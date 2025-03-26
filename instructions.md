@@ -163,7 +163,38 @@ User roles and permissions are strictly defined and stored in the **Supabase mem
 #### **5 Admin Dashboard**
 
 - Application, Union, and Division admins will all share a back-end dashboard that allows them to complete admin functions as relates to their access
-  - Application Admin will have the access to:
-  - Union Admin will have the access to:
-  - Division Admin will have the access to:
+  - Application Admin will have the access to: GLobal Settings, System Statistics, User Management, and everything in Union and Division sections
+  - Union Admin will have the access to: Union Announcements, Advertisements, GCA Officers, Division Management and everything in Division section
+  - Division Admin will have the access to: Member Management, Division Officers, Leave Requests, Division Calendar Allotments
 - Company Admin will be an entirely seperate route and interface only to be used by the company to enter the PLD/SDV and Vacation into the company system and mark when complete
+
+### **6. Divisions**
+
+The **CN/WC GCA of the BLET** includes the following divisions:
+
+- **163** - Proctor, MN
+- **173** - Fond Du Lac, WI
+- **174** - Stevens Point, WI
+- **175** - Neenah, WI
+- **184** - Schiller Park, IL
+- **185** - Gladstone, MI
+- **188** - Superior, WI
+- **209** - Green Bay, WI
+- **520** - Joliet, IL
+
+> **Implementation Notes:**
+>
+> - Each user is assigned to a **single division**.
+> - Each division has **its own set of officers and calendars**.
+
+### **7. Division Officers**
+
+Each division may assign the following **officer positions**, managed by the **Division Admin**:
+
+- **Required Positions:** President, Vice-President, Secretary/Treasurer, Alternate Secretary/Treasurer, Legislative Representative, Alternate Legislative Representative, Local Chairman, First Vice-Local Chairman, Second Vice-Local Chairman, Guide, Chaplain, Delegate to the National Division, First Alternate Delegate to the National Division, Second Alternate Delegate to the National Division, First Trustee, Second Trustee, Third Trustee, First Alternate Trustee, Second Alternate Trustee, Third Alternate Trustee.
+- **Optional Positions:** Third Vice-Local Chairman, Fourth Vice-Local Chairman, Fifth Vice-Local Chairman.
+
+> **Implementation Notes:**
+>
+> - Officer roles will be stored in the **members table**.
+> - Assignments are managed in the **Division Admin dashboard**.
