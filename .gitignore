@@ -1,7 +1,6 @@
-# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
-
-# dependencies
+# Dependencies
 node_modules/
+jspm_packages/
 
 # Expo
 .expo/
@@ -20,19 +19,64 @@ expo-env.d.ts
 # Metro
 .metro-health-check*
 
-# debug
+# Debug
 npm-debug.*
 yarn-debug.*
 yarn-error.*
+.pnpm-debug.log*
+logs
+*.log
+lerna-debug.log*
 
-# macOS
+# Coverage and testing
+coverage
+*.lcov
+.nyc_output
+.vscode-test
+
+# Build outputs
+dist/
+build/
+web-build/
+.next
+out
+.nuxt
+
+# Cache directories
+.cache/
+.parcel-cache/
+.npm
+.eslintcache
+.stylelintcache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+
+# Environment and local files
+.env
+.env*.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# OS specific
 .DS_Store
 *.pem
 
-# local env files
-.env*.local
-
-# typescript
+# TypeScript
 *.tsbuildinfo
 
+# Yarn specific
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
+.yarn-integrity
+
+# Misc
 app-example
+.serverless/
+.dynamodb/
+.tern-port
