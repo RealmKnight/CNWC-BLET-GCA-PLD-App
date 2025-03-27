@@ -9,7 +9,7 @@ You are building an Expo React Native application for **Android, iOS, and web** 
 - **Framework**: Expo SDK 52, React Native
 - **Styling**: NativeWind esp for mobile and where necessary in web usage Tailwind
 - **UI Components**: Shadcn/ui-inspired react-native-reusables, react-native-calendars, expo-calendar to allow user to sync to device calendar
-- **Backend**: hosted Supabase (Authentication, RBAC, File Storage)
+- **Backend**: hosted Supabase (Authentication, RBAC, File Storage, possible realtime)
 - **Deployment**: Expo and Supabase including Expo EAS to utilize versioning, automatic deployments, and OTA app updates
 
 ---
@@ -66,8 +66,97 @@ You are building an Expo React Native application for **Android, iOS, and web** 
 | 6 to <10 years       | 11           |
 | 10+ years            | 13           |
 
-- Members to not get their Max PLDs adjusted until their anniversay date at which time their Max PLDs will increase to the amount in the chart. For example, When a member enters their 3rd year of service, they do not get their upped allotment of PLDs (from 5 -> 8) on Jan 1st of that year, but the allotment will increase on the anniversary of that members hire date.
+- Members do not get their Max PLDs adjusted until their anniversay date at which time their Max PLDs will increase to the amount in the chart. For example, When a member enters their 3rd year of service, they do not get their upped allotment of PLDs (from 5 -> 8) on Jan 1st of that year, but the allotment will increase on the anniversary of that members hire date.
 - Admins can **manually override PLD entitlements** in special cases.
+
+#### **2.4 Calendar State management**
+
+Given the requirements for a highly responsive calendar with real-time updates, here’s how we will handle state management effectively:
+Best Approach: Combination of Zustand & Supabase Realtime
+
+Instead of choosing between Zustand and Supabase Realtime, a hybrid approach would be ideal:
+
+    Zustand for Local State Management:
+
+        Store user interactions (e.g., selected date, current view, request drafts) locally in Zustand.
+
+        Cache calendar data to improve performance and reduce unnecessary network calls.
+
+        Provide optimistic UI updates (e.g., update state immediately upon user action, then reconcile with the backend).
+
+    Supabase Realtime for Instant Updates:
+
+        Use PostgreSQL Row Level Security (RLS) to allow users to subscribe to changes in the requests and allotments tables.
+
+        When an Admin modifies allotments, or a member requests a day off, Supabase Realtime should push updates to all connected clients.
+
+        On receiving an update, Zustand state should be updated accordingly.
+
+Exxample code
+Zustand State Store
+
+Define a Zustand store for handling local state:
+
+```typescript
+import { create } from "zustand";
+
+interface CalendarState {
+  selectedDate: string | null;
+  allotments: Record<string, number>; // { "2025-04-01": 2, "2025-04-02": 3 }
+  requests: Record<string, { user: string; type: string }[]>; // {"2025-04-01": [{user: "John Doe", type: "PLD"}]}
+  setSelectedDate: (date: string) => void;
+  setAllotments: (date: string, value: number) => void;
+  setRequests: (date: string, requests: { user: string; type: string }[]) => void;
+}
+
+export const useCalendarStore = create<CalendarState>((set) => ({
+  selectedDate: null,
+  allotments: {},
+  requests: {},
+  setSelectedDate: (date) => set({ selectedDate: date }),
+  setAllotments: (date, value) =>
+    set((state) => ({
+      allotments: { ...state.allotments, [date]: value },
+    })),
+  setRequests: (date, requests) =>
+    set((state) => ({
+      requests: { ...state.requests, [date]: requests },
+    })),
+}));
+```
+
+Supabase Realtime Subscription example code (listening for changes in requests and allotments tables):
+
+```typescript
+import { supabase } from "@/lib/supabase";
+import { useCalendarStore } from "@/store/calendar";
+
+const subscribeToRealtimeUpdates = () => {
+  const { setAllotments, setRequests } = useCalendarStore.getState();
+
+  // Listen for allotment updates
+  supabase
+    .channel("allotments")
+    .on("postgres_changes", { event: "UPDATE", schema: "public", table: "allotments" }, (payload) => {
+      const { date, max_allotment } = payload.new;
+      setAllotments(date, max_allotment);
+    })
+    .subscribe();
+
+  // Listen for request updates
+  supabase
+    .channel("requests")
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "requests" }, (payload) => {
+      const { date, user_id, type } = payload.new;
+      setRequests(date, [...(useCalendarStore.getState().requests[date] || []), { user: user_id, type }]);
+    })
+    .subscribe();
+};
+
+export default subscribeToRealtimeUpdates;
+```
+
+Call subscribeToRealtimeUpdates() in a top-level component like App.tsx to initialize subscriptions.
 
 ## **Vacation Calendar**
 
@@ -140,10 +229,18 @@ User roles and permissions are strictly defined and stored in the **Supabase mem
 
 > **Implementation Notes:**
 >
-> - Roles are stored in the **Supabase members table**, except for the Company Admin role that will be stored in supabase auth.user.metadata as this user will never be a member.
+> - Roles are stored in the **Supabase members table** members.role, except for the Company Admin role that will be stored in supabase auth.user.metadata as this user will never be a member.
 > - A supabase auth.user record will be associated with the users record in the member table by a foreign key relationship with the UUID of the auth.user being inserted into the members.id column using the members.pin_number to find the corrrect record to update in the members table
 > - A Supabase auth hook will automatically assign **new members** as users.
-> - Roles do not override **Supabase’s built-in auth roles**.
+> - Investigate whether a supabase auth hook is more appropriate to handle the Company Admin over supabase auth.user metadata as metadata can be manipulated on the user side.
+> - Roles **do not** override **Supabase’s built-in auth roles**.
+> - Auth Flow ->
+>   1. If No session, redirect to Login page (use all supabase functions here, forgot/password reset, potential MFA in the future, email verification, redirect to signup page if not registered yet, etc). We want to preserve session state in the app though if the user clicks out of the app to handle something on their mobile device or opens another tab in their web browser, they should not have a state interuption nor have to log in again.
+>   2. Determine if user is Company Admin or regular user, route appropriately (user to flow below, Company admin only has access to Company Admin Dashboard)
+>   3. If the supabase auth.user does not have an associated entry in the members table (search members.id where == auth.user.id) -> memberassociation page where user can enter their company pin_number which will associate their user with the members table entry associated with that pin_number. Error messages on this page will allow the user to contact their Division Admin with issues
+>   4. Otherwise user is logged in and redirected to (tabs)\index.tsx
+> - There will be an application header accross all screens in the app with a Logout Icon on the right hand side (this will be the only icon present on the Company Admin dashboard). A User will Also have a profile icon next to the Logout Icon so that they can access their profile dashboard. And an Admin will see a gear icon on the left hand side of this header that will direct an admin user to the (admin)\ route with the page to be determined by their admin level (Application Admin, Union Admin, or Division Admin).
+> - User Profile dashboard -> user can update their profile (phone number, set preference on contact, allow in app push notifications, etc), change their password, etc as allowed by supabse auth. A user cannot update any information in the members table however and will be shown a message stating "Contact Division admin if any information needs to be updated", may put the member info on a seperate tab on their profile to better seperate these concerns.
 
 #### **3 Notifications System**
 
@@ -172,20 +269,21 @@ User roles and permissions are strictly defined and stored in the **Supabase mem
 
 The **CN/WC GCA of the BLET** includes the following divisions:
 
-- **163** - Proctor, MN
-- **173** - Fond Du Lac, WI
-- **174** - Stevens Point, WI
-- **175** - Neenah, WI
-- **184** - Schiller Park, IL
-- **185** - Gladstone, MI
-- **188** - Superior, WI
-- **209** - Green Bay, WI
-- **520** - Joliet, IL
+- **163** - Proctor, MN - Zone 10
+- **173** - Fond Du Lac, WI - Zone 3 and Zone 4
+- **174** - Stevens Point, WI - Zone 5 and Zone 7
+- **175** - Neenah, WI - Zone 12
+- **184** - Schiller Park, IL - Zone 1
+- **185** - Gladstone, MI - Zone 13
+- **188** - Superior, WI - Zone 6, Zone 8 and Zone 9
+- **209** - Green Bay, WI - Zone 11
+- **520** - Joliet, IL - Zone 2
 
 > **Implementation Notes:**
 >
-> - Each user is assigned to a **single division**.
+> - Each user is assigned to a **single division and zone**.
 > - Each division has **its own set of officers and calendars**.
+> - Some Divisions will have a calendar for each Zone within the division
 
 ### **7. Division Officers**
 

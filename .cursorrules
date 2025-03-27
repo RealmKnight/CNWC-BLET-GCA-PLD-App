@@ -68,10 +68,11 @@ Code Style and Structure
 
   State Management
 
-- Use React Context and useReducer for managing global state.
-- Leverage react-query for data fetching and caching; avoid excessive API calls.
-- For complex state management, consider using Zustand or Redux Toolkit.
-- Handle URL search parameters using libraries like expo-linking.
+- We will be using Zustand and Supabase realtime in a hybrid fashion for Global app state management.
+- This will provide fast UI updates as Zustand provides instant updates for local interactions.
+- Data will be cached in Zustand reducing the need for redundant requests.
+- Real time sync: Supabase ensures that all users see the latest updates dynamically.
+- Handle URL search parameters using libraries like expo-linking when necessary.
 
   Error Handling and Validation
 
