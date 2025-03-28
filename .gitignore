@@ -32,6 +32,9 @@ yarn-error.*
 # local env files
 .env*.local
 
+# supabase files to keep anon key off github
+supabase.ts
+
 # typescript
 *.tsbuildinfo
 
