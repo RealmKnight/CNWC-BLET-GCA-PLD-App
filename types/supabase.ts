@@ -28,6 +28,7 @@ export type Database = {
           home_zone?: string;
           role?: string;
           sdv_entitlement?: number;
+          phone_number?: string;
         };
         Insert: {
           id?: string;
@@ -55,6 +56,7 @@ export type Database = {
           home_zone?: string;
           role?: string;
           sdv_entitlement?: number;
+          phone_number?: string;
         };
         Update: {
           id?: string;
@@ -82,6 +84,7 @@ export type Database = {
           home_zone?: string;
           role?: string;
           sdv_entitlement?: number;
+          phone_number?: string;
         };
       };
       divisions: {
@@ -146,39 +149,35 @@ export type Database = {
         Row: {
           id: string;
           division: string;
-          week_start_date: string;
+          date: string;
           max_allotment: number;
           current_requests?: number;
-          created_at?: string;
-          updated_at?: string;
         };
         Insert: {
           id?: string;
           division: string;
-          week_start_date: string;
+          date: string;
           max_allotment: number;
           current_requests?: number;
-          created_at?: string;
-          updated_at?: string;
         };
         Update: {
           id?: string;
           division?: string;
-          week_start_date?: string;
+          date?: string;
           max_allotment?: number;
           current_requests?: number;
-          created_at?: string;
-          updated_at?: string;
         };
       };
       pld_sdv_requests: {
         Row: {
           id: string;
           member_id: string;
-          week_start_date: string;
-          status: string;
-          created_at?: string;
-          updated_at?: string;
+          division: string;
+          request_date: string;
+          leave_type: "PLD" | "SDV";
+          status: "pending" | "approved" | "denied" | "waitlisted" | "cancellation_pending" | "cancelled";
+          requested_at?: string;
+          waitlist_position?: number;
           responded_at?: string;
           responded_by?: string;
           paid_in_lieu?: boolean;
@@ -186,10 +185,12 @@ export type Database = {
         Insert: {
           id?: string;
           member_id: string;
-          week_start_date: string;
-          status: string;
-          created_at?: string;
-          updated_at?: string;
+          division: string;
+          request_date: string;
+          leave_type: "PLD" | "SDV";
+          status?: "pending" | "approved" | "denied" | "waitlisted" | "cancellation_pending" | "cancelled";
+          requested_at?: string;
+          waitlist_position?: number;
           responded_at?: string;
           responded_by?: string;
           paid_in_lieu?: boolean;
@@ -197,10 +198,12 @@ export type Database = {
         Update: {
           id?: string;
           member_id?: string;
-          week_start_date?: string;
-          status?: string;
-          created_at?: string;
-          updated_at?: string;
+          division?: string;
+          request_date?: string;
+          leave_type?: "PLD" | "SDV";
+          status?: "pending" | "approved" | "denied" | "waitlisted" | "cancellation_pending" | "cancelled";
+          requested_at?: string;
+          waitlist_position?: number;
           responded_at?: string;
           responded_by?: string;
           paid_in_lieu?: boolean;
@@ -263,7 +266,26 @@ export type Database = {
       [_ in never]: never;
     };
     Enums: {
-      [_ in never]: never;
+      division: "163" | "173" | "174" | "175" | "184" | "185" | "188" | "209" | "520";
+      leave_type: "PLD" | "SDV";
+      pld_sdv_status: "pending" | "approved" | "denied" | "waitlisted" | "cancellation_pending" | "cancelled";
+      role: "user" | "division_admin" | "union_admin" | "application_admin" | "company_admin";
+      sys_seniority_type: "WC" | "DMIR" | "DWP" | "SYS1" | "EJ&E" | "SYS2";
+      user_role: "member" | "company_admin";
+      zone:
+        | "zone 1"
+        | "zone 2"
+        | "zone 3"
+        | "zone 4"
+        | "zone 5"
+        | "zone 6"
+        | "zone 7"
+        | "zone 8"
+        | "zone 9"
+        | "zone 10"
+        | "zone 11"
+        | "zone 12"
+        | "zone 13";
     };
   };
 };

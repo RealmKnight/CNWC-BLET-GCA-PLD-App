@@ -15,6 +15,9 @@ declare global {
       "/(company-admin)/index": undefined;
       // Tab Routes
       "/(tabs)/index": undefined;
+      "/(tabs)/notifications": undefined;
+      "/(tabs)/calendar": undefined;
+      "/(tabs)/mytime": undefined;
       "/(tabs)/profile": undefined;
     }
   }

@@ -80,7 +80,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
       console.error("[Auth] Error processing user:", error);
       setMember(null);
       setUserRole(null);
-      throw error;
+    } finally {
+      setIsLoading(false);
     }
   }
 
@@ -88,7 +89,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   useEffect(() => {
     let mounted = true;
 
-    const initAuth = async () => {
+    async function initAuth() {
       try {
         console.log("[Auth] Initializing...");
         // Skip auth initialization during SSR
@@ -117,9 +118,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
           if (initialSession?.user) {
             await handleUserRouting(initialSession.user);
+          } else {
+            setIsLoading(false);
           }
-
-          setIsLoading(false);
         }
       } catch (error) {
         console.error("[Auth] Initialization error:", error);
@@ -127,7 +128,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
           setIsLoading(false);
         }
       }
-    };
+    }
 
     console.log("[Auth] Starting initialization");
     initAuth();
@@ -146,6 +147,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       } else {
         setMember(null);
         setUserRole(null);
+        setIsLoading(false);
       }
     });
 
@@ -232,16 +234,21 @@ export function AuthProvider({ children }: AuthProviderProps) {
   };
 
   const updateProfile = async (updates: Partial<UserProfile>) => {
-    if (!user) throw new Error("No user logged in");
+    if (!user?.id) throw new Error("No user logged in");
 
     try {
-      const { error } = await supabase.auth.updateUser({
-        data: updates,
-      });
+      // Update member data
+      const { error: memberError } = await supabase.from("members").update(updates).eq("id", user.id);
 
-      if (error) throw error;
+      if (memberError) throw memberError;
+
+      // Refresh member data
+      const memberData = await fetchMemberData(user.id);
+      if (memberData) {
+        setMember(memberData);
+      }
     } catch (error) {
-      console.error("Error updating profile:", error);
+      console.error("[Auth] Error updating profile:", error);
       throw error;
     }
   };
