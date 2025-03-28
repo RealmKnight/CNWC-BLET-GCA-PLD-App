@@ -203,13 +203,13 @@ Call subscribeToRealtimeUpdates() in a top-level component like App.tsx to initi
 - Vacation allotment is based on **Company Hire Date** (stored in `members` table).
 - System calculates allotment for the next year year using the following rules:
 
-| **Years of Service** | **Vacation Weekss** |
-| -------------------- | ------------------- |
-| 0 to <2 years        | 1                   |
-| 2 to <5 years        | 2                   |
-| 5 to <14 years       | 3                   |
-| 14 to <23 years      | 4                   |
-| 23+ years            | 5                   |
+| **Years of Service** | **Vacation Weeks** |
+| -------------------- | ------------------ |
+| 0 to <2 years        | 1                  |
+| 2 to <5 years        | 2                  |
+| 5 to <14 years       | 3                  |
+| 14 to <23 years      | 4                  |
+| 23+ years            | 5                  |
 
 - During a calendar year in which an Engineer’s vacation entitlement shall increase on the anniversary date, such Engineer shall be permitted to schedule the additional vacation time to which entitled on the anniversary date at any time during that calendar year.
 - Full week vacations will commence on Mondays and continue as consecutive week(s).
