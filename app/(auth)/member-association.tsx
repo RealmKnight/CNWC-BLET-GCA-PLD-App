@@ -1,14 +1,24 @@
 import { useState } from "react";
-import { StyleSheet, TextInput, TouchableOpacity, Image } from "react-native";
+import { StyleSheet, TextInput, TouchableOpacity, Image, Modal } from "react-native";
 import { useAuth } from "@/hooks/useAuth";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
+import { useRouter } from "expo-router";
+import { supabase } from "@/utils/supabase";
+
+interface ValidationError {
+  message: string;
+  requiresAdminContact: boolean;
+}
 
 export default function MemberAssociationScreen() {
   const [pinNumber, setPinNumber] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ValidationError | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const { associateMember } = useAuth();
+  const [showMessageModal, setShowMessageModal] = useState(false);
+  const [message, setMessage] = useState("");
+  const { associateMember, user } = useAuth();
+  const router = useRouter();
 
   const handleAssociate = async () => {
     try {
@@ -16,7 +26,51 @@ export default function MemberAssociationScreen() {
       setIsLoading(true);
       await associateMember(pinNumber);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "An error occurred");
+      const errorMessage = err instanceof Error ? err.message : "An error occurred";
+      // These specific error messages should match the ones from our validate_member_association function
+      const requiresAdminContact = ["Member is not active", "Member is already associated with another user"].includes(
+        errorMessage
+      );
+
+      setError({
+        message: errorMessage,
+        requiresAdminContact,
+      });
+
+      if (requiresAdminContact) {
+        setShowMessageModal(true);
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSendMessage = async () => {
+    try {
+      setIsLoading(true);
+
+      const { data: result, error } = await supabase.rpc("send_admin_message", {
+        p_user_id: user?.id,
+        p_pin_number: pinNumber,
+        p_message: message,
+      });
+
+      if (error) throw error;
+      if (!result?.[0]?.success) {
+        throw new Error(result?.[0]?.message || "Failed to send message");
+      }
+
+      setShowMessageModal(false);
+      setError({
+        message: "Message sent to division admin. They will contact you soon.",
+        requiresAdminContact: false,
+      });
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Failed to send message";
+      setError({
+        message: errorMessage,
+        requiresAdminContact: true,
+      });
     } finally {
       setIsLoading(false);
     }
@@ -44,7 +98,9 @@ export default function MemberAssociationScreen() {
           editable={!isLoading}
         />
 
-        {error && <ThemedText style={styles.error}>{error}</ThemedText>}
+        {error && (
+          <ThemedText style={[styles.error, !error.requiresAdminContact && styles.success]}>{error.message}</ThemedText>
+        )}
 
         <TouchableOpacity
           style={[styles.button, isLoading && styles.buttonDisabled]}
@@ -54,6 +110,48 @@ export default function MemberAssociationScreen() {
           <ThemedText style={styles.buttonText}>{isLoading ? "Associating..." : "Associate Member"}</ThemedText>
         </TouchableOpacity>
       </ThemedView>
+
+      <Modal
+        visible={showMessageModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowMessageModal(false)}
+      >
+        <ThemedView style={styles.modalContainer}>
+          <ThemedView style={styles.modalContent}>
+            <ThemedText type="title" style={styles.modalTitle}>
+              Contact Division Admin
+            </ThemedText>
+            <ThemedText style={styles.modalText}>Please provide details about your situation:</ThemedText>
+            <TextInput
+              style={styles.messageInput}
+              placeholder="Enter your message"
+              placeholderTextColor="#666666"
+              value={message}
+              onChangeText={setMessage}
+              multiline
+              numberOfLines={4}
+              editable={!isLoading}
+            />
+            <ThemedView style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.cancelButton]}
+                onPress={() => setShowMessageModal(false)}
+                disabled={isLoading}
+              >
+                <ThemedText style={styles.modalButtonText}>Cancel</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.sendButton]}
+                onPress={handleSendMessage}
+                disabled={isLoading}
+              >
+                <ThemedText style={styles.modalButtonText}>{isLoading ? "Sending..." : "Send Message"}</ThemedText>
+              </TouchableOpacity>
+            </ThemedView>
+          </ThemedView>
+        </ThemedView>
+      </Modal>
     </ThemedView>
   );
 }
@@ -100,10 +198,69 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginBottom: 10,
   },
+  success: {
+    color: "#34c759",
+  },
   logo: {
     width: 130,
     height: 163,
     alignSelf: "center",
     marginBottom: 20,
+  },
+  modalContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+  },
+  modalContent: {
+    width: "90%",
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 20,
+    alignItems: "center",
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: "600",
+    marginBottom: 15,
+  },
+  modalText: {
+    marginBottom: 15,
+    textAlign: "center",
+  },
+  messageInput: {
+    width: "100%",
+    height: 100,
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 15,
+    textAlignVertical: "top",
+  },
+  modalButtons: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    width: "100%",
+  },
+  modalButton: {
+    flex: 1,
+    height: 44,
+    borderRadius: 8,
+    justifyContent: "center",
+    alignItems: "center",
+    marginHorizontal: 5,
+  },
+  cancelButton: {
+    backgroundColor: "#ff3b30",
+  },
+  sendButton: {
+    backgroundColor: "#34c759",
+  },
+  modalButtonText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
   },
 });

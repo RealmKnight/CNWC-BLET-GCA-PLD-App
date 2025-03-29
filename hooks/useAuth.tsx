@@ -333,25 +333,22 @@ export function AuthProvider({ children }: AuthProviderProps) {
     if (!user) throw new Error("No user logged in");
 
     try {
-      const { data: memberData, error: memberError } = await supabase
-        .from("members")
-        .select("*")
-        .eq("pin_number", pinNumber)
-        .single();
+      // Call our validation function
+      const { data: validationResult, error: validationError } = await supabase.rpc("validate_member_association", {
+        pin_number: pinNumber,
+      });
 
-      if (memberError) throw memberError;
-      if (!memberData) throw new Error("Invalid PIN number");
-
-      // Check if member is already associated
-      if (memberData.id) {
-        throw new Error("This PIN is already associated with another user");
+      if (validationError) throw validationError;
+      if (!validationResult?.length || !validationResult[0].is_valid) {
+        throw new Error(validationResult?.[0]?.error_message || "Invalid PIN number");
       }
 
-      const { error: updateError } = await supabase.from("members").update({ id: user.id }).eq("pin_number", pinNumber);
+      // If validation passed, update the member
+      const { error: updateError } = await supabase.from("members").update({ user_id: user.id }).eq("pin", pinNumber);
 
       if (updateError) throw updateError;
 
-      setMember(memberData);
+      // Refresh auth state
       await updateAuthState(session, "associateMember");
     } catch (error) {
       console.error("Error associating member:", error);
