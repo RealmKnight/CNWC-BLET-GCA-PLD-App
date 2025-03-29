@@ -246,10 +246,29 @@ User roles and permissions are strictly defined and stored in the **Supabase mem
 
 - **Email & in-app alerts** for:
   - Request approval/denial
-  - Waitlist promotion
+  - Waitlist promotion for calendar requests
   - Admin changes to allotments
-  - "Must Read" News or message sent out by Admin
+  - "Must Read" messages sent out by Admin
+  - News will be a message but will not be "must read"
   - Admins will receive notifications of messages sent to them directly so that they can reply to them
+
+Example code using the notifications system for push notifications
+
+```typescript
+import { sendMessageWithNotification } from "@/utils/notificationService";
+
+// Example usage:
+await sendMessageWithNotification({
+  recipientId: "user-uuid",
+  subject: "New Message",
+  content: "You have a new message",
+  topic: "messages",
+  event: "new_message",
+  payload: {
+    /* additional data */
+  },
+});
+```
 
 #### **4 Messaging System**
 

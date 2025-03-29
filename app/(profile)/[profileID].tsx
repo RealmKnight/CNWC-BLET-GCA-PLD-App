@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { StyleSheet, ScrollView, Alert, Modal, Platform } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { ThemedView } from "@/components/ThemedView";
@@ -10,10 +10,41 @@ import { Ionicons } from "@expo/vector-icons";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { Database } from "@/types/supabase";
+import * as Device from "expo-device";
+import * as Notifications from "expo-notifications";
 
 type Member = Database["public"]["Tables"]["members"]["Row"];
-type ContactPreference = "phone" | "text" | "email";
+type ContactPreference = "phone" | "text" | "email" | "push";
 type ColorScheme = keyof typeof Colors;
+
+async function registerForPushNotificationsAsync() {
+  let token;
+
+  if (Platform.OS === "web") {
+    return null;
+  }
+
+  if (Device.isDevice) {
+    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    let finalStatus = existingStatus;
+
+    if (existingStatus !== "granted") {
+      const { status } = await Notifications.requestPermissionsAsync();
+      finalStatus = status;
+    }
+
+    if (finalStatus !== "granted") {
+      Alert.alert("Failed to get push token for push notification!");
+      return null;
+    }
+
+    token = (await Notifications.getExpoPushTokenAsync()).data;
+  } else {
+    Alert.alert("Must use physical device for Push Notifications");
+  }
+
+  return token;
+}
 
 function PhoneUpdateModal({
   visible,
@@ -115,6 +146,8 @@ export default function ProfileScreen() {
   );
   const [phoneNumber, setPhoneNumber] = useState(member?.phone_number || "");
   const [isPhoneModalVisible, setIsPhoneModalVisible] = useState(false);
+  const [pushToken, setPushToken] = useState<string | null>(null);
+  const [isDeviceMobile] = useState(Platform.OS !== "web");
 
   const isAdmin = member?.role?.includes("admin");
   const isOwnProfile = user?.id === profileID;
@@ -125,12 +158,27 @@ export default function ProfileScreen() {
     try {
       if (!session) throw new Error("No active session");
 
+      if (preference === "push") {
+        if (!isDeviceMobile) {
+          Alert.alert("Error", "Push notifications are only available on mobile devices");
+          return;
+        }
+
+        const token = await registerForPushNotificationsAsync();
+        if (!token) {
+          Alert.alert("Error", "Failed to setup push notifications. Please check your device settings.");
+          return;
+        }
+        setPushToken(token);
+      }
+
       // Set local state immediately for better UX
       setContactPreference(preference);
 
       const { data, error } = await supabase.auth.updateUser({
         data: {
           contact_preference: preference,
+          push_token: preference === "push" ? pushToken : null,
         },
       });
 
@@ -149,6 +197,25 @@ export default function ProfileScreen() {
       Alert.alert("Error", "Failed to update contact preference. Please try again.");
     }
   };
+
+  // Add this useEffect to handle initial push token setup
+  useEffect(() => {
+    if (isDeviceMobile && contactPreference === "push") {
+      registerForPushNotificationsAsync().then((token) => {
+        if (token) {
+          setPushToken(token);
+          // Update the token in Supabase if needed
+          if (session && (!user?.user_metadata.push_token || user.user_metadata.push_token !== token)) {
+            supabase.auth.updateUser({
+              data: {
+                push_token: token,
+              },
+            });
+          }
+        }
+      });
+    }
+  }, [isDeviceMobile, contactPreference]);
 
   const handlePhoneUpdateSuccess = (newPhone: string) => {
     setPhoneNumber(newPhone);
@@ -211,51 +278,77 @@ export default function ProfileScreen() {
         <>
           <ThemedView style={styles.section}>
             <ThemedText type="title">Contact Preferences</ThemedText>
-            <ThemedView style={styles.preferenceButtons}>
-              <TouchableOpacity
-                style={[styles.preferenceButton, contactPreference === "phone" && styles.preferenceButtonActive]}
-                onPress={() => handleUpdatePreference("phone")}
-              >
-                <ThemedText
-                  style={[
-                    styles.preferenceButtonText,
-                    contactPreference === "phone" && styles.preferenceButtonTextActive,
-                  ]}
+            <ThemedView style={styles.preferenceContainer}>
+              <ThemedView style={styles.preferenceButtons}>
+                {/* to activate if we decide to use phone calls 
+                <TouchableOpacity
+                  style={[styles.preferenceButton, contactPreference === "phone" && styles.preferenceButtonActive]}
+                  onPress={() => handleUpdatePreference("phone")}
                 >
-                  Phone Call
-                </ThemedText>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.preferenceButton, contactPreference === "text" && styles.preferenceButtonActive]}
-                onPress={() => handleUpdatePreference("text")}
-              >
-                <ThemedText
-                  style={[
-                    styles.preferenceButtonText,
-                    contactPreference === "text" && styles.preferenceButtonTextActive,
-                  ]}
+                  <ThemedText
+                    style={[
+                      styles.preferenceButtonText,
+                      contactPreference === "phone" && styles.preferenceButtonTextActive,
+                    ]}
+                  >
+                    Phone Call
+                  </ThemedText>
+                </TouchableOpacity> 
+                */}
+                <TouchableOpacity
+                  style={[styles.preferenceButton, contactPreference === "text" && styles.preferenceButtonActive]}
+                  onPress={() => handleUpdatePreference("text")}
                 >
-                  Text Message
-                </ThemedText>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.preferenceButton, contactPreference === "email" && styles.preferenceButtonActive]}
-                onPress={() => handleUpdatePreference("email")}
-              >
-                <ThemedText
-                  style={[
-                    styles.preferenceButtonText,
-                    contactPreference === "email" && styles.preferenceButtonTextActive,
-                  ]}
+                  <ThemedText
+                    style={[
+                      styles.preferenceButtonText,
+                      contactPreference === "text" && styles.preferenceButtonTextActive,
+                    ]}
+                  >
+                    Text Message
+                  </ThemedText>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.preferenceButton, contactPreference === "email" && styles.preferenceButtonActive]}
+                  onPress={() => handleUpdatePreference("email")}
                 >
-                  Email
-                </ThemedText>
-              </TouchableOpacity>
+                  <ThemedText
+                    style={[
+                      styles.preferenceButtonText,
+                      contactPreference === "email" && styles.preferenceButtonTextActive,
+                    ]}
+                  >
+                    Email
+                  </ThemedText>
+                </TouchableOpacity>
+              </ThemedView>
+              {isDeviceMobile && (
+                <ThemedView style={styles.pushNotificationContainer}>
+                  <TouchableOpacity
+                    style={[
+                      styles.preferenceButton,
+                      styles.pushNotificationButton,
+                      contactPreference === "push" && styles.preferenceButtonActive,
+                    ]}
+                    onPress={() => handleUpdatePreference("push")}
+                  >
+                    <ThemedText
+                      style={[
+                        styles.preferenceButtonText,
+                        contactPreference === "push" && styles.preferenceButtonTextActive,
+                      ]}
+                    >
+                      Push Notifications
+                    </ThemedText>
+                  </TouchableOpacity>
+                </ThemedView>
+              )}
             </ThemedView>
           </ThemedView>
 
           <ThemedView style={styles.section}>
             <ThemedText type="title">Account Settings</ThemedText>
+            <ThemedText type="subtitle">Send an email with a reset link to change your password</ThemedText>
             <TouchableOpacity onPress={handleUpdatePassword} style={styles.settingButton}>
               <ThemedText style={styles.settingButtonText}>Change Password</ThemedText>
             </TouchableOpacity>
@@ -314,9 +407,21 @@ const styles = StyleSheet.create({
   iconButton: {
     padding: 8,
   },
+  preferenceContainer: {
+    gap: 12,
+  },
   preferenceButtons: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 8,
+  },
+  pushNotificationContainer: {
+    width: "100%",
+  },
+  pushNotificationButton: {
+    width: "100%",
+    justifyContent: "center",
+    alignItems: "center",
   },
   preferenceButton: {
     padding: 12,

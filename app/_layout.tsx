@@ -1,14 +1,31 @@
-import { Slot, useRouter, useSegments } from "expo-router";
-import { AuthProvider, useAuth } from "@/hooks/useAuth";
+import { Stack } from "expo-router";
 import { ThemeProvider } from "@/components/ThemeProvider";
+import { AuthProvider, useAuth } from "@/hooks/useAuth";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { StyleSheet } from "react-native";
+import { Slot, useRouter, useSegments } from "expo-router";
 import { useEffect } from "react";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
+import { configureNotifications, setupNotificationListeners } from "@/utils/notificationConfig";
 
 function RootLayoutContent() {
   const { isLoading, session, userRole } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+
+  useEffect(() => {
+    // Configure notifications when the app starts
+    configureNotifications();
+
+    // Set up notification listeners and store cleanup function
+    const cleanupNotifications = setupNotificationListeners();
+
+    return () => {
+      // Clean up notification listeners when component unmounts
+      cleanupNotifications();
+    };
+  }, []);
 
   useEffect(() => {
     console.log("[Router] State:", { isLoading, hasSession: !!session, userRole, currentSegment: segments[0] });
@@ -61,10 +78,18 @@ function RootLayoutContent() {
 
 export default function RootLayout() {
   return (
-    <ThemeProvider>
-      <AuthProvider>
-        <RootLayoutContent />
-      </AuthProvider>
-    </ThemeProvider>
+    <GestureHandlerRootView style={styles.container}>
+      <ThemeProvider>
+        <AuthProvider>
+          <RootLayoutContent />
+        </AuthProvider>
+      </ThemeProvider>
+    </GestureHandlerRootView>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+});

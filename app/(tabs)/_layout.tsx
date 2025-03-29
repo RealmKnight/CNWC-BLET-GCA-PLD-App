@@ -1,24 +1,31 @@
 import { Tabs } from "expo-router";
 import React from "react";
-import { Platform } from "react-native";
+import { Platform, View } from "react-native";
 
 import { HapticTab } from "@/components/HapticTab";
 import { IconSymbol } from "@/components/ui/IconSymbol";
-import Ionicons from "@expo/vector-icons/Ionicons";
+import { Ionicons } from "@expo/vector-icons";
 import TabBarBackground from "@/components/ui/TabBarBackground";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { AppHeader } from "@/components/AppHeader";
+import { useNotificationStore } from "@/store/notificationStore";
+import { ThemedText } from "@/components/ThemedText";
+
+type ColorScheme = "light" | "dark";
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
+  const colorScheme = (useColorScheme() ?? "light") as ColorScheme;
+  const { unreadCount } = useNotificationStore();
+
+  const tintColor = Colors[colorScheme].tint;
 
   return (
     <>
       <AppHeader />
       <Tabs
         screenOptions={{
-          tabBarActiveTintColor: Colors[colorScheme ?? "light"].tint,
+          tabBarActiveTintColor: tintColor,
           headerShown: false,
           tabBarButton: HapticTab,
           tabBarBackground: TabBarBackground,
@@ -42,7 +49,37 @@ export default function TabLayout() {
           name="notifications"
           options={{
             title: "Notifications",
-            tabBarIcon: ({ color }) => <Ionicons size={28} name="notifications" color={color} />,
+            tabBarIcon: ({ color, size, focused }) => (
+              <View>
+                <Ionicons name={focused ? "notifications" : "notifications-outline"} size={size} color={color} />
+                {unreadCount > 0 && (
+                  <View
+                    style={{
+                      position: "absolute",
+                      right: -6,
+                      top: -3,
+                      backgroundColor: tintColor,
+                      borderRadius: 12,
+                      minWidth: 18,
+                      height: 18,
+                      justifyContent: "center",
+                      alignItems: "center",
+                      paddingHorizontal: 4,
+                    }}
+                  >
+                    <ThemedText
+                      style={{
+                        color: "#FFFFFF",
+                        fontSize: 12,
+                        fontWeight: "600",
+                      }}
+                    >
+                      {unreadCount > 99 ? "99+" : unreadCount}
+                    </ThemedText>
+                  </View>
+                )}
+              </View>
+            ),
           }}
         />
         <Tabs.Screen
