@@ -1,123 +1,149 @@
-import { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
-import { Link } from 'expo-router';
-import { useAuth } from '../../hooks/useAuth';
+import { useState } from "react";
+import { StyleSheet, TextInput, TouchableOpacity, Image } from "react-native";
+import { Link } from "expo-router";
+import { useAuth } from "@/hooks/useAuth";
+import { ThemedView } from "@/components/ThemedView";
+import { ThemedText } from "@/components/ThemedText";
 
-export default function SignUp() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [error, setError] = useState('');
+export default function SignUpScreen() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
   const { signUp } = useAuth();
 
   const handleSignUp = async () => {
     try {
-      setError('');
+      setError(null);
+      setIsLoading(true);
       if (password !== confirmPassword) {
-        throw new Error('Passwords do not match');
+        throw new Error("Passwords do not match");
       }
       await signUp(email, password);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(err instanceof Error ? err.message : "An error occurred");
+    } finally {
+      setIsLoading(false);
     }
   };
 
   return (
-    <View style={styles.container}>
-      <View style={styles.formContainer}>
-        <Text style={styles.title}>Sign Up</Text>
-        
-        {error ? <Text style={styles.error}>{error}</Text> : null}
+    <ThemedView style={styles.container}>
+      <Image source={require("@/assets/images/BLETblackgold.png")} style={styles.logo} />
+      <ThemedView style={styles.header}>
+        <ThemedText type="title">Create Account</ThemedText>
+        <ThemedText type="subtitle">Sign up to get started</ThemedText>
+      </ThemedView>
 
+      <ThemedView style={styles.form}>
         <TextInput
           style={styles.input}
           placeholder="Email"
+          placeholderTextColor="#666666"
           value={email}
           onChangeText={setEmail}
           autoCapitalize="none"
           keyboardType="email-address"
+          editable={!isLoading}
         />
 
         <TextInput
           style={styles.input}
           placeholder="Password"
+          placeholderTextColor="#666666"
           value={password}
           onChangeText={setPassword}
           secureTextEntry
+          editable={!isLoading}
         />
 
         <TextInput
           style={styles.input}
           placeholder="Confirm Password"
+          placeholderTextColor="#666666"
           value={confirmPassword}
           onChangeText={setConfirmPassword}
           secureTextEntry
+          editable={!isLoading}
         />
 
-        <TouchableOpacity style={styles.button} onPress={handleSignUp}>
-          <Text style={styles.buttonText}>Sign Up</Text>
+        {error && <ThemedText style={styles.error}>{error}</ThemedText>}
+
+        <TouchableOpacity
+          style={[styles.button, isLoading && styles.buttonDisabled]}
+          onPress={handleSignUp}
+          disabled={isLoading}
+        >
+          <ThemedText style={styles.buttonText}>{isLoading ? "Creating account..." : "Sign Up"}</ThemedText>
         </TouchableOpacity>
 
-        <View style={styles.footer}>
-          <Text>Already have an account? </Text>
+        <ThemedView style={styles.links}>
           <Link href="/(auth)/sign-in" asChild>
             <TouchableOpacity>
-              <Text style={styles.link}>Sign In</Text>
+              <ThemedText style={styles.link}>Already have an account? Sign In</ThemedText>
             </TouchableOpacity>
           </Link>
-        </View>
-      </View>
-    </View>
+        </ThemedView>
+      </ThemedView>
+    </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
     padding: 20,
-    justifyContent: 'center',
+    justifyContent: "center",
   },
-  formContainer: {
-    width: '100%',
-    maxWidth: 400,
-    alignSelf: 'center',
+  header: {
+    marginBottom: 40,
+    alignItems: "center",
   },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 20,
-    textAlign: 'center',
+  form: {
+    width: "100%",
   },
   input: {
+    height: 50,
     borderWidth: 1,
-    borderColor: '#ddd',
-    padding: 15,
+    borderColor: "#ddd",
     borderRadius: 8,
+    paddingHorizontal: 15,
     marginBottom: 15,
   },
   button: {
-    backgroundColor: '#007AFF',
-    padding: 15,
+    backgroundColor: "#FFF700FF",
+    height: 50,
     borderRadius: 8,
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: 10,
+  },
+  buttonDisabled: {
+    opacity: 0.7,
   },
   buttonText: {
-    color: '#fff',
+    color: "#000000FF",
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: "600",
   },
-  footer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
+  links: {
     marginTop: 20,
+    alignItems: "center",
   },
   link: {
-    color: '#007AFF',
+    color: "#88FF00FF",
+    marginVertical: 5,
   },
   error: {
-    color: '#ff3b30',
+    color: "#ff3b30",
+    textAlign: "center",
     marginBottom: 10,
-    textAlign: 'center',
+  },
+  logo: {
+    width: 130,
+    height: 163,
+    alignSelf: "center",
+    marginBottom: 20,
   },
 });

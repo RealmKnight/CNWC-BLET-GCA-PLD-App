@@ -57,10 +57,11 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
+    width: 180,
+    height: 226,
     position: "absolute",
+    top: 10,
+    left: "50%",
+    transform: [{ translateX: -90 }],
   },
 });

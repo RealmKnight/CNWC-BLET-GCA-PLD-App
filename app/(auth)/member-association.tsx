@@ -1,92 +1,109 @@
-import { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
-import { useAuth } from '../../hooks/useAuth';
+import { useState } from "react";
+import { StyleSheet, TextInput, TouchableOpacity, Image } from "react-native";
+import { useAuth } from "@/hooks/useAuth";
+import { ThemedView } from "@/components/ThemedView";
+import { ThemedText } from "@/components/ThemedText";
 
-export default function MemberAssociation() {
-  const [pinNumber, setPinNumber] = useState('');
-  const [error, setError] = useState('');
+export default function MemberAssociationScreen() {
+  const [pinNumber, setPinNumber] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
   const { associateMember } = useAuth();
 
   const handleAssociate = async () => {
     try {
-      setError('');
+      setError(null);
+      setIsLoading(true);
       await associateMember(pinNumber);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(err instanceof Error ? err.message : "An error occurred");
+    } finally {
+      setIsLoading(false);
     }
   };
 
   return (
-    <View style={styles.container}>
-      <View style={styles.formContainer}>
-        <Text style={styles.title}>Associate Member</Text>
-        <Text style={styles.subtitle}>
-          Please enter your member PIN number to associate your account with your member profile.
-        </Text>
-        
-        {error ? <Text style={styles.error}>{error}</Text> : null}
+    <ThemedView style={styles.container}>
+      <Image source={require("@/assets/images/BLETblackgold.png")} style={styles.logo} />
+      <ThemedView style={styles.header}>
+        <ThemedText type="title">Associate Member</ThemedText>
+        <ThemedText type="subtitle">
+          Please enter your member PIN number to associate your account with your member profile
+        </ThemedText>
+      </ThemedView>
 
+      <ThemedView style={styles.form}>
         <TextInput
           style={styles.input}
           placeholder="PIN Number"
+          placeholderTextColor="#666666"
           value={pinNumber}
           onChangeText={setPinNumber}
           keyboardType="numeric"
           maxLength={6}
+          editable={!isLoading}
         />
 
-        <TouchableOpacity style={styles.button} onPress={handleAssociate}>
-          <Text style={styles.buttonText}>Associate Member</Text>
+        {error && <ThemedText style={styles.error}>{error}</ThemedText>}
+
+        <TouchableOpacity
+          style={[styles.button, isLoading && styles.buttonDisabled]}
+          onPress={handleAssociate}
+          disabled={isLoading}
+        >
+          <ThemedText style={styles.buttonText}>{isLoading ? "Associating..." : "Associate Member"}</ThemedText>
         </TouchableOpacity>
-      </View>
-    </View>
+      </ThemedView>
+    </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
     padding: 20,
-    justifyContent: 'center',
+    justifyContent: "center",
   },
-  formContainer: {
-    width: '100%',
-    maxWidth: 400,
-    alignSelf: 'center',
+  header: {
+    marginBottom: 40,
+    alignItems: "center",
   },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 10,
-    textAlign: 'center',
-  },
-  subtitle: {
-    textAlign: 'center',
-    marginBottom: 20,
-    color: '#666',
+  form: {
+    width: "100%",
   },
   input: {
+    height: 50,
     borderWidth: 1,
-    borderColor: '#ddd',
-    padding: 15,
+    borderColor: "#ddd",
     borderRadius: 8,
+    paddingHorizontal: 15,
     marginBottom: 15,
   },
   button: {
-    backgroundColor: '#007AFF',
-    padding: 15,
+    backgroundColor: "#FFF700FF",
+    height: 50,
     borderRadius: 8,
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: 10,
+  },
+  buttonDisabled: {
+    opacity: 0.7,
   },
   buttonText: {
-    color: '#fff',
+    color: "#000000FF",
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   error: {
-    color: '#ff3b30',
+    color: "#ff3b30",
+    textAlign: "center",
     marginBottom: 10,
-    textAlign: 'center',
+  },
+  logo: {
+    width: 130,
+    height: 163,
+    alignSelf: "center",
+    marginBottom: 20,
   },
 });

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { StyleSheet, TextInput, TouchableOpacity } from "react-native";
+import React, { useState } from "react";
+import { StyleSheet, TextInput, TouchableOpacity, Image } from "react-native";
 import { Link } from "expo-router";
 import { useAuth } from "@/hooks/useAuth";
 import { ThemedView } from "@/components/ThemedView";
@@ -21,6 +21,7 @@ export default function ResetPasswordScreen() {
 
   return (
     <ThemedView style={styles.container}>
+      <Image source={require("@/assets/images/BLETblackgold.png")} style={styles.logo} />
       <ThemedView style={styles.header}>
         <ThemedText type="title">Reset Password</ThemedText>
         <ThemedText type="subtitle">
@@ -66,6 +67,7 @@ const styles = StyleSheet.create({
   },
   header: {
     marginBottom: 40,
+    alignItems: "center",
   },
   form: {
     width: "100%",
@@ -79,7 +81,7 @@ const styles = StyleSheet.create({
     marginBottom: 15,
   },
   button: {
-    backgroundColor: "#007AFF",
+    backgroundColor: "#FFF700FF",
     height: 50,
     borderRadius: 8,
     justifyContent: "center",
@@ -87,7 +89,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   buttonText: {
-    color: "#fff",
+    color: "#000000FF",
     fontSize: 16,
     fontWeight: "600",
   },
@@ -96,7 +98,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   link: {
-    color: "#007AFF",
+    color: "#88FF00FF",
     marginVertical: 5,
+  },
+  logo: {
+    width: 130,
+    height: 163,
+    alignSelf: "center",
+    marginBottom: 20,
   },
 });

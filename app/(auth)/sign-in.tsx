@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { StyleSheet, TextInput, TouchableOpacity } from "react-native";
+import { StyleSheet, TextInput, TouchableOpacity, Image } from "react-native";
 import { Link } from "expo-router";
 import { useAuth } from "@/hooks/useAuth";
 import { ThemedView } from "@/components/ThemedView";
@@ -27,6 +27,7 @@ export default function SignInScreen() {
 
   return (
     <ThemedView style={styles.container}>
+      <Image source={require("@/assets/images/BLETblackgold.png")} style={styles.logo} />
       <ThemedView style={styles.header}>
         <ThemedText type="title">Welcome Back</ThemedText>
         <ThemedText type="subtitle">Sign in to continue</ThemedText>
@@ -87,6 +88,7 @@ const styles = StyleSheet.create({
   },
   header: {
     marginBottom: 40,
+    alignItems: "center",
   },
   form: {
     width: "100%",
@@ -100,7 +102,7 @@ const styles = StyleSheet.create({
     marginBottom: 15,
   },
   button: {
-    backgroundColor: "#007AFF",
+    backgroundColor: "#FFF700FF",
     height: 50,
     borderRadius: 8,
     justifyContent: "center",
@@ -111,7 +113,7 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
   buttonText: {
-    color: "#fff",
+    color: "#000000FF",
     fontSize: 16,
     fontWeight: "600",
   },
@@ -120,12 +122,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   link: {
-    color: "#007AFF",
+    color: "#88FF00FF",
     marginVertical: 5,
   },
   error: {
     color: "#ff3b30",
     textAlign: "center",
     marginBottom: 10,
+  },
+  logo: {
+    width: 130,
+    height: 163,
+    alignSelf: "center",
+    marginBottom: 20,
   },
 });
