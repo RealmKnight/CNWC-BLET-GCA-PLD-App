@@ -1,26 +1,45 @@
 /**
  * Below are the colors that are used in the app. The colors are defined in the light and dark mode.
- * There are many other ways to style your app. For example, [Nativewind](https://www.nativewind.dev/), [Tamagui](https://tamagui.dev/), [unistyles](https://reactnativeunistyles.vercel.app), etc.
+ * Currently defaulting to dark mode with a black and gold theme.
  */
 
-const tintColorLight = "#0a7ea4";
-const tintColorDark = "#fff";
+const goldPrimary = "#FFD700";
+const goldSecondary = "#DAA520";
+const goldAccent = "#B8860B";
+const black = "#000000";
 
 export const Colors = {
-  light: {
-    text: "#11181C",
-    background: "#CACAACFF",
-    tint: tintColorLight,
-    icon: "#42627AFF",
-    tabIconDefault: "#234057FF",
-    tabIconSelected: tintColorLight,
-  },
   dark: {
-    text: "#F1F148FF",
-    background: "#151718",
-    tint: tintColorDark,
-    icon: "#889E08FF",
-    tabIconDefault: "#8EB1CEFF",
-    tabIconSelected: tintColorDark,
+    text: goldPrimary,
+    background: black,
+    tint: goldPrimary,
+    icon: goldSecondary,
+    tabIconDefault: goldSecondary,
+    tabIconSelected: goldPrimary,
+    // Button specific colors
+    buttonBackground: goldPrimary,
+    buttonText: black,
+    buttonBorder: goldSecondary,
+    // Secondary button variant
+    buttonBackgroundSecondary: black,
+    buttonTextSecondary: goldPrimary,
+    buttonBorderSecondary: goldSecondary,
+  },
+  light: {
+    // Light theme preserved for future use, currently defaulting to dark
+    text: goldPrimary,
+    background: black,
+    tint: goldPrimary,
+    icon: goldSecondary,
+    tabIconDefault: goldSecondary,
+    tabIconSelected: goldPrimary,
+    // Button specific colors
+    buttonBackground: goldPrimary,
+    buttonText: black,
+    buttonBorder: goldSecondary,
+    // Secondary button variant
+    buttonBackgroundSecondary: black,
+    buttonTextSecondary: goldPrimary,
+    buttonBorderSecondary: goldSecondary,
   },
 };

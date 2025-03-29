@@ -1,9 +1,9 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, ReactNode, useRef } from "react";
 import { Session, User } from "@supabase/supabase-js";
 import { supabase } from "../utils/supabase";
 import { Database } from "../types/supabase";
-import { router, useRootNavigation } from "expo-router";
-import { Platform } from "react-native";
+import { router } from "expo-router";
+import { Platform, AppState } from "react-native";
 import { UserRole, UserProfile } from "@/types/auth";
 
 type Member = Database["public"]["Tables"]["members"]["Row"];
@@ -36,7 +36,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [member, setMember] = useState<Member | null>(null);
   const [userRole, setUserRole] = useState<UserRole | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const rootNavigation = useRootNavigation();
+  const [appState, setAppState] = useState(AppState.currentState);
+
+  // Add refs to track auth state
+  const isUpdatingAuth = useRef(false);
+  const pendingAuthUpdate = useRef<{ session: Session | null; source: string } | null>(null);
+  const appStateTimeout = useRef<NodeJS.Timeout | null>(null);
+  const initialAuthCompleteRef = useRef(false);
 
   async function fetchMemberData(userId: string) {
     try {
@@ -62,40 +68,125 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }
 
-  async function handleUserRouting(currentUser: User) {
-    try {
-      console.log("[Auth] Processing user:", currentUser.email);
-      const memberData = await fetchMemberData(currentUser.id);
+  const updateAuthState = async (newSession: Session | null, source: string) => {
+    // If already updating, queue the update
+    if (isUpdatingAuth.current) {
+      console.log("[Auth] Update already in progress, queueing update from:", source);
+      pendingAuthUpdate.current = { session: newSession, source };
+      return;
+    }
 
-      if (memberData) {
-        console.log("[Auth] Setting role:", memberData.role);
-        setMember(memberData);
-        setUserRole(memberData.role as UserRole);
+    try {
+      isUpdatingAuth.current = true;
+      console.log(`[Auth] Updating auth state from ${source}`);
+
+      const newUser = newSession?.user ?? null;
+      const currentUser = user;
+
+      // Skip update if nothing has changed and we have complete data
+      if (
+        newUser?.id === currentUser?.id &&
+        member !== null &&
+        (source.includes("APP_STATE") ||
+          source.includes("state_change_SIGNED_IN") ||
+          (source === "initial" && initialAuthCompleteRef.current))
+      ) {
+        console.log("[Auth] Skipping redundant auth update");
+        return;
+      }
+
+      // Only set loading if:
+      // 1. Not a user metadata update
+      // 2. Not an app state change
+      // 3. Not a sign-in event when we already have a session
+      // 4. Not a redundant session check
+      // 5. Not after initial auth is complete
+      const shouldSetLoading =
+        !source.includes("USER_UPDATED") &&
+        !source.includes("APP_STATE") &&
+        !(source.includes("state_change_SIGNED_IN") && !!session) &&
+        !(source === "initial" && !!session && !!member) &&
+        !(initialAuthCompleteRef.current && source.includes("state_change_"));
+
+      if (shouldSetLoading) {
+        console.log("[Auth] Setting loading state for auth update");
+        setIsLoading(true);
+      }
+
+      console.log("[Auth] Setting session and user:", {
+        hasSession: !!newSession,
+        userId: newUser?.id,
+        email: newUser?.email,
+      });
+
+      setSession(newSession);
+      setUser(newUser);
+
+      if (newUser) {
+        console.log("[Auth] Fetching member data for user:", newUser.id);
+        try {
+          // Skip member refetch if we already have the correct data
+          const shouldSkipMemberFetch =
+            source.includes("USER_UPDATED") ||
+            source.includes("APP_STATE") ||
+            (source.includes("state_change_SIGNED_IN") && member?.id === newUser.id) ||
+            (source === "initial" && member?.id === newUser.id) ||
+            (initialAuthCompleteRef.current && member?.id === newUser.id);
+
+          if (!shouldSkipMemberFetch) {
+            const memberData = await fetchMemberData(newUser.id);
+            if (memberData) {
+              console.log("[Auth] Setting member data and role:", {
+                id: memberData.id,
+                role: memberData.role,
+                name: `${memberData.first_name} ${memberData.last_name}`,
+              });
+              setMember(memberData);
+              setUserRole(memberData.role as UserRole);
+            } else {
+              console.warn("[Auth] No member data found");
+              setMember(null);
+              setUserRole(null);
+            }
+          } else {
+            console.log("[Auth] Skipping member fetch for:", source);
+          }
+        } catch (error) {
+          console.error("[Auth] Error fetching member data:", error);
+          setMember(null);
+          setUserRole(null);
+        }
       } else {
-        console.log("[Auth] No member data found");
+        console.log("[Auth] No user, clearing member data and role");
         setMember(null);
         setUserRole(null);
       }
-    } catch (error) {
-      console.error("[Auth] Error processing user:", error);
-      setMember(null);
-      setUserRole(null);
     } finally {
-      setIsLoading(false);
-    }
-  }
+      if (!source.includes("USER_UPDATED") && !source.includes("APP_STATE")) {
+        console.log("[Auth] Finished updating auth state, setting isLoading to false");
+        setIsLoading(false);
+      }
 
-  // Effect to handle auth state
+      isUpdatingAuth.current = false;
+
+      // Process any pending updates
+      if (pendingAuthUpdate.current) {
+        const { session: pendingSession, source: pendingSource } = pendingAuthUpdate.current;
+        pendingAuthUpdate.current = null;
+        await updateAuthState(pendingSession, pendingSource);
+      }
+    }
+  };
+
   useEffect(() => {
     let mounted = true;
 
     async function initAuth() {
+      if (!mounted) return;
+
       try {
-        console.log("[Auth] Initializing...");
-        // Skip auth initialization during SSR
-        if (Platform.OS === "web" && typeof window === "undefined") {
-          return;
-        }
+        console.log("[Auth] Starting initial auth check...");
+        if (Platform.OS === "web" && typeof window === "undefined") return;
 
         const {
           data: { session: initialSession },
@@ -107,53 +198,88 @@ export function AuthProvider({ children }: AuthProviderProps) {
           throw error;
         }
 
-        console.log("[Auth] Session check:", {
+        console.log("[Auth] Initial session check:", {
           status: initialSession ? "active" : "none",
           email: initialSession?.user?.email,
+          userId: initialSession?.user?.id,
         });
 
         if (mounted) {
-          setSession(initialSession);
-          setUser(initialSession?.user ?? null);
-
-          if (initialSession?.user) {
-            await handleUserRouting(initialSession.user);
+          if (initialSession) {
+            console.log("[Auth] Processing initial session");
+            await updateAuthState(initialSession, "initial");
           } else {
+            console.log("[Auth] No initial session, setting isLoading false");
             setIsLoading(false);
           }
+          initialAuthCompleteRef.current = true;
         }
       } catch (error) {
-        console.error("[Auth] Initialization error:", error);
+        console.error("[Auth] Initial auth error:", error);
         if (mounted) {
-          setIsLoading(false);
+          await updateAuthState(null, "error");
         }
+        initialAuthCompleteRef.current = true;
       }
     }
+
+    // Handle app state changes with debounce
+    const subscription = AppState.addEventListener("change", async (nextAppState) => {
+      console.log("[Auth] App state changed:", { from: appState, to: nextAppState });
+
+      // Clear any existing timeout
+      if (appStateTimeout.current) {
+        clearTimeout(appStateTimeout.current);
+      }
+
+      // Set a new timeout for handling the app state change
+      appStateTimeout.current = setTimeout(async () => {
+        if (appState.match(/inactive|background/) && nextAppState === "active" && mounted) {
+          console.log("[Auth] App came to foreground, checking session");
+          const {
+            data: { session: currentSession },
+          } = await supabase.auth.getSession();
+          if (currentSession && mounted) {
+            await updateAuthState(currentSession, "APP_STATE");
+          }
+        }
+        if (mounted) {
+          setAppState(nextAppState);
+        }
+      }, 100);
+    });
 
     console.log("[Auth] Starting initialization");
     initAuth();
 
     const {
-      data: { subscription },
+      data: { subscription: authSubscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log("[Auth] State change:", { event, email: session?.user?.email });
+      console.log("[Auth] Auth state change:", {
+        event,
+        email: session?.user?.email,
+        userId: session?.user?.id,
+        initialAuthComplete: initialAuthCompleteRef.current,
+      });
+
       if (!mounted) return;
 
-      setSession(session);
-      setUser(session?.user ?? null);
-
-      if (session?.user) {
-        await handleUserRouting(session.user);
-      } else {
-        setMember(null);
-        setUserRole(null);
-        setIsLoading(false);
+      // Skip auth updates during initialization
+      if (!initialAuthCompleteRef.current) {
+        console.log("[Auth] Waiting for initial auth to complete...");
+        return;
       }
+
+      await updateAuthState(session, `state_change_${event}`);
     });
 
     return () => {
       mounted = false;
-      subscription.unsubscribe();
+      if (appStateTimeout.current) {
+        clearTimeout(appStateTimeout.current);
+      }
+      subscription.remove();
+      authSubscription.unsubscribe();
     };
   }, []);
 
@@ -226,7 +352,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       if (updateError) throw updateError;
 
       setMember(memberData);
-      await handleUserRouting(user);
+      await updateAuthState(session, "associateMember");
     } catch (error) {
       console.error("Error associating member:", error);
       throw error;
@@ -243,10 +369,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       if (memberError) throw memberError;
 
       // Refresh member data
-      const memberData = await fetchMemberData(user.id);
-      if (memberData) {
-        setMember(memberData);
-      }
+      await updateAuthState(session, "updateProfile");
     } catch (error) {
       console.error("[Auth] Error updating profile:", error);
       throw error;

@@ -11,9 +11,10 @@ export function AppHeader() {
   const segments = useSegments();
   const { user, userRole, signOut } = useAuth();
   const router = useRouter();
-  const colorScheme = useColorScheme() ?? "light";
+  const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const isAdminRoute = segments[0] === "(admin)";
   const isAdmin = userRole?.includes("admin");
+  const isProfileRoute = segments[0] === "(profile)";
 
   console.log("[AppHeader] State:", {
     pathname,
@@ -22,6 +23,10 @@ export function AppHeader() {
     isAdmin,
     userRole,
   });
+
+  const handleHomePress = () => {
+    router.replace("/(tabs)");
+  };
 
   const handleSettingsPress = () => {
     if (isAdminRoute) {
@@ -48,11 +53,18 @@ export function AppHeader() {
 
   return (
     <ThemedView style={styles.header}>
-      {isAdmin && (
-        <TouchableOpacity onPress={handleSettingsPress} style={styles.iconButton}>
-          <Ionicons name={isAdminRoute ? "home-outline" : "settings-outline"} size={28} color={iconColor} />
-        </TouchableOpacity>
-      )}
+      <ThemedView style={styles.leftIcons}>
+        {isAdmin && (
+          <TouchableOpacity onPress={handleSettingsPress} style={styles.iconButton}>
+            <Ionicons name={isAdminRoute ? "home-outline" : "settings-outline"} size={28} color={iconColor} />
+          </TouchableOpacity>
+        )}
+        {isProfileRoute && (
+          <TouchableOpacity onPress={handleHomePress} style={styles.iconButton}>
+            <Ionicons name="home-outline" size={28} color={iconColor} />
+          </TouchableOpacity>
+        )}
+      </ThemedView>
       <ThemedView style={styles.rightIcons}>
         <TouchableOpacity onPress={handleProfilePress} style={styles.iconButton}>
           <Ionicons name="person-circle-outline" size={28} color={iconColor} />
@@ -74,6 +86,11 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: "rgba(128, 128, 128, 0.2)",
+  },
+  leftIcons: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
   rightIcons: {
     flexDirection: "row",

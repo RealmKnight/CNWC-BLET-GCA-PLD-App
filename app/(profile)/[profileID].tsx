@@ -13,6 +13,7 @@ import { Database } from "@/types/supabase";
 
 type Member = Database["public"]["Tables"]["members"]["Row"];
 type ContactPreference = "phone" | "text" | "email";
+type ColorScheme = keyof typeof Colors;
 
 function PhoneUpdateModal({
   visible,
@@ -30,7 +31,7 @@ function PhoneUpdateModal({
   const [phoneNumber, setPhoneNumber] = useState(currentPhone);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const colorScheme = useColorScheme() ?? "light";
+  const theme = (useColorScheme() ?? "light") as ColorScheme;
   const { session, member } = useAuth();
 
   const handleUpdatePhone = async () => {
@@ -72,7 +73,7 @@ function PhoneUpdateModal({
           <ThemedView style={styles.modalHeader}>
             <ThemedText type="title">Update Phone Number</ThemedText>
             <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-              <Ionicons name="close" size={24} color={Colors[colorScheme].text} />
+              <Ionicons name="close" size={24} color={Colors[theme].text} />
             </TouchableOpacity>
           </ThemedView>
 
@@ -108,7 +109,7 @@ function PhoneUpdateModal({
 export default function ProfileScreen() {
   const { profileID } = useLocalSearchParams();
   const { user, member, session } = useAuth();
-  const colorScheme = useColorScheme() ?? "light";
+  const theme = (useColorScheme() ?? "light") as ColorScheme;
   const [contactPreference, setContactPreference] = useState<ContactPreference>(
     (user?.user_metadata.contact_preference as ContactPreference) || "phone"
   );
@@ -124,18 +125,28 @@ export default function ProfileScreen() {
     try {
       if (!session) throw new Error("No active session");
 
+      // Set local state immediately for better UX
+      setContactPreference(preference);
+
       const { data, error } = await supabase.auth.updateUser({
         data: {
           contact_preference: preference,
         },
       });
 
-      if (error) throw error;
-      if (data.user) {
-        setContactPreference(data.user.user_metadata.contact_preference as ContactPreference);
+      if (error) {
+        // Revert on error
+        setContactPreference((user?.user_metadata.contact_preference as ContactPreference) || "phone");
+        throw error;
+      }
+
+      // Update local user state to prevent unnecessary reloads
+      if (data.user && user) {
+        user.user_metadata = data.user.user_metadata;
       }
     } catch (error) {
       console.error("Error updating preference:", error);
+      Alert.alert("Error", "Failed to update contact preference. Please try again.");
     }
   };
 
@@ -189,7 +200,7 @@ export default function ProfileScreen() {
             <ThemedText>{phoneNumber || "Not set"}</ThemedText>
             {canEdit && (
               <TouchableOpacity onPress={() => setIsPhoneModalVisible(true)} style={styles.iconButton}>
-                <Ionicons name="pencil" size={24} color={Colors[colorScheme].tint} />
+                <Ionicons name="pencil" size={24} color={Colors[theme].tint} />
               </TouchableOpacity>
             )}
           </ThemedView>
@@ -205,19 +216,40 @@ export default function ProfileScreen() {
                 style={[styles.preferenceButton, contactPreference === "phone" && styles.preferenceButtonActive]}
                 onPress={() => handleUpdatePreference("phone")}
               >
-                <ThemedText>Phone Call</ThemedText>
+                <ThemedText
+                  style={[
+                    styles.preferenceButtonText,
+                    contactPreference === "phone" && styles.preferenceButtonTextActive,
+                  ]}
+                >
+                  Phone Call
+                </ThemedText>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.preferenceButton, contactPreference === "text" && styles.preferenceButtonActive]}
                 onPress={() => handleUpdatePreference("text")}
               >
-                <ThemedText>Text Message</ThemedText>
+                <ThemedText
+                  style={[
+                    styles.preferenceButtonText,
+                    contactPreference === "text" && styles.preferenceButtonTextActive,
+                  ]}
+                >
+                  Text Message
+                </ThemedText>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.preferenceButton, contactPreference === "email" && styles.preferenceButtonActive]}
                 onPress={() => handleUpdatePreference("email")}
               >
-                <ThemedText>Email</ThemedText>
+                <ThemedText
+                  style={[
+                    styles.preferenceButtonText,
+                    contactPreference === "email" && styles.preferenceButtonTextActive,
+                  ]}
+                >
+                  Email
+                </ThemedText>
               </TouchableOpacity>
             </ThemedView>
           </ThemedView>
@@ -225,7 +257,7 @@ export default function ProfileScreen() {
           <ThemedView style={styles.section}>
             <ThemedText type="title">Account Settings</ThemedText>
             <TouchableOpacity onPress={handleUpdatePassword} style={styles.settingButton}>
-              <ThemedText>Change Password</ThemedText>
+              <ThemedText style={styles.settingButtonText}>Change Password</ThemedText>
             </TouchableOpacity>
           </ThemedView>
 
@@ -290,15 +322,26 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: "rgba(128, 128, 128, 0.2)",
+    borderColor: Colors.dark.buttonBorder,
   },
   preferenceButtonActive: {
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.dark.buttonBackground,
+  },
+  preferenceButtonText: {
+    color: Colors.dark.buttonTextSecondary,
+  },
+  preferenceButtonTextActive: {
+    color: Colors.dark.buttonText,
   },
   settingButton: {
     padding: 12,
     borderRadius: 8,
-    backgroundColor: "rgba(128, 128, 128, 0.1)",
+    backgroundColor: Colors.dark.buttonBackgroundSecondary,
+    borderColor: Colors.dark.buttonBorderSecondary,
+    borderWidth: 1,
+  },
+  settingButtonText: {
+    color: Colors.dark.buttonTextSecondary,
   },
   modalOverlay: {
     flex: 1,
@@ -333,7 +376,7 @@ const styles = StyleSheet.create({
     width: "90%",
   } as any,
   modalButton: {
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.dark.buttonBackground,
     padding: 16,
     borderRadius: 8,
     alignItems: "center",
@@ -345,7 +388,7 @@ const styles = StyleSheet.create({
     borderColor: Colors.light.tint,
   } as any,
   buttonText: {
-    color: "#fff",
+    color: Colors.dark.buttonText,
     fontWeight: "600",
   } as any,
   errorContainer: {
