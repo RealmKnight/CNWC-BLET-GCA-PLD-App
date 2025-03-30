@@ -3,16 +3,31 @@ import { StyleSheet } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { UserRole } from "@/types/auth";
+import { DivisionAdminPanel } from "./division/DivisionAdminPanel";
+import { useUserStore } from "@/store/userStore";
 
 interface AdminDashboardProps {
   role: Extract<UserRole, "application_admin" | "union_admin" | "division_admin">;
 }
 
 export function AdminDashboard({ role }: AdminDashboardProps) {
+  const { division } = useUserStore();
+
   const formattedTitle = role
     .split("_")
     .map((word: string) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
+
+  if (role === "division_admin") {
+    if (!division) {
+      return (
+        <ThemedView style={styles.container}>
+          <ThemedText>Loading division information...</ThemedText>
+        </ThemedView>
+      );
+    }
+    return <DivisionAdminPanel division={division} />;
+  }
 
   return (
     <ThemedView style={styles.container}>
@@ -39,16 +54,6 @@ export function AdminDashboard({ role }: AdminDashboardProps) {
             <ThemedText>• GCA Officers</ThemedText>
             <ThemedText>• Division Management</ThemedText>
             <ThemedText>• All Division Features</ThemedText>
-          </>
-        )}
-
-        {role === "division_admin" && (
-          <>
-            <ThemedText type="subtitle">Division Admin Features:</ThemedText>
-            <ThemedText>• Member Management</ThemedText>
-            <ThemedText>• Division Officers</ThemedText>
-            <ThemedText>• Leave Requests</ThemedText>
-            <ThemedText>• Division Calendar Allotments</ThemedText>
           </>
         )}
       </ThemedView>

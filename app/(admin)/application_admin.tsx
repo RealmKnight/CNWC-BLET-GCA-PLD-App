@@ -1,10 +1,12 @@
+import React from "react";
 import { StyleSheet } from "react-native";
 import { useAuth } from "@/hooks/useAuth";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { AdminDashboard } from "@/components/admin/AdminDashboard";
+import { Stack } from "expo-router";
 
-export default function ApplicationAdminScreen() {
+function ApplicationAdminScreen() {
   const { userRole, isLoading } = useAuth();
 
   if (isLoading) {
@@ -15,6 +17,7 @@ export default function ApplicationAdminScreen() {
     );
   }
 
+  // Only application admin can access this page
   if (userRole !== "application_admin") {
     return (
       <ThemedView style={styles.container}>
@@ -34,3 +37,16 @@ const styles = StyleSheet.create({
     padding: 20,
   },
 });
+
+export default function Page() {
+  return (
+    <>
+      <Stack.Screen
+        options={{
+          title: "Application Admin",
+        }}
+      />
+      <ApplicationAdminScreen />
+    </>
+  );
+}

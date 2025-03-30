@@ -5,6 +5,7 @@ import { Database } from "../types/supabase";
 import { router } from "expo-router";
 import { Platform, AppState } from "react-native";
 import { UserRole, UserProfile } from "@/types/auth";
+import { useUserStore } from "@/store/userStore";
 
 type Member = Database["public"]["Tables"]["members"]["Row"];
 
@@ -123,7 +124,18 @@ export function AuthProvider({ children }: AuthProviderProps) {
       setUser(newUser);
 
       if (newUser) {
-        console.log("[Auth] Fetching member data for user:", newUser.id);
+        // Check for company admin role first
+        const isCompanyAdmin = newUser.user_metadata?.role === "company_admin";
+        if (isCompanyAdmin) {
+          console.log("[Auth] User is a company admin, skipping member data fetch");
+          setMember(null);
+          setUserRole(null);
+          useUserStore.getState().reset();
+          router.replace("/company-admin");
+          return;
+        }
+
+        console.log("[Auth] User is not a company admin, proceeding with member data fetch");
         try {
           // Skip member refetch if we already have the correct data
           const shouldSkipMemberFetch =
@@ -143,10 +155,15 @@ export function AuthProvider({ children }: AuthProviderProps) {
               });
               setMember(memberData);
               setUserRole(memberData.role as UserRole);
+              // Sync with user store
+              useUserStore.getState().setMember(memberData);
+              useUserStore.getState().setUserRole(memberData.role as UserRole);
             } else {
               console.warn("[Auth] No member data found");
               setMember(null);
               setUserRole(null);
+              // Reset user store
+              useUserStore.getState().reset();
             }
           } else {
             console.log("[Auth] Skipping member fetch for:", source);
@@ -155,11 +172,15 @@ export function AuthProvider({ children }: AuthProviderProps) {
           console.error("[Auth] Error fetching member data:", error);
           setMember(null);
           setUserRole(null);
+          // Reset user store
+          useUserStore.getState().reset();
         }
       } else {
         console.log("[Auth] No user, clearing member data and role");
         setMember(null);
         setUserRole(null);
+        // Reset user store
+        useUserStore.getState().reset();
       }
     } finally {
       if (!source.includes("USER_UPDATED") && !source.includes("APP_STATE")) {
