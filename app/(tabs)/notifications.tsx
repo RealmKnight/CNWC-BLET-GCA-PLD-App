@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo, useCallback } from "react";
 import { StyleSheet, RefreshControl, Platform, TouchableOpacity, Image, TextInput } from "react-native";
 import { useRouter } from "expo-router";
 import { ThemedText } from "@/components/ThemedText";
@@ -9,12 +9,20 @@ import { markMessageRead } from "@/utils/notificationService";
 import { Ionicons } from "@expo/vector-icons";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
-import { ScrollView } from "react-native-gesture-handler";
+import { PlatformScrollView } from "@/components/PlatformScrollView";
 import { format } from "date-fns";
 import { useNotificationStore } from "@/store/notificationStore";
 
 type ColorScheme = keyof typeof Colors;
-type GroupBy = "date" | "type" | "none";
+
+interface NotificationItemProps {
+  message: Message;
+  onPress: () => void;
+  onAcknowledge: () => void;
+  onArchive: () => void;
+}
+
+type GroupBy = "none" | "date" | "type";
 type FilterType = "all" | "unread" | "must_read" | "archived";
 
 interface Message {
@@ -29,67 +37,38 @@ interface Message {
   is_archived?: boolean;
 }
 
-function NotificationItem({
-  message,
-  onPress,
-  onAcknowledge,
-  onArchive,
-}: {
-  message: Message;
-  onPress: () => void;
-  onAcknowledge: () => void;
-  onArchive: () => void;
-}) {
+function NotificationItem({ message, onPress, onAcknowledge, onArchive }: NotificationItemProps) {
   const theme = (useColorScheme() ?? "light") as ColorScheme;
   const isUnread = !message.is_read;
-  const requiresAck = message.requires_acknowledgment;
-
-  const getIconName = () => {
-    switch (message.message_type) {
-      case "must_read":
-        return "alert-circle";
-      case "news":
-        return "newspaper";
-      case "direct_message":
-        return "mail";
-      case "approval":
-        return "checkmark-circle";
-      case "denial":
-        return "close-circle";
-      case "waitlist_promotion":
-        return "arrow-up-circle";
-      case "allotment_change":
-        return "calendar";
-      default:
-        return "notifications";
-    }
-  };
+  const needsAcknowledgment = message.requires_acknowledgment;
 
   return (
-    <TouchableOpacity onPress={onPress}>
-      <ThemedView style={[styles.notificationItem, isUnread && styles.unreadItem]}>
-        <ThemedView style={styles.notificationIcon}>
-          <Ionicons name={getIconName()} size={24} color={Colors[theme].tint} />
-        </ThemedView>
-        <ThemedView style={styles.notificationContent}>
-          <ThemedText type="subtitle" style={[styles.subject, isUnread && styles.unreadText]}>
-            {message.subject}
-          </ThemedText>
-          <ThemedText numberOfLines={2} style={styles.content}>
-            {message.content}
-          </ThemedText>
-          <ThemedText style={styles.timestamp}>{new Date(message.created_at).toLocaleDateString()}</ThemedText>
-        </ThemedView>
-        {requiresAck && !message.is_read && (
-          <TouchableOpacity onPress={onAcknowledge} style={styles.acknowledgeButton}>
-            <ThemedText style={styles.acknowledgeText}>Acknowledge</ThemedText>
+    <TouchableOpacity
+      style={[styles.notificationItem, { backgroundColor: Colors[theme].card }, isUnread && styles.unreadItem]}
+      onPress={onPress}
+    >
+      <ThemedView style={styles.notificationHeader}>
+        <ThemedText style={styles.notificationType}>
+          {message.message_type.charAt(0).toUpperCase() + message.message_type.slice(1)}
+        </ThemedText>
+        <ThemedText style={styles.notificationDate}>{format(new Date(message.created_at), "MMM d, yyyy")}</ThemedText>
+      </ThemedView>
+
+      <ThemedText style={styles.notificationTitle}>{message.subject}</ThemedText>
+      <ThemedText style={styles.notificationContent} numberOfLines={2}>
+        {message.content}
+      </ThemedText>
+
+      <ThemedView style={styles.notificationFooter}>
+        {isUnread && <ThemedView style={styles.unreadDot} />}
+        {needsAcknowledgment && (
+          <TouchableOpacity style={styles.acknowledgeButton} onPress={onAcknowledge}>
+            <ThemedText style={styles.acknowledgeButtonText}>Acknowledge</ThemedText>
           </TouchableOpacity>
         )}
-        {message.is_archived && (
-          <TouchableOpacity onPress={onArchive} style={styles.archiveButton}>
-            <ThemedText style={styles.archiveText}>Archive</ThemedText>
-          </TouchableOpacity>
-        )}
+        <TouchableOpacity style={styles.archiveButton} onPress={onArchive}>
+          <Ionicons name="archive-outline" size={20} color={Colors[theme].text} />
+        </TouchableOpacity>
       </ThemedView>
     </TouchableOpacity>
   );
@@ -148,12 +127,12 @@ export default function NotificationsScreen() {
     }, {} as Record<string, Message[]>);
   }, [messages, groupBy, filterType, searchQuery]);
 
-  const handleRefresh = async () => {
+  const handleRefresh = useCallback(async () => {
     if (!user) return;
     setRefreshing(true);
     await fetchMessages(user.id);
     setRefreshing(false);
-  };
+  }, [user, fetchMessages]);
 
   const handleMessagePress = async (message: Message) => {
     if (!user) return;
@@ -229,7 +208,7 @@ export default function NotificationsScreen() {
   }, [user]);
 
   return (
-    <ScrollView
+    <PlatformScrollView
       style={styles.container}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
     >
@@ -254,7 +233,7 @@ export default function NotificationsScreen() {
         </ThemedView>
 
         <ThemedView style={styles.filterRow}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll}>
+          <PlatformScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll}>
             {["all", "unread", "must_read", "archived"].map((filter) => (
               <TouchableOpacity
                 key={filter}
@@ -266,7 +245,7 @@ export default function NotificationsScreen() {
                 </ThemedText>
               </TouchableOpacity>
             ))}
-          </ScrollView>
+          </PlatformScrollView>
         </ThemedView>
 
         <ThemedView style={styles.actionRow}>
@@ -312,7 +291,7 @@ export default function NotificationsScreen() {
           </ThemedView>
         ))
       )}
-    </ScrollView>
+    </PlatformScrollView>
   );
 }
 
@@ -349,25 +328,53 @@ const styles = StyleSheet.create({
   unreadItem: {
     backgroundColor: "rgba(0, 122, 255, 0.1)",
   },
-  notificationIcon: {
-    marginRight: 16,
-  },
-  notificationContent: {
-    flex: 1,
-  },
-  subject: {
+  notificationHeader: {
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: 4,
   },
-  unreadText: {
+  notificationType: {
+    fontSize: 14,
     fontWeight: "bold",
   },
-  content: {
-    fontSize: 14,
-    marginBottom: 4,
-  },
-  timestamp: {
+  notificationDate: {
     fontSize: 12,
     color: "gray",
+  },
+  notificationTitle: {
+    fontSize: 16,
+    fontWeight: "bold",
+    marginBottom: 4,
+  },
+  notificationContent: {
+    fontSize: 14,
+  },
+  notificationFooter: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 4,
+  },
+  unreadDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: Colors.light.tint,
+    marginRight: 8,
+  },
+  acknowledgeButton: {
+    padding: 8,
+    borderRadius: 16,
+    backgroundColor: Colors.light.tint,
+  },
+  acknowledgeButtonText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  archiveButton: {
+    padding: 8,
+    borderRadius: 16,
+    backgroundColor: Colors.light.text,
   },
   emptyState: {
     flex: 1,
@@ -379,18 +386,6 @@ const styles = StyleSheet.create({
     marginTop: 16,
     fontSize: 16,
     color: "gray",
-  },
-  acknowledgeButton: {
-    backgroundColor: Colors.light.tint,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    marginLeft: 8,
-  },
-  acknowledgeText: {
-    color: "#fff",
-    fontSize: 12,
-    fontWeight: "600",
   },
   controls: {
     padding: 16,
@@ -457,17 +452,5 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     backgroundColor: "rgba(128, 128, 128, 0.05)",
-  },
-  archiveButton: {
-    backgroundColor: Colors.light.text,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    marginLeft: 8,
-  },
-  archiveText: {
-    color: Colors.light.background,
-    fontSize: 12,
-    fontWeight: "600",
   },
 });

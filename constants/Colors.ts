@@ -55,6 +55,7 @@ export const Colors = {
     border: goldSecondary,
     card: "#1a1a1a",
     textDim: "#666666",
+    warning: "#F59E0B",
   },
   light: {
     // Light theme preserved for future use, currently defaulting to dark
@@ -79,5 +80,6 @@ export const Colors = {
     border: goldSecondary,
     card: "#f8f9fa",
     textDim: "#6c757d",
+    warning: "#F59E0B",
   },
 } as const;

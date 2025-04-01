@@ -1,5 +1,15 @@
 import React, { useEffect, useState } from "react";
-import { StyleSheet, Platform, TouchableOpacity, ScrollView, Modal, Alert } from "react-native";
+import {
+  StyleSheet,
+  Platform,
+  TouchableOpacity,
+  ScrollView,
+  Modal,
+  Alert,
+  ViewStyle,
+  TextStyle,
+  ActivityIndicator,
+} from "react-native";
 import { Calendar } from "@/components/Calendar";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
@@ -17,6 +27,7 @@ type ColorScheme = keyof typeof Colors;
 
 interface RequestWithMember extends DayRequest {
   member: {
+    id: string;
     first_name: string;
     last_name: string;
     pin_number: string;
@@ -39,15 +50,25 @@ function RequestDialog({ isVisible, onClose, onSubmit, selectedDate, allotments,
   const theme = (useColorScheme() ?? "light") as ColorScheme;
   const isFull = allotments.current >= allotments.max;
   const [remainingDays, setRemainingDays] = useState<{ PLD: number; SDV: number }>({ PLD: 0, SDV: 0 });
+  const [availableDays, setAvailableDays] = useState<{ PLD: number; SDV: number }>({ PLD: 0, SDV: 0 });
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const { user } = useAuth();
   const { member } = useUserStore();
 
   useEffect(() => {
     async function fetchRemainingDays() {
-      if (!member?.id) return;
+      if (!member?.id) {
+        setError("Member information not found");
+        return;
+      }
 
+      setIsLoading(true);
+      setError(null);
       const year = new Date(selectedDate).getFullYear();
+
       try {
+        console.log("[RequestDialog] Fetching remaining days for member:", member.id, "year:", year);
         const [pldResult, sdvResult] = await Promise.all([
           supabase.rpc("get_member_remaining_days", {
             p_member_id: member.id,
@@ -64,12 +85,45 @@ function RequestDialog({ isVisible, onClose, onSubmit, selectedDate, allotments,
         if (pldResult.error) throw pldResult.error;
         if (sdvResult.error) throw sdvResult.error;
 
-        setRemainingDays({
+        console.log("[RequestDialog] Remaining days:", { PLD: pldResult.data, SDV: sdvResult.data });
+
+        // Get all pending and waitlisted requests for the year
+        const { data: pendingRequests, error: pendingError } = await supabase
+          .from("pld_sdv_requests")
+          .select("leave_type")
+          .eq("member_id", member.id)
+          .eq("status", "pending")
+          .or("status.eq.waitlisted")
+          .gte("request_date", `${year}-01-01`)
+          .lte("request_date", `${year}-12-31`);
+
+        if (pendingError) throw pendingError;
+
+        // Count pending requests by type
+        const pendingCounts = {
+          PLD: pendingRequests?.filter((r) => r.leave_type === "PLD").length || 0,
+          SDV: pendingRequests?.filter((r) => r.leave_type === "SDV").length || 0,
+        };
+
+        console.log("[RequestDialog] Pending/waitlisted requests:", pendingCounts);
+
+        // Set both remaining and available days
+        const remaining = {
           PLD: pldResult.data || 0,
           SDV: sdvResult.data || 0,
+        };
+        setRemainingDays(remaining);
+
+        // Calculate available days by subtracting pending/waitlisted requests
+        setAvailableDays({
+          PLD: Math.max(0, remaining.PLD - pendingCounts.PLD),
+          SDV: Math.max(0, remaining.SDV - pendingCounts.SDV),
         });
       } catch (error) {
         console.error("[RequestDialog] Error fetching remaining days:", error);
+        setError("Failed to fetch remaining days");
+      } finally {
+        setIsLoading(false);
       }
     }
 
@@ -78,10 +132,17 @@ function RequestDialog({ isVisible, onClose, onSubmit, selectedDate, allotments,
     }
   }, [isVisible, member?.id, selectedDate]);
 
+  // Check if user already has a request for this date
+  const hasExistingRequest = requests.some(
+    (req) => req.member?.id === member?.id && !["denied", "cancelled"].includes(req.status)
+  );
+
   const renderRequestList = () => {
+    // Filter out cancelled and denied requests
+    const activeRequests = requests.filter((req) => !["cancelled", "denied"].includes(req.status));
     const spots = Array.from({ length: allotments.max }, (_, i) => i + 1);
     return spots.map((spot) => {
-      const request = requests[spot - 1];
+      const request = activeRequests[spot - 1];
       return (
         <ThemedView key={spot} style={styles.requestSpot}>
           <ThemedText style={styles.spotNumber}>{spot}.</ThemedText>
@@ -95,7 +156,11 @@ function RequestDialog({ isVisible, onClose, onSubmit, selectedDate, allotments,
                   styles.requestStatus,
                   {
                     color:
-                      request.status === "approved" ? "#4CAF50" : request.status === "denied" ? "#F44336" : "#FFC107",
+                      request.status === "approved"
+                        ? Colors[theme].success
+                        : request.status === "denied"
+                        ? Colors[theme].error
+                        : Colors[theme].warning,
                   },
                 ]}
               >
@@ -124,52 +189,70 @@ function RequestDialog({ isVisible, onClose, onSubmit, selectedDate, allotments,
             {allotments.current}/{allotments.max} spots filled
           </ThemedText>
 
-          <ThemedView style={styles.remainingDaysInfo}>
-            <ThemedText>Remaining Days:</ThemedText>
-            <ThemedText>PLD: {remainingDays.PLD}</ThemedText>
-            <ThemedText>SDV: {remainingDays.SDV}</ThemedText>
-          </ThemedView>
-
-          {!isFull ? (
-            <ThemedView style={styles.requestButtons}>
-              <TouchableOpacity
-                style={[
-                  styles.requestButton,
-                  { backgroundColor: Colors[theme].tint },
-                  remainingDays.PLD <= 0 && styles.disabledButton,
-                ]}
-                onPress={() => onSubmit("PLD")}
-                activeOpacity={0.7}
-                disabled={remainingDays.PLD <= 0}
-              >
-                <ThemedText style={styles.requestButtonText}>
-                  Request PLD {remainingDays.PLD <= 0 ? "(None Left)" : ""}
-                </ThemedText>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.requestButton,
-                  { backgroundColor: Colors[theme].tint },
-                  remainingDays.SDV <= 0 && styles.disabledButton,
-                ]}
-                onPress={() => onSubmit("SDV")}
-                activeOpacity={0.7}
-                disabled={remainingDays.SDV <= 0}
-              >
-                <ThemedText style={styles.requestButtonText}>
-                  Request SDV {remainingDays.SDV <= 0 ? "(None Left)" : ""}
-                </ThemedText>
-              </TouchableOpacity>
+          {error ? (
+            <ThemedView style={styles.warningContainer}>
+              <ThemedText style={styles.warningText}>{error}</ThemedText>
+            </ThemedView>
+          ) : hasExistingRequest ? (
+            <ThemedView style={styles.warningContainer}>
+              <ThemedText style={styles.warningText}>You already have a request for this date</ThemedText>
+            </ThemedView>
+          ) : isLoading ? (
+            <ThemedView style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color={Colors[theme].tint} />
+              <ThemedText style={styles.loadingText}>Checking available days...</ThemedText>
             </ThemedView>
           ) : (
-            <TouchableOpacity
-              style={[styles.requestButton, styles.waitlistButton]}
-              onPress={() => onSubmit("PLD")}
-              activeOpacity={0.7}
-            >
-              <ThemedText style={styles.requestButtonText}>Request Waitlist Spot</ThemedText>
-            </TouchableOpacity>
+            <>
+              <ThemedView style={styles.remainingDaysInfo}>
+                <ThemedText style={styles.availableDaysNote}>Available to Request:</ThemedText>
+                <ThemedText>
+                  PLD: {availableDays.PLD} SDV: {availableDays.SDV}
+                </ThemedText>
+              </ThemedView>
+
+              {!isFull ? (
+                <ThemedView style={styles.requestButtons}>
+                  <TouchableOpacity
+                    style={[
+                      styles.requestButton,
+                      { backgroundColor: Colors[theme].tint },
+                      availableDays.PLD <= 0 && styles.disabledButton,
+                    ]}
+                    onPress={() => onSubmit("PLD")}
+                    activeOpacity={0.7}
+                    disabled={availableDays.PLD <= 0}
+                  >
+                    <ThemedText style={styles.requestButtonText}>
+                      Request PLD {availableDays.PLD <= 0 ? "(None Left)" : ""}
+                    </ThemedText>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.requestButton,
+                      { backgroundColor: Colors[theme].tint },
+                      availableDays.SDV <= 0 && styles.disabledButton,
+                    ]}
+                    onPress={() => onSubmit("SDV")}
+                    activeOpacity={0.7}
+                    disabled={availableDays.SDV <= 0}
+                  >
+                    <ThemedText style={styles.requestButtonText}>
+                      Request SDV {availableDays.SDV <= 0 ? "(None Left)" : ""}
+                    </ThemedText>
+                  </TouchableOpacity>
+                </ThemedView>
+              ) : (
+                <TouchableOpacity
+                  style={[styles.requestButton, styles.waitlistButton]}
+                  onPress={() => onSubmit("PLD")}
+                  activeOpacity={0.7}
+                >
+                  <ThemedText style={styles.requestButtonText}>Request Waitlist Spot</ThemedText>
+                </TouchableOpacity>
+              )}
+            </>
           )}
 
           <ScrollView style={styles.requestList}>
@@ -248,6 +331,8 @@ export default function CalendarScreen() {
       try {
         await submitRequest(selectedDate, leaveType);
         setIsRequestDialogVisible(false);
+        // Keep the selected date but update the calendar key to force a refresh
+        setCalendarKey((prev) => prev + 1);
         // Show success message using Alert
         if (Platform.OS === "web") {
           alert("Request submitted successfully");
@@ -290,7 +375,9 @@ export default function CalendarScreen() {
     }
   };
 
-  const selectedDateRequests = selectedDate ? requests[selectedDate] || [] : [];
+  const selectedDateRequests = selectedDate
+    ? (requests[selectedDate] || []).filter((req) => !["cancelled", "denied"].includes(req.status))
+    : [];
   const maxAllotment = selectedDate
     ? allotments[selectedDate] ?? yearlyAllotments[new Date(selectedDate).getFullYear()] ?? 6
     : 0;
@@ -351,11 +438,11 @@ export default function CalendarScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-  },
+  } as ViewStyle,
   contentContainer: {
     flexGrow: 1,
     paddingBottom: 20,
-  },
+  } as ViewStyle,
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -363,29 +450,29 @@ const styles = StyleSheet.create({
     gap: 16,
     padding: 16,
     paddingBottom: 8,
-  },
+  } as ViewStyle,
   headerIcon: {
     marginRight: 0,
-  },
+  } as ViewStyle,
   todayButton: {
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 8,
     alignItems: "center",
     marginLeft: 16,
-  },
+  } as ViewStyle,
   todayButtonText: {
     color: "black",
     fontWeight: "600",
     fontSize: 14,
-  },
+  } as TextStyle,
   selectedDateInfo: {
     padding: 16,
     borderTopWidth: 1,
     borderTopColor: "rgba(128, 128, 128, 0.2)",
     marginTop: 10,
     alignItems: "center",
-  },
+  } as ViewStyle,
   requestButton: {
     paddingHorizontal: 20,
     paddingVertical: 10,
@@ -393,11 +480,11 @@ const styles = StyleSheet.create({
     minWidth: 120,
     alignItems: "center",
     marginTop: 16,
-  },
+  } as ViewStyle,
   requestButtonText: {
     color: "white",
     fontWeight: "600",
-  },
+  } as TextStyle,
   modalOverlay: {
     position: "absolute",
     top: 0,
@@ -408,87 +495,123 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     zIndex: 1000,
-  },
+  } as ViewStyle,
   modalContent: {
-    backgroundColor: Colors.light.background,
-    borderRadius: 8,
+    backgroundColor: Colors.dark.background,
     padding: 20,
-    minWidth: 300,
-    maxWidth: "90%",
-  },
+    borderRadius: 10,
+    width: "90%",
+    maxWidth: 500,
+    maxHeight: Platform.OS === "web" ? "90%" : "90%",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+  } as ViewStyle,
   modalTitle: {
-    marginBottom: 12,
+    fontSize: 18,
+    fontWeight: "bold",
+    marginBottom: 16,
     textAlign: "center",
-  },
+  } as TextStyle,
   modalMessage: {
     marginBottom: 20,
     textAlign: "center",
-  },
+  } as TextStyle,
   modalButtons: {
     flexDirection: "row",
     justifyContent: "space-around",
-  },
+  } as ViewStyle,
   modalButton: {
     paddingHorizontal: 20,
     paddingVertical: 10,
     borderRadius: 8,
     minWidth: 100,
     alignItems: "center",
-  },
+  } as ViewStyle,
   cancelButton: {
     backgroundColor: "rgba(0, 0, 0, 0.1)",
-  },
+  } as ViewStyle,
   confirmButton: {
-    backgroundColor: Colors.light.tint,
-  },
+    backgroundColor: Colors.dark.tint,
+  } as ViewStyle,
   modalButtonText: {
     fontWeight: "600",
-  },
+  } as TextStyle,
   requestSpot: {
     flexDirection: "row",
     alignItems: "center",
-    padding: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(128, 128, 128, 0.1)",
-  },
+    padding: 8,
+    marginVertical: 4,
+    borderRadius: 8,
+    backgroundColor: Colors.dark.card,
+  } as ViewStyle,
   spotNumber: {
-    fontWeight: "600",
-    marginRight: 10,
-  },
+    marginRight: 8,
+    fontWeight: "bold",
+  } as TextStyle,
   spotInfo: {
     flex: 1,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-  },
+  } as ViewStyle,
   emptySpot: {
-    color: "#666",
-  },
+    color: Colors.light.success,
+    fontStyle: "italic",
+  } as TextStyle,
   requestList: {
-    maxHeight: 300,
-  },
+    width: "100%",
+    maxHeight: Platform.OS === "web" ? "50%" : 300,
+    marginVertical: 16,
+  } as ViewStyle,
   sectionTitle: {
     marginBottom: 10,
-  },
+  } as TextStyle,
   requestStatus: {
-    fontWeight: "600",
-  },
+    marginLeft: 8,
+    fontWeight: "500",
+  } as TextStyle,
   allotmentInfo: {
-    marginBottom: 10,
-  },
+    marginBottom: 16,
+  } as TextStyle,
   requestButtons: {
     flexDirection: "row",
     justifyContent: "space-around",
     marginVertical: 16,
     gap: 16,
-  },
+  } as ViewStyle,
   waitlistButton: {
     backgroundColor: "#FFC107",
-  },
+  } as ViewStyle,
   remainingDaysInfo: {
-    marginBottom: 10,
-  },
+    marginBottom: 16,
+    alignItems: "center",
+  } as ViewStyle,
   disabledButton: {
     backgroundColor: "rgba(128, 128, 128, 0.5)",
-  },
+  } as ViewStyle,
+  warningContainer: {
+    marginBottom: 10,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: Colors.light.error,
+    borderRadius: 8,
+    backgroundColor: Colors.light.error + "20",
+  } as ViewStyle,
+  warningText: {
+    color: Colors.light.error,
+    fontWeight: "600",
+  } as TextStyle,
+  loadingContainer: {
+    padding: 20,
+    alignItems: "center",
+  } as ViewStyle,
+  loadingText: {
+    marginTop: 12,
+  } as TextStyle,
+  availableDaysNote: {
+    marginTop: 12,
+    fontWeight: "600",
+    fontSize: 14,
+  } as TextStyle,
 });

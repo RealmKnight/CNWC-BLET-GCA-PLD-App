@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { View, FlatList, Alert, TextInput, StyleSheet } from "react-native";
 import { Text, Button, Modal } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
 import { Ionicons } from "@expo/vector-icons";
 import { Colors } from "../constants/Colors";
 import { useColorScheme } from "../hooks/useColorScheme";
@@ -20,6 +20,8 @@ interface PendingRequest {
   request_date: string;
   leave_type: "PLD" | "SDV";
   created_at: string;
+  status: string;
+  paid_in_lieu: boolean;
 }
 
 interface DenialReason {
@@ -55,20 +57,35 @@ export default function CompanyAdminScreen() {
 
   // Check if user is a company admin
   useEffect(() => {
-    if (isLoading) return;
+    if (!isLoading) {
+      if (!user) {
+        // Instead of immediate navigation, return early and let the root layout handle the redirect
+        return;
+      }
 
-    if (!user) {
-      router.replace("/(auth)");
-      return;
-    }
+      const isCompanyAdmin = user.user_metadata?.role === "company_admin";
+      if (!isCompanyAdmin) {
+        Alert.alert("Access Denied", "You do not have permission to access this page.");
+        // Instead of immediate navigation, return early and let the root layout handle the redirect
+        return;
+      }
 
-    const isCompanyAdmin = user.user_metadata?.role === "company_admin";
-    if (!isCompanyAdmin) {
-      router.replace("/");
-      Alert.alert("Access Denied", "You do not have permission to access this page.");
-      return;
+      // Only fetch data if we have a valid company admin
+      fetchPendingRequests();
+      fetchDenialReasons();
     }
   }, [user, isLoading]);
+
+  // If still loading or no user/not admin, show loading state
+  if (isLoading || !user || user.user_metadata?.role !== "company_admin") {
+    return (
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
+        <View style={styles.loadingContainer}>
+          <Text>Loading...</Text>
+        </View>
+      </View>
+    );
+  }
 
   // Fetch pending requests
   const fetchPendingRequests = useCallback(async () => {
@@ -76,8 +93,8 @@ export default function CompanyAdminScreen() {
       // First get the requests
       const { data: requestData, error: requestError } = await supabase
         .from("pld_sdv_requests")
-        .select("*")
-        .eq("status", "pending")
+        .select("id, member_id, request_date, leave_type, created_at, status, paid_in_lieu")
+        .in("status", ["pending", "cancellation_pending"])
         .order("request_date", { ascending: true });
 
       if (requestError) throw requestError;
@@ -108,6 +125,8 @@ export default function CompanyAdminScreen() {
             request_date: request.request_date,
             leave_type: request.leave_type,
             created_at: request.created_at,
+            status: request.status,
+            paid_in_lieu: request.paid_in_lieu ?? false,
           }))
         );
       }
@@ -133,11 +152,6 @@ export default function CompanyAdminScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    fetchPendingRequests();
-    fetchDenialReasons();
-  }, [fetchPendingRequests, fetchDenialReasons]);
-
   // Handle request approval
   const handleApprove = async (request: PendingRequest) => {
     setIsRequestLoading(true);
@@ -158,7 +172,7 @@ export default function CompanyAdminScreen() {
         member_id: request.member_id,
         title: "Leave Request Approved",
         body: `Your ${request.leave_type} request for ${format(
-          new Date(request.request_date),
+          parseISO(request.request_date),
           "MMM d, yyyy"
         )} has been approved.`,
         data: {
@@ -202,7 +216,7 @@ export default function CompanyAdminScreen() {
         member_id: selectedRequest.member_id,
         title: "Leave Request Denied",
         body: `Your ${selectedRequest.leave_type} request for ${format(
-          new Date(selectedRequest.request_date),
+          parseISO(selectedRequest.request_date),
           "MMM d, yyyy"
         )} has been denied.`,
         data: {
@@ -221,6 +235,46 @@ export default function CompanyAdminScreen() {
     } catch (error) {
       console.error("Error denying request:", error);
       Alert.alert("Error", "Failed to deny request");
+    } finally {
+      setIsRequestLoading(false);
+    }
+  };
+
+  // Handle cancellation approval
+  const handleCancellationApproval = async (request: PendingRequest) => {
+    setIsRequestLoading(true);
+    try {
+      const { error } = await supabase
+        .from("pld_sdv_requests")
+        .update({
+          status: "cancelled",
+          actioned_by: user?.id,
+          actioned_at: new Date().toISOString(),
+        })
+        .eq("id", request.id);
+
+      if (error) throw error;
+
+      // Send notification to user
+      await supabase.from("push_notification_deliveries").insert({
+        member_id: request.member_id,
+        title: "Leave Request Cancellation Approved",
+        body: `Your cancellation request for ${request.leave_type} on ${format(
+          parseISO(request.request_date),
+          "MMM d, yyyy"
+        )} has been approved.`,
+        data: {
+          type: "leave_request",
+          request_id: request.id,
+          status: "cancelled",
+        },
+      });
+
+      await fetchPendingRequests();
+      Alert.alert("Success", "Cancellation approved successfully");
+    } catch (error) {
+      console.error("Error approving cancellation:", error);
+      Alert.alert("Error", "Failed to approve cancellation");
     } finally {
       setIsRequestLoading(false);
     }
@@ -253,36 +307,64 @@ export default function CompanyAdminScreen() {
   }, [navigation, handleLogout, colors.text]);
 
   const renderItem = ({ item }: { item: PendingRequest }) => (
-    <View style={[styles.requestItem, { borderBottomColor: colors.border }]}>
+    <View
+      style={[
+        styles.requestItem,
+        { borderBottomColor: colors.border },
+        item.paid_in_lieu && styles.paidInLieuItem,
+        item.status === "cancellation_pending" && styles.cancellationPendingItem,
+      ]}
+    >
       <View style={{ flex: 1 }}>
         <Text style={styles.memberName}>
           {item.pin_number} - {item.first_name} {item.last_name}
         </Text>
-        <Text style={styles.requestDate}>
-          {format(new Date(item.request_date), "MMM d, yyyy")} - {item.leave_type}
-        </Text>
+        <View style={styles.requestHeader}>
+          <Text style={styles.requestDate}>
+            {format(parseISO(item.request_date), "MMM d, yyyy")} - {item.leave_type}
+            {item.paid_in_lieu && <Text style={styles.paidInLieuText}> - To Be Paid In Lieu</Text>}
+          </Text>
+          {item.status === "cancellation_pending" && (
+            <View style={[styles.statusBadge, { backgroundColor: colors.error + "20" }]}>
+              <Text style={[styles.statusText, { color: colors.error }]}>Cancellation</Text>
+            </View>
+          )}
+        </View>
         <Text dim style={styles.requestTime}>
-          Requested: {format(new Date(item.created_at), "MMM d, yyyy h:mm a")}
+          {item.status === "cancellation_pending" ? "Cancellation" : "Request"} Submitted:{" "}
+          {format(parseISO(item.created_at), "MMM d, yyyy h:mm a")}
         </Text>
       </View>
       <View style={styles.actions}>
-        <TouchableOpacity
-          onPress={() => handleApprove(item)}
-          disabled={isRequestLoading}
-          style={[styles.actionButton, { backgroundColor: colors.success + "20" }]}
-        >
-          <Ionicons name="checkmark-circle" size={24} color={colors.success} />
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => {
-            setSelectedRequest(item);
-            setIsDenialModalVisible(true);
-          }}
-          disabled={isRequestLoading}
-          style={[styles.actionButton, { backgroundColor: colors.error + "20" }]}
-        >
-          <Ionicons name="close-circle" size={24} color={colors.error} />
-        </TouchableOpacity>
+        {item.status === "cancellation_pending" ? (
+          <TouchableOpacity
+            onPress={() => handleCancellationApproval(item)}
+            disabled={isRequestLoading}
+            style={[styles.actionButton, { backgroundColor: colors.success + "20" }]}
+          >
+            <Ionicons name="checkmark-circle" size={24} color={colors.success} />
+          </TouchableOpacity>
+        ) : (
+          <>
+            <TouchableOpacity
+              onPress={() => handleApprove(item)}
+              disabled={isRequestLoading}
+              style={[styles.actionButton, { backgroundColor: colors.success + "20" }]}
+            >
+              <Ionicons name="checkmark-circle" size={24} color={colors.success} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                setSelectedRequest(item);
+                setIsDenialModalVisible(true);
+              }}
+              disabled={isRequestLoading}
+              style={[styles.actionButton, { backgroundColor: colors.error + "20" }]}
+            >
+              <Ionicons name="close-circle" size={24} color={colors.error} />
+            </TouchableOpacity>
+          </>
+        )}
       </View>
     </View>
   );
@@ -431,5 +513,35 @@ const styles = StyleSheet.create({
   },
   confirmButton: {
     marginTop: 8,
+  },
+  paidInLieuItem: {
+    backgroundColor: "rgba(255, 215, 0, 0.1)", // Light gold background
+  },
+  paidInLieuText: {
+    color: "#B8860B", // Dark golden rod color
+    fontWeight: "500",
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  requestHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 4,
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  statusText: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  cancellationPendingItem: {
+    backgroundColor: Colors.dark.error + "10",
   },
 });

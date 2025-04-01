@@ -10,6 +10,7 @@ import { ThemedText } from "@/components/ThemedText";
 import { configureNotifications, setupNotificationListeners } from "@/utils/notificationConfig";
 import Toast, { BaseToast, ErrorToast, BaseToastProps } from "react-native-toast-message";
 import { Colors } from "@/constants/Colors";
+import { ThemedToast } from "@/components/ThemedToast";
 
 // Define toast config
 const toastConfig = {
@@ -157,7 +158,7 @@ export default function RootLayout() {
       <ThemeProvider>
         <AuthProvider>
           <RootLayoutContent />
-          <Toast config={toastConfig} />
+          <ThemedToast />
         </AuthProvider>
       </ThemeProvider>
     </GestureHandlerRootView>

@@ -70,10 +70,13 @@ export function Calendar({ current }: CalendarProps) {
     loadInitialData,
   } = useCalendarStore();
 
-  // Log when component receives new current prop
+  // Use the selected date for the calendar view if available, otherwise use current
+  const calendarDate = selectedDate || current;
+
+  // Log when component receives new current prop or selected date changes
   useEffect(() => {
-    console.log("[Calendar] Received new current prop:", current);
-  }, [current]);
+    console.log("[Calendar] Date update:", { current, selectedDate, calendarDate });
+  }, [current, selectedDate, calendarDate]);
 
   // Calculate date range for fetching data
   const dateRange = useMemo(() => {
@@ -91,10 +94,17 @@ export function Calendar({ current }: CalendarProps) {
     async function initializeData() {
       if (division) {
         try {
+          console.log("[Calendar] Starting data initialization:", {
+            dateRange,
+            division,
+          });
           await loadInitialData(dateRange.start, dateRange.end);
+          console.log("[Calendar] Data initialization complete");
         } catch (error) {
           console.error("[Calendar] Error loading data:", error);
         }
+      } else {
+        console.log("[Calendar] No division available for initialization");
       }
     }
     initializeData();
@@ -103,9 +113,22 @@ export function Calendar({ current }: CalendarProps) {
   // Generate marked dates for the calendar
   const markedDates = useMemo(() => {
     if (!isInitialized) {
-      console.log("[Calendar] Not initialized yet, returning empty marked dates");
+      console.log("[Calendar] Not initialized yet, returning empty marked dates", {
+        isLoading,
+        isInitialized,
+        division,
+      });
       return {};
     }
+
+    const state = useCalendarStore.getState();
+    console.log("[Calendar] Generating marked dates", {
+      isLoading,
+      isInitialized,
+      division,
+      hasRequests: Object.keys(state.requests).length,
+      hasAllotments: Object.keys(state.allotments).length,
+    });
 
     const dates: any = {};
     const now = new Date();
@@ -223,7 +246,7 @@ export function Calendar({ current }: CalendarProps) {
   return (
     <ThemedView style={styles.container}>
       <RNCalendar
-        key={`calendar-inner-${current}`}
+        key={`calendar-inner-${calendarDate}`}
         theme={CALENDAR_THEME[theme]}
         markingType="custom"
         markedDates={markedDates}
@@ -233,7 +256,7 @@ export function Calendar({ current }: CalendarProps) {
         }}
         enableSwipeMonths
         style={styles.calendar}
-        current={current}
+        current={calendarDate}
         onMonthChange={(month: DateData) => {
           console.log("[Calendar] Month changed to:", month.dateString);
         }}

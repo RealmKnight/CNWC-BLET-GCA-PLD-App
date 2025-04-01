@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/utils/supabase";
 import { useAuth } from "./useAuth";
 import { RealtimeChannel } from "@supabase/supabase-js";
+import { useIsomorphicLayoutEffect } from "./useIsomorphicLayoutEffect";
+import { useUserStore } from "@/store/userStore";
 
 export interface TimeStats {
   total: {
@@ -33,12 +35,23 @@ export interface TimeStats {
   };
 }
 
+export interface TimeOffRequest {
+  id: string;
+  request_date: string;
+  leave_type: "PLD" | "SDV";
+  status: "pending" | "approved" | "denied" | "waitlisted" | "cancellation_pending" | "cancelled";
+  requested_at: string;
+  waitlist_position?: number;
+}
+
 export function useMyTime() {
   const [stats, setStats] = useState<TimeStats | null>(null);
+  const [requests, setRequests] = useState<TimeOffRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { member, isLoading: isAuthLoading } = useAuth();
   const [realtimeChannel, setRealtimeChannel] = useState<RealtimeChannel | null>(null);
+  const { member: userStoreMember } = useUserStore();
 
   const fetchStats = useCallback(async () => {
     if (!member?.id) {
@@ -67,8 +80,9 @@ export function useMyTime() {
 
       // Calculate PLD entitlement based on years of service
       const today = new Date();
+      const currentYear = today.getFullYear();
       const hireDate = new Date(memberData.company_hire_date);
-      const yearsOfService = today.getFullYear() - hireDate.getFullYear();
+      const yearsOfService = currentYear - hireDate.getFullYear();
       const hasHitAnniversary =
         today.getMonth() > hireDate.getMonth() ||
         (today.getMonth() === hireDate.getMonth() && today.getDate() >= hireDate.getDate());
@@ -93,10 +107,7 @@ export function useMyTime() {
         maxPlds,
       });
 
-      // Get member's SDV allotment for current year
-      const currentYear = new Date().getFullYear();
-
-      // Calculate stats
+      // Calculate base stats
       const baseStats: TimeStats = {
         total: {
           pld: maxPlds,
@@ -140,70 +151,20 @@ export function useMyTime() {
         throw currentRequestsError;
       }
 
-      // Get previous year's requests to calculate unused PLDs
-      const { data: prevYearRequests, error: prevYearRequestsError } = await supabase
-        .from("pld_sdv_requests")
-        .select("*")
-        .eq("member_id", member.id)
-        .eq("leave_type", "PLD")
-        .gte("request_date", `${currentYear - 1}-01-01`)
-        .lte("request_date", `${currentYear - 1}-12-31`);
-
-      if (prevYearRequestsError) {
-        console.error("[MyTime] Error fetching previous year requests:", prevYearRequestsError);
-        throw prevYearRequestsError;
-      }
-
-      // Get previous year's allotment
-      const { data: prevYearAllotment, error: prevYearAllotmentError } = await supabase
-        .from("pld_sdv_allotments")
-        .select("max_allotment")
-        .eq("division", memberData.division)
-        .eq("year", currentYear - 1)
-        .single();
-
-      if (prevYearAllotmentError && prevYearAllotmentError.code !== "PGRST116") {
-        // PGRST116 means no data found, which is fine for previous year
-        console.error("[MyTime] Error fetching previous year allotment:", prevYearAllotmentError);
-        throw prevYearAllotmentError;
-      }
-
-      // Calculate unused PLDs from previous year
-      const prevYearTotal = prevYearAllotment?.max_allotment ?? 0;
-      const prevYearUsed =
-        prevYearRequests?.reduce((total, request) => {
-          if (request.status === "approved" || request.paid_in_lieu) {
-            return total + 1;
-          }
-          return total;
-        }, 0) ?? 0;
-      const unusedPlds = Math.max(0, prevYearTotal - prevYearUsed);
-
-      // If unused PLDs are different from what's stored, update the member record
-      if (unusedPlds !== memberData.pld_rolled_over) {
-        const { error: updateError } = await supabase
-          .from("members")
-          .update({ pld_rolled_over: unusedPlds })
-          .eq("id", member.id);
-
-        if (updateError) {
-          console.error("[MyTime] Error updating rolled over PLDs:", updateError);
-          // Don't throw here, just log the error
-        }
-      }
-
       console.log("[MyTime] Current year requests:", currentRequests);
 
-      // Process current year requests
+      // Update stats based on current year requests
       currentRequests?.forEach((request) => {
-        if (request.paid_in_lieu) {
-          baseStats.paidInLieu[request.leave_type.toLowerCase() as "pld" | "sdv"] += 1;
-        } else if (request.waitlist_position) {
-          baseStats.waitlisted[request.leave_type.toLowerCase() as "pld" | "sdv"] += 1;
+        const type = request.leave_type.toLowerCase() as "pld" | "sdv";
+
+        if (request.status === "pending") {
+          baseStats.requested[type]++;
+        } else if (request.status === "waitlisted") {
+          baseStats.waitlisted[type]++;
         } else if (request.status === "approved") {
-          baseStats.approved[request.leave_type.toLowerCase() as "pld" | "sdv"] += 1;
-        } else if (request.status === "pending") {
-          baseStats.requested[request.leave_type.toLowerCase() as "pld" | "sdv"] += 1;
+          baseStats.approved[type]++;
+        } else if (request.paid_in_lieu) {
+          baseStats.paidInLieu[type]++;
         }
       });
 
@@ -214,7 +175,10 @@ export function useMyTime() {
         baseStats.approved.sdv + baseStats.requested.sdv + baseStats.waitlisted.sdv + baseStats.paidInLieu.sdv;
 
       console.log("[MyTime] Calculated stats:", baseStats);
+
       setStats(baseStats);
+      setRequests(currentRequests || []);
+      setError(null);
     } catch (err) {
       console.error("[MyTime] Error in fetchStats:", err);
       setError(err instanceof Error ? err.message : "Failed to fetch time statistics");
@@ -269,8 +233,69 @@ export function useMyTime() {
     [member?.id, member?.division]
   );
 
+  const fetchRequests = useCallback(async () => {
+    if (!member?.id) return;
+
+    try {
+      const currentYear = new Date().getFullYear();
+      const { data, error } = await supabase
+        .from("pld_sdv_requests")
+        .select("*")
+        .eq("member_id", member.id)
+        .gte("request_date", `${currentYear}-01-01`)
+        .lte("request_date", `${currentYear}-12-31`)
+        .not("status", "in", '("cancelled","denied")')
+        .order("request_date", { ascending: true });
+
+      if (error) throw error;
+
+      setRequests(data);
+    } catch (err) {
+      console.error("[MyTime] Error fetching requests:", err);
+      setError(err instanceof Error ? err.message : "Failed to fetch time off requests");
+    }
+  }, [member?.id]);
+
+  const cancelRequest = useCallback(
+    async (requestId: string) => {
+      if (!member?.id) return false;
+
+      try {
+        // Call the database function to handle cancellation
+        const { data, error } = await supabase.rpc("cancel_leave_request", {
+          p_request_id: requestId,
+          p_member_id: member.id,
+        });
+
+        if (error) throw error;
+
+        // Send notification to user
+        await supabase.from("push_notification_deliveries").insert({
+          member_id: member.id,
+          title: data ? "Request Cancelled" : "Cancellation Request Submitted",
+          body: data
+            ? "Your request has been cancelled."
+            : "Your cancellation request has been submitted for approval.",
+          data: {
+            type: "leave_request",
+            request_id: requestId,
+            status: data ? "cancelled" : "cancellation_pending",
+          },
+        });
+
+        // Refresh requests and stats
+        await Promise.all([fetchRequests(), fetchStats()]);
+        return true;
+      } catch (err) {
+        console.error("[MyTime] Error cancelling request:", err);
+        throw err;
+      }
+    },
+    [member?.id, fetchRequests, fetchStats]
+  );
+
   // Set up realtime subscription when member is available
-  useEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (!member?.id) {
       return;
     }
@@ -289,7 +314,7 @@ export function useMyTime() {
         },
         (payload) => {
           console.log("[MyTime] Received realtime update:", payload);
-          fetchStats();
+          Promise.all([fetchStats(), fetchRequests()]);
         }
       )
       .subscribe();
@@ -300,21 +325,31 @@ export function useMyTime() {
       console.log("[MyTime] Cleaning up realtime subscription");
       channel.unsubscribe();
     };
-  }, [member?.id, fetchStats]);
+  }, [member?.id, fetchStats, fetchRequests]);
 
   // Fetch stats when auth is ready
-  useEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     console.log("[MyTime] Auth state:", { isAuthLoading, memberId: member?.id });
     if (!isAuthLoading && member?.id) {
       fetchStats();
     }
   }, [isAuthLoading, member?.id, fetchStats]);
 
+  useEffect(() => {
+    if (member?.id) {
+      Promise.all([fetchStats(), fetchRequests()]).finally(() => {
+        setIsLoading(false);
+      });
+    }
+  }, [member?.id, fetchStats, fetchRequests]);
+
   return {
     stats,
-    isLoading: isLoading || isAuthLoading,
+    requests,
+    isLoading,
     error,
     fetchStats,
     requestPaidInLieu,
+    cancelRequest,
   };
 }
