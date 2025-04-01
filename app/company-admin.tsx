@@ -9,6 +9,7 @@ import { useColorScheme } from "../hooks/useColorScheme";
 import { TouchableOpacityComponent } from "../components/TouchableOpacityComponent";
 import { supabase } from "../utils/supabase";
 import { router, useNavigation } from "expo-router";
+import { sendMessageWithNotification } from "../utils/notificationService";
 
 // Types
 interface PendingRequest {
@@ -191,16 +192,17 @@ export default function CompanyAdminScreen() {
 
       if (error) throw error;
 
-      // Send notification to user
-      await supabase.from("push_notification_deliveries").insert({
-        member_id: request.member_id,
-        title: "Leave Request Approved",
-        body: `Your ${request.leave_type} request for ${format(
+      // Send notification using the proper function
+      await sendMessageWithNotification({
+        recipientId: request.member_id,
+        subject: "Leave Request Approved",
+        content: `Your ${request.leave_type} request for ${format(
           parseISO(request.request_date),
           "MMM d, yyyy"
         )} has been approved.`,
-        data: {
-          type: "leave_request",
+        messageType: "approval",
+        topic: "leave_request",
+        payload: {
           request_id: request.id,
           status: "approved",
         },
@@ -235,16 +237,17 @@ export default function CompanyAdminScreen() {
 
       if (error) throw error;
 
-      // Send notification to user
-      await supabase.from("push_notification_deliveries").insert({
-        member_id: selectedRequest.member_id,
-        title: "Leave Request Denied",
-        body: `Your ${selectedRequest.leave_type} request for ${format(
+      // Send notification using the proper function
+      await sendMessageWithNotification({
+        recipientId: selectedRequest.member_id,
+        subject: "Leave Request Denied",
+        content: `Your ${selectedRequest.leave_type} request for ${format(
           parseISO(selectedRequest.request_date),
           "MMM d, yyyy"
         )} has been denied.`,
-        data: {
-          type: "leave_request",
+        messageType: "denial",
+        topic: "leave_request",
+        payload: {
           request_id: selectedRequest.id,
           status: "denied",
         },
@@ -268,27 +271,25 @@ export default function CompanyAdminScreen() {
   const handleCancellationApproval = async (request: PendingRequest) => {
     setIsRequestLoading(true);
     try {
-      const { error } = await supabase
-        .from("pld_sdv_requests")
-        .update({
-          status: "cancelled",
-          actioned_by: user?.id,
-          actioned_at: new Date().toISOString(),
-        })
-        .eq("id", request.id);
+      // Call the stored procedure to handle the cancellation
+      const { error } = await supabase.rpc("handle_cancellation_approval", {
+        p_request_id: request.id,
+        p_actioned_by: user?.id,
+      });
 
       if (error) throw error;
 
-      // Send notification to user
-      await supabase.from("push_notification_deliveries").insert({
-        member_id: request.member_id,
-        title: "Leave Request Cancellation Approved",
-        body: `Your cancellation request for ${request.leave_type} on ${format(
+      // Send notification using the proper function
+      await sendMessageWithNotification({
+        recipientId: request.member_id,
+        subject: "Leave Request Cancellation Approved",
+        content: `Your cancellation request for ${request.leave_type} on ${format(
           parseISO(request.request_date),
           "MMM d, yyyy"
         )} has been approved.`,
-        data: {
-          type: "leave_request",
+        messageType: "approval",
+        topic: "leave_request",
+        payload: {
           request_id: request.id,
           status: "cancelled",
         },
