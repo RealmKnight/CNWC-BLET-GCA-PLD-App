@@ -131,7 +131,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
           setMember(null);
           setUserRole(null);
           useUserStore.getState().reset();
-          router.replace("/company-admin");
+          // Delay navigation to ensure root layout is mounted
+          setTimeout(() => {
+            try {
+              router.replace("/company-admin");
+            } catch (error) {
+              console.warn("[Auth] Navigation failed, will retry on next state update:", error);
+            }
+          }, 100);
           return;
         }
 
@@ -208,6 +215,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
       try {
         console.log("[Auth] Starting initial auth check...");
         if (Platform.OS === "web" && typeof window === "undefined") return;
+
+        // Add a small delay on web to ensure root layout is mounted
+        if (Platform.OS === "web") {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
 
         const {
           data: { session: initialSession },

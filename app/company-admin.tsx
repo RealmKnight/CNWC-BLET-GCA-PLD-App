@@ -6,7 +6,7 @@ import { format, parseISO } from "date-fns";
 import { Ionicons } from "@expo/vector-icons";
 import { Colors } from "../constants/Colors";
 import { useColorScheme } from "../hooks/useColorScheme";
-import { TouchableOpacity } from "react-native-gesture-handler";
+import { TouchableOpacityComponent } from "../components/TouchableOpacityComponent";
 import { supabase } from "../utils/supabase";
 import { router, useNavigation } from "expo-router";
 
@@ -54,38 +54,6 @@ export default function CompanyAdminScreen() {
   const [selectedDenialReason, setSelectedDenialReason] = useState<number | null>(null);
   const [denialComment, setDenialComment] = useState("");
   const [isRequestLoading, setIsRequestLoading] = useState(false);
-
-  // Check if user is a company admin
-  useEffect(() => {
-    if (!isLoading) {
-      if (!user) {
-        // Instead of immediate navigation, return early and let the root layout handle the redirect
-        return;
-      }
-
-      const isCompanyAdmin = user.user_metadata?.role === "company_admin";
-      if (!isCompanyAdmin) {
-        Alert.alert("Access Denied", "You do not have permission to access this page.");
-        // Instead of immediate navigation, return early and let the root layout handle the redirect
-        return;
-      }
-
-      // Only fetch data if we have a valid company admin
-      fetchPendingRequests();
-      fetchDenialReasons();
-    }
-  }, [user, isLoading]);
-
-  // If still loading or no user/not admin, show loading state
-  if (isLoading || !user || user.user_metadata?.role !== "company_admin") {
-    return (
-      <View style={[styles.container, { backgroundColor: colors.background }]}>
-        <View style={styles.loadingContainer}>
-          <Text>Loading...</Text>
-        </View>
-      </View>
-    );
-  }
 
   // Fetch pending requests
   const fetchPendingRequests = useCallback(async () => {
@@ -151,6 +119,62 @@ export default function CompanyAdminScreen() {
       console.error("Error fetching denial reasons:", error);
     }
   }, []);
+
+  // Handle logout
+  const handleLogout = useCallback(async () => {
+    try {
+      await signOut();
+      router.replace("/(auth)/sign-in");
+    } catch (error) {
+      console.error("Error signing out:", error);
+      Alert.alert("Error", "Failed to sign out");
+    }
+  }, [signOut]);
+
+  // Set up header right button
+  useEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <TouchableOpacityComponent
+          onPress={handleLogout}
+          style={{ marginRight: 16 }}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Ionicons name="log-out-outline" size={24} color={colors.text} />
+        </TouchableOpacityComponent>
+      ),
+    });
+  }, [navigation, handleLogout, colors.text]);
+
+  // Check if user is a company admin
+  useEffect(() => {
+    if (!isLoading) {
+      if (!user) {
+        return;
+      }
+
+      const isCompanyAdmin = user.user_metadata?.role === "company_admin";
+      if (!isCompanyAdmin) {
+        Alert.alert("Access Denied", "You do not have permission to access this page.");
+        return;
+      }
+
+      // Only fetch data if we have a valid company admin
+      fetchPendingRequests();
+      fetchDenialReasons();
+    }
+  }, [user, isLoading, fetchPendingRequests, fetchDenialReasons]);
+
+  // If still loading or no user/not admin, show loading state
+  if (isLoading || !user || user.user_metadata?.role !== "company_admin") {
+    return (
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
+        <View style={styles.loadingContainer}>
+          <Text>Loading...</Text>
+        </View>
+      </View>
+    );
+  }
 
   // Handle request approval
   const handleApprove = async (request: PendingRequest) => {
@@ -280,32 +304,6 @@ export default function CompanyAdminScreen() {
     }
   };
 
-  // Handle logout
-  const handleLogout = useCallback(async () => {
-    try {
-      await signOut();
-      router.replace("/(auth)/sign-in");
-    } catch (error) {
-      console.error("Error signing out:", error);
-      Alert.alert("Error", "Failed to sign out");
-    }
-  }, [signOut]);
-
-  // Set up header right button
-  useEffect(() => {
-    navigation.setOptions({
-      headerRight: () => (
-        <TouchableOpacity
-          onPress={handleLogout}
-          style={{ marginRight: 16 }}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        >
-          <Ionicons name="log-out-outline" size={24} color={colors.text} />
-        </TouchableOpacity>
-      ),
-    });
-  }, [navigation, handleLogout, colors.text]);
-
   const renderItem = ({ item }: { item: PendingRequest }) => (
     <View
       style={[
@@ -337,23 +335,23 @@ export default function CompanyAdminScreen() {
       </View>
       <View style={styles.actions}>
         {item.status === "cancellation_pending" ? (
-          <TouchableOpacity
+          <TouchableOpacityComponent
             onPress={() => handleCancellationApproval(item)}
             disabled={isRequestLoading}
             style={[styles.actionButton, { backgroundColor: colors.success + "20" }]}
           >
             <Ionicons name="checkmark-circle" size={24} color={colors.success} />
-          </TouchableOpacity>
+          </TouchableOpacityComponent>
         ) : (
           <>
-            <TouchableOpacity
+            <TouchableOpacityComponent
               onPress={() => handleApprove(item)}
               disabled={isRequestLoading}
               style={[styles.actionButton, { backgroundColor: colors.success + "20" }]}
             >
               <Ionicons name="checkmark-circle" size={24} color={colors.success} />
-            </TouchableOpacity>
-            <TouchableOpacity
+            </TouchableOpacityComponent>
+            <TouchableOpacityComponent
               onPress={() => {
                 setSelectedRequest(item);
                 setIsDenialModalVisible(true);
@@ -362,7 +360,7 @@ export default function CompanyAdminScreen() {
               style={[styles.actionButton, { backgroundColor: colors.error + "20" }]}
             >
               <Ionicons name="close-circle" size={24} color={colors.error} />
-            </TouchableOpacity>
+            </TouchableOpacityComponent>
           </>
         )}
       </View>
@@ -397,7 +395,7 @@ export default function CompanyAdminScreen() {
           <Text>Select Reason:</Text>
           <View style={styles.reasonsList}>
             {denialReasons.map((reason) => (
-              <TouchableOpacity
+              <TouchableOpacityComponent
                 key={reason.id}
                 onPress={() => setSelectedDenialReason(reason.id)}
                 style={[
@@ -415,7 +413,7 @@ export default function CompanyAdminScreen() {
                 >
                   {reason.reason}
                 </Text>
-              </TouchableOpacity>
+              </TouchableOpacityComponent>
             ))}
           </View>
 
