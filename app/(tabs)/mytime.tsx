@@ -61,6 +61,7 @@ interface TimeOffRequest {
   status: "pending" | "approved" | "denied" | "waitlisted" | "cancellation_pending" | "cancelled";
   requested_at: string;
   waitlist_position?: number;
+  paid_in_lieu?: boolean;
 }
 
 interface RequestRowProps {
@@ -104,9 +105,9 @@ function RequestRow({ request, onCancelPress }: RequestRowProps) {
   const getStatusText = () => {
     switch (request.status) {
       case "approved":
-        return "Approved";
+        return request.paid_in_lieu ? "Payment Approved" : "Approved";
       case "pending":
-        return "Pending";
+        return request.paid_in_lieu ? "Payment Pending" : "Pending";
       case "waitlisted":
         return "Waitlisted";
       case "cancellation_pending":
@@ -126,7 +127,8 @@ function RequestRow({ request, onCancelPress }: RequestRowProps) {
           </ThemedView>
         </ThemedView>
         <ThemedText style={styles.requestDetails}>
-          {request.leave_type} • Submitted {format(parseISO(request.requested_at), "MMMM d, yyyy 'at' h:mm a")}
+          {request.leave_type} {request.paid_in_lieu ? "Payment" : ""} • Submitted{" "}
+          {format(parseISO(request.requested_at), "MMMM d, yyyy 'at' h:mm a")}
           {request.status === "cancellation_pending" && " • Cancellation Requested"}
         </ThemedText>
         {request.waitlist_position && (
@@ -168,22 +170,23 @@ function CancelRequestModal({ isVisible, request, onConfirm, onCancel }: CancelR
   if (!request) return null;
 
   const isApproved = request.status === "approved";
+  const isPaidInLieu = request.paid_in_lieu;
 
   return (
     <Modal visible={isVisible} transparent animationType="fade" onRequestClose={onCancel}>
       <ThemedView style={styles.modalContainer}>
         <ThemedView style={styles.modalContent}>
-          <ThemedText style={styles.modalTitle}>Cancel {isApproved ? "Approved" : ""} Request</ThemedText>
+          <ThemedText style={styles.modalTitle}>
+            Cancel {isApproved ? "Approved" : ""} {isPaidInLieu ? "Payment" : ""} Request
+          </ThemedText>
           <ThemedText style={styles.modalDescription}>
             {isApproved
-              ? `Are you sure you want to cancel your approved ${request.leave_type} request for ${format(
-                  parseISO(request.request_date),
-                  "MMMM d, yyyy"
-                )}? This action cannot be undone.`
-              : `Are you sure you want to cancel your ${request.leave_type} request for ${format(
-                  parseISO(request.request_date),
-                  "MMMM d, yyyy"
-                )}?`}
+              ? `Are you sure you want to cancel your approved ${request.leave_type} ${
+                  isPaidInLieu ? "payment" : ""
+                } request for ${format(parseISO(request.request_date), "MMMM d, yyyy")}? This action cannot be undone.`
+              : `Are you sure you want to cancel your ${request.leave_type} ${
+                  isPaidInLieu ? "payment" : ""
+                } request for ${format(parseISO(request.request_date), "MMMM d, yyyy")}?`}
           </ThemedText>
           <ThemedView style={styles.modalButtonsContainer}>
             <ThemedTouchableOpacity style={styles.cancelButton} onPress={onCancel}>
@@ -194,7 +197,7 @@ function CancelRequestModal({ isVisible, request, onConfirm, onCancel }: CancelR
               onPress={onConfirm}
             >
               <ThemedText style={styles.confirmButtonText}>
-                Yes, Cancel {isApproved ? "Approved" : ""} Request
+                Yes, Cancel {isApproved ? "Approved" : ""} {isPaidInLieu ? "Payment" : ""} Request
               </ThemedText>
             </ThemedTouchableOpacity>
           </ThemedView>

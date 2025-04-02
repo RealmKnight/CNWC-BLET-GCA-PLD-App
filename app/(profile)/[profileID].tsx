@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { StyleSheet, ScrollView, Alert, Modal, Platform } from "react-native";
+import { StyleSheet, ScrollView, Alert, Modal, Platform, TextInput } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -12,10 +12,21 @@ import { useColorScheme } from "@/hooks/useColorScheme";
 import { Database } from "@/types/supabase";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
+import { testEmailFunction } from "@/utils/notificationService";
 
 type Member = Database["public"]["Tables"]["members"]["Row"];
 type ContactPreference = "phone" | "text" | "email" | "push";
 type ColorScheme = keyof typeof Colors;
+
+interface UserPreferences {
+  id: string;
+  user_id: string;
+  pin_number: number;
+  push_token: string | null;
+  contact_preference: ContactPreference;
+  created_at: string;
+  updated_at: string;
+}
 
 async function registerForPushNotificationsAsync() {
   let token;
@@ -46,6 +57,27 @@ async function registerForPushNotificationsAsync() {
   return token;
 }
 
+// Utility functions for phone number formatting
+function formatPhoneNumber(value: string): string {
+  // Strip all non-numeric characters
+  const cleaned = value.replace(/\D/g, "");
+
+  // Format as (XXX) XXX-XXXX
+  const match = cleaned.match(/^(\d{0,3})(\d{0,3})(\d{0,4})$/);
+  if (!match) return "";
+
+  const parts = [match[1], match[2], match[3]].filter(Boolean);
+
+  if (parts.length === 0) return "";
+  if (parts.length === 1) return `(${parts[0]}`;
+  if (parts.length === 2) return `(${parts[0]}) ${parts[1]}`;
+  return `(${parts[0]}) ${parts[1]}-${parts[2]}`;
+}
+
+function unformatPhoneNumber(value: string): string {
+  return value.replace(/\D/g, "");
+}
+
 function PhoneUpdateModal({
   visible,
   onClose,
@@ -63,7 +95,13 @@ function PhoneUpdateModal({
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const theme = (useColorScheme() ?? "light") as ColorScheme;
-  const { session, member } = useAuth();
+  const { session } = useAuth();
+
+  const handlePhoneChange = (value: string) => {
+    // Only allow numbers, max 10 digits
+    const cleaned = value.replace(/\D/g, "").slice(0, 10);
+    setPhoneNumber(cleaned);
+  };
 
   const handleUpdatePhone = async () => {
     try {
@@ -74,18 +112,38 @@ function PhoneUpdateModal({
         throw new Error("No active session. Please try logging out and back in.");
       }
 
-      // Only admins can update member data
-      const isAdmin = member?.role?.includes("admin");
-      if (!isAdmin) {
-        throw new Error("Only administrators can update member information.");
+      if (phoneNumber.length !== 10) {
+        throw new Error("Please enter a valid 10-digit phone number.");
       }
 
-      const { error: updateError } = await supabase
-        .from("members")
-        .update({ phone_number: phoneNumber })
-        .eq("id", targetUserId);
+      // Users can only update their own phone number
+      if (session.user.id !== targetUserId) {
+        throw new Error("You can only update your own phone number.");
+      }
 
-      if (updateError) throw updateError;
+      // Format phone number for Supabase (E.164 format)
+      const formattedPhone = `+1${phoneNumber}`; // Assuming US numbers for now
+
+      // Update phone in auth.users
+      const { error: updateError } = await supabase.auth.updateUser({
+        phone: formattedPhone,
+      });
+
+      if (updateError) {
+        // Special handling for SMS provider not configured
+        if (updateError.message.includes("SMS provider")) {
+          console.warn("SMS provider not configured:", updateError);
+          // For now, we'll allow the update but warn about verification
+          Alert.alert(
+            "Notice",
+            "Phone number updated, but verification is not available yet. SMS notifications will be enabled once the system is fully configured."
+          );
+          onSuccess(phoneNumber);
+          onClose();
+          return;
+        }
+        throw updateError;
+      }
 
       onSuccess(phoneNumber);
       onClose();
@@ -115,19 +173,30 @@ function PhoneUpdateModal({
           )}
 
           <ThemedView style={styles.inputContainer}>
-            <input
-              type="tel"
-              value={phoneNumber}
-              onChange={(e) => setPhoneNumber(e.target.value)}
-              placeholder="Enter phone number"
-              style={styles.modalInput}
-              disabled={isLoading}
+            <TextInput
+              value={formatPhoneNumber(phoneNumber)}
+              onChangeText={handlePhoneChange}
+              placeholder="(555) 555-1234"
+              placeholderTextColor={Colors[theme].textDim}
+              style={[
+                styles.modalInput,
+                {
+                  color: Colors[theme].text,
+                  backgroundColor: Colors[theme].background,
+                },
+              ]}
+              editable={!isLoading}
+              keyboardType="phone-pad"
             />
           </ThemedView>
           <TouchableOpacity
             onPress={handleUpdatePhone}
-            style={[styles.modalButton, isLoading && styles.buttonDisabled]}
-            disabled={isLoading}
+            style={[
+              styles.modalButton,
+              isLoading && styles.buttonDisabled,
+              { backgroundColor: Colors[theme].buttonBackground },
+            ]}
+            disabled={isLoading || phoneNumber.length !== 10}
           >
             <ThemedText style={styles.buttonText}>{isLoading ? "Updating..." : "Update Phone Number"}</ThemedText>
           </TouchableOpacity>
@@ -138,25 +207,82 @@ function PhoneUpdateModal({
 }
 
 export default function ProfileScreen() {
-  const { profileID } = useLocalSearchParams();
+  const params = useLocalSearchParams();
+  const profileID = Array.isArray(params.profileID) ? params.profileID[0] : params.profileID;
   const { user, member, session } = useAuth();
   const theme = (useColorScheme() ?? "light") as ColorScheme;
-  const [contactPreference, setContactPreference] = useState<ContactPreference>(
-    (user?.user_metadata.contact_preference as ContactPreference) || "phone"
-  );
-  const [phoneNumber, setPhoneNumber] = useState(member?.phone_number || "");
+  const [userPreferences, setUserPreferences] = useState<UserPreferences | null>(null);
+  const [phoneNumber, setPhoneNumber] = useState("");
   const [isPhoneModalVisible, setIsPhoneModalVisible] = useState(false);
-  const [pushToken, setPushToken] = useState<string | null>(null);
   const [isDeviceMobile] = useState(Platform.OS !== "web");
 
-  const isAdmin = member?.role?.includes("admin");
   const isOwnProfile = user?.id === profileID;
-  // Only admins can edit member data
-  const canEdit = isAdmin;
+  // Users can only edit their own phone number
+  const canEdit = isOwnProfile;
+
+  // Fetch user data including phone number from metadata
+  useEffect(() => {
+    if (user && isOwnProfile) {
+      setPhoneNumber(user.phone || "");
+    }
+  }, [user, isOwnProfile]);
+
+  // Add debug effect for session changes
+  useEffect(() => {
+    if (session) {
+      console.log("Session user metadata:", session.user.user_metadata);
+    }
+  }, [session]);
+
+  // Fetch user preferences
+  useEffect(() => {
+    if (member?.pin_number) {
+      supabase
+        .from("user_preferences")
+        .select("*")
+        .eq("pin_number", member.pin_number)
+        .single()
+        .then(({ data, error }) => {
+          if (error) {
+            if (error.code === "PGRST116") {
+              // No preferences found, create default preferences
+              createDefaultPreferences();
+            } else {
+              console.error("Error fetching preferences:", error);
+            }
+          } else {
+            setUserPreferences(data as UserPreferences);
+          }
+        });
+    }
+  }, [member?.pin_number]);
+
+  const createDefaultPreferences = async () => {
+    if (!member?.pin_number || !user?.id) return;
+
+    try {
+      const { data, error } = await supabase
+        .from("user_preferences")
+        .insert({
+          user_id: user.id,
+          pin_number: member.pin_number,
+          contact_preference: "email",
+          push_token: null,
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      setUserPreferences(data as UserPreferences);
+    } catch (error) {
+      console.error("Error creating default preferences:", error);
+      Alert.alert("Error", "Failed to set up contact preferences");
+    }
+  };
 
   const handleUpdatePreference = async (preference: ContactPreference) => {
     try {
-      if (!session) throw new Error("No active session");
+      if (!session || !member?.pin_number) throw new Error("No active session");
 
       if (preference === "push") {
         if (!isDeviceMobile) {
@@ -169,53 +295,50 @@ export default function ProfileScreen() {
           Alert.alert("Error", "Failed to setup push notifications. Please check your device settings.");
           return;
         }
-        setPushToken(token);
+
+        // Update preferences with new token and preference
+        const { error } = await supabase
+          .from("user_preferences")
+          .upsert({
+            user_id: user?.id,
+            pin_number: member.pin_number,
+            push_token: token,
+            contact_preference: preference,
+          })
+          .select()
+          .single();
+
+        if (error) throw error;
+      } else {
+        // Update preference without token
+        const { error } = await supabase
+          .from("user_preferences")
+          .upsert({
+            user_id: user?.id,
+            pin_number: member.pin_number,
+            push_token: null,
+            contact_preference: preference,
+          })
+          .select()
+          .single();
+
+        if (error) throw error;
       }
 
-      // Set local state immediately for better UX
-      setContactPreference(preference);
+      // Refresh preferences
+      const { data: updatedPrefs, error: fetchError } = await supabase
+        .from("user_preferences")
+        .select("*")
+        .eq("pin_number", member.pin_number)
+        .single();
 
-      const { data, error } = await supabase.auth.updateUser({
-        data: {
-          contact_preference: preference,
-          push_token: preference === "push" ? pushToken : null,
-        },
-      });
-
-      if (error) {
-        // Revert on error
-        setContactPreference((user?.user_metadata.contact_preference as ContactPreference) || "phone");
-        throw error;
-      }
-
-      // Update local user state to prevent unnecessary reloads
-      if (data.user && user) {
-        user.user_metadata = data.user.user_metadata;
-      }
+      if (fetchError) throw fetchError;
+      setUserPreferences(updatedPrefs as UserPreferences);
     } catch (error) {
       console.error("Error updating preference:", error);
       Alert.alert("Error", "Failed to update contact preference. Please try again.");
     }
   };
-
-  // Add this useEffect to handle initial push token setup
-  useEffect(() => {
-    if (isDeviceMobile && contactPreference === "push") {
-      registerForPushNotificationsAsync().then((token) => {
-        if (token) {
-          setPushToken(token);
-          // Update the token in Supabase if needed
-          if (session && (!user?.user_metadata.push_token || user.user_metadata.push_token !== token)) {
-            supabase.auth.updateUser({
-              data: {
-                push_token: token,
-              },
-            });
-          }
-        }
-      });
-    }
-  }, [isDeviceMobile, contactPreference]);
 
   const handlePhoneUpdateSuccess = (newPhone: string) => {
     setPhoneNumber(newPhone);
@@ -255,16 +378,16 @@ export default function ProfileScreen() {
         <ThemedText type="title">Personal Information</ThemedText>
         <ThemedView style={styles.infoRow}>
           <ThemedText type="subtitle">Name:</ThemedText>
-          <ThemedText>{`${member.first_name} ${member.last_name}`}</ThemedText>
+          <ThemedText>{`${member?.first_name} ${member?.last_name}`}</ThemedText>
         </ThemedView>
         <ThemedView style={styles.infoRow}>
           <ThemedText type="subtitle">Email:</ThemedText>
-          <ThemedText>{user.email}</ThemedText>
+          <ThemedText>{user?.email}</ThemedText>
         </ThemedView>
         <ThemedView style={styles.infoRow}>
           <ThemedText type="subtitle">Phone:</ThemedText>
           <ThemedView style={styles.editRow}>
-            <ThemedText>{phoneNumber || "Not set"}</ThemedText>
+            <ThemedText>{phoneNumber ? formatPhoneNumber(phoneNumber) : "Not set"}</ThemedText>
             {canEdit && (
               <TouchableOpacity onPress={() => setIsPhoneModalVisible(true)} style={styles.iconButton}>
                 <Ionicons name="pencil" size={24} color={Colors[theme].tint} />
@@ -280,42 +403,33 @@ export default function ProfileScreen() {
             <ThemedText type="title">Contact Preferences</ThemedText>
             <ThemedView style={styles.preferenceContainer}>
               <ThemedView style={styles.preferenceButtons}>
-                {/* to activate if we decide to use phone calls 
                 <TouchableOpacity
-                  style={[styles.preferenceButton, contactPreference === "phone" && styles.preferenceButtonActive]}
-                  onPress={() => handleUpdatePreference("phone")}
-                >
-                  <ThemedText
-                    style={[
-                      styles.preferenceButtonText,
-                      contactPreference === "phone" && styles.preferenceButtonTextActive,
-                    ]}
-                  >
-                    Phone Call
-                  </ThemedText>
-                </TouchableOpacity> 
-                */}
-                <TouchableOpacity
-                  style={[styles.preferenceButton, contactPreference === "text" && styles.preferenceButtonActive]}
+                  style={[
+                    styles.preferenceButton,
+                    userPreferences?.contact_preference === "text" && styles.preferenceButtonActive,
+                  ]}
                   onPress={() => handleUpdatePreference("text")}
                 >
                   <ThemedText
                     style={[
                       styles.preferenceButtonText,
-                      contactPreference === "text" && styles.preferenceButtonTextActive,
+                      userPreferences?.contact_preference === "text" && styles.preferenceButtonTextActive,
                     ]}
                   >
                     Text Message
                   </ThemedText>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.preferenceButton, contactPreference === "email" && styles.preferenceButtonActive]}
+                  style={[
+                    styles.preferenceButton,
+                    userPreferences?.contact_preference === "email" && styles.preferenceButtonActive,
+                  ]}
                   onPress={() => handleUpdatePreference("email")}
                 >
                   <ThemedText
                     style={[
                       styles.preferenceButtonText,
-                      contactPreference === "email" && styles.preferenceButtonTextActive,
+                      userPreferences?.contact_preference === "email" && styles.preferenceButtonTextActive,
                     ]}
                   >
                     Email
@@ -328,14 +442,14 @@ export default function ProfileScreen() {
                     style={[
                       styles.preferenceButton,
                       styles.pushNotificationButton,
-                      contactPreference === "push" && styles.preferenceButtonActive,
+                      userPreferences?.contact_preference === "push" && styles.preferenceButtonActive,
                     ]}
                     onPress={() => handleUpdatePreference("push")}
                   >
                     <ThemedText
                       style={[
                         styles.preferenceButtonText,
-                        contactPreference === "push" && styles.preferenceButtonTextActive,
+                        userPreferences?.contact_preference === "push" && styles.preferenceButtonTextActive,
                       ]}
                     >
                       Push Notifications
@@ -351,6 +465,24 @@ export default function ProfileScreen() {
             <ThemedText type="subtitle">Send an email with a reset link to change your password</ThemedText>
             <TouchableOpacity onPress={handleUpdatePassword} style={styles.settingButton}>
               <ThemedText style={styles.settingButtonText}>Change Password</ThemedText>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={async () => {
+                try {
+                  const success = await testEmailFunction(user?.email || "");
+                  Alert.alert(
+                    success ? "Success" : "Error",
+                    success ? "Test email sent successfully!" : "Failed to send test email"
+                  );
+                } catch (error) {
+                  console.error("Error testing email:", error);
+                  Alert.alert("Error", "Failed to send test email");
+                }
+              }}
+              style={styles.settingButton}
+            >
+              <ThemedText style={styles.settingButtonText}>Test Email Function</ThemedText>
             </TouchableOpacity>
           </ThemedView>
 
@@ -478,8 +610,10 @@ const styles = StyleSheet.create({
     borderColor: "rgba(128, 128, 128, 0.2)",
     borderRadius: 8,
     padding: 12,
-    width: "90%",
-  } as any,
+    width: "100%",
+    fontSize: 16,
+    textAlign: "center",
+  },
   modalButton: {
     backgroundColor: Colors.dark.buttonBackground,
     padding: 16,

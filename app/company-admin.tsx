@@ -451,6 +451,7 @@ export default function CompanyAdminScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    padding: 20,
   },
   listContent: {
     flexGrow: 1,

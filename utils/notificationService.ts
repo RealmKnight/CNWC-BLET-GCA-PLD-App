@@ -34,6 +34,18 @@ interface MessagePayload {
   payload?: Record<string, unknown>;
 }
 
+interface UserPreferences {
+  push_token: string | null;
+  contact_preference: string | null;
+}
+
+interface MemberWithPreferences {
+  pin_number: number;
+  user_preferences: UserPreferences | null;
+  email?: string;
+  phone?: string;
+}
+
 // Function to get unread message count for a user
 export async function getUnreadMessageCount(userId: string): Promise<number> {
   const { count } = await supabase
@@ -88,6 +100,42 @@ export async function sendPushNotification(message: PushMessage): Promise<boolea
   }
 }
 
+// Function to send SMS using Twilio through Supabase Edge Function
+async function sendSMS(to: string, content: string): Promise<boolean> {
+  try {
+    const { data, error } = await supabase.functions.invoke("send-sms", {
+      body: { to, content },
+    });
+
+    if (error) throw error;
+    return data?.success || false;
+  } catch (error) {
+    console.error("Error sending SMS:", error);
+    return false;
+  }
+}
+
+// Function to send email through SMTP
+async function sendEmail(to: string, subject: string, content: string): Promise<boolean> {
+  try {
+    const { data, error } = await supabase.functions.invoke("send-email", {
+      body: { to, subject, content },
+    });
+
+    if (error) throw error;
+    return data?.success || false;
+  } catch (error) {
+    console.error("Error sending email:", error);
+    return false;
+  }
+}
+
+// Function to truncate content for SMS
+function truncateForSMS(content: string): string {
+  if (content.length <= 30) return content;
+  return content.substring(0, 27) + "...";
+}
+
 export async function sendMessageWithNotification({
   recipientId,
   subject,
@@ -99,17 +147,29 @@ export async function sendMessageWithNotification({
   payload = {},
 }: MessagePayload) {
   try {
-    // First, get the recipient's push token and preference
-    const { data: userData, error: userError } = await supabase
-      .from("users")
-      .select("user_metadata")
+    // First get the member's info from their auth id
+    const { data: memberData, error: memberError } = await supabase
+      .from("members")
+      .select(
+        `
+        pin_number,
+        user_preferences:user_preferences(
+          push_token,
+          contact_preference
+        ),
+        email,
+        phone
+      `
+      )
       .eq("id", recipientId)
-      .single();
+      .single<MemberWithPreferences>();
 
-    if (userError) throw userError;
+    if (memberError) throw memberError;
 
-    const pushToken = userData?.user_metadata?.push_token;
-    const contactPreference = userData?.user_metadata?.contact_preference;
+    const pushToken = memberData?.user_preferences?.push_token;
+    const contactPreference = memberData?.user_preferences?.contact_preference || "email";
+    const email = memberData?.email;
+    const phone = memberData?.phone;
 
     // Get current unread count for badge
     const unreadCount = await getUnreadMessageCount(recipientId);
@@ -135,45 +195,62 @@ export async function sendMessageWithNotification({
 
     if (messageError) throw messageError;
 
-    // If the user prefers push notifications and has a token, send the notification
-    if (contactPreference === "push" && pushToken && Platform.OS !== "web") {
-      const pushMessage: PushMessage = {
-        to: pushToken,
-        title: subject,
-        body: content,
-        data: {
-          messageId: messageData.id,
-          messageType,
-          requiresAcknowledgment,
-          ...payload,
-        },
-        sound: messageType === "must_read" ? "default" : null,
-        priority: messageType === "must_read" ? "high" : "normal",
-        badge: unreadCount + 1,
-      };
+    // Send notification based on user preference
+    switch (contactPreference) {
+      case "push":
+        if (pushToken && Platform.OS !== "web") {
+          const pushMessage: PushMessage = {
+            to: pushToken,
+            title: subject,
+            body: content,
+            data: {
+              messageId: messageData.id,
+              messageType,
+              requiresAcknowledgment,
+              ...payload,
+            },
+            sound: messageType === "must_read" ? "default" : null,
+            priority: messageType === "must_read" ? "high" : "normal",
+            badge: unreadCount + 1,
+          };
 
-      // Create a delivery record
-      const { error: deliveryError } = await supabase.from("push_notification_deliveries").insert({
-        message_id: messageData.id,
-        recipient_id: recipientId,
-        push_token: pushToken,
-        status: "sending",
-      });
+          // Create a delivery record
+          const { error: deliveryError } = await supabase.from("push_notification_deliveries").insert({
+            message_id: messageData.id,
+            recipient_id: recipientId,
+            push_token: pushToken,
+            status: "sending",
+          });
 
-      if (deliveryError) throw deliveryError;
+          if (deliveryError) throw deliveryError;
 
-      // Send the push notification
-      const success = await sendPushNotification(pushMessage);
+          // Send the push notification
+          const success = await sendPushNotification(pushMessage);
 
-      // Update the delivery status
-      await supabase
-        .from("push_notification_deliveries")
-        .update({
-          status: success ? "sent" : "failed",
-          sent_at: success ? new Date().toISOString() : null,
-          error_message: success ? null : "Failed to send push notification",
-        })
-        .eq("message_id", messageData.id);
+          // Update the delivery status
+          await supabase
+            .from("push_notification_deliveries")
+            .update({
+              status: success ? "sent" : "failed",
+              sent_at: success ? new Date().toISOString() : null,
+              error_message: success ? null : "Failed to send push notification",
+            })
+            .eq("message_id", messageData.id);
+        }
+        break;
+
+      case "text":
+        if (phone) {
+          await sendSMS(phone, truncateForSMS(content));
+        }
+        break;
+
+      case "email":
+      default:
+        if (email) {
+          await sendEmail(email, subject, content);
+        }
+        break;
     }
 
     return messageData;
@@ -194,5 +271,65 @@ export async function markNotificationDelivered(messageId: string) {
       .eq("message_id", messageId);
   } catch (error) {
     console.error("Error marking notification as delivered:", error);
+  }
+}
+
+// Test function for email Edge Function
+export async function testEmailFunction(to: string): Promise<boolean> {
+  try {
+    console.log("Testing email function with recipient:", to);
+    
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      console.error("No access token available");
+      return false;
+    }
+    
+    const functionUrl = 'https://ymkihdiegkqbeegfebse.supabase.co/functions/v1/send-email';
+    
+    const response = await fetch(functionUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`
+      },
+      body: JSON.stringify({
+        to,
+        subject: "Test Email with Logo",
+        content: `
+          <div style="text-align: center; padding: 20px;">
+            <h1 style="color: #003366;">Email System Test</h1>
+            <p style="font-size: 16px; line-height: 1.5;">
+              This is a test email to verify that our email system is working correctly with the new logo integration.
+            </p>
+            <p style="font-size: 16px; line-height: 1.5;">
+              If you're seeing this message and the BLET logo above, everything is working perfectly!
+            </p>
+            <p style="font-style: italic; color: #666; margin-top: 20px;">
+              This is an automated test message. No action is required.
+            </p>
+          </div>
+        `
+      })
+    });
+
+    console.log("Response status:", response.status);
+    const data = await response.json();
+    console.log("Response data:", data);
+
+    if (!response.ok) {
+      console.error("Email function error response:", data);
+      return false;
+    }
+
+    return data?.success || false;
+  } catch (err: unknown) {
+    const error = err as Error;
+    console.error("Unexpected error in testEmailFunction:", {
+      message: error.message,
+      name: error.name,
+      stack: error.stack
+    });
+    return false;
   }
 }

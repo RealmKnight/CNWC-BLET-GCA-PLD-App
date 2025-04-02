@@ -157,14 +157,20 @@ export function useMyTime() {
       currentRequests?.forEach((request) => {
         const type = request.leave_type.toLowerCase() as "pld" | "sdv";
 
-        if (request.status === "pending") {
-          baseStats.requested[type]++;
-        } else if (request.status === "waitlisted") {
-          baseStats.waitlisted[type]++;
-        } else if (request.status === "approved") {
-          baseStats.approved[type]++;
-        } else if (request.paid_in_lieu) {
-          baseStats.paidInLieu[type]++;
+        if (request.paid_in_lieu) {
+          if (request.status === "pending") {
+            baseStats.requested[type]++;
+          } else if (request.status === "approved") {
+            baseStats.paidInLieu[type]++;
+          }
+        } else {
+          if (request.status === "pending") {
+            baseStats.requested[type]++;
+          } else if (request.status === "waitlisted") {
+            baseStats.waitlisted[type]++;
+          } else if (request.status === "approved") {
+            baseStats.approved[type]++;
+          }
         }
       });
 
