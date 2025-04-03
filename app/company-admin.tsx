@@ -64,6 +64,7 @@ export default function CompanyAdminScreen() {
         .from("pld_sdv_requests")
         .select("id, member_id, request_date, leave_type, created_at, status, paid_in_lieu")
         .in("status", ["pending", "cancellation_pending"])
+        .not("status", "eq", "waitlisted")
         .order("request_date", { ascending: true });
 
       if (requestError) throw requestError;
@@ -74,13 +75,13 @@ export default function CompanyAdminScreen() {
         const { data: memberData, error: memberError } = await supabase
           .from("members")
           .select("id, pin_number, first_name, last_name")
-          .in("id", memberIds);
+          .in("pin_number", memberIds);
 
         if (memberError) throw memberError;
 
         // Map member data to requests
         const memberMap = memberData?.reduce((acc, member) => {
-          acc[member.id] = member;
+          acc[member.pin_number] = member;
           return acc;
         }, {} as Record<string, (typeof memberData)[0]>);
 

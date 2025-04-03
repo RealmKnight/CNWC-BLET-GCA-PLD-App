@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect } from "react";
-import { StyleSheet, useWindowDimensions, Alert, Modal, Animated } from "react-native";
+import React, { useState, useRef, useEffect, useMemo } from "react";
+import { StyleSheet, useWindowDimensions, Alert, Modal, Animated, ActivityIndicator } from "react-native";
 import { useColorScheme } from "react-native";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
@@ -11,6 +11,7 @@ import { Feather } from "@expo/vector-icons";
 import { useMyTime } from "@/hooks/useMyTime";
 import { format } from "date-fns-tz";
 import { parseISO } from "date-fns";
+import { useFocusEffect } from "@react-navigation/native";
 
 interface LeaveRowProps {
   label: string;
@@ -62,14 +63,16 @@ interface TimeOffRequest {
   requested_at: string;
   waitlist_position?: number;
   paid_in_lieu?: boolean;
+  is_six_month_request?: boolean;
 }
 
 interface RequestRowProps {
   request: TimeOffRequest;
-  onCancelPress: (request: TimeOffRequest) => void;
+  onCancel: (request: TimeOffRequest) => void;
+  onCancelSixMonth: (request: TimeOffRequest) => void;
 }
 
-function RequestRow({ request, onCancelPress }: RequestRowProps) {
+function RequestRow({ request, onCancel, onCancelSixMonth }: RequestRowProps) {
   const colorScheme = useColorScheme();
   const positionAnim = useRef(new Animated.Value(1)).current;
   const prevPosition = useRef(request.waitlist_position);
@@ -103,6 +106,9 @@ function RequestRow({ request, onCancelPress }: RequestRowProps) {
   };
 
   const getStatusText = () => {
+    if (request.is_six_month_request) {
+      return "6-Month Request (Pending)";
+    }
     switch (request.status) {
       case "approved":
         return request.paid_in_lieu ? "Payment Approved" : "Approved";
@@ -118,38 +124,30 @@ function RequestRow({ request, onCancelPress }: RequestRowProps) {
   };
 
   return (
-    <ThemedView style={[styles.requestRow, request.status === "cancellation_pending" && styles.cancellationPendingRow]}>
-      <ThemedView style={styles.requestInfo}>
-        <ThemedView style={styles.requestHeader}>
-          <ThemedText style={styles.requestDate}>{format(parseISO(request.request_date), "MMMM d, yyyy")}</ThemedText>
-          <ThemedView style={[styles.statusBadge, { backgroundColor: getStatusColor() + "20" }]}>
-            <ThemedText style={[styles.statusText, { color: getStatusColor() }]}>{getStatusText()}</ThemedText>
-          </ThemedView>
-        </ThemedView>
-        <ThemedText style={styles.requestDetails}>
-          {request.leave_type} {request.paid_in_lieu ? "Payment" : ""} • Submitted{" "}
-          {format(parseISO(request.requested_at), "MMMM d, yyyy 'at' h:mm a")}
-          {request.status === "cancellation_pending" && " • Cancellation Requested"}
-        </ThemedText>
+    <ThemedView
+      style={[
+        styles.row,
+        request.status === "cancellation_pending" && styles.cancellationPendingRow,
+        request.is_six_month_request && styles.sixMonthRequestRow,
+      ]}
+    >
+      <ThemedView style={styles.dateContainer}>
+        <ThemedText style={styles.date}>{format(parseISO(request.request_date), "MMM d, yyyy")}</ThemedText>
+        <ThemedText style={[styles.statusText, { color: getStatusColor() }]}>{getStatusText()}</ThemedText>
         {request.waitlist_position && (
-          <Animated.View
-            style={{
-              transform: [
-                {
-                  scale: positionAnim.interpolate({
-                    inputRange: [0, 0.5, 1],
-                    outputRange: [0.8, 1.2, 1],
-                  }),
-                },
-              ],
-            }}
-          >
-            <ThemedText style={styles.waitlistPosition}>#{request.waitlist_position}</ThemedText>
-          </Animated.View>
+          <Animated.Text style={[styles.waitlistPosition, { transform: [{ scale: positionAnim }] }]}>
+            #{request.waitlist_position}
+          </Animated.Text>
         )}
       </ThemedView>
-      {request.status !== "cancellation_pending" && (
-        <ThemedTouchableOpacity style={styles.cancelButton} onPress={() => onCancelPress(request)}>
+      <ThemedView style={styles.typeContainer}>
+        <ThemedText style={styles.type}>{request.leave_type}</ThemedText>
+      </ThemedView>
+      {(request.status === "pending" || request.is_six_month_request) && (
+        <ThemedTouchableOpacity
+          style={styles.cancelButton}
+          onPress={() => (request.is_six_month_request ? onCancelSixMonth(request) : onCancel(request))}
+        >
           <Feather name="x-circle" size={24} color={Colors[colorScheme ?? "light"].error} />
         </ThemedTouchableOpacity>
       )}
@@ -162,9 +160,10 @@ interface CancelRequestModalProps {
   request: TimeOffRequest | null;
   onConfirm: () => void;
   onCancel: () => void;
+  isLoading: boolean;
 }
 
-function CancelRequestModal({ isVisible, request, onConfirm, onCancel }: CancelRequestModalProps) {
+function CancelRequestModal({ isVisible, request, onConfirm, onCancel, isLoading }: CancelRequestModalProps) {
   const colorScheme = useColorScheme();
 
   if (!request) return null;
@@ -189,16 +188,21 @@ function CancelRequestModal({ isVisible, request, onConfirm, onCancel }: CancelR
                 } request for ${format(parseISO(request.request_date), "MMMM d, yyyy")}?`}
           </ThemedText>
           <ThemedView style={styles.modalButtonsContainer}>
-            <ThemedTouchableOpacity style={styles.cancelButton} onPress={onCancel}>
+            <ThemedTouchableOpacity style={styles.cancelButton} onPress={onCancel} disabled={isLoading}>
               <ThemedText style={styles.cancelButtonText}>No, Keep It</ThemedText>
             </ThemedTouchableOpacity>
             <ThemedTouchableOpacity
               style={[styles.confirmButton, { backgroundColor: Colors[colorScheme ?? "light"].error }]}
               onPress={onConfirm}
+              disabled={isLoading}
             >
-              <ThemedText style={styles.confirmButtonText}>
-                Yes, Cancel {isApproved ? "Approved" : ""} {isPaidInLieu ? "Payment" : ""} Request
-              </ThemedText>
+              {isLoading ? (
+                <ActivityIndicator color={Colors[colorScheme ?? "light"].background} />
+              ) : (
+                <ThemedText style={styles.confirmButtonText}>
+                  Yes, Cancel {isApproved ? "Approved" : ""} {isPaidInLieu ? "Payment" : ""} Request
+                </ThemedText>
+              )}
             </ThemedTouchableOpacity>
           </ThemedView>
         </ThemedView>
@@ -238,10 +242,86 @@ export default function MyTimeScreen() {
   const [selectedType, setSelectedType] = useState<"PLD" | "SDV" | null>(null);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState<TimeOffRequest | null>(null);
-  const { stats, requests, isLoading, error, requestPaidInLieu, cancelRequest } = useMyTime();
+  const {
+    stats,
+    requests,
+    isLoading,
+    error,
+    isInitialized,
+    initialize,
+    requestPaidInLieu,
+    cancelRequest,
+    cancelSixMonthRequest,
+  } = useMyTime();
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [dataChanged, setDataChanged] = useState(false);
+  const [lastRefreshTime, setLastRefreshTime] = useState(0);
+  const REFRESH_COOLDOWN = 2000; // 2 seconds cooldown
+  const mountTimeRef = useRef(Date.now());
+
+  // Initialize data when component mounts
+  useEffect(() => {
+    if (!isInitialized) {
+      console.log("[MyTime] Screen mounted, initializing data");
+      initialize();
+      mountTimeRef.current = Date.now();
+    }
+  }, [isInitialized]);
+
+  // Handle focus events with debounce
+  useFocusEffect(
+    React.useCallback(() => {
+      const now = Date.now();
+      // Skip refresh if we just mounted (within cooldown period)
+      if (now - mountTimeRef.current < REFRESH_COOLDOWN) {
+        console.log("[MyTime] Screen focused, skipping refresh (recent mount)");
+        return;
+      }
+
+      // Only refresh if initialized and outside cooldown period
+      if (isInitialized && now - lastRefreshTime > REFRESH_COOLDOWN) {
+        console.log("[MyTime] Screen focused, refreshing data");
+        initialize();
+        setLastRefreshTime(now);
+      } else {
+        console.log("[MyTime] Screen focused, skipping refresh:", {
+          isInitialized,
+          timeSinceLastRefresh: now - lastRefreshTime,
+          cooldown: REFRESH_COOLDOWN,
+        });
+      }
+    }, [initialize, lastRefreshTime, isInitialized])
+  );
 
   // Calculate responsive card width
   const cardWidth = Math.min(width * 0.9, 600); // 90% of screen width, max 600px
+
+  // Memoize the filtered and sorted requests
+  const { pendingAndApproved, waitlisted } = useMemo(() => {
+    // Filter and sort requests by status and date
+    const pendingAndApproved = sortRequestsByDate(
+      requests.filter(
+        (request) =>
+          request.status === "pending" || request.status === "approved" || request.status === "cancellation_pending"
+      )
+    );
+
+    // Sort future dates ascending (closest first)
+    pendingAndApproved.future.sort((a, b) => parseISO(a.request_date).getTime() - parseISO(b.request_date).getTime());
+
+    // Sort past dates descending (most recent first)
+    pendingAndApproved.past.sort((a, b) => parseISO(b.request_date).getTime() - parseISO(a.request_date).getTime());
+
+    const waitlisted = sortRequestsByDate(requests.filter((request) => request.status === "waitlisted"));
+
+    // Sort future dates ascending (closest first)
+    waitlisted.future.sort((a, b) => parseISO(a.request_date).getTime() - parseISO(b.request_date).getTime());
+
+    // Sort past dates descending (most recent first)
+    waitlisted.past.sort((a, b) => parseISO(b.request_date).getTime() - parseISO(a.request_date).getTime());
+
+    return { pendingAndApproved, waitlisted };
+  }, [requests]); // Only recalculate when requests change
 
   const handlePaidInLieuPress = () => {
     setShowPaidInLieuModal(true);
@@ -271,7 +351,12 @@ export default function MyTimeScreen() {
     setSelectedType(null);
   };
 
-  const handleCancelPress = (request: TimeOffRequest) => {
+  const handleCancelRequest = (request: TimeOffRequest) => {
+    setSelectedRequest(request);
+    setShowCancelModal(true);
+  };
+
+  const handleCancelSixMonthRequest = (request: TimeOffRequest) => {
     setSelectedRequest(request);
     setShowCancelModal(true);
   };
@@ -280,41 +365,37 @@ export default function MyTimeScreen() {
     if (!selectedRequest) return;
 
     try {
-      const success = await cancelRequest(selectedRequest.id);
-      if (success) {
-        Alert.alert("Success", "Request cancelled successfully");
+      setIsCancelling(true);
+      console.log("[MyTime] Attempting to cancel request:", {
+        id: selectedRequest.id,
+        isSixMonth: selectedRequest.is_six_month_request,
+      });
+
+      if (selectedRequest.is_six_month_request) {
+        const success = await cancelSixMonthRequest(selectedRequest.id);
+        if (success) {
+          Alert.alert("Success", "Six-month request cancelled successfully");
+        } else {
+          Alert.alert("Error", "Failed to cancel six-month request");
+        }
       } else {
-        Alert.alert("Error", "Failed to cancel request");
+        const success = await cancelRequest(selectedRequest.id);
+        if (success) {
+          Alert.alert("Success", "Request cancelled successfully");
+        } else {
+          Alert.alert("Error", "Failed to cancel request");
+        }
       }
-    } catch (error) {
-      Alert.alert("Error", "Failed to cancel request");
-    } finally {
+
       setShowCancelModal(false);
       setSelectedRequest(null);
+    } catch (error) {
+      console.error("[MyTime] Error in handleConfirmCancel:", error);
+      Alert.alert("Error", error instanceof Error ? error.message : "Failed to cancel request");
+    } finally {
+      setIsCancelling(false);
     }
   };
-
-  // Filter and sort requests by status and date
-  const pendingAndApproved = sortRequestsByDate(
-    requests.filter(
-      (request) =>
-        request.status === "pending" || request.status === "approved" || request.status === "cancellation_pending"
-    )
-  );
-
-  // Sort future dates ascending (closest first)
-  pendingAndApproved.future.sort((a, b) => parseISO(a.request_date).getTime() - parseISO(b.request_date).getTime());
-
-  // Sort past dates descending (most recent first)
-  pendingAndApproved.past.sort((a, b) => parseISO(b.request_date).getTime() - parseISO(a.request_date).getTime());
-
-  const waitlisted = sortRequestsByDate(requests.filter((request) => request.status === "waitlisted"));
-
-  // Sort future dates ascending (closest first)
-  waitlisted.future.sort((a, b) => parseISO(a.request_date).getTime() - parseISO(b.request_date).getTime());
-
-  // Sort past dates descending (most recent first)
-  waitlisted.past.sort((a, b) => parseISO(b.request_date).getTime() - parseISO(a.request_date).getTime());
 
   if (isLoading || !stats) {
     return (
@@ -371,6 +452,9 @@ export default function MyTimeScreen() {
         contentContainerStyle={styles.contentContainer}
       >
         <ThemedView style={[styles.card, { width: cardWidth }]}>
+          <ThemedView style={styles.sectionHeader}>
+            <ThemedText style={styles.sectionTitle}>My Time</ThemedText>
+          </ThemedView>
           <ThemedView style={styles.tableHeader}>
             <ThemedText style={styles.headerLabel}>Type</ThemedText>
             <ThemedText style={styles.headerValue}>PLD</ThemedText>
@@ -380,7 +464,7 @@ export default function MyTimeScreen() {
           <LeaveRow label="Total" pldValue={stats.total.pld} sdvValue={stats.total.sdv} />
           <LeaveRow label="Rolled Over" pldValue={stats.rolledOver.pld} />
           <LeaveRow label="Available" pldValue={stats.available.pld} sdvValue={stats.available.sdv} />
-          <LeaveRow label="Requested" pldValue={stats.requested.pld} sdvValue={stats.requested.sdv} />
+          <LeaveRow label="Requested/Pending" pldValue={stats.requested.pld} sdvValue={stats.requested.sdv} />
           <LeaveRow label="Waitlisted" pldValue={stats.waitlisted.pld} sdvValue={stats.waitlisted.sdv} />
           <LeaveRow label="Approved" pldValue={stats.approved.pld} sdvValue={stats.approved.sdv} />
           <LeaveRow
@@ -401,17 +485,27 @@ export default function MyTimeScreen() {
           {pendingAndApproved.future.length > 0 || pendingAndApproved.past.length > 0 ? (
             <>
               {pendingAndApproved.future.map((request) => (
-                <RequestRow key={request.id} request={request} onCancelPress={handleCancelPress} />
+                <RequestRow
+                  key={request.id}
+                  request={request}
+                  onCancel={handleCancelRequest}
+                  onCancelSixMonth={handleCancelSixMonthRequest}
+                />
               ))}
 
               {pendingAndApproved.past.length > 0 && pendingAndApproved.future.length > 0 && (
                 <ThemedView style={styles.dateSeparator}>
-                  <ThemedText style={styles.dateSeparatorText}>Past Requests</ThemedText>
+                  <ThemedText style={styles.sectionTitle}>Past Requests</ThemedText>
                 </ThemedView>
               )}
 
               {pendingAndApproved.past.map((request) => (
-                <RequestRow key={request.id} request={request} onCancelPress={handleCancelPress} />
+                <RequestRow
+                  key={request.id}
+                  request={request}
+                  onCancel={handleCancelRequest}
+                  onCancelSixMonth={handleCancelSixMonthRequest}
+                />
               ))}
             </>
           ) : (
@@ -425,7 +519,12 @@ export default function MyTimeScreen() {
               <ThemedText style={[styles.subsectionTitle, styles.waitlistTitle]}>Waitlisted Requests</ThemedText>
 
               {waitlisted.future.map((request) => (
-                <RequestRow key={request.id} request={request} onCancelPress={handleCancelPress} />
+                <RequestRow
+                  key={request.id}
+                  request={request}
+                  onCancel={handleCancelRequest}
+                  onCancelSixMonth={handleCancelSixMonthRequest}
+                />
               ))}
 
               {waitlisted.past.length > 0 && waitlisted.future.length > 0 && (
@@ -435,7 +534,12 @@ export default function MyTimeScreen() {
               )}
 
               {waitlisted.past.map((request) => (
-                <RequestRow key={request.id} request={request} onCancelPress={handleCancelPress} />
+                <RequestRow
+                  key={request.id}
+                  request={request}
+                  onCancel={handleCancelRequest}
+                  onCancelSixMonth={handleCancelSixMonthRequest}
+                />
               ))}
             </>
           )}
@@ -495,6 +599,7 @@ export default function MyTimeScreen() {
           setShowCancelModal(false);
           setSelectedRequest(null);
         }}
+        isLoading={isCancelling}
       />
     </>
   );
@@ -745,5 +850,22 @@ const styles = StyleSheet.create({
   },
   cancellationPendingRow: {
     backgroundColor: Colors.dark.error + "10", // Light red background
+  },
+  sixMonthRequestRow: {
+    backgroundColor: Colors.dark.warning + "10", // Light warning background
+  },
+  dateContainer: {
+    flex: 1,
+  },
+  date: {
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  typeContainer: {
+    flex: 1,
+  },
+  type: {
+    fontSize: 16,
+    fontWeight: "600",
   },
 });

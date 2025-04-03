@@ -59,16 +59,8 @@ interface CalendarProps {
 export function Calendar({ current }: CalendarProps) {
   const theme = (useColorScheme() ?? "light") as ColorScheme;
   const division = useUserStore((state) => state.division);
-  const {
-    selectedDate,
-    setSelectedDate,
-    isDateSelectable,
-    getDateAvailability,
-    isLoading,
-    isInitialized,
-    error,
-    loadInitialData,
-  } = useCalendarStore();
+  const { selectedDate, setSelectedDate, isDateSelectable, getDateAvailability, isLoading, isInitialized, error } =
+    useCalendarStore();
 
   // Use the selected date for the calendar view if available, otherwise use current
   const calendarDate = selectedDate || current;
@@ -81,7 +73,6 @@ export function Calendar({ current }: CalendarProps) {
   // Calculate date range for fetching data
   const dateRange = useMemo(() => {
     const now = new Date();
-    // Calculate exactly 6 months from today (keeping the same date)
     const endDate = new Date(now.getFullYear(), now.getMonth() + 6, now.getDate());
     return {
       start: format(now, "yyyy-MM-dd"),
@@ -89,31 +80,10 @@ export function Calendar({ current }: CalendarProps) {
     };
   }, []);
 
-  // Fetch initial data
-  useEffect(() => {
-    async function initializeData() {
-      if (division) {
-        try {
-          console.log("[Calendar] Starting data initialization:", {
-            dateRange,
-            division,
-          });
-          await loadInitialData(dateRange.start, dateRange.end);
-          console.log("[Calendar] Data initialization complete");
-        } catch (error) {
-          console.error("[Calendar] Error loading data:", error);
-        }
-      } else {
-        console.log("[Calendar] No division available for initialization");
-      }
-    }
-    initializeData();
-  }, [division, dateRange.start, dateRange.end, loadInitialData]);
-
   // Generate marked dates for the calendar
   const markedDates = useMemo(() => {
-    if (!isInitialized) {
-      console.log("[Calendar] Not initialized yet, returning empty marked dates", {
+    if (!isInitialized || isLoading) {
+      console.log("[Calendar] Waiting for initialization:", {
         isLoading,
         isInitialized,
         division,
@@ -179,7 +149,7 @@ export function Calendar({ current }: CalendarProps) {
     }
 
     return dates;
-  }, [selectedDate, theme, isInitialized, getDateAvailability]);
+  }, [isInitialized, isLoading, division, selectedDate, theme]);
 
   const handleDayPress = (day: DateData) => {
     const now = new Date();

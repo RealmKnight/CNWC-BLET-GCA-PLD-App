@@ -22,6 +22,7 @@ import { useColorScheme } from "@/hooks/useColorScheme";
 import { format } from "date-fns-tz";
 import { supabase } from "@/utils/supabase";
 import { useUserStore } from "@/store/userStore";
+import { useFocusEffect } from "@react-navigation/native";
 
 type ColorScheme = keyof typeof Colors;
 
@@ -53,6 +54,7 @@ function RequestDialog({ isVisible, onClose, onSubmit, selectedDate, allotments,
   const [availableDays, setAvailableDays] = useState<{ PLD: number; SDV: number }>({ PLD: 0, SDV: 0 });
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const { user } = useAuth();
   const { member } = useUserStore();
 
@@ -175,6 +177,22 @@ function RequestDialog({ isVisible, onClose, onSubmit, selectedDate, allotments,
     });
   };
 
+  const handleSubmit = async (leaveType: "PLD" | "SDV") => {
+    try {
+      setIsSubmitting(true);
+      setError(null);
+      await onSubmit(leaveType);
+      // Wait for a brief moment to allow realtime subscription to process
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      onClose();
+    } catch (error) {
+      console.error("[RequestDialog] Error submitting request:", error);
+      setError("Failed to submit request. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   if (!isVisible) return null;
 
   return (
@@ -219,13 +237,17 @@ function RequestDialog({ isVisible, onClose, onSubmit, selectedDate, allotments,
                       { backgroundColor: Colors[theme].tint },
                       availableDays.PLD <= 0 && styles.disabledButton,
                     ]}
-                    onPress={() => onSubmit("PLD")}
+                    onPress={() => handleSubmit("PLD")}
                     activeOpacity={0.7}
-                    disabled={availableDays.PLD <= 0}
+                    disabled={availableDays.PLD <= 0 || isSubmitting}
                   >
-                    <ThemedText style={styles.requestButtonText}>
-                      Request PLD {availableDays.PLD <= 0 ? "(None Left)" : ""}
-                    </ThemedText>
+                    {isSubmitting ? (
+                      <ActivityIndicator color={Colors[theme].background} />
+                    ) : (
+                      <ThemedText style={styles.requestButtonText}>
+                        Request PLD {availableDays.PLD <= 0 ? "(None Left)" : ""}
+                      </ThemedText>
+                    )}
                   </TouchableOpacity>
 
                   <TouchableOpacity
@@ -234,22 +256,31 @@ function RequestDialog({ isVisible, onClose, onSubmit, selectedDate, allotments,
                       { backgroundColor: Colors[theme].tint },
                       availableDays.SDV <= 0 && styles.disabledButton,
                     ]}
-                    onPress={() => onSubmit("SDV")}
+                    onPress={() => handleSubmit("SDV")}
                     activeOpacity={0.7}
-                    disabled={availableDays.SDV <= 0}
+                    disabled={availableDays.SDV <= 0 || isSubmitting}
                   >
-                    <ThemedText style={styles.requestButtonText}>
-                      Request SDV {availableDays.SDV <= 0 ? "(None Left)" : ""}
-                    </ThemedText>
+                    {isSubmitting ? (
+                      <ActivityIndicator color={Colors[theme].background} />
+                    ) : (
+                      <ThemedText style={styles.requestButtonText}>
+                        Request SDV {availableDays.SDV <= 0 ? "(None Left)" : ""}
+                      </ThemedText>
+                    )}
                   </TouchableOpacity>
                 </ThemedView>
               ) : (
                 <TouchableOpacity
                   style={[styles.requestButton, styles.waitlistButton]}
-                  onPress={() => onSubmit("PLD")}
+                  onPress={() => handleSubmit("PLD")}
                   activeOpacity={0.7}
+                  disabled={isSubmitting}
                 >
-                  <ThemedText style={styles.requestButtonText}>Request Waitlist Spot</ThemedText>
+                  {isSubmitting ? (
+                    <ActivityIndicator color={Colors[theme].background} />
+                  ) : (
+                    <ThemedText style={styles.requestButtonText}>Request Waitlist Spot</ThemedText>
+                  )}
                 </TouchableOpacity>
               )}
             </>
@@ -262,7 +293,12 @@ function RequestDialog({ isVisible, onClose, onSubmit, selectedDate, allotments,
             {renderRequestList()}
           </ScrollView>
 
-          <TouchableOpacity style={[styles.modalButton, styles.cancelButton]} onPress={onClose} activeOpacity={0.7}>
+          <TouchableOpacity
+            style={[styles.modalButton, styles.cancelButton]}
+            onPress={onClose}
+            activeOpacity={0.7}
+            disabled={isSubmitting}
+          >
             <ThemedText style={styles.modalButtonText}>Close</ThemedText>
           </TouchableOpacity>
         </ThemedView>
@@ -274,54 +310,95 @@ function RequestDialog({ isVisible, onClose, onSubmit, selectedDate, allotments,
 export default function CalendarScreen() {
   const theme = (useColorScheme() ?? "light") as ColorScheme;
   const { user } = useAuth();
-  const { selectedDate, requests, submitRequest, setSelectedDate, allotments, yearlyAllotments, error, setError } =
-    useCalendarStore();
+  const {
+    selectedDate,
+    requests,
+    submitRequest,
+    setSelectedDate,
+    allotments,
+    yearlyAllotments,
+    error,
+    setError,
+    loadInitialData,
+    isInitialized,
+  } = useCalendarStore();
   const [isRequestDialogVisible, setIsRequestDialogVisible] = useState(false);
+  const [dataChanged, setDataChanged] = useState(false);
+  const [lastRefreshTime, setLastRefreshTime] = useState(0);
+  const REFRESH_COOLDOWN = 500; // milliseconds
 
   // Force the date to be the actual current date, not system date
   const [currentDate, setCurrentDate] = useState("");
   // Add a key to force re-render
   const [calendarKey, setCalendarKey] = useState(0);
 
-  // Get the actual server time on mount
+  // Initialize data once when component mounts
   useEffect(() => {
-    async function getServerTime() {
-      try {
-        const { data, error } = await supabase.rpc("get_server_timestamp");
-        if (error) throw error;
-
-        const serverDate = new Date(data);
-        console.log("[CalendarScreen] Server date:", serverDate.toISOString());
-        const formattedDate = format(serverDate, "yyyy-MM-dd", { timeZone: "UTC" });
-        setCurrentDate(formattedDate);
-      } catch (error) {
-        console.error("[CalendarScreen] Error getting server time:", error);
-        // Fallback to local time if server time fails
-        const now = new Date();
-        setCurrentDate(format(now, "yyyy-MM-dd", { timeZone: "UTC" }));
-      }
+    if (!isInitialized) {
+      const now = new Date();
+      const dateRange = {
+        start: format(now, "yyyy-MM-dd"),
+        end: format(new Date(now.getFullYear(), now.getMonth() + 6, now.getDate()), "yyyy-MM-dd"),
+      };
+      console.log("[CalendarScreen] Initial mount, loading data");
+      loadInitialData(dateRange.start, dateRange.end);
     }
-    getServerTime();
-  }, []);
+  }, [isInitialized]);
 
-  // Log when currentDate changes
-  useEffect(() => {
-    console.log("[CalendarScreen] currentDate updated to:", currentDate);
-  }, [currentDate]);
+  // Handle focus events - only update visual state
+  useFocusEffect(
+    React.useCallback(() => {
+      console.log("[CalendarScreen] Screen focused, checking if refresh needed");
+      const now = Date.now();
+
+      // Only refresh visual state if data has changed and we're outside cooldown
+      if (dataChanged && now - lastRefreshTime > REFRESH_COOLDOWN) {
+        console.log("[CalendarScreen] Refreshing calendar display after cooldown");
+        setCalendarKey((prev) => prev + 1);
+        setDataChanged(false);
+        setLastRefreshTime(now);
+      } else {
+        console.log("[CalendarScreen] No refresh needed or within cooldown period");
+      }
+
+      return () => {
+        setSelectedDate(null);
+      };
+    }, [dataChanged, lastRefreshTime])
+  );
 
   // Set up realtime subscriptions and cleanup
   useEffect(() => {
     const subscription = setupCalendarSubscriptions();
+
+    // Add listener for realtime updates with debounce
+    let debounceTimeout: NodeJS.Timeout;
+
+    const unsubscribe = useCalendarStore.subscribe((state, prevState) => {
+      // Check if relevant data has changed
+      if (
+        JSON.stringify(state.requests) !== JSON.stringify(prevState.requests) ||
+        JSON.stringify(state.allotments) !== JSON.stringify(prevState.allotments)
+      ) {
+        // Clear any existing timeout
+        if (debounceTimeout) {
+          clearTimeout(debounceTimeout);
+        }
+
+        // Set a new timeout
+        debounceTimeout = setTimeout(() => {
+          console.log("[CalendarScreen] Data changed in store, marking for refresh");
+          setDataChanged(true);
+        }, 100); // Small delay to batch rapid updates
+      }
+    });
+
     return () => {
       subscription.unsubscribe();
-      // Clear selection when unmounting
-      setSelectedDate(null);
-    };
-  }, []);
-
-  // Clear selection when navigating away
-  useEffect(() => {
-    return () => {
+      unsubscribe();
+      if (debounceTimeout) {
+        clearTimeout(debounceTimeout);
+      }
       setSelectedDate(null);
     };
   }, []);
@@ -331,8 +408,7 @@ export default function CalendarScreen() {
       try {
         await submitRequest(selectedDate, leaveType);
         setIsRequestDialogVisible(false);
-        // Keep the selected date but update the calendar key to force a refresh
-        setCalendarKey((prev) => prev + 1);
+        // Removed setCalendarKey update since realtime will handle the refresh
         // Show success message using Alert
         if (Platform.OS === "web") {
           alert("Request submitted successfully");
