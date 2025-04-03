@@ -332,18 +332,68 @@ export default function CalendarScreen() {
   // Add a key to force re-render
   const [calendarKey, setCalendarKey] = useState(0);
 
+  // Handle visibility change for web browsers
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+
+    // Track when the component mounted
+    const mountTime = Date.now();
+    console.log("[CalendarScreen] Component mounted at:", mountTime);
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        console.log("[CalendarScreen] Page became visible, checking data");
+        const now = Date.now();
+        const timeSinceMount = now - mountTime;
+        const timeSinceLastRefresh = now - lastRefreshTime;
+
+        // Skip refresh if we just mounted or refreshed recently
+        if (timeSinceMount < REFRESH_COOLDOWN) {
+          console.log("[CalendarScreen] Skipping refresh - component just mounted");
+          return;
+        }
+
+        if (timeSinceLastRefresh < REFRESH_COOLDOWN) {
+          console.log("[CalendarScreen] Skipping refresh - within cooldown period");
+          return;
+        }
+
+        console.log("[CalendarScreen] Refreshing data after visibility change");
+        // Force calendar to re-render with current date
+        const today = format(new Date(), "yyyy-MM-dd");
+        setCurrentDate(today);
+        setCalendarKey((prev) => prev + 1);
+        // Load fresh data
+        const dateRange = {
+          start: format(new Date(), "yyyy-MM-dd"),
+          end: format(
+            new Date(new Date().getFullYear(), new Date().getMonth() + 6, new Date().getDate()),
+            "yyyy-MM-dd"
+          ),
+        };
+        loadInitialData(dateRange.start, dateRange.end);
+        setLastRefreshTime(now);
+        // Clear selected date when returning to visible
+        setSelectedDate(null);
+      }
+    }
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [loadInitialData, lastRefreshTime, REFRESH_COOLDOWN, setSelectedDate]);
+
   // Initialize data once when component mounts
   useEffect(() => {
-    if (!isInitialized) {
-      const now = new Date();
-      const dateRange = {
-        start: format(now, "yyyy-MM-dd"),
-        end: format(new Date(now.getFullYear(), now.getMonth() + 6, now.getDate()), "yyyy-MM-dd"),
-      };
-      console.log("[CalendarScreen] Initial mount, loading data");
-      loadInitialData(dateRange.start, dateRange.end);
-    }
-  }, [isInitialized]);
+    const now = new Date();
+    const dateRange = {
+      start: format(now, "yyyy-MM-dd"),
+      end: format(new Date(now.getFullYear(), now.getMonth() + 6, now.getDate()), "yyyy-MM-dd"),
+    };
+    console.log("[CalendarScreen] Initial mount, loading data");
+    loadInitialData(dateRange.start, dateRange.end);
+    setCurrentDate(dateRange.start);
+    setLastRefreshTime(Date.now());
+  }, []); // Only run on mount
 
   // Handle focus events - only update visual state
   useFocusEffect(
@@ -351,11 +401,10 @@ export default function CalendarScreen() {
       console.log("[CalendarScreen] Screen focused, checking if refresh needed");
       const now = Date.now();
 
-      // Only refresh visual state if data has changed and we're outside cooldown
-      if (dataChanged && now - lastRefreshTime > REFRESH_COOLDOWN) {
-        console.log("[CalendarScreen] Refreshing calendar display after cooldown");
+      // Only refresh if we're outside cooldown period
+      if (now - lastRefreshTime > REFRESH_COOLDOWN) {
+        console.log("[CalendarScreen] Screen focused, refreshing data");
         setCalendarKey((prev) => prev + 1);
-        setDataChanged(false);
         setLastRefreshTime(now);
       } else {
         console.log("[CalendarScreen] No refresh needed or within cooldown period");
@@ -364,7 +413,7 @@ export default function CalendarScreen() {
       return () => {
         setSelectedDate(null);
       };
-    }, [dataChanged, lastRefreshTime])
+    }, [lastRefreshTime])
   );
 
   // Set up realtime subscriptions and cleanup

@@ -199,11 +199,11 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       isBefore(dateObj, fortyEightHoursFromNow) ||
       isAfter(dateObj, sixMonthsFromNow)
     ) {
-      console.log("[CalendarStore] Date outside valid range:", {
-        date,
-        fortyEightHoursFromNow,
-        sixMonthsFromNow,
-      });
+      // console.log("[CalendarStore] Date outside valid range:", {
+      //   date,
+      //   fortyEightHoursFromNow,
+      //   sixMonthsFromNow,
+      // });
       return "unavailable";
     }
 
@@ -623,45 +623,60 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
     const division = useUserStore.getState().division;
     if (!division) {
       console.log("[CalendarStore] No division found during initialization");
-      set({ error: "No division found" });
+      set({
+        error: "No division found",
+        isLoading: false,
+        isInitialized: false,
+      });
       return;
     }
 
-    try {
-      console.log("[CalendarStore] Starting initial data load:", {
-        startDate,
-        endDate,
-        division,
-      });
-      set({ isLoading: true, error: null });
+    // Get current state
+    const currentState = get();
+    console.log("[CalendarStore] Starting initial data load:", {
+      startDate,
+      endDate,
+      division,
+      currentState: {
+        isLoading: currentState.isLoading,
+        isInitialized: currentState.isInitialized,
+        hasRequests: Object.keys(currentState.requests).length,
+        hasAllotments: Object.keys(currentState.allotments).length,
+      },
+    });
 
+    // Reset error state and set loading
+    set({ error: null, isLoading: true });
+
+    try {
       const [allotmentsResult, requestsResult] = await Promise.all([
         get().fetchAllotments(startDate, endDate),
         get().fetchRequests(startDate, endDate),
       ]);
 
-      console.log("[CalendarStore] Initial data loaded:", {
-        allotments: Object.keys(allotmentsResult.allotments).length,
-        yearlyAllotments: Object.keys(allotmentsResult.yearlyAllotments).length,
-        requests: Object.keys(requestsResult).length,
-      });
-
-      // Set initialized if we have either allotments/yearly allotments or requests
+      // Check if we got any data
       const hasAllotments =
         Object.keys(allotmentsResult.allotments).length > 0 ||
         Object.keys(allotmentsResult.yearlyAllotments).length > 0;
       const hasRequests = Object.keys(requestsResult).length > 0;
 
-      set({
-        isLoading: false,
-        isInitialized: true, // Always set to true after initial load
-        error: null,
-      });
-
-      console.log("[CalendarStore] Initialization complete:", {
+      console.log("[CalendarStore] Data load complete:", {
         hasAllotments,
         hasRequests,
+        allotmentsCount: Object.keys(allotmentsResult.allotments).length,
+        yearlyAllotmentsCount:
+          Object.keys(allotmentsResult.yearlyAllotments).length,
+        requestsCount: Object.keys(requestsResult).length,
+      });
+
+      // Always update state with what we have
+      set({
+        isLoading: false,
         isInitialized: true,
+        error: null,
+        allotments: allotmentsResult.allotments,
+        yearlyAllotments: allotmentsResult.yearlyAllotments,
+        requests: requestsResult,
       });
     } catch (error) {
       console.error("[CalendarStore] Error loading data:", error);
@@ -670,7 +685,8 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
         error: error instanceof Error
           ? error.message
           : "Failed to load calendar data",
-        isInitialized: false,
+        // Keep initialized state if we were already initialized
+        isInitialized: currentState.isInitialized,
       });
     }
   },

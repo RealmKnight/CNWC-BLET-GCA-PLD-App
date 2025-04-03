@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
-import { StyleSheet, useWindowDimensions, Alert, Modal, Animated, ActivityIndicator } from "react-native";
+import { StyleSheet, useWindowDimensions, Alert, Modal, Animated, ActivityIndicator, Platform } from "react-native";
 import { useColorScheme } from "react-native";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
@@ -258,6 +258,28 @@ export default function MyTimeScreen() {
   const [lastRefreshTime, setLastRefreshTime] = useState(0);
   const REFRESH_COOLDOWN = 2000; // 2 seconds cooldown
   const mountTimeRef = useRef(Date.now());
+
+  // Handle visibility change for web browsers
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        console.log("[MyTime] Page became visible, checking data");
+        const now = Date.now();
+        if (now - lastRefreshTime > REFRESH_COOLDOWN) {
+          console.log("[MyTime] Refreshing data after visibility change");
+          initialize();
+          setLastRefreshTime(now);
+        } else {
+          console.log("[MyTime] Skipping refresh due to cooldown");
+        }
+      }
+    }
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [initialize, lastRefreshTime, REFRESH_COOLDOWN]);
 
   // Initialize data when component mounts
   useEffect(() => {
