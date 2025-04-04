@@ -60,7 +60,9 @@ function RootLayoutContent() {
       const inAuthGroup = segments[0] === "(auth)";
       const inAdminGroup = segments[0] === "(admin)";
       const inTabsGroup = segments[0] === "(tabs)";
+      const inProfileGroup = segments[0] === "(profile)";
       const isCompanyAdmin = session?.user?.user_metadata?.role === "company_admin";
+      const isModalRoute = segments[0] === "assign-officer";
 
       if (!session && !inAuthGroup) {
         // Redirect to sign-in if not authenticated
@@ -84,8 +86,8 @@ function RootLayoutContent() {
           } else {
             router.replace("/(tabs)");
           }
-        } else if (userRole?.includes("admin") && !inAdminGroup && !inTabsGroup && segments[0] !== "(profile)") {
-          // Redirect admin to admin area if not in admin, tabs, or profile group
+        } else if (userRole?.includes("admin") && !inAdminGroup && !inTabsGroup && !inProfileGroup && !isModalRoute) {
+          // Redirect admin to admin area if not in admin, tabs, profile, or modal route
           console.log("[Router] Redirecting admin to admin area");
           router.replace(`/(admin)/${userRole}`);
         } else if (!userRole?.includes("admin") && !inTabsGroup && !inAuthGroup) {

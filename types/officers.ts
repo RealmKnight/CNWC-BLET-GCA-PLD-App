@@ -60,9 +60,15 @@ export const POSITION_RULES = {
     ["Legislative Representative", "Alternate Legislative Representative"],
   ] as const,
 
-  // Positions that require holding another position
-  requires: {
-    "Vice-President": [] as OfficerPosition[],
+  // Positions that are allowed to be held together (not required)
+  allowedCombinations: {
+    "Local Chairman": [
+      "First Vice-Local Chairman",
+      "Second Vice-Local Chairman",
+      "Third Vice-Local Chairman",
+      "Fourth Vice-Local Chairman",
+      "Fifth Vice-Local Chairman",
+    ] as OfficerPosition[],
     "First Vice-Local Chairman": ["Local Chairman"] as OfficerPosition[],
     "Second Vice-Local Chairman": ["Local Chairman"] as OfficerPosition[],
     "Third Vice-Local Chairman": ["Local Chairman"] as OfficerPosition[],

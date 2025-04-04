@@ -1,12 +1,12 @@
-import { useState, useCallback } from "react";
+import { useCallback, useState } from "react";
 import { supabase } from "@/utils/supabase";
 import {
-  OfficerPosition,
-  OfficerAssignment,
   CurrentOfficer,
+  OfficerAssignment,
+  OfficerPosition,
+  OptionalPosition,
   POSITION_RULES,
   RequiredPosition,
-  OptionalPosition,
 } from "@/types/officers";
 import { Database } from "@/types/supabase";
 
@@ -64,7 +64,9 @@ export function useOfficerPositions({ division }: UseOfficerPositionsProps) {
       return transformedData;
     } catch (err) {
       console.error("Error fetching officers:", err);
-      setError(err instanceof Error ? err.message : "Failed to fetch current officers");
+      setError(
+        err instanceof Error ? err.message : "Failed to fetch current officers",
+      );
       return [];
     } finally {
       setIsLoading(false);
@@ -89,18 +91,25 @@ export function useOfficerPositions({ division }: UseOfficerPositionsProps) {
 
         return data as OfficerAssignment[];
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to fetch position history");
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Failed to fetch position history",
+        );
         return [];
       } finally {
         setIsLoading(false);
       }
     },
-    [division]
+    [division],
   );
 
   // Validate position assignment
   const validatePositionAssignment = useCallback(
-    async (memberPin: number, position: OfficerPosition): Promise<{ isValid: boolean; error?: string }> => {
+    async (
+      memberPin: number,
+      position: OfficerPosition,
+    ): Promise<{ isValid: boolean; error?: string }> => {
       try {
         // Get current positions held by the member
         const currentPositions = await fetchMemberPositionHistory(memberPin);
@@ -110,14 +119,17 @@ export function useOfficerPositions({ division }: UseOfficerPositionsProps) {
         if (activePositions.length >= POSITION_RULES.maxPositionsPerMember) {
           return {
             isValid: false,
-            error: `Members cannot hold more than ${POSITION_RULES.maxPositionsPerMember} positions`,
+            error:
+              `Members cannot hold more than ${POSITION_RULES.maxPositionsPerMember} positions`,
           };
         }
 
         // Check mutually exclusive positions
         for (const [pos1, pos2] of POSITION_RULES.mutuallyExclusive) {
           if (position === pos1 || position === pos2) {
-            const hasConflict = activePositions.some((p) => p.position === pos1 || p.position === pos2);
+            const hasConflict = activePositions.some((p) =>
+              p.position === pos1 || p.position === pos2
+            );
             if (hasConflict) {
               return {
                 isValid: false,
@@ -127,16 +139,17 @@ export function useOfficerPositions({ division }: UseOfficerPositionsProps) {
           }
         }
 
-        // Check required positions
-        const requirements = POSITION_RULES.requires[position as keyof typeof POSITION_RULES.requires];
-        if (requirements?.length > 0) {
-          const hasRequired = activePositions.some((p) => requirements.includes(p.position));
-          if (!hasRequired) {
-            return {
-              isValid: false,
-              error: `Must hold ${requirements.join(" or ")} to be assigned as ${position}`,
-            };
-          }
+        // No need to check for required positions anymore, as positions are allowed but not required
+        // Just check if the combination is allowed when relevant
+        const allowedPositions =
+          POSITION_RULES
+            .allowedCombinations[
+              position as keyof typeof POSITION_RULES.allowedCombinations
+            ];
+        if (allowedPositions) {
+          // If this position has allowed combinations, we don't need to validate anything
+          // The member is free to hold this position regardless of other positions
+          return { isValid: true };
         }
 
         return { isValid: true };
@@ -147,18 +160,24 @@ export function useOfficerPositions({ division }: UseOfficerPositionsProps) {
         };
       }
     },
-    [fetchMemberPositionHistory]
+    [fetchMemberPositionHistory],
   );
 
   // Assign position to member
   const assignPosition = useCallback(
-    async ({ memberPin, position, startDate = new Date().toISOString() }: AssignPositionParams) => {
+    async (
+      { memberPin, position, startDate = new Date().toISOString() }:
+        AssignPositionParams,
+    ) => {
       try {
         setIsLoading(true);
         setError(null);
 
         // Validate the assignment
-        const validation = await validatePositionAssignment(memberPin, position);
+        const validation = await validatePositionAssignment(
+          memberPin,
+          position,
+        );
         if (!validation.isValid) {
           throw new Error(validation.error);
         }
@@ -191,13 +210,15 @@ export function useOfficerPositions({ division }: UseOfficerPositionsProps) {
 
         return data as OfficerAssignment;
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to assign position");
+        setError(
+          err instanceof Error ? err.message : "Failed to assign position",
+        );
         throw err;
       } finally {
         setIsLoading(false);
       }
     },
-    [division, validatePositionAssignment]
+    [division, validatePositionAssignment],
   );
 
   // Remove position from member
@@ -221,13 +242,15 @@ export function useOfficerPositions({ division }: UseOfficerPositionsProps) {
 
         return data as OfficerAssignment;
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to remove position");
+        setError(
+          err instanceof Error ? err.message : "Failed to remove position",
+        );
         throw err;
       } finally {
         setIsLoading(false);
       }
     },
-    [supabase]
+    [supabase],
   );
 
   return {

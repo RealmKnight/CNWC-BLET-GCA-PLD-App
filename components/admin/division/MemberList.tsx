@@ -51,7 +51,7 @@ const WebButton = ({ onPress, children }: { onPress: () => void; children: React
 const MemberItem = React.memo(({ item, onPress }: { item: Member; onPress: () => void }) => {
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   return (
-    <TouchableOpacityComponent style={styles.memberItem} onPress={onPress}>
+    <TouchableOpacityComponent style={styles.memberItem} onPress={onPress} activeOpacity={0.7}>
       <View style={styles.memberInfo}>
         <ThemedText style={styles.memberName}>
           {item.last_name}, {item.first_name}
@@ -146,7 +146,7 @@ export function MemberList({ onEditMember }: MemberListProps) {
           onChangeText={setSearchQuery}
         />
         {searchQuery !== "" && (
-          <TouchableOpacityComponent style={styles.clearButton} onPress={() => setSearchQuery("")}>
+          <TouchableOpacityComponent style={styles.clearButton} onPress={() => setSearchQuery("")} activeOpacity={0.7}>
             <Ionicons name="close-circle" size={20} color={Colors[colorScheme].text} />
           </TouchableOpacityComponent>
         )}

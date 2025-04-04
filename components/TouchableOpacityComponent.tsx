@@ -1,6 +1,10 @@
 import React from "react";
-import { Platform, TouchableOpacity } from "react-native";
+import { Platform, TouchableOpacity, TouchableOpacityProps, View } from "react-native";
 
-// On web, we use the regular TouchableOpacity
-// On mobile, we re-export the regular TouchableOpacity since we're not using gesture handler for basic touches
-export { TouchableOpacity as TouchableOpacityComponent };
+// Create a forwarded ref component that properly handles refs
+const TouchableOpacityComponentBase = React.forwardRef<View, TouchableOpacityProps>((props, ref) => {
+  return <TouchableOpacity ref={ref} {...props} />;
+});
+
+// Export the component with proper ref handling
+export const TouchableOpacityComponent = TouchableOpacityComponentBase;

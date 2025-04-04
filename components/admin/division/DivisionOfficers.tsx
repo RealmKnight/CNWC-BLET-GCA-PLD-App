@@ -1,181 +1,243 @@
-import React, { useState } from "react";
-import { StyleSheet, Platform, Modal, useWindowDimensions, ScrollView, Pressable, View } from "react-native";
+import React, { useState, useEffect } from "react";
+import { StyleSheet, Platform, ScrollView, View } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { TouchableOpacityComponent } from "@/components/TouchableOpacityComponent";
 import { Ionicons } from "@expo/vector-icons";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
-import Animated, {
-  FadeIn,
-  FadeOut,
-  SlideInUp,
-  SlideOutDown,
-  useAnimatedGestureHandler,
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-  runOnJS,
-} from "react-native-reanimated";
-import { PanGestureHandler, PanGestureHandlerGestureEvent } from "react-native-gesture-handler";
+import Animated, { FadeIn, FadeOut, SlideInDown, SlideOutUp, Layout } from "react-native-reanimated";
 import { AssignOfficerPosition } from "./AssignOfficerPosition";
 import { useOfficerPositions } from "@/hooks/useOfficerPositions";
 import { router } from "expo-router";
+import { format } from "date-fns";
+import DateTimePickerModal from "react-native-modal-datetime-picker";
+import Toast from "react-native-toast-message";
+import { supabase } from "@/utils/supabase";
+import DateTimePicker from "@react-native-community/datetimepicker";
+import { Modal } from "@/components/ui/Modal";
 
 const AnimatedThemedView = Animated.createAnimatedComponent(ThemedView);
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
-const AnimatedTouchableOpacity = Animated.createAnimatedComponent(TouchableOpacityComponent);
-
-// Define required and optional officer positions
-const REQUIRED_POSITIONS = [
-  "President",
-  "Vice-President",
-  "Secretary/Treasurer",
-  "Alternate Secretary/Treasurer",
-  "Legislative Representative",
-  "Alternate Legislative Representative",
-  "Local Chairman",
-  "First Vice-Local Chairman",
-  "Second Vice-Local Chairman",
-  "Guide",
-  "Chaplain",
-  "Delegate to the National Division",
-  "First Alternate Delegate to the National Division",
-  "Second Alternate Delegate to the National Division",
-  "First Trustee",
-  "Second Trustee",
-  "Third Trustee",
-  "First Alternate Trustee",
-  "Second Alternate Trustee",
-  "Third Alternate Trustee",
-] as const;
-
-const OPTIONAL_POSITIONS = [
-  "Third Vice-Local Chairman",
-  "Fourth Vice-Local Chairman",
-  "Fifth Vice-Local Chairman",
-] as const;
-
-type RequiredPosition = (typeof REQUIRED_POSITIONS)[number];
-type OptionalPosition = (typeof OPTIONAL_POSITIONS)[number];
-type OfficerPosition = RequiredPosition | OptionalPosition;
-
-interface Officer {
-  position: OfficerPosition;
-  memberId: string;
-  memberName: string;
-  startDate: string;
-  isRequired: boolean;
-}
-
 const isWeb = Platform.OS === "web";
+const isIOS = Platform.OS === "ios";
 
-type GestureContext = {
-  y: number;
-};
+// Combine all positions into a single array with required flag
+const ALL_POSITIONS = [
+  { title: "President", required: true },
+  { title: "Vice-President", required: true },
+  { title: "Secretary/Treasurer", required: true },
+  { title: "Alternate Secretary/Treasurer", required: true },
+  { title: "Legislative Representative", required: true },
+  { title: "Alternate Legislative Representative", required: true },
+  { title: "Local Chairman", required: true },
+  { title: "First Vice-Local Chairman", required: true },
+  { title: "Second Vice-Local Chairman", required: true },
+  { title: "Third Vice-Local Chairman", required: false },
+  { title: "Fourth Vice-Local Chairman", required: false },
+  { title: "Fifth Vice-Local Chairman", required: false },
+  { title: "Guide", required: true },
+  { title: "Chaplain", required: true },
+  { title: "Delegate to the National Division", required: true },
+  { title: "First Alternate Delegate to the National Division", required: true },
+  { title: "Second Alternate Delegate to the National Division", required: true },
+  { title: "First Trustee", required: true },
+  { title: "Second Trustee", required: true },
+  { title: "Third Trustee", required: true },
+  { title: "First Alternate Trustee", required: true },
+  { title: "Second Alternate Trustee", required: true },
+  { title: "Third Alternate Trustee", required: true },
+] as const;
+
+type OfficerPosition = (typeof ALL_POSITIONS)[number]["title"];
 
 interface DivisionOfficersProps {
   division: string;
 }
 
 export function DivisionOfficers({ division }: DivisionOfficersProps) {
+  const [expandedPosition, setExpandedPosition] = useState<OfficerPosition | null>(null);
+  const [assignModalPosition, setAssignModalPosition] = useState<OfficerPosition | null>(null);
+  const [currentOfficers, setCurrentOfficers] = useState<any[]>([]);
+  const [isDatePickerVisible, setDatePickerVisible] = useState(false);
   const [selectedPosition, setSelectedPosition] = useState<OfficerPosition | null>(null);
+  const [selectedDate, setSelectedDate] = useState(new Date());
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
-  const tintColor = Colors[colorScheme].tint;
-  const { width } = useWindowDimensions();
   const { fetchCurrentOfficers } = useOfficerPositions({ division });
 
+  useEffect(() => {
+    loadCurrentOfficers();
+  }, []);
+
+  const loadCurrentOfficers = async () => {
+    const officers = await fetchCurrentOfficers();
+    setCurrentOfficers(officers);
+  };
+
   const handlePositionPress = (position: OfficerPosition) => {
-    setSelectedPosition(position);
-    if (!isWeb) {
+    setExpandedPosition(expandedPosition === position ? null : position);
+  };
+
+  const handleAssign = async (position: OfficerPosition) => {
+    console.log("[DivisionOfficers] Opening assign modal for position:", position, "division:", division);
+    if (isWeb) {
+      setAssignModalPosition(position);
+    } else {
+      // For mobile platforms, navigate to the modal screen
       router.push({
         pathname: "/assign-officer",
         params: {
           position,
           division,
+          updateDateOnly: currentOfficers.find((officer) => String(officer.position).trim() === String(position).trim())
+            ? "true"
+            : "false",
         },
       });
     }
   };
 
-  const renderPositionList = () => (
-    <ScrollView
-      style={styles.positionListScroll}
-      contentContainerStyle={styles.positionListContent}
-      showsVerticalScrollIndicator={true}
-    >
-      <ThemedText type="subtitle">Required Positions</ThemedText>
-      {REQUIRED_POSITIONS.map((position) => (
-        <TouchableOpacityComponent
-          key={position}
-          style={[styles.positionItem, selectedPosition === position && styles.selectedPosition]}
-          onPress={() => handlePositionPress(position)}
-        >
-          <ThemedText style={[styles.positionText, selectedPosition === position && styles.selectedPositionText]}>
-            {position}
-          </ThemedText>
-          <Ionicons
-            name={isWeb ? "chevron-forward" : "chevron-down"}
-            size={20}
-            color={selectedPosition === position ? "#fff" : Colors[colorScheme].text}
-          />
-        </TouchableOpacityComponent>
-      ))}
-
-      <ThemedText type="subtitle" style={styles.optionalTitle}>
-        Optional Positions
-      </ThemedText>
-      {OPTIONAL_POSITIONS.map((position) => (
-        <TouchableOpacityComponent
-          key={position}
-          style={[styles.positionItem, selectedPosition === position && styles.selectedPosition]}
-          onPress={() => handlePositionPress(position)}
-        >
-          <ThemedText style={[styles.positionText, selectedPosition === position && styles.selectedPositionText]}>
-            {position}
-          </ThemedText>
-          <Ionicons
-            name={isWeb ? "chevron-forward" : "chevron-down"}
-            size={20}
-            color={selectedPosition === position ? "#fff" : Colors[colorScheme].text}
-          />
-        </TouchableOpacityComponent>
-      ))}
-    </ScrollView>
-  );
-
-  const renderPositionDetails = () => {
-    if (!selectedPosition) {
-      return (
-        <ThemedView style={styles.detailsPlaceholder}>
-          <ThemedText>Select a position to view or edit its details</ThemedText>
-        </ThemedView>
-      );
+  const handleUpdateDate = (position: OfficerPosition) => {
+    const currentOfficer = currentOfficers.find(
+      (officer) => String(officer.position).trim() === String(position).trim()
+    );
+    if (currentOfficer) {
+      // For the date picker, adjust the UTC date to local
+      const date = new Date(currentOfficer.startDate);
+      date.setHours(12, 0, 0, 0); // Set to noon to avoid timezone issues
+      setSelectedDate(date);
+    } else {
+      setSelectedDate(new Date());
     }
+    setSelectedPosition(position);
+    setDatePickerVisible(true);
+  };
+
+  const handleDateConfirm = async (date: Date) => {
+    setDatePickerVisible(false);
+    if (!selectedPosition) return;
+
+    try {
+      const currentOfficer = currentOfficers.find(
+        (officer) => String(officer.position).trim() === String(selectedPosition).trim()
+      );
+
+      if (!currentOfficer) {
+        throw new Error("No officer found for this position");
+      }
+
+      // Set the time to noon UTC to ensure consistent date storage
+      const saveDate = new Date(date);
+      saveDate.setUTCHours(12, 0, 0, 0);
+
+      const { error } = await supabase
+        .from("officer_positions")
+        .update({ start_date: saveDate.toISOString() })
+        .eq("member_pin", currentOfficer.memberPin)
+        .eq("position", selectedPosition)
+        .eq("division", division)
+        .is("end_date", null);
+
+      if (error) throw error;
+
+      await loadCurrentOfficers();
+
+      Toast.show({
+        type: "success",
+        text1: "Date Updated",
+        text2: `Start date updated for ${selectedPosition}`,
+        position: "bottom",
+        visibilityTime: 3000,
+      });
+    } catch (error: any) {
+      console.error("Error updating date:", error);
+      Toast.show({
+        type: "error",
+        text1: "Error",
+        text2: error.message || "Failed to update start date",
+        position: "bottom",
+        visibilityTime: 3000,
+      });
+    }
+  };
+
+  const formatStartDate = (dateString: string) => {
+    try {
+      const date = new Date(dateString);
+      return format(date, "MMM d, yyyy");
+    } catch (error) {
+      console.error("Error formatting date:", dateString, error);
+      return dateString;
+    }
+  };
+
+  const renderPositionItem = (position: (typeof ALL_POSITIONS)[number]) => {
+    const isExpanded = expandedPosition === position.title;
+    const iconName = isExpanded ? "chevron-up" : "chevron-down";
+    const currentOfficer = currentOfficers.find(
+      (officer) => String(officer.position).trim() === String(position.title).trim()
+    );
 
     return (
-      <ScrollView style={styles.positionDetailsScroll}>
-        <AnimatedThemedView entering={FadeIn} exiting={FadeOut} style={styles.positionDetails}>
-          <ThemedText type="subtitle">{selectedPosition}</ThemedText>
-          <AssignOfficerPosition
-            position={selectedPosition}
-            division={division}
-            onAssign={() => {
-              // Refresh the officers list
-              fetchCurrentOfficers();
-              // Clear the selection if on mobile
-              if (!isWeb) {
-                setSelectedPosition(null);
-              }
-            }}
-            onCancel={() => {
-              if (!isWeb) {
-                setSelectedPosition(null);
-              }
-            }}
-          />
-        </AnimatedThemedView>
-      </ScrollView>
+      <Animated.View key={position.title} layout={Layout.springify()} entering={FadeIn} exiting={FadeOut}>
+        <TouchableOpacityComponent
+          style={[styles.positionItem, isExpanded && styles.selectedPosition]}
+          onPress={() => handlePositionPress(position.title)}
+          activeOpacity={0.7}
+        >
+          <View style={styles.positionHeader}>
+            <View style={styles.positionTitleContainer}>
+              <ThemedText style={[styles.positionText, isExpanded && styles.selectedPositionText]}>
+                {position.title}
+              </ThemedText>
+              {!position.required && (
+                <ThemedText style={[styles.optionalBadge, isExpanded && styles.selectedPositionText]}>
+                  Optional
+                </ThemedText>
+              )}
+            </View>
+            <Ionicons name={iconName} size={20} color={isExpanded ? "#fff" : Colors[colorScheme].text} />
+          </View>
+        </TouchableOpacityComponent>
+
+        {isExpanded && (
+          <AnimatedThemedView entering={SlideInDown} exiting={SlideOutUp} style={styles.positionDetails}>
+            {currentOfficer ? (
+              <View style={styles.officerInfo}>
+                <View style={styles.officerDetails}>
+                  <ThemedText style={styles.officerName}>
+                    {currentOfficer.firstName} {currentOfficer.lastName}
+                  </ThemedText>
+                  <ThemedText style={styles.officerPin}>PIN: {currentOfficer.memberPin}</ThemedText>
+                  <ThemedText style={styles.officerStartDate}>
+                    Since: {formatStartDate(currentOfficer.startDate)}
+                  </ThemedText>
+                </View>
+                <View style={styles.buttonContainer}>
+                  <TouchableOpacityComponent
+                    style={[styles.actionButton, styles.updateDateButton]}
+                    onPress={() => handleUpdateDate(position.title)}
+                  >
+                    <ThemedText style={styles.buttonText}>Update Start Date</ThemedText>
+                  </TouchableOpacityComponent>
+                  <TouchableOpacityComponent
+                    style={[styles.actionButton, styles.changeButton]}
+                    onPress={() => handleAssign(position.title)}
+                  >
+                    <ThemedText style={styles.buttonText}>Change</ThemedText>
+                  </TouchableOpacityComponent>
+                </View>
+              </View>
+            ) : (
+              <View style={styles.emptyState}>
+                <ThemedText style={styles.emptyStateText}>No officer assigned</ThemedText>
+                <TouchableOpacityComponent style={styles.assignButton} onPress={() => handleAssign(position.title)}>
+                  <ThemedText style={styles.buttonText}>Assign</ThemedText>
+                </TouchableOpacityComponent>
+              </View>
+            )}
+          </AnimatedThemedView>
+        )}
+      </Animated.View>
     );
   };
 
@@ -184,10 +246,83 @@ export function DivisionOfficers({ division }: DivisionOfficersProps) {
       <ThemedView style={styles.header}>
         <ThemedText type="title">Division Officers</ThemedText>
       </ThemedView>
-      <ThemedView style={styles.content}>
-        {renderPositionList()}
-        {isWeb && renderPositionDetails()}
-      </ThemedView>
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={true}
+      >
+        {ALL_POSITIONS.map(renderPositionItem)}
+      </ScrollView>
+
+      {/* Mobile date picker */}
+      {!isWeb && (
+        <DateTimePickerModal
+          isVisible={isDatePickerVisible}
+          mode="date"
+          onConfirm={handleDateConfirm}
+          onCancel={() => setDatePickerVisible(false)}
+          date={selectedDate}
+          display={Platform.OS === "ios" ? "inline" : "default"}
+        />
+      )}
+
+      {/* Web date picker modal */}
+      {isWeb && isDatePickerVisible && (
+        <Modal
+          visible={true}
+          onClose={() => setDatePickerVisible(false)}
+          title={`Update Start Date - ${selectedPosition}`}
+        >
+          <View style={styles.webDatePickerContainer}>
+            <input
+              type="date"
+              value={format(selectedDate, "yyyy-MM-dd")}
+              onChange={(e) => {
+                if (e.target.value) {
+                  const newDate = new Date(e.target.value + "T12:00:00Z");
+                  setSelectedDate(newDate);
+                }
+              }}
+              style={{
+                fontSize: "16px",
+                padding: "8px 12px",
+                borderRadius: "8px",
+                border: "1px solid #ccc",
+                marginBottom: "20px",
+                width: "200px",
+              }}
+            />
+            <View style={styles.webDatePickerButtons}>
+              <TouchableOpacityComponent
+                style={[styles.actionButton, styles.cancelButton]}
+                onPress={() => setDatePickerVisible(false)}
+              >
+                <ThemedText style={styles.buttonText}>Cancel</ThemedText>
+              </TouchableOpacityComponent>
+              <TouchableOpacityComponent
+                style={[styles.actionButton, styles.updateButton]}
+                onPress={() => handleDateConfirm(selectedDate)}
+              >
+                <ThemedText style={styles.buttonText}>Update</ThemedText>
+              </TouchableOpacityComponent>
+            </View>
+          </View>
+        </Modal>
+      )}
+
+      {/* Only render the assign modal component on web */}
+      {isWeb && assignModalPosition && (
+        <AssignOfficerPosition
+          position={assignModalPosition}
+          division={division}
+          onAssign={() => {
+            setAssignModalPosition(null);
+            loadCurrentOfficers();
+          }}
+          onCancel={() => setAssignModalPosition(null)}
+          visible={true}
+        />
+      )}
     </ThemedView>
   );
 }
@@ -199,27 +334,15 @@ const styles = StyleSheet.create({
   header: {
     marginBottom: 24,
   },
-  content: {
+  scrollView: {
     flex: 1,
-    flexDirection: isWeb ? "row" : "column",
-    gap: 24,
   },
-  positionListScroll: {
-    flex: isWeb ? undefined : 1,
-    width: isWeb ? 300 : "100%",
-  },
-  positionListContent: {
+  scrollContent: {
     padding: 16,
-    backgroundColor: Colors.light.background,
-    borderRadius: 8,
+    gap: 8,
   },
   positionItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: 16,
     borderRadius: 8,
-    marginVertical: 4,
     backgroundColor: Colors.light.background,
     elevation: 1,
     shadowColor: "#000",
@@ -227,36 +350,115 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 2,
   },
-  selectedPosition: {
-    backgroundColor: Colors.light.tint,
+  positionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: 16,
+  },
+  positionTitleContainer: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
   positionText: {
     fontSize: 16,
     flex: 1,
-    marginRight: 8,
+  },
+  optionalBadge: {
+    fontSize: 12,
+    color: Colors.light.tint,
+    backgroundColor: Colors.light.tint + "20",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  selectedPosition: {
+    backgroundColor: Colors.light.tint,
   },
   selectedPositionText: {
     color: "#fff",
   },
-  optionalTitle: {
-    marginTop: 24,
-    marginBottom: 8,
-  },
-  positionDetailsScroll: {
-    flex: 1,
-  },
   positionDetails: {
-    flex: 1,
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(0,0,0,0.1)",
     backgroundColor: Colors.light.background,
-    borderRadius: 8,
-    padding: 20,
   },
-  detailsPlaceholder: {
-    flex: 1,
-    backgroundColor: Colors.light.background,
-    borderRadius: 8,
-    padding: 20,
-    justifyContent: "center",
+  officerInfo: {
+    flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
+  },
+  officerDetails: {
+    flex: 1,
+  },
+  officerName: {
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  officerPin: {
+    fontSize: 14,
+    opacity: 0.7,
+    marginTop: 4,
+  },
+  officerStartDate: {
+    fontSize: 14,
+    opacity: 0.7,
+    marginTop: 2,
+  },
+  emptyState: {
+    alignItems: "center",
+    paddingVertical: 8,
+  },
+  emptyStateText: {
+    fontSize: 14,
+    opacity: 0.7,
+    marginBottom: 12,
+  },
+  buttonContainer: {
+    flexDirection: "column",
+    gap: 8,
+    marginLeft: 16,
+  },
+  actionButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  updateDateButton: {
+    backgroundColor: Colors.light.tint + "CC", // Slightly more transparent
+  },
+  changeButton: {
+    backgroundColor: Colors.light.tint,
+  },
+  assignButton: {
+    backgroundColor: Colors.light.tint,
+    paddingHorizontal: 24,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  buttonText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  webDatePickerContainer: {
+    padding: 20,
+    alignItems: "center",
+  },
+  webDatePicker: {
+    marginBottom: 20,
+  },
+  webDatePickerButtons: {
+    flexDirection: "row",
+    gap: 16,
+  },
+  cancelButton: {
+    backgroundColor: Colors.light.text + "80",
+  },
+  updateButton: {
+    backgroundColor: Colors.light.tint,
   },
 });

@@ -1,6 +1,6 @@
 import React from "react";
 import { StyleSheet, View, Platform } from "react-native";
-import { useLocalSearchParams, router } from "expo-router";
+import { useLocalSearchParams, router, Stack } from "expo-router";
 import { AssignOfficerPosition } from "@/components/admin/division/AssignOfficerPosition";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -13,7 +13,10 @@ import { OfficerPosition } from "@/types/officers";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function AssignOfficerScreen() {
-  const { position, division } = useLocalSearchParams<{ position: string; division: string }>();
+  const { position, division } = useLocalSearchParams<{
+    position: string;
+    division: string;
+  }>();
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const { fetchCurrentOfficers } = useOfficerPositions({ division: division || "" });
 
@@ -39,6 +42,34 @@ export default function AssignOfficerScreen() {
     );
   }
 
+  // Configure the screen for modal presentation
+  if (Platform.OS !== "web") {
+    return (
+      <>
+        <Stack.Screen
+          options={{
+            title: position,
+            presentation: "modal",
+            headerLeft: () => (
+              <TouchableOpacityComponent onPress={handleClose}>
+                <ThemedText style={styles.headerButton}>Cancel</ThemedText>
+              </TouchableOpacityComponent>
+            ),
+          }}
+        />
+        <SafeAreaView style={{ flex: 1 }} edges={["bottom"]}>
+          <AssignOfficerPosition
+            position={position as OfficerPosition}
+            division={division}
+            onAssign={handleAssign}
+            onCancel={handleClose}
+            visible={true}
+          />
+        </SafeAreaView>
+      </>
+    );
+  }
+
   return (
     <SafeAreaView style={{ flex: 1 }}>
       <ThemedView style={styles.container}>
@@ -61,6 +92,7 @@ export default function AssignOfficerScreen() {
             division={division}
             onAssign={handleAssign}
             onCancel={handleClose}
+            visible={true}
           />
         </View>
       </ThemedView>
@@ -106,5 +138,10 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
+  },
+  headerButton: {
+    fontSize: 17,
+    color: Colors.light.tint,
+    marginLeft: 8,
   },
 });

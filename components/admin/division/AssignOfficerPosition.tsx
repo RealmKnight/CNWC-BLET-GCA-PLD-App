@@ -1,15 +1,30 @@
-import React, { useState, useEffect } from "react";
-import { StyleSheet, Platform, TextInput, View, ScrollView, useWindowDimensions } from "react-native";
+import React, { useState, useEffect, Fragment } from "react";
+import {
+  StyleSheet,
+  Platform,
+  TextInput,
+  View,
+  ScrollView,
+  Modal,
+  useWindowDimensions,
+  KeyboardAvoidingView,
+  TouchableOpacity,
+  ActivityIndicator,
+} from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { TouchableOpacityComponent } from "@/components/TouchableOpacityComponent";
 import { Ionicons } from "@expo/vector-icons";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
-import { OfficerPosition, CurrentOfficer } from "@/types/officers";
+import { OfficerPosition } from "@/types/officers";
 import { useOfficerPositions } from "@/hooks/useOfficerPositions";
 import { supabase } from "@/utils/supabase";
 import DateTimePickerModal from "react-native-modal-datetime-picker";
+import { format } from "date-fns";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import DateTimePicker from "@react-native-community/datetimepicker";
+import Toast from "react-native-toast-message";
 
 interface Member {
   pin_number: number;
@@ -23,202 +38,262 @@ interface AssignOfficerPositionProps {
   division: string;
   onAssign: () => void;
   onCancel: () => void;
+  visible: boolean;
+  updateDateOnly?: boolean;
 }
 
-export function AssignOfficerPosition({ position, division, onAssign, onCancel }: AssignOfficerPositionProps) {
+export function AssignOfficerPosition({
+  position,
+  division,
+  onAssign,
+  onCancel,
+  visible,
+  updateDateOnly = false,
+}: AssignOfficerPositionProps) {
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
-  const [currentOfficer, setCurrentOfficer] = useState<CurrentOfficer | null>(null);
+  const [currentOfficer, setCurrentOfficer] = useState<any | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [startDate, setStartDate] = useState(new Date());
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [isDatePickerVisible, setDatePickerVisible] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const { assignPosition, fetchCurrentOfficers } = useOfficerPositions({ division });
   const { height: windowHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const isWeb = Platform.OS === "web";
+  const [startDate, setStartDate] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchMembers();
-    fetchCurrentPositionHolder();
-  }, [position, division]);
+    async function loadData() {
+      if (visible) {
+        console.log("[AssignOfficerPosition] Loading data for division:", division);
+        await fetchMembers();
+        await fetchCurrentPositionHolder();
+      }
+    }
+    loadData();
+  }, [visible, position, division]);
+
+  const fetchMembers = async () => {
+    try {
+      console.log("[AssignOfficerPosition] Fetching members for division:", division);
+      setIsLoading(true);
+
+      // First, let's log what we're querying
+      const query = supabase
+        .from("members")
+        .select("pin_number, first_name, last_name, status")
+        .eq("division", division)
+        .eq("status", "ACTIVE")
+        .is("deleted", false)
+        .order("last_name", { ascending: true });
+
+      console.log("[AssignOfficerPosition] Query parameters:", { division, status: "ACTIVE", deleted: false });
+
+      const { data, error } = await query;
+
+      if (error) {
+        console.error("[AssignOfficerPosition] Database error:", error);
+        throw error;
+      }
+
+      console.log("[AssignOfficerPosition] Raw response:", data);
+      console.log("[AssignOfficerPosition] Fetched members:", data?.length || 0);
+
+      if (data) {
+        setMembers(data);
+        setIsLoading(false);
+      }
+    } catch (err) {
+      console.error("[AssignOfficerPosition] Error fetching members:", err);
+      setError("Failed to fetch members");
+      setIsLoading(false);
+    }
+  };
 
   const fetchCurrentPositionHolder = async () => {
     try {
       const officers = await fetchCurrentOfficers();
-      console.log("Current officers:", officers);
-      console.log("Looking for position:", position);
-
-      // Strict comparison of position strings
       const currentHolder = officers.find((officer) => String(officer.position).trim() === String(position).trim());
-
-      console.log("Found holder:", currentHolder);
       if (currentHolder) {
         setCurrentOfficer(currentHolder);
-      } else {
-        setCurrentOfficer(null);
+        // Set the initial date from the timestamp
+        const date = new Date(currentHolder.startDate);
+        setSelectedDate(date);
+        setStartDate(date.toISOString().split("T")[0]);
       }
     } catch (err) {
       console.error("Failed to fetch current position holder:", err);
-      setCurrentOfficer(null);
     }
   };
 
-  const fetchMembers = async () => {
+  const handleDateChange = (date: Date) => {
+    setSelectedDate(date);
+    setStartDate(date.toISOString().split("T")[0]);
+  };
+
+  const handleConfirm = async () => {
+    if (!selectedMember || !startDate) return;
+
     try {
-      setIsLoading(true);
-      const { data, error } = await supabase
-        .from("members")
-        .select("pin_number, first_name, last_name, status")
-        .eq("division", division)
-        .eq("deleted", false)
-        .order("last_name");
+      // Create a date at noon UTC to avoid timezone issues
+      const date = new Date(startDate);
+      date.setUTCHours(12, 0, 0, 0);
+
+      const { error } = await supabase.from("officer_positions").insert({
+        member_pin: selectedMember.pin_number,
+        position: position,
+        division: division,
+        start_date: date.toISOString(), // Store as ISO timestamp at noon UTC
+      });
 
       if (error) throw error;
-      setMembers(data || []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to fetch members");
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
-  const filteredMembers = members.filter((member) => {
-    const searchLower = searchQuery.toLowerCase();
-    return (
-      member.first_name.toLowerCase().includes(searchLower) ||
-      member.last_name.toLowerCase().includes(searchLower) ||
-      member.pin_number.toString().includes(searchLower)
-    );
-  });
-
-  const handleAssign = async () => {
-    if (!selectedMember) {
-      setError("Please select a member");
-      return;
-    }
-
-    try {
-      setIsLoading(true);
-      await assignPosition({
-        memberPin: selectedMember.pin_number,
-        position,
-        startDate: startDate.toISOString(),
+      Toast.show({
+        type: "success",
+        text1: "Success",
+        text2: `${selectedMember.first_name} ${selectedMember.last_name} assigned as ${position}`,
+        position: "bottom",
+        visibilityTime: 3000,
       });
-      await fetchCurrentPositionHolder();
+
       onAssign();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to assign position");
-    } finally {
-      setIsLoading(false);
+    } catch (error: any) {
+      console.error("Error assigning officer:", error);
+      setError(error.message);
     }
   };
+
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return format(date, "MMM d, yyyy");
+  };
+
+  const filteredMembers = React.useMemo(() => {
+    console.log("[AssignOfficerPosition] Filtering members. Total:", members.length, "Search:", searchQuery);
+    return members.filter(
+      (member) =>
+        searchQuery === "" ||
+        `${member.first_name} ${member.last_name}`.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        member.pin_number.toString().includes(searchQuery)
+    );
+  }, [members, searchQuery]);
 
   const handleDateConfirm = (date: Date) => {
-    setStartDate(date);
+    setSelectedDate(date);
     setDatePickerVisible(false);
   };
 
-  const renderMemberList = () => (
-    <View style={[styles.memberListContainer, !isWeb && { maxHeight: windowHeight * 0.3 }]}>
-      <ScrollView style={styles.memberList} nestedScrollEnabled={true} contentContainerStyle={styles.memberListContent}>
-        {filteredMembers.map((member) => (
-          <TouchableOpacityComponent
-            key={member.pin_number}
-            style={[
-              styles.memberItem,
-              selectedMember?.pin_number === member.pin_number && styles.selectedMember,
-              { borderColor: Colors[colorScheme].buttonBorder },
-            ]}
-            onPress={() => setSelectedMember(member)}
-          >
-            <ThemedText>
-              {member.last_name}, {member.first_name} ({member.pin_number})
+  const modalContent = (
+    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.container}>
+      <ThemedView style={[styles.header, { paddingTop: insets.top }]}>
+        <TouchableOpacity onPress={onCancel} style={styles.backButton}>
+          <Ionicons name="arrow-back" size={24} color={Colors[colorScheme].text} />
+        </TouchableOpacity>
+        <ThemedText style={styles.title}>{position}</ThemedText>
+        <View style={styles.backButton} />
+      </ThemedView>
+      <ThemedView style={styles.searchContainer}>
+        {currentOfficer && (
+          <ThemedView style={styles.currentHolderCard}>
+            <ThemedText style={styles.currentHolderTitle}>Current Position Holder</ThemedText>
+            <ThemedText style={styles.currentHolderName}>
+              {currentOfficer.firstName} {currentOfficer.lastName}
             </ThemedText>
+            <ThemedText style={styles.currentHolderDetails}>PIN: {currentOfficer.memberPin}</ThemedText>
+            <ThemedText style={styles.currentHolderDetails}>Since: {formatDate(currentOfficer.startDate)}</ThemedText>
+          </ThemedView>
+        )}
+        <TextInput
+          style={[styles.searchInput, { color: Colors[colorScheme].text }]}
+          placeholder="Search members..."
+          placeholderTextColor={Colors[colorScheme].textDim}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+        />
+        {searchQuery !== "" && (
+          <TouchableOpacityComponent style={styles.clearButton} onPress={() => setSearchQuery("")}>
+            <Ionicons name="close-circle" size={20} color={Colors[colorScheme].text} />
           </TouchableOpacityComponent>
-        ))}
+        )}
+      </ThemedView>
+
+      <ScrollView
+        style={styles.memberList}
+        contentContainerStyle={styles.memberListContent}
+        keyboardShouldPersistTaps="handled"
+      >
+        {isLoading ? (
+          <ThemedText style={styles.centerText}>Loading members...</ThemedText>
+        ) : filteredMembers.length === 0 ? (
+          <ThemedText style={styles.centerText}>No members found</ThemedText>
+        ) : (
+          filteredMembers.map((member) => (
+            <TouchableOpacityComponent
+              key={member.pin_number}
+              style={[styles.memberItem, selectedMember?.pin_number === member.pin_number && styles.selectedMember]}
+              onPress={() => setSelectedMember(member)}
+            >
+              <View style={styles.memberInfo}>
+                <ThemedText style={styles.memberName}>
+                  {member.last_name}, {member.first_name}
+                </ThemedText>
+                <ThemedText style={styles.memberPin}>PIN: {member.pin_number}</ThemedText>
+              </View>
+              {selectedMember?.pin_number === member.pin_number && (
+                <Ionicons name="checkmark-circle" size={24} color={Colors[colorScheme].tint} />
+              )}
+            </TouchableOpacityComponent>
+          ))
+        )}
       </ScrollView>
-    </View>
+      <ThemedView style={[styles.footer, { paddingBottom: insets.bottom }]}>
+        {error && <ThemedText style={styles.error}>{error}</ThemedText>}
+        <View style={styles.dateContainer}>
+          <ThemedText>Start Date:</ThemedText>
+          <TouchableOpacityComponent onPress={() => setDatePickerVisible(true)}>
+            <ThemedText style={styles.dateText}>{format(selectedDate || new Date(), "MMM d, yyyy")}</ThemedText>
+          </TouchableOpacityComponent>
+        </View>
+        <View style={styles.buttonContainer}>
+          <TouchableOpacityComponent style={[styles.button, styles.cancelButton]} onPress={onCancel}>
+            <ThemedText style={styles.buttonText}>Cancel</ThemedText>
+          </TouchableOpacityComponent>
+          <TouchableOpacityComponent
+            style={[styles.button, styles.assignButton, (!selectedMember || isLoading) && styles.disabledButton]}
+            onPress={handleConfirm}
+            disabled={!selectedMember || isLoading}
+          >
+            <ThemedText style={styles.buttonText}>{isLoading ? "Assigning..." : "Assign"}</ThemedText>
+          </TouchableOpacityComponent>
+        </View>
+      </ThemedView>
+      <DateTimePickerModal
+        isVisible={isDatePickerVisible}
+        mode="date"
+        onConfirm={handleDateConfirm}
+        onCancel={() => setDatePickerVisible(false)}
+        date={selectedDate || new Date()}
+      />
+    </KeyboardAvoidingView>
   );
 
-  if (isLoading) {
+  if (isWeb) {
     return (
-      <ThemedView style={styles.container}>
-        <ThemedText>Loading...</ThemedText>
-      </ThemedView>
-    );
-  }
-
-  if (error) {
-    return (
-      <ThemedView style={styles.container}>
-        <ThemedText style={styles.error}>{error}</ThemedText>
-        <TouchableOpacityComponent onPress={onCancel} style={styles.button}>
-          <ThemedText>Close</ThemedText>
-        </TouchableOpacityComponent>
-      </ThemedView>
+      <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
+        <ThemedView style={styles.webModalOverlay}>
+          <ThemedView style={styles.webModalContent}>{modalContent}</ThemedView>
+        </ThemedView>
+      </Modal>
     );
   }
 
   return (
-    <ThemedView style={styles.container}>
-      <View style={styles.content}>
-        <ThemedText style={styles.title}>Assign {position}</ThemedText>
-
-        {currentOfficer && (
-          <ThemedView style={styles.currentOfficerContainer}>
-            <ThemedText style={styles.currentOfficerLabel}>Current Position Holder:</ThemedText>
-            <ThemedView style={styles.currentOfficerInfo}>
-              <ThemedText style={styles.currentOfficerName}>
-                {currentOfficer.lastName}, {currentOfficer.firstName}
-              </ThemedText>
-              <ThemedText style={styles.currentOfficerDate}>
-                Since: {new Date(currentOfficer.startDate).toLocaleDateString()}
-              </ThemedText>
-            </ThemedView>
-          </ThemedView>
-        )}
-
-        <TextInput
-          style={[
-            styles.searchInput,
-            { color: Colors[colorScheme].text, borderColor: Colors[colorScheme].buttonBorder },
-          ]}
-          placeholder="Search members..."
-          placeholderTextColor={Colors[colorScheme].text}
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-        />
-
-        {renderMemberList()}
-
-        <TouchableOpacityComponent style={styles.dateButton} onPress={() => setDatePickerVisible(true)}>
-          <ThemedText>Start Date: {startDate.toLocaleDateString()}</ThemedText>
-        </TouchableOpacityComponent>
-
-        <DateTimePickerModal
-          isVisible={isDatePickerVisible}
-          mode="date"
-          onConfirm={handleDateConfirm}
-          onCancel={() => setDatePickerVisible(false)}
-          date={startDate}
-        />
-
-        <View style={styles.buttonContainer}>
-          <TouchableOpacityComponent style={[styles.button, styles.cancelButton]} onPress={onCancel}>
-            <ThemedText>Cancel</ThemedText>
-          </TouchableOpacityComponent>
-          <TouchableOpacityComponent
-            style={[styles.button, styles.assignButton]}
-            onPress={handleAssign}
-            disabled={!selectedMember}
-          >
-            <ThemedText>Assign</ThemedText>
-          </TouchableOpacityComponent>
-        </View>
-      </View>
-    </ThemedView>
+    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onCancel}>
+      {modalContent}
+    </Modal>
   );
 }
 
@@ -226,93 +301,164 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  content: {
+  webModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  webModalContent: {
+    width: "100%",
+    maxWidth: 600,
+    height: "90%",
+    backgroundColor: Colors.light.background,
+    borderRadius: 12,
+    overflow: "hidden",
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(0, 0, 0, 0.1)",
+  },
+  backButton: {
+    width: 40,
+    height: 40,
+    justifyContent: "center",
+    alignItems: "center",
   },
   title: {
-    fontSize: 20,
-    fontWeight: "bold",
-    marginBottom: 16,
+    fontSize: 18,
+    fontWeight: "600",
+    textAlign: "center",
+    flex: 1,
   },
-  searchInput: {
-    height: 40,
+  currentHolderCard: {
+    margin: 16,
+    padding: 16,
+    backgroundColor: Colors.light.background,
+    borderRadius: 12,
     borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    marginBottom: 16,
+    borderColor: "rgba(0, 0, 0, 0.1)",
   },
-  memberListContainer: {
-    marginBottom: 16,
-  },
-  memberList: {
-    borderWidth: 1,
-    borderColor: "#ccc",
-    borderRadius: 8,
-  },
-  memberListContent: {
-    padding: 8,
-  },
-  memberItem: {
-    padding: 12,
-    borderWidth: 1,
-    borderRadius: 8,
+  currentHolderTitle: {
+    fontSize: 16,
+    fontWeight: "600",
     marginBottom: 8,
   },
-  selectedMember: {
-    backgroundColor: "rgba(0, 122, 255, 0.1)",
-  },
-  dateButton: {
-    padding: 12,
-    borderRadius: 8,
-    backgroundColor: "rgba(0, 122, 255, 0.1)",
-    marginBottom: 16,
-    alignItems: "center",
-  },
-  buttonContainer: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  button: {
-    flex: 1,
-    padding: 12,
-    borderRadius: 8,
-    backgroundColor: "rgba(0, 122, 255, 0.1)",
-    alignItems: "center",
-    marginHorizontal: 4,
-  },
-  cancelButton: {
-    backgroundColor: "rgba(255, 59, 48, 0.1)",
-  },
-  assignButton: {
-    backgroundColor: "rgba(52, 199, 89, 0.1)",
-  },
-  error: {
-    color: "red",
-    marginBottom: 16,
-  },
-  currentOfficerContainer: {
-    backgroundColor: "rgba(0, 122, 255, 0.05)",
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-  },
-  currentOfficerLabel: {
-    fontSize: 14,
+  currentHolderName: {
+    fontSize: 18,
     fontWeight: "600",
     marginBottom: 4,
-    opacity: 0.8,
   },
-  currentOfficerInfo: {
+  currentHolderDetails: {
+    fontSize: 14,
+    opacity: 0.7,
+    marginTop: 2,
+  },
+  searchContainer: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(0, 0, 0, 0.1)",
   },
-  currentOfficerName: {
+  searchInput: {
+    flex: 1,
+    height: 40,
+    borderWidth: 1,
+    borderColor: "rgba(0, 0, 0, 0.1)",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+  },
+  clearButton: {
+    position: "absolute",
+    right: 24,
+    padding: 4,
+  },
+  memberList: {
+    flex: 1,
+  },
+  memberListContent: {
+    padding: 16,
+  },
+  memberItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: 16,
+    backgroundColor: Colors.light.background,
+    borderRadius: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: "rgba(0, 0, 0, 0.1)",
+  },
+  memberInfo: {
+    flex: 1,
+  },
+  memberName: {
     fontSize: 16,
     fontWeight: "500",
   },
-  currentOfficerDate: {
+  memberPin: {
     fontSize: 14,
     opacity: 0.7,
+    marginTop: 4,
+  },
+  selectedMember: {
+    borderColor: Colors.light.tint,
+    backgroundColor: Colors.light.tint + "10",
+  },
+  footer: {
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(0, 0, 0, 0.1)",
+    backgroundColor: Colors.light.background,
+  },
+  dateContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  dateText: {
+    fontSize: 16,
+    color: Colors.light.tint,
+    marginLeft: 8,
+  },
+  buttonContainer: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  button: {
+    flex: 1,
+    height: 44,
+    borderRadius: 8,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  cancelButton: {
+    backgroundColor: "rgba(0, 0, 0, 0.1)",
+  },
+  assignButton: {
+    backgroundColor: Colors.light.tint,
+  },
+  disabledButton: {
+    opacity: 0.5,
+  },
+  buttonText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  error: {
+    color: Colors.light.error,
+    marginBottom: 16,
+    textAlign: "center",
+  },
+  centerText: {
+    textAlign: "center",
+    marginTop: 20,
   },
 });
