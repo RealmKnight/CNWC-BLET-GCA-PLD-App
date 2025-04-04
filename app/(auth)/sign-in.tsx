@@ -4,6 +4,7 @@ import { Link } from "expo-router";
 import { useAuth } from "@/hooks/useAuth";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
+import { Colors } from "@/constants/Colors";
 
 export default function SignInScreen() {
   const [email, setEmail] = useState("");
@@ -96,24 +97,28 @@ const styles = StyleSheet.create({
   input: {
     height: 50,
     borderWidth: 1,
-    borderColor: "#ddd",
+    borderColor: Colors.dark.border,
     borderRadius: 8,
     paddingHorizontal: 15,
     marginBottom: 15,
+    backgroundColor: Colors.dark.card,
+    color: Colors.dark.text,
   },
   button: {
-    backgroundColor: "#FFF700FF",
+    backgroundColor: Colors.dark.buttonBackground,
     height: 50,
     borderRadius: 8,
     justifyContent: "center",
     alignItems: "center",
     marginTop: 10,
+    borderWidth: 1,
+    borderColor: Colors.dark.buttonBorder,
   },
   buttonDisabled: {
     opacity: 0.7,
   },
   buttonText: {
-    color: "#000000FF",
+    color: Colors.dark.buttonText,
     fontSize: 16,
     fontWeight: "600",
   },
@@ -122,11 +127,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   link: {
-    color: "#88FF00FF",
+    color: Colors.dark.icon,
     marginVertical: 5,
   },
   error: {
-    color: "#ff3b30",
+    color: Colors.dark.error,
     textAlign: "center",
     marginBottom: 10,
   },

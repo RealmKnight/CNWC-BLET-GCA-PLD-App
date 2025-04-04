@@ -5,6 +5,7 @@ import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { useRouter } from "expo-router";
 import { supabase } from "@/utils/supabase";
+import { Colors } from "@/constants/Colors";
 
 interface ValidationError {
   message: string;
@@ -172,34 +173,38 @@ const styles = StyleSheet.create({
   input: {
     height: 50,
     borderWidth: 1,
-    borderColor: "#ddd",
+    borderColor: Colors.dark.border,
     borderRadius: 8,
     paddingHorizontal: 15,
     marginBottom: 15,
+    backgroundColor: Colors.dark.card,
+    color: Colors.dark.text,
   },
   button: {
-    backgroundColor: "#FFF700FF",
+    backgroundColor: Colors.dark.buttonBackground,
     height: 50,
     borderRadius: 8,
     justifyContent: "center",
     alignItems: "center",
     marginTop: 10,
+    borderWidth: 1,
+    borderColor: Colors.dark.buttonBorder,
   },
   buttonDisabled: {
     opacity: 0.7,
   },
   buttonText: {
-    color: "#000000FF",
+    color: Colors.dark.buttonText,
     fontSize: 16,
     fontWeight: "600",
   },
   error: {
-    color: "#ff3b30",
+    color: Colors.dark.error,
     textAlign: "center",
     marginBottom: 10,
   },
   success: {
-    color: "#34c759",
+    color: Colors.dark.success,
   },
   logo: {
     width: 130,
@@ -215,29 +220,35 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     width: "90%",
-    backgroundColor: "#fff",
+    backgroundColor: Colors.dark.card,
     borderRadius: 12,
     padding: 20,
     alignItems: "center",
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
   },
   modalTitle: {
     fontSize: 20,
     fontWeight: "600",
     marginBottom: 15,
+    color: Colors.dark.text,
   },
   modalText: {
     marginBottom: 15,
     textAlign: "center",
+    color: Colors.dark.text,
   },
   messageInput: {
     width: "100%",
     height: 100,
     borderWidth: 1,
-    borderColor: "#ddd",
+    borderColor: Colors.dark.border,
     borderRadius: 8,
     padding: 10,
     marginBottom: 15,
     textAlignVertical: "top",
+    backgroundColor: Colors.dark.background,
+    color: Colors.dark.text,
   },
   modalButtons: {
     flexDirection: "row",
@@ -253,13 +264,13 @@ const styles = StyleSheet.create({
     marginHorizontal: 5,
   },
   cancelButton: {
-    backgroundColor: "#ff3b30",
+    backgroundColor: Colors.dark.error,
   },
   sendButton: {
-    backgroundColor: "#34c759",
+    backgroundColor: Colors.dark.success,
   },
   modalButtonText: {
-    color: "#fff",
+    color: Colors.dark.background,
     fontSize: 16,
     fontWeight: "600",
   },
