@@ -33,14 +33,16 @@ interface DenialReason {
 interface RequestItem {
   id: string;
   member_id: string;
-  members: {
-    pin_number: string;
-    first_name: string;
-    last_name: string;
-  };
   request_date: string;
   leave_type: "PLD" | "SDV";
   created_at: string;
+  status: string;
+  paid_in_lieu: boolean;
+  members: {
+    pin_number: number;
+    first_name: string | null;
+    last_name: string | null;
+  };
 }
 
 export default function CompanyAdminScreen() {
@@ -59,37 +61,60 @@ export default function CompanyAdminScreen() {
   // Fetch pending requests
   const fetchPendingRequests = useCallback(async () => {
     try {
-      // First get the requests
+      // Get the requests with member details in a single query using a regular join
       const { data: requestData, error: requestError } = await supabase
         .from("pld_sdv_requests")
-        .select("id, member_id, request_date, leave_type, created_at, status, paid_in_lieu")
+        .select(
+          `
+          id,
+          member_id,
+          request_date,
+          leave_type,
+          created_at,
+          status,
+          paid_in_lieu
+        `
+        )
         .in("status", ["pending", "cancellation_pending"])
         .not("status", "eq", "waitlisted")
         .order("request_date", { ascending: true });
 
-      if (requestError) throw requestError;
+      if (requestError) {
+        console.error("Error details:", requestError);
+        throw requestError;
+      }
 
-      // Then get the member details for each request
-      if (requestData) {
+      console.log("Fetched requests:", requestData?.length ?? 0);
+
+      // If we have requests, fetch the member details
+      if (requestData && requestData.length > 0) {
         const memberIds = [...new Set(requestData.map((req) => req.member_id))];
+
+        // Fetch member details using the auth.users table since that's where member_id comes from
         const { data: memberData, error: memberError } = await supabase
           .from("members")
           .select("id, pin_number, first_name, last_name")
-          .in("pin_number", memberIds);
+          .in("id", memberIds);
 
-        if (memberError) throw memberError;
+        if (memberError) {
+          console.error("Error fetching member details:", memberError);
+          throw memberError;
+        }
 
-        // Map member data to requests
+        console.log("Fetched members:", memberData?.length ?? 0);
+
+        // Create a map of member details
         const memberMap = memberData?.reduce((acc, member) => {
-          acc[member.pin_number] = member;
+          acc[member.id] = member;
           return acc;
-        }, {} as Record<string, (typeof memberData)[0]>);
+        }, {} as Record<string, any>);
 
+        // Transform the data to match the expected format
         setPendingRequests(
           requestData.map((request) => ({
             id: request.id,
             member_id: request.member_id,
-            pin_number: memberMap[request.member_id]?.pin_number ?? "",
+            pin_number: memberMap[request.member_id]?.pin_number?.toString() ?? "",
             first_name: memberMap[request.member_id]?.first_name ?? "",
             last_name: memberMap[request.member_id]?.last_name ?? "",
             request_date: request.request_date,
@@ -99,6 +124,8 @@ export default function CompanyAdminScreen() {
             paid_in_lieu: request.paid_in_lieu ?? false,
           }))
         );
+      } else {
+        setPendingRequests([]);
       }
     } catch (error) {
       console.error("Error fetching pending requests:", error);
