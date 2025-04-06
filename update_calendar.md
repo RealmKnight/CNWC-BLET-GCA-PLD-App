@@ -56,9 +56,13 @@ ADD COLUMN zone_id INTEGER REFERENCES zones(id);
 -- Add zone support to requests
 ALTER TABLE pld_sdv_requests
 ADD COLUMN zone_id INTEGER REFERENCES zones(id);
+
+-- Add zone support to six month requests
+ALTER TABLE six_month_requests
+ADD COLUMN zone_id INTEGER REFERENCES zones(id);
 \`\`\`
 
-### Phase 2: Backend Logic Updates
+### Phase 2: Backend Processing Updates
 
 #### Dependencies
 
@@ -74,9 +78,140 @@ ADD COLUMN zone_id INTEGER REFERENCES zones(id);
 
 #### Tools Required
 
+- mcp_supabase_execute_postgresql
 - edit_file
 - read_file
 - codebase_search
+
+#### Processing Function Updates
+
+\`\`\`sql
+-- Update process_six_month_requests function to handle zones
+CREATE OR REPLACE FUNCTION public.process_six_month_requests(target_date date)
+RETURNS void
+LANGUAGE plpgsql
+AS $function$
+DECLARE
+v_max_allotment INTEGER;
+v_division TEXT;
+v_zone_id INTEGER;
+v_year INTEGER;
+v_request record;
+v_position INTEGER := 1;
+v_waitlist_position INTEGER := 1;
+BEGIN
+-- Get the year for the target date
+v_year := EXTRACT(YEAR FROM target_date);
+
+    -- Process each division/zone combination separately
+    FOR v_division, v_zone_id IN (
+        SELECT DISTINCT division, zone_id
+        FROM six_month_requests
+        WHERE request_date = target_date
+        AND NOT processed
+    ) LOOP
+        -- Reset position counters for each division/zone
+        v_position := 1;
+        v_waitlist_position := 1;
+
+        -- Get max allotment for the date/division/zone
+        SELECT COALESCE(
+            -- First check for specific date allotment
+            (SELECT max_allotment FROM pld_sdv_allotments
+             WHERE date = target_date
+             AND division = v_division
+             AND zone_id = v_zone_id),
+            -- Then check for specific date division-wide allotment
+            (SELECT max_allotment FROM pld_sdv_allotments
+             WHERE date = target_date
+             AND division = v_division
+             AND zone_id IS NULL),
+            -- Then check for yearly zone-specific allotment
+            (SELECT max_allotment FROM pld_sdv_allotments
+             WHERE year = v_year
+             AND division = v_division
+             AND zone_id = v_zone_id
+             AND date = make_date(v_year, 1, 1)),
+            -- Finally check for yearly division-wide allotment
+            (SELECT max_allotment FROM pld_sdv_allotments
+             WHERE year = v_year
+             AND division = v_division
+             AND zone_id IS NULL
+             AND date = make_date(v_year, 1, 1)),
+            6  -- Default if no allotment set
+        ) INTO v_max_allotment;
+
+        -- Process requests in seniority order
+        FOR v_request IN (
+            SELECT r.*,
+                   COALESCE(m.wc_sen_roster, m.prior_vac_sys) as seniority
+            FROM six_month_requests r
+            JOIN members m ON r.member_id = m.id
+            WHERE r.request_date = target_date
+            AND r.division = v_division
+            AND (r.zone_id = v_zone_id OR (r.zone_id IS NULL AND v_zone_id IS NULL))
+            AND NOT r.processed
+            ORDER BY
+                CASE WHEN m.wc_sen_roster IS NOT NULL THEN 0 ELSE 1 END,  -- WC roster first
+                COALESCE(m.wc_sen_roster, m.prior_vac_sys) ASC NULLS LAST
+        ) LOOP
+            -- Rest of the processing logic remains the same,
+            -- just ensure zone_id is included in inserts
+            IF v_position <= v_max_allotment THEN
+                -- Insert approved request with zone_id
+                INSERT INTO pld_sdv_requests (
+                    member_id, division, zone_id, request_date, leave_type,
+                    status, requested_at
+                ) VALUES (
+                    v_request.member_id, v_request.division, v_request.zone_id,
+                    v_request.request_date, v_request.leave_type, 'pending',
+                    v_request.requested_at
+                );
+
+                -- Update six_month_requests status
+                UPDATE six_month_requests
+                SET processed = TRUE,
+                    processed_at = NOW(),
+                    final_status = 'approved',
+                    position = v_position
+                WHERE id = v_request.id;
+
+                v_position := v_position + 1;
+            ELSE
+                -- Insert waitlisted request with zone_id
+                INSERT INTO pld_sdv_requests (
+                    member_id, division, zone_id, request_date, leave_type,
+                    status, requested_at, waitlist_position
+                ) VALUES (
+                    v_request.member_id, v_request.division, v_request.zone_id,
+                    v_request.request_date, v_request.leave_type, 'waitlisted',
+                    v_request.requested_at, v_waitlist_position
+                );
+
+                -- Update six_month_requests status
+                UPDATE six_month_requests
+                SET processed = TRUE,
+                    processed_at = NOW(),
+                    final_status = 'waitlisted',
+                    position = v_waitlist_position
+                WHERE id = v_request.id;
+
+                v_waitlist_position := v_waitlist_position + 1;
+            END IF;
+        END LOOP;
+    END LOOP;
+
+END;
+$function$;
+
+-- Update cron job to handle all zones
+UPDATE cron.job
+SET command = $$
+SELECT process_six_month_requests((CURRENT_DATE - INTERVAL '1 day' + INTERVAL '6 months')::DATE);
+
+$$
+WHERE jobname = 'process-six-month-requests';
+\`\`\`
 
 #### Calendar Store Modifications
 
@@ -87,6 +222,7 @@ interface CalendarState {
 hasZoneSpecificCalendar: (division: string) => boolean;
 getMemberZoneCalendar: (division: string, zone: string) => Promise<...>;
 validateMemberZone: (memberId: string, zoneId: number) => Promise<boolean>;
+submitSixMonthRequest: (date: string, type: "PLD" | "SDV", zoneId?: number) => Promise<void>;
 }
 
 // New Zone Management Store
@@ -174,10 +310,18 @@ interface RequestDialogProps {
 // Existing props...
 zoneId?: number;
 isZoneSpecific: boolean;
+isSixMonthRequest: boolean;
+}
+
+// Add SixMonthRequestInfo component
+interface SixMonthRequestInfoProps {
+date: string;
+zoneId?: number;
+onClose: () => void;
 }
 \`\`\`
 
-### Phase 5: Migration Strategy
+### Phase 5: Migration and Data Handling
 
 #### Dependencies
 
@@ -188,6 +332,7 @@ isZoneSpecific: boolean;
 
 - scripts/migrations/zone-calendar-setup.ts (new)
 - scripts/migrations/zone-validation.ts (new)
+- scripts/migrations/six-month-request-migration.ts (new)
 - store/calendarStore.ts
 - utils/supabase.ts
 
@@ -209,7 +354,50 @@ async function setupZoneCalendars() {
 async function validateZoneAssignments() {
 // Implementation
 }
+
+// Six month request migration
+async function migrateSixMonthRequests() {
+// Handle existing six month requests
+// No backfilling needed as these are temporary records
+}
 \`\`\`
+
+#### Migration Considerations
+
+1. Data Migration
+- Existing requests and allotments will have NULL zone_id
+- Six month requests are temporary, no backfilling needed
+- Historical requests remain with their original division
+
+2. Processing Order
+- Maintain existing seniority-based processing within zones
+- Zone-specific allotments take precedence
+- Fall back to division-wide allotments if no zone-specific allotment exists
+
+3. Error Handling
+- Add zone validation to ensure requests match member's assigned zone
+- Log any zone-related processing errors for monitoring
+- Handle six month request validation and conflicts
+
+### Phase 6: Monitoring and Testing
+
+#### Additional Test Cases
+1. Six Month Request Processing
+- Test zone-specific processing order
+- Verify seniority calculations within zones
+- Test fallback to division allotments
+- Verify waitlist handling
+
+2. Integration Tests
+- End-to-end six month request flow
+- Multiple zone processing
+- Cron job execution
+- Zone transfer scenarios
+
+3. Load Tests
+- Process multiple zones simultaneously
+- Test high-volume six month request processing
+- Verify performance under load
 
 ## Testing Strategy
 
@@ -343,3 +531,4 @@ async function validateZoneAssignments() {
 - Estimated time: 1-2 days
 - Critical path: Yes
 - Risk level: High
+$$
