@@ -1,10 +1,25 @@
 import React from "react";
-import { Platform, TouchableOpacity, TouchableOpacityProps, View } from "react-native";
+import { TouchableOpacity, TouchableOpacityProps, Platform, View } from "react-native";
+import { Pressable, PressableProps } from "react-native";
 
-// Create a forwarded ref component that properly handles refs
-const TouchableOpacityComponentBase = React.forwardRef<View, TouchableOpacityProps>((props, ref) => {
-  return <TouchableOpacity ref={ref} {...props} />;
+type TouchableOpacityComponentProps = TouchableOpacityProps & PressableProps;
+
+export const TouchableOpacityComponent = React.forwardRef<View, TouchableOpacityComponentProps>((props, ref) => {
+  const { children, ...rest } = props;
+
+  if (Platform.OS === "web") {
+    return (
+      <Pressable ref={ref} {...rest}>
+        {children}
+      </Pressable>
+    );
+  }
+
+  return (
+    <TouchableOpacity ref={ref} {...rest}>
+      {children}
+    </TouchableOpacity>
+  );
 });
 
-// Export the component with proper ref handling
-export const TouchableOpacityComponent = TouchableOpacityComponentBase;
+TouchableOpacityComponent.displayName = "TouchableOpacityComponent";

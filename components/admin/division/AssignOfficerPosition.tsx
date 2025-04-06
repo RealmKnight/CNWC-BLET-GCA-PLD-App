@@ -1,11 +1,11 @@
-import React, { useState, useEffect, Fragment } from "react";
+import React, { useState, useEffect, Fragment, useRef } from "react";
 import {
   StyleSheet,
   Platform,
   TextInput,
   View,
   ScrollView,
-  Modal,
+  Modal as RNModal,
   useWindowDimensions,
   KeyboardAvoidingView,
   TouchableOpacity,
@@ -25,6 +25,7 @@ import { format } from "date-fns";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import Toast from "react-native-toast-message";
+import { Modal as UIModal } from "@/components/ui/Modal";
 
 interface Member {
   pin_number: number;
@@ -42,6 +43,26 @@ interface AssignOfficerPositionProps {
   updateDateOnly?: boolean;
 }
 
+interface ModalProps {
+  children: React.ReactNode;
+  visible: boolean;
+  onClose: () => void;
+}
+
+const Modal = React.forwardRef<View, ModalProps>(({ children, visible, onClose }, ref) => {
+  if (!visible) return null;
+
+  return (
+    <RNModal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <ThemedView style={styles.webModalOverlay}>
+        <ThemedView ref={ref} style={styles.webModalContent}>
+          {children}
+        </ThemedView>
+      </ThemedView>
+    </RNModal>
+  );
+});
+
 export function AssignOfficerPosition({
   position,
   division,
@@ -54,7 +75,8 @@ export function AssignOfficerPosition({
   const [members, setMembers] = useState<Member[]>([]);
   const [currentOfficer, setCurrentOfficer] = useState<any | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  const [startDate, setStartDate] = useState<string>(new Date().toISOString().split("T")[0]);
   const [isDatePickerVisible, setDatePickerVisible] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +85,16 @@ export function AssignOfficerPosition({
   const { height: windowHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const isWeb = Platform.OS === "web";
-  const [startDate, setStartDate] = useState<string | null>(null);
+  const modalRef = useRef<View>(null);
+
+  useEffect(() => {
+    if (visible) {
+      setError(null);
+      const now = new Date();
+      setSelectedDate(now);
+      setStartDate(now.toISOString().split("T")[0]);
+    }
+  }, [visible]);
 
   useEffect(() => {
     async function loadData() {
@@ -135,21 +166,50 @@ export function AssignOfficerPosition({
   };
 
   const handleConfirm = async () => {
-    if (!selectedMember || !startDate) return;
-
     try {
+      if (!selectedMember) {
+        setError("Please select a member first");
+        Toast.show({
+          type: "error",
+          text1: "Error",
+          text2: "Please select a member first",
+          position: "bottom",
+          visibilityTime: 3000,
+        });
+        return;
+      }
+
+      if (!startDate) {
+        setError("Please select a start date");
+        Toast.show({
+          type: "error",
+          text1: "Error",
+          text2: "Please select a start date",
+          position: "bottom",
+          visibilityTime: 3000,
+        });
+        return;
+      }
+
+      setIsLoading(true);
+      setError(null);
+
+      console.log("[AssignOfficerPosition] Assigning position:", {
+        memberPin: selectedMember.pin_number,
+        position,
+        division,
+        startDate,
+      });
+
       // Create a date at noon UTC to avoid timezone issues
       const date = new Date(startDate);
       date.setUTCHours(12, 0, 0, 0);
 
-      const { error } = await supabase.from("officer_positions").insert({
-        member_pin: selectedMember.pin_number,
-        position: position,
-        division: division,
-        start_date: date.toISOString(), // Store as ISO timestamp at noon UTC
+      await assignPosition({
+        memberPin: selectedMember.pin_number,
+        position,
+        startDate: date.toISOString(),
       });
-
-      if (error) throw error;
 
       Toast.show({
         type: "success",
@@ -161,8 +221,18 @@ export function AssignOfficerPosition({
 
       onAssign();
     } catch (error: any) {
-      console.error("Error assigning officer:", error);
-      setError(error.message);
+      console.error("[AssignOfficerPosition] Error assigning officer:", error);
+      const errorMessage = error.message || "Failed to assign position";
+      setError(errorMessage);
+      Toast.show({
+        type: "error",
+        text1: "Error",
+        text2: errorMessage,
+        position: "bottom",
+        visibilityTime: 3000,
+      });
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -184,6 +254,66 @@ export function AssignOfficerPosition({
   const handleDateConfirm = (date: Date) => {
     setSelectedDate(date);
     setDatePickerVisible(false);
+  };
+
+  const renderDatePicker = () => {
+    if (isWeb) {
+      return (
+        <UIModal visible={isDatePickerVisible} onClose={() => setDatePickerVisible(false)} title="Select Start Date">
+          <View style={styles.webDatePickerContainer}>
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => {
+                if (e.target.value) {
+                  const newDate = new Date(e.target.value + "T12:00:00Z");
+                  setSelectedDate(newDate);
+                  setStartDate(e.target.value);
+                }
+              }}
+              style={{
+                fontSize: 16,
+                padding: "8px 12px",
+                borderRadius: 8,
+                border: "1px solid #ccc",
+                marginBottom: 20,
+                width: 200,
+              }}
+            />
+            <View style={styles.webDatePickerButtons}>
+              <TouchableOpacityComponent
+                style={[styles.button, styles.cancelButton]}
+                onPress={() => setDatePickerVisible(false)}
+              >
+                <ThemedText style={styles.buttonText}>Cancel</ThemedText>
+              </TouchableOpacityComponent>
+              <TouchableOpacityComponent
+                style={[styles.button, styles.assignButton]}
+                onPress={() => {
+                  handleDateConfirm(selectedDate);
+                  setDatePickerVisible(false);
+                }}
+              >
+                <ThemedText style={styles.buttonText}>Update</ThemedText>
+              </TouchableOpacityComponent>
+            </View>
+          </View>
+        </UIModal>
+      );
+    }
+
+    return (
+      <DateTimePickerModal
+        isVisible={isDatePickerVisible}
+        mode="date"
+        onConfirm={(date) => {
+          handleDateConfirm(date);
+          setDatePickerVisible(false);
+        }}
+        onCancel={() => setDatePickerVisible(false)}
+        date={selectedDate}
+      />
+    );
   };
 
   const modalContent = (
@@ -250,11 +380,11 @@ export function AssignOfficerPosition({
         )}
       </ScrollView>
       <ThemedView style={[styles.footer, { paddingBottom: insets.bottom }]}>
-        {error && <ThemedText style={styles.error}>{error}</ThemedText>}
+        {error && <ThemedText style={styles.errorText}>{error}</ThemedText>}
         <View style={styles.dateContainer}>
           <ThemedText>Start Date:</ThemedText>
-          <TouchableOpacityComponent onPress={() => setDatePickerVisible(true)}>
-            <ThemedText style={styles.dateText}>{format(selectedDate || new Date(), "MMM d, yyyy")}</ThemedText>
+          <TouchableOpacityComponent onPress={() => setDatePickerVisible(true)} style={styles.dateButton}>
+            <ThemedText style={styles.dateText}>{format(selectedDate, "MMM d, yyyy")}</ThemedText>
           </TouchableOpacityComponent>
         </View>
         <View style={styles.buttonContainer}>
@@ -266,34 +396,32 @@ export function AssignOfficerPosition({
             onPress={handleConfirm}
             disabled={!selectedMember || isLoading}
           >
-            <ThemedText style={styles.buttonText}>{isLoading ? "Assigning..." : "Assign"}</ThemedText>
+            <View style={styles.buttonContent}>
+              {isLoading ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <ThemedText style={styles.buttonText}>{isLoading ? "Assigning..." : "Assign"}</ThemedText>
+              )}
+            </View>
           </TouchableOpacityComponent>
         </View>
       </ThemedView>
-      <DateTimePickerModal
-        isVisible={isDatePickerVisible}
-        mode="date"
-        onConfirm={handleDateConfirm}
-        onCancel={() => setDatePickerVisible(false)}
-        date={selectedDate || new Date()}
-      />
+      {renderDatePicker()}
     </KeyboardAvoidingView>
   );
 
   if (isWeb) {
     return (
-      <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
-        <ThemedView style={styles.webModalOverlay}>
-          <ThemedView style={styles.webModalContent}>{modalContent}</ThemedView>
-        </ThemedView>
+      <Modal ref={modalRef} visible={visible} onClose={onCancel}>
+        {modalContent}
       </Modal>
     );
   }
 
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onCancel}>
+    <RNModal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onCancel}>
       {modalContent}
-    </Modal>
+    </RNModal>
   );
 }
 
@@ -452,7 +580,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
   },
-  error: {
+  errorText: {
     color: Colors.light.error,
     marginBottom: 16,
     textAlign: "center",
@@ -461,4 +589,24 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 20,
   },
+  buttonContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  dateButton: {
+    padding: 8,
+    backgroundColor: `${Colors.light.tint}10`,
+    borderRadius: 8,
+    marginLeft: 8,
+  },
+  webDatePickerContainer: {
+    padding: 20,
+    alignItems: "center",
+  } as const,
+  webDatePickerButtons: {
+    flexDirection: "row" as const,
+    gap: 16,
+  } as const,
 });
