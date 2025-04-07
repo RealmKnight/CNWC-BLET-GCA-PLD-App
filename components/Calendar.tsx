@@ -54,21 +54,41 @@ const AVAILABILITY_COLORS = {
 
 interface CalendarProps {
   current?: string;
+  zoneId?: number;
+  isZoneSpecific?: boolean;
 }
 
-export function Calendar({ current }: CalendarProps) {
+export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarProps) {
   const theme = (useColorScheme() ?? "light") as ColorScheme;
   const division = useUserStore((state) => state.division);
-  const { selectedDate, setSelectedDate, isDateSelectable, getDateAvailability, isLoading, isInitialized, error } =
-    useCalendarStore();
+  const member = useUserStore((state) => state.member);
+  const {
+    selectedDate,
+    setSelectedDate,
+    isDateSelectable,
+    getDateAvailability,
+    isLoading,
+    isInitialized,
+    error,
+    validateMemberZone,
+  } = useCalendarStore();
 
   // Use the selected date for the calendar view if available, otherwise use current
   const calendarDate = selectedDate || current;
 
-  // Log when component receives new current prop or selected date changes
+  // Log when component receives new props or state changes
   useEffect(() => {
-    console.log("[Calendar] Date update:", { current, selectedDate, calendarDate });
-  }, [current, selectedDate, calendarDate]);
+    console.log("[Calendar] State update:", {
+      current,
+      selectedDate,
+      calendarDate,
+      zoneId,
+      isZoneSpecific,
+      isLoading,
+      isInitialized,
+      hasError: !!error,
+    });
+  }, [current, selectedDate, calendarDate, zoneId, isZoneSpecific, isLoading, isInitialized, error]);
 
   // Calculate date range for fetching data
   const dateRange = useMemo(() => {
@@ -82,11 +102,19 @@ export function Calendar({ current }: CalendarProps) {
 
   // Generate marked dates for the calendar
   const markedDates = useMemo(() => {
-    if (!isInitialized || isLoading) {
-      console.log("[Calendar] Waiting for initialization:", {
+    if (!division) {
+      console.log("[Calendar] No division available");
+      return {};
+    }
+
+    // Only show loading state if we're not initialized and actually loading
+    if (!isInitialized && isLoading) {
+      console.log("[Calendar] Still initializing:", {
         isLoading,
         isInitialized,
         division,
+        zoneId,
+        isZoneSpecific,
       });
       return {};
     }
@@ -96,6 +124,8 @@ export function Calendar({ current }: CalendarProps) {
       isLoading,
       isInitialized,
       division,
+      zoneId,
+      isZoneSpecific,
       hasRequests: Object.keys(state.requests).length,
       hasAllotments: Object.keys(state.allotments).length,
     });
@@ -116,7 +146,7 @@ export function Calendar({ current }: CalendarProps) {
     // Add marks for all dates in range
     allDates.forEach((date) => {
       const dateStr = format(date, "yyyy-MM-dd");
-      const availability = getDateAvailability(dateStr);
+      const availability = getDateAvailability(dateStr, zoneId);
       const colors = AVAILABILITY_COLORS[availability];
 
       dates[dateStr] = {
@@ -149,9 +179,9 @@ export function Calendar({ current }: CalendarProps) {
     }
 
     return dates;
-  }, [isInitialized, isLoading, division, selectedDate, theme]);
+  }, [isInitialized, isLoading, division, selectedDate, theme, zoneId, isZoneSpecific]);
 
-  const handleDayPress = (day: DateData) => {
+  const handleDayPress = async (day: DateData) => {
     const now = new Date();
     const dateObj = parseISO(day.dateString);
     const fortyEightHoursFromNow = addDays(now, 2);
@@ -181,7 +211,23 @@ export function Calendar({ current }: CalendarProps) {
       return;
     }
 
-    if (isDateSelectable(day.dateString)) {
+    // Check zone access if zone-specific
+    if (isZoneSpecific && member?.id) {
+      const hasZoneAccess = await validateMemberZone(member.id, zoneId || 0);
+      if (!hasZoneAccess) {
+        Toast.show({
+          type: "error",
+          text1: "Access Denied",
+          text2: "You don't have access to this zone's calendar",
+          position: "bottom",
+          visibilityTime: 3000,
+          topOffset: 50,
+        });
+        return;
+      }
+    }
+
+    if (isDateSelectable(day.dateString, zoneId)) {
       setSelectedDate(day.dateString);
     } else {
       // This case handles when the date is within range but not available (e.g., full)
@@ -196,7 +242,8 @@ export function Calendar({ current }: CalendarProps) {
     }
   };
 
-  if (isLoading || !isInitialized) {
+  // Only show loading state if we're not initialized and actually loading
+  if (!isInitialized && isLoading) {
     return (
       <ThemedView style={[styles.container, styles.loadingContainer]}>
         <ActivityIndicator size="large" color={Colors[theme].tint} />
@@ -209,6 +256,15 @@ export function Calendar({ current }: CalendarProps) {
     return (
       <ThemedView style={[styles.container, styles.loadingContainer]}>
         <ThemedText style={styles.errorText}>Error loading calendar: {error}</ThemedText>
+      </ThemedView>
+    );
+  }
+
+  // If we're initialized but don't have a division, show an error
+  if (isInitialized && !division) {
+    return (
+      <ThemedView style={[styles.container, styles.loadingContainer]}>
+        <ThemedText style={styles.errorText}>No division selected</ThemedText>
       </ThemedView>
     );
   }

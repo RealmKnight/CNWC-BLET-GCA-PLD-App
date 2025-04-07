@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import {
   StyleSheet,
   Platform,
@@ -9,6 +9,8 @@ import {
   ViewStyle,
   TextStyle,
   ActivityIndicator,
+  View,
+  AppState,
 } from "react-native";
 import { Calendar } from "@/components/Calendar";
 import { ThemedText } from "@/components/ThemedText";
@@ -23,17 +25,11 @@ import { format } from "date-fns-tz";
 import { supabase } from "@/utils/supabase";
 import { useUserStore } from "@/store/userStore";
 import { useFocusEffect } from "@react-navigation/native";
+import { useZoneCalendarStore } from "@/store/zoneCalendarStore";
+import { Member } from "@/types/member";
+import { useMyTime } from "@/hooks/useMyTime";
 
 type ColorScheme = keyof typeof Colors;
-
-interface RequestWithMember extends DayRequest {
-  member: {
-    id: string;
-    first_name: string;
-    last_name: string;
-    pin_number: string;
-  };
-}
 
 interface RequestDialogProps {
   isVisible: boolean;
@@ -44,272 +40,179 @@ interface RequestDialogProps {
     max: number;
     current: number;
   };
-  requests: RequestWithMember[];
+  requests: DayRequest[];
+  zoneId?: number;
+  isZoneSpecific?: boolean;
 }
 
-function RequestDialog({ isVisible, onClose, onSubmit, selectedDate, allotments, requests }: RequestDialogProps) {
+function RequestDialog({
+  isVisible,
+  onClose,
+  onSubmit,
+  selectedDate,
+  allotments,
+  requests: allRequests,
+  zoneId,
+  isZoneSpecific = false,
+}: RequestDialogProps) {
   const theme = (useColorScheme() ?? "light") as ColorScheme;
-  const isFull = allotments.current >= allotments.max;
-  const [remainingDays, setRemainingDays] = useState<{ PLD: number; SDV: number }>({ PLD: 0, SDV: 0 });
-  const [availableDays, setAvailableDays] = useState<{ PLD: number; SDV: number }>({ PLD: 0, SDV: 0 });
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const { user } = useAuth();
-  const { member } = useUserStore();
+  const { stats } = useMyTime();
 
-  useEffect(() => {
-    async function fetchRemainingDays() {
-      if (!member?.id) {
-        setError("Member information not found");
-        return;
-      }
+  // Filter active requests directly from props instead of using store selector
+  const activeRequests = useMemo(() => {
+    return allRequests.filter(
+      (r) =>
+        (r.status === "approved" || r.status === "pending" || r.status === "waitlisted") &&
+        (!zoneId || r.zone_id === zoneId)
+    );
+  }, [allRequests, zoneId]);
 
-      setIsLoading(true);
-      setError(null);
-      const year = new Date(selectedDate).getFullYear();
-
-      try {
-        console.log("[RequestDialog] Fetching remaining days for member:", member.id, "year:", year);
-        const [pldResult, sdvResult] = await Promise.all([
-          supabase.rpc("get_member_remaining_days", {
-            p_member_id: member.id,
-            p_year: year,
-            p_leave_type: "PLD",
-          }),
-          supabase.rpc("get_member_remaining_days", {
-            p_member_id: member.id,
-            p_year: year,
-            p_leave_type: "SDV",
-          }),
-        ]);
-
-        if (pldResult.error) throw pldResult.error;
-        if (sdvResult.error) throw sdvResult.error;
-
-        console.log("[RequestDialog] Remaining days:", { PLD: pldResult.data, SDV: sdvResult.data });
-
-        // Get all pending and waitlisted requests for the year
-        const { data: pendingRequests, error: pendingError } = await supabase
-          .from("pld_sdv_requests")
-          .select("leave_type")
-          .eq("member_id", member.id)
-          .eq("status", "pending")
-          .or("status.eq.waitlisted")
-          .gte("request_date", `${year}-01-01`)
-          .lte("request_date", `${year}-12-31`);
-
-        if (pendingError) throw pendingError;
-
-        // Count pending requests by type
-        const pendingCounts = {
-          PLD: pendingRequests?.filter((r) => r.leave_type === "PLD").length || 0,
-          SDV: pendingRequests?.filter((r) => r.leave_type === "SDV").length || 0,
-        };
-
-        console.log("[RequestDialog] Pending/waitlisted requests:", pendingCounts);
-
-        // Set both remaining and available days
-        const remaining = {
-          PLD: pldResult.data || 0,
-          SDV: sdvResult.data || 0,
-        };
-        setRemainingDays(remaining);
-
-        // Calculate available days by subtracting pending/waitlisted requests
-        setAvailableDays({
-          PLD: Math.max(0, remaining.PLD - pendingCounts.PLD),
-          SDV: Math.max(0, remaining.SDV - pendingCounts.SDV),
-        });
-      } catch (error) {
-        console.error("[RequestDialog] Error fetching remaining days:", error);
-        setError("Failed to fetch remaining days");
-      } finally {
-        setIsLoading(false);
-      }
-    }
-
-    if (isVisible) {
-      fetchRemainingDays();
-    }
-  }, [isVisible, member?.id, selectedDate]);
-
-  // Check if user already has a request for this date
-  const hasExistingRequest = requests.some(
-    (req) => req.member?.id === member?.id && !["denied", "cancelled"].includes(req.status)
+  // Memoize derived values
+  const currentAllotment = useMemo(
+    () => ({
+      max: allotments.max,
+      current: activeRequests.length,
+    }),
+    [allotments.max, activeRequests.length]
   );
 
-  const renderRequestList = () => {
-    // Filter out cancelled and denied requests
-    const activeRequests = requests.filter((req) => !["cancelled", "denied"].includes(req.status));
-    const spots = Array.from({ length: allotments.max }, (_, i) => i + 1);
-    return spots.map((spot) => {
-      const request = activeRequests[spot - 1];
-      return (
-        <ThemedView key={spot} style={styles.requestSpot}>
-          <ThemedText style={styles.spotNumber}>{spot}.</ThemedText>
-          {request ? (
-            <ThemedView style={styles.spotInfo}>
-              <ThemedText>
-                {request.member.first_name} {request.member.last_name} ({request.member.pin_number})
-              </ThemedText>
-              <ThemedText
-                style={[
-                  styles.requestStatus,
-                  {
-                    color:
-                      request.status === "approved"
-                        ? Colors[theme].success
-                        : request.status === "denied"
-                        ? Colors[theme].error
-                        : Colors[theme].warning,
-                  },
-                ]}
-              >
-                {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
-              </ThemedText>
-            </ThemedView>
-          ) : (
-            <ThemedText style={styles.emptySpot}>Available</ThemedText>
-          )}
-        </ThemedView>
-      );
+  const isFull = currentAllotment.current >= currentAllotment.max;
+
+  // Memoize sorted requests to prevent unnecessary re-renders
+  const sortedRequests = useMemo(() => {
+    const statusPriority: Record<string, number> = {
+      approved: 0,
+      pending: 1,
+      waitlisted: 2,
+    };
+
+    return [...activeRequests].sort((a, b) => {
+      const aStatus = statusPriority[a.status] ?? 999;
+      const bStatus = statusPriority[b.status] ?? 999;
+
+      if (aStatus !== bStatus) return aStatus - bStatus;
+
+      if (a.status === "waitlisted" && b.status === "waitlisted") {
+        return (a.waitlist_position || 0) - (b.waitlist_position || 0);
+      }
+
+      return new Date(a.requested_at || "").getTime() - new Date(b.requested_at || "").getTime();
     });
-  };
-
-  const handleSubmit = async (leaveType: "PLD" | "SDV") => {
-    try {
-      setIsSubmitting(true);
-      setError(null);
-      await onSubmit(leaveType);
-      // Wait for a brief moment to allow realtime subscription to process
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      onClose();
-    } catch (error) {
-      console.error("[RequestDialog] Error submitting request:", error);
-      setError("Failed to submit request. Please try again.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  if (!isVisible) return null;
+  }, [activeRequests]);
 
   return (
     <Modal visible={isVisible} transparent animationType="fade" onRequestClose={onClose}>
-      <ThemedView style={styles.modalOverlay}>
-        <ThemedView style={styles.modalContent}>
-          <ThemedText type="title" style={styles.modalTitle}>
-            Request for {selectedDate}
-          </ThemedText>
+      <View style={dialogStyles.modalOverlay}>
+        <View style={dialogStyles.modalContent}>
+          <ThemedText style={dialogStyles.modalTitle}>Request Day Off - {selectedDate}</ThemedText>
 
-          <ThemedText style={styles.allotmentInfo}>
-            {allotments.current}/{allotments.max} spots filled
-          </ThemedText>
-
-          {error ? (
-            <ThemedView style={styles.warningContainer}>
-              <ThemedText style={styles.warningText}>{error}</ThemedText>
-            </ThemedView>
-          ) : hasExistingRequest ? (
-            <ThemedView style={styles.warningContainer}>
-              <ThemedText style={styles.warningText}>You already have a request for this date</ThemedText>
-            </ThemedView>
-          ) : isLoading ? (
-            <ThemedView style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color={Colors[theme].tint} />
-              <ThemedText style={styles.loadingText}>Checking available days...</ThemedText>
-            </ThemedView>
-          ) : (
-            <>
-              <ThemedView style={styles.remainingDaysInfo}>
-                <ThemedText style={styles.availableDaysNote}>Available to Request:</ThemedText>
-                <ThemedText>
-                  PLD: {availableDays.PLD} SDV: {availableDays.SDV}
-                </ThemedText>
-              </ThemedView>
-
-              {!isFull ? (
-                <ThemedView style={styles.requestButtons}>
-                  <TouchableOpacity
-                    style={[
-                      styles.requestButton,
-                      { backgroundColor: Colors[theme].tint },
-                      availableDays.PLD <= 0 && styles.disabledButton,
-                    ]}
-                    onPress={() => handleSubmit("PLD")}
-                    activeOpacity={0.7}
-                    disabled={availableDays.PLD <= 0 || isSubmitting}
-                  >
-                    {isSubmitting ? (
-                      <ActivityIndicator color={Colors[theme].background} />
-                    ) : (
-                      <ThemedText style={styles.requestButtonText}>
-                        Request PLD {availableDays.PLD <= 0 ? "(None Left)" : ""}
-                      </ThemedText>
-                    )}
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[
-                      styles.requestButton,
-                      { backgroundColor: Colors[theme].tint },
-                      availableDays.SDV <= 0 && styles.disabledButton,
-                    ]}
-                    onPress={() => handleSubmit("SDV")}
-                    activeOpacity={0.7}
-                    disabled={availableDays.SDV <= 0 || isSubmitting}
-                  >
-                    {isSubmitting ? (
-                      <ActivityIndicator color={Colors[theme].background} />
-                    ) : (
-                      <ThemedText style={styles.requestButtonText}>
-                        Request SDV {availableDays.SDV <= 0 ? "(None Left)" : ""}
-                      </ThemedText>
-                    )}
-                  </TouchableOpacity>
-                </ThemedView>
-              ) : (
-                <TouchableOpacity
-                  style={[styles.requestButton, styles.waitlistButton]}
-                  onPress={() => handleSubmit("PLD")}
-                  activeOpacity={0.7}
-                  disabled={isSubmitting}
-                >
-                  {isSubmitting ? (
-                    <ActivityIndicator color={Colors[theme].background} />
-                  ) : (
-                    <ThemedText style={styles.requestButtonText}>Request Waitlist Spot</ThemedText>
-                  )}
-                </TouchableOpacity>
-              )}
-            </>
-          )}
-
-          <ScrollView style={styles.requestList}>
-            <ThemedText type="subtitle" style={styles.sectionTitle}>
-              Current Requests:
+          <View style={dialogStyles.allotmentContainer}>
+            <ThemedText style={dialogStyles.allotmentInfo}>
+              {currentAllotment.current}/{currentAllotment.max} spots filled
             </ThemedText>
-            {renderRequestList()}
+          </View>
+
+          <View style={dialogStyles.remainingDaysContainer}>
+            <ThemedText style={dialogStyles.remainingDaysText}>
+              Available PLD Days: {stats?.available.pld ?? 0}
+            </ThemedText>
+            <ThemedText style={dialogStyles.remainingDaysText}>
+              Available SDV Days: {stats?.available.sdv ?? 0}
+            </ThemedText>
+          </View>
+
+          <ScrollView style={dialogStyles.requestList}>
+            {sortedRequests.map((request, index) => (
+              <View key={request.id} style={dialogStyles.requestSpot}>
+                <ThemedText style={dialogStyles.spotNumber}>#{index + 1}</ThemedText>
+                <View style={dialogStyles.spotInfo}>
+                  <ThemedText>
+                    {request.member.first_name} {request.member.last_name}
+                  </ThemedText>
+                  <ThemedText
+                    style={[
+                      dialogStyles.requestStatus,
+                      request.status === "approved" && dialogStyles.approvedStatus,
+                      request.status === "waitlisted" && dialogStyles.waitlistedStatus,
+                    ]}
+                  >
+                    {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
+                    {request.status === "waitlisted" && request.waitlist_position
+                      ? ` #${request.waitlist_position}`
+                      : ""}
+                  </ThemedText>
+                </View>
+              </View>
+            ))}
+            {Array.from({ length: currentAllotment.max - sortedRequests.length }).map((_, index) => (
+              <View key={`empty-${index}`} style={dialogStyles.requestSpot}>
+                <ThemedText style={dialogStyles.spotNumber}>#{sortedRequests.length + index + 1}</ThemedText>
+                <ThemedText style={dialogStyles.emptySpot}>Available</ThemedText>
+              </View>
+            ))}
           </ScrollView>
 
-          <TouchableOpacity
-            style={[styles.modalButton, styles.cancelButton]}
-            onPress={onClose}
-            activeOpacity={0.7}
-            disabled={isSubmitting}
-          >
-            <ThemedText style={styles.modalButtonText}>Close</ThemedText>
-          </TouchableOpacity>
-        </ThemedView>
-      </ThemedView>
+          <View style={dialogStyles.modalButtons}>
+            <TouchableOpacity style={[dialogStyles.modalButton, dialogStyles.cancelButton]} onPress={onClose}>
+              <ThemedText style={dialogStyles.modalButtonText}>Cancel</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[dialogStyles.modalButton, dialogStyles.submitButton, isFull && dialogStyles.waitlistButton]}
+              onPress={() => onSubmit("PLD")}
+            >
+              <ThemedText style={dialogStyles.modalButtonText}>
+                {isFull ? "Join Waitlist (PLD)" : "Request PLD"}
+              </ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[dialogStyles.modalButton, dialogStyles.submitButton, isFull && dialogStyles.waitlistButton]}
+              onPress={() => onSubmit("SDV")}
+            >
+              <ThemedText style={dialogStyles.modalButtonText}>
+                {isFull ? "Join Waitlist (SDV)" : "Request SDV"}
+              </ThemedText>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
     </Modal>
   );
 }
 
+interface SubscriptionHandle {
+  unsubscribe: () => void;
+}
+
 export default function CalendarScreen() {
   const theme = (useColorScheme() ?? "light") as ColorScheme;
-  const { user } = useAuth();
+  const { user, session } = useAuth();
+  const { member, division } = useUserStore();
+  const { divisionsWithZones } = useZoneCalendarStore();
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [requestDialogVisible, setRequestDialogVisible] = useState(false);
+  const [dataChanged, setDataChanged] = useState(false);
+  const [lastRefreshTime, setLastRefreshTime] = useState(0);
+  const [appState, setAppState] = useState(AppState.currentState);
+  const REFRESH_COOLDOWN = 500; // milliseconds
+
+  // Add refs to track loading state and prevent duplicate loads
+  const isLoadingRef = React.useRef(false);
+  const loadPromiseRef = React.useRef<Promise<void> | null>(null);
+
+  // Force the date to be the actual current date, not system date
+  const [currentDate, setCurrentDate] = useState("");
+  // Add a key to force re-render
+  const [calendarKey, setCalendarKey] = useState(0);
+
+  // Get member's zone if division uses zone calendars
+  const memberZoneId = useMemo(() => {
+    if (!division || !member?.zone) return undefined;
+    const hasZoneCalendars = divisionsWithZones[division];
+    const memberRecord = member as Member;
+    return hasZoneCalendars ? memberRecord.zone_id : undefined;
+  }, [division, member?.zone, divisionsWithZones]);
+
   const {
     selectedDate,
     requests,
@@ -317,246 +220,295 @@ export default function CalendarScreen() {
     setSelectedDate,
     allotments,
     yearlyAllotments,
-    error,
-    setError,
     loadInitialData,
     isInitialized,
   } = useCalendarStore();
-  const [isRequestDialogVisible, setIsRequestDialogVisible] = useState(false);
-  const [dataChanged, setDataChanged] = useState(false);
-  const [lastRefreshTime, setLastRefreshTime] = useState(0);
-  const REFRESH_COOLDOWN = 500; // milliseconds
 
-  // Force the date to be the actual current date, not system date
-  const [currentDate, setCurrentDate] = useState("");
-  // Add a key to force re-render
-  const [calendarKey, setCalendarKey] = useState(0);
+  // Calculate date range for fetching data
+  const dateRange = useMemo(() => {
+    const now = new Date();
+    const endDate = new Date(now.getFullYear(), now.getMonth() + 6, now.getDate());
+    return {
+      start: format(now, "yyyy-MM-dd"),
+      end: format(endDate, "yyyy-MM-dd"),
+    };
+  }, []);
 
-  // Handle visibility change for web browsers
-  useEffect(() => {
-    if (Platform.OS !== "web") return;
+  // Add ref to track subscription
+  const subscriptionRef = React.useRef<SubscriptionHandle | null>(null);
 
-    // Track when the component mounted
-    const mountTime = Date.now();
-    console.log("[CalendarScreen] Component mounted at:", mountTime);
+  // Add loading timeout ref
+  const loadingTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+  const MAX_LOADING_TIME = 10000; // 10 seconds maximum loading time
 
-    function handleVisibilityChange() {
-      if (document.visibilityState === "visible") {
-        console.log("[CalendarScreen] Page became visible, checking data");
-        const now = Date.now();
-        const timeSinceMount = now - mountTime;
-        const timeSinceLastRefresh = now - lastRefreshTime;
-
-        // Skip refresh if we just mounted or refreshed recently
-        if (timeSinceMount < REFRESH_COOLDOWN) {
-          console.log("[CalendarScreen] Skipping refresh - component just mounted");
-          return;
-        }
-
-        if (timeSinceLastRefresh < REFRESH_COOLDOWN) {
-          console.log("[CalendarScreen] Skipping refresh - within cooldown period");
-          return;
-        }
-
-        console.log("[CalendarScreen] Refreshing data after visibility change");
-        // Force calendar to re-render with current date
-        const today = format(new Date(), "yyyy-MM-dd");
-        setCurrentDate(today);
-        setCalendarKey((prev) => prev + 1);
-        // Load fresh data
-        const dateRange = {
-          start: format(new Date(), "yyyy-MM-dd"),
-          end: format(
-            new Date(new Date().getFullYear(), new Date().getMonth() + 6, new Date().getDate()),
-            "yyyy-MM-dd"
-          ),
-        };
-        loadInitialData(dateRange.start, dateRange.end);
-        setLastRefreshTime(now);
-        // Clear selected date when returning to visible
-        setSelectedDate(null);
-      }
+  // Coordinated data loading function with timeout
+  const loadDataSafely = async () => {
+    // If already loading, return existing promise
+    if (isLoadingRef.current && loadPromiseRef.current) {
+      return loadPromiseRef.current;
     }
 
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, [loadInitialData, lastRefreshTime, REFRESH_COOLDOWN, setSelectedDate]);
+    // If no user or division, skip load
+    if (!user || !division) {
+      setIsLoading(false);
+      return;
+    }
 
-  // Initialize data once when component mounts
+    // Clear any existing loading timeout
+    if (loadingTimeoutRef.current) {
+      clearTimeout(loadingTimeoutRef.current);
+    }
+
+    isLoadingRef.current = true;
+    setIsLoading(true);
+    setError(null);
+
+    // Set a timeout to clear loading state if it takes too long
+    loadingTimeoutRef.current = setTimeout(() => {
+      console.log("[CalendarScreen] Loading timeout reached, forcing state clear");
+      isLoadingRef.current = false;
+      setIsLoading(false);
+      loadPromiseRef.current = null;
+    }, MAX_LOADING_TIME);
+
+    loadPromiseRef.current = loadInitialData(dateRange.start, dateRange.end)
+      .catch((error) => {
+        console.error("[CalendarScreen] Error loading data:", error);
+        setError("Failed to load calendar data");
+      })
+      .finally(() => {
+        if (loadingTimeoutRef.current) {
+          clearTimeout(loadingTimeoutRef.current);
+        }
+        isLoadingRef.current = false;
+        setIsLoading(false);
+        loadPromiseRef.current = null;
+      });
+
+    return loadPromiseRef.current;
+  };
+
+  // Handle app state changes
   useEffect(() => {
-    const now = new Date();
-    const dateRange = {
-      start: format(now, "yyyy-MM-dd"),
-      end: format(new Date(now.getFullYear(), now.getMonth() + 6, now.getDate()), "yyyy-MM-dd"),
-    };
-    console.log("[CalendarScreen] Initial mount, loading data");
-    loadInitialData(dateRange.start, dateRange.end);
-    setCurrentDate(dateRange.start);
-    setLastRefreshTime(Date.now());
-  }, []); // Only run on mount
+    const subscription = AppState.addEventListener("change", async (nextAppState) => {
+      console.log("[CalendarScreen] App state changed:", { from: appState, to: nextAppState });
 
-  // Handle focus events - only update visual state
+      if (appState.match(/inactive|background/) && nextAppState === "active") {
+        console.log("[CalendarScreen] App came to foreground, checking session and data");
+
+        try {
+          const {
+            data: { session: currentSession },
+          } = await supabase.auth.getSession();
+
+          if (currentSession && user) {
+            console.log("[CalendarScreen] Session valid, refreshing data");
+            const now = Date.now();
+            if (now - lastRefreshTime > REFRESH_COOLDOWN) {
+              await loadDataSafely();
+              setLastRefreshTime(now);
+              setCalendarKey((prev) => prev + 1);
+            }
+          }
+        } catch (error) {
+          console.error("[CalendarScreen] Error checking session:", error);
+          // Clear loading state on error
+          isLoadingRef.current = false;
+          setIsLoading(false);
+        }
+      }
+
+      setAppState(nextAppState);
+    });
+
+    return () => {
+      subscription.remove();
+      // Clear any pending timeouts
+      if (loadingTimeoutRef.current) {
+        clearTimeout(loadingTimeoutRef.current);
+      }
+    };
+  }, [appState, user, lastRefreshTime]);
+
+  // Clean up on unmount
+  useEffect(() => {
+    return () => {
+      // Clear all loading states and timeouts
+      if (loadingTimeoutRef.current) {
+        clearTimeout(loadingTimeoutRef.current);
+      }
+      isLoadingRef.current = false;
+      setIsLoading(false);
+      loadPromiseRef.current = null;
+    };
+  }, []);
+
+  // Load initial data when component mounts or auth state changes
+  useEffect(() => {
+    loadDataSafely();
+  }, [user, division]);
+
+  // Handle visibility changes (app focus/background)
   useFocusEffect(
     React.useCallback(() => {
-      console.log("[CalendarScreen] Screen focused, checking if refresh needed");
       const now = Date.now();
-
-      // Only refresh if we're outside cooldown period
-      if (now - lastRefreshTime > REFRESH_COOLDOWN) {
+      if (now - lastRefreshTime > REFRESH_COOLDOWN && user && division) {
         console.log("[CalendarScreen] Screen focused, refreshing data");
+        loadDataSafely();
         setCalendarKey((prev) => prev + 1);
         setLastRefreshTime(now);
-      } else {
-        console.log("[CalendarScreen] No refresh needed or within cooldown period");
       }
 
       return () => {
         setSelectedDate(null);
       };
-    }, [lastRefreshTime])
+    }, [user, division, lastRefreshTime])
   );
 
   // Set up realtime subscriptions and cleanup
   useEffect(() => {
-    const subscription = setupCalendarSubscriptions();
+    if (!user || !division) return;
+
+    console.log("[CalendarScreen] Setting up realtime subscriptions");
+    const setupSubscriptions = () => {
+      if (subscriptionRef.current) {
+        subscriptionRef.current.unsubscribe();
+      }
+      subscriptionRef.current = setupCalendarSubscriptions();
+    };
+
+    setupSubscriptions();
 
     // Add listener for realtime updates with debounce
     let debounceTimeout: NodeJS.Timeout;
 
     const unsubscribe = useCalendarStore.subscribe((state, prevState) => {
-      // Check if relevant data has changed
       if (
         JSON.stringify(state.requests) !== JSON.stringify(prevState.requests) ||
         JSON.stringify(state.allotments) !== JSON.stringify(prevState.allotments)
       ) {
-        // Clear any existing timeout
         if (debounceTimeout) {
           clearTimeout(debounceTimeout);
         }
 
-        // Set a new timeout
         debounceTimeout = setTimeout(() => {
-          console.log("[CalendarScreen] Data changed in store, marking for refresh");
-          setDataChanged(true);
-        }, 100); // Small delay to batch rapid updates
+          if (!isLoadingRef.current) {
+            console.log("[CalendarScreen] Data changed in store, marking for refresh");
+            setDataChanged(true);
+          }
+        }, 100);
       }
     });
 
+    // Periodically check connection status and resubscribe if needed
+    const connectionCheckInterval = setInterval(async () => {
+      try {
+        const {
+          data: { session: currentSession },
+        } = await supabase.auth.getSession();
+        if (currentSession && (!subscriptionRef.current || dataChanged)) {
+          console.log("[CalendarScreen] Reestablishing realtime subscriptions");
+          setupSubscriptions();
+          setDataChanged(false);
+        }
+      } catch (error) {
+        console.error("[CalendarScreen] Error checking connection:", error);
+      }
+    }, 30000);
+
     return () => {
-      subscription.unsubscribe();
+      if (subscriptionRef.current) {
+        subscriptionRef.current.unsubscribe();
+      }
       unsubscribe();
       if (debounceTimeout) {
         clearTimeout(debounceTimeout);
       }
+      clearInterval(connectionCheckInterval);
       setSelectedDate(null);
     };
-  }, []);
+  }, [user, division]);
 
   const handleRequestSubmit = async (leaveType: "PLD" | "SDV") => {
-    if (selectedDate) {
-      try {
-        await submitRequest(selectedDate, leaveType);
-        setIsRequestDialogVisible(false);
-        // Removed setCalendarKey update since realtime will handle the refresh
-        // Show success message using Alert
-        if (Platform.OS === "web") {
-          alert("Request submitted successfully");
-        } else {
-          Alert.alert("Success", "Request submitted successfully");
-        }
-      } catch (error) {
-        // Show error message using Alert
-        if (Platform.OS === "web") {
-          alert(error instanceof Error ? error.message : "Failed to submit request");
-        } else {
-          Alert.alert("Error", error instanceof Error ? error.message : "Failed to submit request");
-        }
-      }
-    }
-  };
+    if (!selectedDate) return;
 
-  const handleTodayPress = async () => {
     try {
-      const { data, error } = await supabase.rpc("get_server_timestamp");
-      if (error) throw error;
-
-      const serverDate = new Date(data);
-      const today = format(serverDate, "yyyy-MM-dd", { timeZone: "UTC" });
-      console.log("[CalendarScreen] Today button pressed, setting date to:", today);
-      // Clear the selection since today cannot be requested
-      setSelectedDate(null);
-      console.log("[CalendarScreen] Cleared selected date");
-      // Update the current date and force calendar to re-render
-      setCurrentDate(today);
-      setCalendarKey((prev) => prev + 1);
-    } catch (error) {
-      console.error("[CalendarScreen] Error getting server time for Today button:", error);
-      // Fallback to local time if server time fails
-      const now = new Date();
-      const today = format(now, "yyyy-MM-dd", { timeZone: "UTC" });
-      setSelectedDate(null);
-      setCurrentDate(today);
-      setCalendarKey((prev) => prev + 1);
+      await submitRequest(selectedDate, leaveType, memberZoneId);
+      setRequestDialogVisible(false);
+    } catch (err) {
+      console.error("[CalendarScreen] Error submitting request:", err);
+      Alert.alert("Error", "Failed to submit request");
     }
   };
 
-  const selectedDateRequests = selectedDate
-    ? (requests[selectedDate] || []).filter((req) => !["cancelled", "denied"].includes(req.status))
-    : [];
-  const maxAllotment = selectedDate
-    ? allotments[selectedDate] ?? yearlyAllotments[new Date(selectedDate).getFullYear()] ?? 6
-    : 0;
+  const handleTodayPress = () => {
+    const today = format(new Date(), "yyyy-MM-dd");
+    if (selectedDate !== today) {
+      setSelectedDate(today);
+    }
+  };
+
+  // Memoize the request dialog props
+  const requestDialogProps = useMemo(() => {
+    if (!selectedDate) return null;
+
+    const dateKey = memberZoneId ? `${selectedDate}_${memberZoneId}` : selectedDate;
+    const yearKey = memberZoneId
+      ? `${new Date(selectedDate).getFullYear()}_${memberZoneId}`
+      : new Date(selectedDate).getFullYear().toString();
+
+    const maxAllotment = allotments[dateKey] ?? yearlyAllotments[yearKey] ?? 0;
+    const dateRequests = requests[dateKey] || [];
+    const currentAllotmentCount = dateRequests.filter(
+      (r: DayRequest) => r.status === "approved" || r.status === "pending"
+    ).length;
+
+    return {
+      isVisible: requestDialogVisible,
+      onClose: () => setRequestDialogVisible(false),
+      onSubmit: handleRequestSubmit,
+      selectedDate,
+      allotments: {
+        max: maxAllotment,
+        current: currentAllotmentCount,
+      },
+      requests: dateRequests as DayRequest[],
+      zoneId: memberZoneId,
+      isZoneSpecific: !!memberZoneId,
+    };
+  }, [requestDialogVisible, selectedDate, memberZoneId, allotments, yearlyAllotments, requests, handleRequestSubmit]);
+
+  if (!isInitialized) {
+    return (
+      <ThemedView style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={Colors.light.tint} />
+        <ThemedText>Initializing calendar...</ThemedText>
+      </ThemedView>
+    );
+  }
+
+  if (error) {
+    return (
+      <ThemedView style={styles.errorContainer}>
+        <ThemedText style={styles.errorText}>{error}</ThemedText>
+      </ThemedView>
+    );
+  }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
-      <ThemedView style={styles.header}>
-        <IconSymbol size={24} color={Colors[theme].text} name="calendar" style={styles.headerIcon} />
-        <ThemedText type="title">PLD/SDV Calendar</ThemedText>
-        <TouchableOpacity
-          style={[styles.todayButton, { backgroundColor: Colors[theme].tint }]}
-          onPress={handleTodayPress}
-          activeOpacity={0.7}
-        >
-          <ThemedText style={styles.todayButtonText}>Today</ThemedText>
-        </TouchableOpacity>
-      </ThemedView>
-
-      <Calendar key={`calendar-${currentDate}-${calendarKey}`} current={currentDate} />
+    <ThemedView style={styles.container}>
+      <ScrollView style={styles.scrollView}>
+        <Calendar current={selectedDate || undefined} zoneId={memberZoneId} isZoneSpecific={!!memberZoneId} />
+      </ScrollView>
 
       {selectedDate && (
-        <ThemedView style={styles.selectedDateInfo}>
-          <ThemedText type="subtitle">Selected Date: {selectedDate}</ThemedText>
-          <ThemedText>
-            {selectedDateRequests.length}/{maxAllotment} spots filled
-          </ThemedText>
-
-          <TouchableOpacity
-            style={[styles.requestButton, { backgroundColor: Colors[theme].tint }]}
-            onPress={() => setIsRequestDialogVisible(true)}
-            activeOpacity={0.7}
-          >
-            <ThemedText style={styles.requestButtonText}>
-              {selectedDateRequests.length >= maxAllotment ? "Request Waitlist Spot" : "Request Day Off"}
-            </ThemedText>
-          </TouchableOpacity>
-        </ThemedView>
+        <TouchableOpacity style={styles.requestButton} onPress={() => setRequestDialogVisible(true)}>
+          <ThemedText style={styles.requestButtonText}>Request Day Off</ThemedText>
+        </TouchableOpacity>
       )}
 
-      <RequestDialog
-        isVisible={isRequestDialogVisible}
-        onClose={() => {
-          setIsRequestDialogVisible(false);
-          setError(null); // Clear any errors when closing the dialog
-        }}
-        onSubmit={handleRequestSubmit}
-        selectedDate={selectedDate || ""}
-        allotments={{
-          max: maxAllotment,
-          current: selectedDateRequests.length,
-        }}
-        requests={selectedDateRequests as unknown as RequestWithMember[]}
-      />
-    </ScrollView>
+      {requestDialogProps && <RequestDialog {...requestDialogProps} />}
+    </ThemedView>
   );
 }
 
@@ -564,52 +516,38 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   } as ViewStyle,
-  contentContainer: {
-    flexGrow: 1,
-    paddingBottom: 20,
-  } as ViewStyle,
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 16,
-    padding: 16,
-    paddingBottom: 8,
-  } as ViewStyle,
-  headerIcon: {
-    marginRight: 0,
-  } as ViewStyle,
-  todayButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-    alignItems: "center",
-    marginLeft: 16,
-  } as ViewStyle,
-  todayButtonText: {
-    color: "black",
-    fontWeight: "600",
-    fontSize: 14,
-  } as TextStyle,
-  selectedDateInfo: {
-    padding: 16,
-    borderTopWidth: 1,
-    borderTopColor: "rgba(128, 128, 128, 0.2)",
-    marginTop: 10,
-    alignItems: "center",
+  scrollView: {
+    flex: 1,
   } as ViewStyle,
   requestButton: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
+    backgroundColor: Colors.light.tint,
+    padding: 16,
+    margin: 16,
     borderRadius: 8,
-    minWidth: 120,
     alignItems: "center",
-    marginTop: 16,
   } as ViewStyle,
   requestButtonText: {
     color: "white",
+    fontSize: 16,
     fontWeight: "600",
   } as TextStyle,
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  } as ViewStyle,
+  errorContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  } as ViewStyle,
+  errorText: {
+    color: Colors.light.error,
+    fontWeight: "600",
+  } as TextStyle,
+});
+
+const dialogStyles = StyleSheet.create({
   modalOverlay: {
     position: "absolute",
     top: 0,
@@ -638,30 +576,42 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     textAlign: "center",
   } as TextStyle,
-  modalMessage: {
-    marginBottom: 20,
-    textAlign: "center",
-  } as TextStyle,
   modalButtons: {
     flexDirection: "row",
-    justifyContent: "space-around",
+    justifyContent: "space-between",
+    width: "100%",
+    gap: 8,
+    marginTop: 16,
   } as ViewStyle,
   modalButton: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
+    flex: 1,
+    minHeight: 44,
+    padding: 8,
     borderRadius: 8,
-    minWidth: 100,
     alignItems: "center",
-  } as ViewStyle,
-  cancelButton: {
-    backgroundColor: "rgba(0, 0, 0, 0.1)",
-  } as ViewStyle,
-  confirmButton: {
-    backgroundColor: Colors.dark.tint,
+    justifyContent: "center",
   } as ViewStyle,
   modalButtonText: {
+    fontSize: 14,
     fontWeight: "600",
+    color: "white",
+    textAlign: "center",
+    lineHeight: 16,
   } as TextStyle,
+  cancelButton: {
+    backgroundColor: Colors.dark.border,
+  } as ViewStyle,
+  submitButton: {
+    backgroundColor: Colors.light.primary,
+  } as ViewStyle,
+  waitlistButton: {
+    backgroundColor: Colors.light.warning,
+  } as ViewStyle,
+  requestList: {
+    width: "100%",
+    maxHeight: Platform.OS === "web" ? "50%" : 300,
+    marginVertical: 16,
+  } as ViewStyle,
   requestSpot: {
     flexDirection: "row",
     alignItems: "center",
@@ -680,63 +630,40 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
   } as ViewStyle,
-  emptySpot: {
-    color: Colors.light.success,
-    fontStyle: "italic",
-  } as TextStyle,
-  requestList: {
-    width: "100%",
-    maxHeight: Platform.OS === "web" ? "50%" : 300,
-    marginVertical: 16,
-  } as ViewStyle,
-  sectionTitle: {
-    marginBottom: 10,
-  } as TextStyle,
   requestStatus: {
     marginLeft: 8,
     fontWeight: "500",
   } as TextStyle,
+  emptySpot: {
+    color: Colors.light.success,
+    fontStyle: "italic",
+  } as TextStyle,
   allotmentInfo: {
     marginBottom: 16,
   } as TextStyle,
-  requestButtons: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-    marginVertical: 16,
-    gap: 16,
-  } as ViewStyle,
-  waitlistButton: {
-    backgroundColor: "#FFC107",
-  } as ViewStyle,
-  remainingDaysInfo: {
-    marginBottom: 16,
-    alignItems: "center",
-  } as ViewStyle,
-  disabledButton: {
-    backgroundColor: "rgba(128, 128, 128, 0.5)",
-  } as ViewStyle,
-  warningContainer: {
-    marginBottom: 10,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: Colors.light.error,
-    borderRadius: 8,
-    backgroundColor: Colors.light.error + "20",
-  } as ViewStyle,
-  warningText: {
+  approvedStatus: {
+    color: Colors.light.success,
+  } as TextStyle,
+  waitlistedStatus: {
     color: Colors.light.error,
-    fontWeight: "600",
   } as TextStyle,
-  loadingContainer: {
-    padding: 20,
+  allotmentContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
+    marginBottom: 16,
   } as ViewStyle,
-  loadingText: {
-    marginTop: 12,
-  } as TextStyle,
-  availableDaysNote: {
-    marginTop: 12,
-    fontWeight: "600",
-    fontSize: 14,
+  remainingDaysContainer: {
+    width: "100%",
+    marginBottom: 16,
+    padding: 12,
+    backgroundColor: Colors.dark.card,
+    borderRadius: 8,
+    gap: 8,
+  } as ViewStyle,
+  remainingDaysText: {
+    fontSize: 16,
+    fontWeight: "500",
+    color: Colors.light.success,
   } as TextStyle,
 });

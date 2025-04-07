@@ -173,40 +173,82 @@ export type Database = {
           id: string;
           member_id: string;
           division: string;
+          zone_id?: number;
           request_date: string;
           leave_type: "PLD" | "SDV";
-          status: "pending" | "approved" | "denied" | "waitlisted" | "cancellation_pending" | "cancelled";
+          status:
+            | "pending"
+            | "approved"
+            | "denied"
+            | "waitlisted"
+            | "cancellation_pending"
+            | "cancelled";
           requested_at?: string;
           waitlist_position?: number;
           responded_at?: string;
           responded_by?: string;
           paid_in_lieu?: boolean;
+          denial_reason_id?: number;
+          denial_comment?: string;
+          actioned_by?: string;
+          actioned_at?: string;
+          created_at?: string;
+          updated_at?: string;
+          metadata?: Record<string, any>;
         };
         Insert: {
           id?: string;
           member_id: string;
           division: string;
+          zone_id?: number;
           request_date: string;
           leave_type: "PLD" | "SDV";
-          status?: "pending" | "approved" | "denied" | "waitlisted" | "cancellation_pending" | "cancelled";
+          status?:
+            | "pending"
+            | "approved"
+            | "denied"
+            | "waitlisted"
+            | "cancellation_pending"
+            | "cancelled";
           requested_at?: string;
           waitlist_position?: number;
           responded_at?: string;
           responded_by?: string;
           paid_in_lieu?: boolean;
+          denial_reason_id?: number;
+          denial_comment?: string;
+          actioned_by?: string;
+          actioned_at?: string;
+          created_at?: string;
+          updated_at?: string;
+          metadata?: Record<string, any>;
         };
         Update: {
           id?: string;
           member_id?: string;
           division?: string;
+          zone_id?: number;
           request_date?: string;
           leave_type?: "PLD" | "SDV";
-          status?: "pending" | "approved" | "denied" | "waitlisted" | "cancellation_pending" | "cancelled";
+          status?:
+            | "pending"
+            | "approved"
+            | "denied"
+            | "waitlisted"
+            | "cancellation_pending"
+            | "cancelled";
           requested_at?: string;
           waitlist_position?: number;
           responded_at?: string;
           responded_by?: string;
           paid_in_lieu?: boolean;
+          denial_reason_id?: number;
+          denial_comment?: string;
+          actioned_by?: string;
+          actioned_at?: string;
+          created_at?: string;
+          updated_at?: string;
+          metadata?: Record<string, any>;
         };
       };
       vacation_allotments: {
@@ -266,10 +308,30 @@ export type Database = {
       [_ in never]: never;
     };
     Enums: {
-      division: "163" | "173" | "174" | "175" | "184" | "185" | "188" | "209" | "520";
+      division:
+        | "163"
+        | "173"
+        | "174"
+        | "175"
+        | "184"
+        | "185"
+        | "188"
+        | "209"
+        | "520";
       leave_type: "PLD" | "SDV";
-      pld_sdv_status: "pending" | "approved" | "denied" | "waitlisted" | "cancellation_pending" | "cancelled";
-      role: "user" | "division_admin" | "union_admin" | "application_admin" | "company_admin";
+      pld_sdv_status:
+        | "pending"
+        | "approved"
+        | "denied"
+        | "waitlisted"
+        | "cancellation_pending"
+        | "cancelled";
+      role:
+        | "user"
+        | "division_admin"
+        | "union_admin"
+        | "application_admin"
+        | "company_admin";
       sys_seniority_type: "WC" | "DMIR" | "DWP" | "SYS1" | "EJ&E" | "SYS2";
       user_role: "member" | "company_admin";
       zone:

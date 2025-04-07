@@ -10,7 +10,7 @@ import { MemberManagement } from "./MemberManagement";
 import { DivisionOfficers } from "./DivisionOfficers";
 import { MessageCenter } from "./MessageCenter";
 import { AdminMessages } from "./AdminMessages";
-import { CalendarAllotments } from "./CalendarAllotments";
+import { CalendarManager } from "./CalendarManager";
 import Animated, {
   FadeIn,
   FadeOut,
@@ -106,15 +106,15 @@ export function DivisionAdminPanel({ division }: DivisionAdminPanelProps) {
     const Component = (() => {
       switch (activeSection) {
         case "members":
-          return () => <MemberManagement division={division} />;
+          return () => <MemberManagement />;
         case "officers":
           return () => <DivisionOfficers division={division} />;
         case "messages":
-          return () => <MessageCenter division={division} />;
+          return () => <MessageCenter />;
         case "adminMessages":
-          return () => <AdminMessages division={division} />;
+          return () => <AdminMessages />;
         case "calendar":
-          return () => <CalendarAllotments division={division} />;
+          return () => <CalendarManager />;
         default:
           return null;
       }

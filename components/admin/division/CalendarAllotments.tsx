@@ -9,6 +9,7 @@ import { supabase } from "@/utils/supabase";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserStore } from "@/store/userStore";
 import { UserRole, CompanyAdminRole } from "@/types/auth";
+import { useZoneCalendarStore } from "@/store/zoneCalendarStore";
 
 type AllotmentType = "pld_sdv" | "vacation";
 
@@ -57,7 +58,12 @@ function ConfirmationDialog({ isVisible, title, message, onConfirm, onCancel }: 
   );
 }
 
-export function CalendarAllotments() {
+interface CalendarAllotmentsProps {
+  zoneId?: number;
+  isZoneSpecific?: boolean;
+}
+
+export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarAllotmentsProps) {
   const [selectedType, setSelectedType] = useState<"pld_sdv" | "vacation">("pld_sdv");
   const [yearlyAllotments, setYearlyAllotments] = useState<YearlyAllotment[]>([]);
   const [tempAllotments, setTempAllotments] = useState<Record<number, string>>({});
@@ -73,6 +79,7 @@ export function CalendarAllotments() {
   const { user } = useAuth();
   const division = useUserStore((state) => state.division);
   const userRole = useUserStore((state) => state.userRole);
+  const { divisionsWithZones } = useZoneCalendarStore();
 
   // Get the current and next year
   const currentYear = new Date().getFullYear();
@@ -85,13 +92,19 @@ export function CalendarAllotments() {
     const fetchAllotments = async () => {
       setIsLoading(true);
       try {
-        const { data, error } = await supabase
+        let query = supabase
           .from("pld_sdv_allotments")
           .select("year, max_allotment")
           .eq("division", division)
           .in("year", [currentYear, nextYear])
-          .is("date", null) // Only get yearly defaults (no specific date)
-          .limit(2);
+          .is("date", null); // Only get yearly defaults (no specific date)
+
+        // Add zone filter if applicable
+        if (isZoneSpecific && zoneId) {
+          query = query.eq("zone_id", zoneId);
+        }
+
+        const { data, error } = await query.limit(2);
 
         if (error) throw error;
 
@@ -122,7 +135,7 @@ export function CalendarAllotments() {
     };
 
     fetchAllotments();
-  }, [user, division]);
+  }, [user, division, zoneId, isZoneSpecific]);
 
   const getAllotmentForYear = (year: number) => {
     return yearlyAllotments.find((a) => a.year === year)?.max_allotment || 0;
@@ -137,16 +150,23 @@ export function CalendarAllotments() {
         max_allotment: numValue,
         division,
         current_requests: 0,
+        zone_id: isZoneSpecific ? zoneId : null,
       });
 
       // First, check if a record exists
-      const { data: existingData } = await supabase
+      let query = supabase
         .from("pld_sdv_allotments")
         .select("id")
         .eq("division", division)
         .eq("year", year)
-        .eq("date", `${year}-01-01`)
-        .single();
+        .eq("date", `${year}-01-01`);
+
+      // Add zone filter if applicable
+      if (isZoneSpecific && zoneId) {
+        query = query.eq("zone_id", zoneId);
+      }
+
+      const { data: existingData } = await query.single();
 
       let result;
       if (existingData) {
@@ -169,6 +189,7 @@ export function CalendarAllotments() {
             division,
             date: `${year}-01-01`,
             current_requests: 0,
+            zone_id: isZoneSpecific ? zoneId : null,
           })
           .select();
       }
@@ -318,39 +339,51 @@ export function CalendarAllotments() {
   };
 
   const renderYearlyAllotments = () => (
-    <ThemedView style={styles.yearlyAllotments}>
-      <ThemedText type="subtitle">{`Yearly PLD/SDV Allotments for Division ${division || ""}`}</ThemedText>
-      <ThemedText style={styles.description}>
-        Set the default daily allotment for each year. These values will apply to all days unless overridden by specific
-        daily, weekly, or monthly adjustments.
+    <ThemedView style={styles.yearlyAllotmentsContainer}>
+      <ThemedText type="title" style={styles.sectionTitle}>
+        {isZoneSpecific ? "Zone Yearly Allotments" : "Division Yearly Allotments"}
       </ThemedText>
-
       {[currentYear, nextYear].map((year) => (
-        <ThemedView key={year} style={styles.yearRow}>
-          <ThemedText style={styles.yearLabel}>{year}:</ThemedText>
+        <ThemedView key={year} style={styles.yearContainer}>
+          <ThemedText style={styles.yearLabel}>{year}</ThemedText>
           <TextInput
-            style={[styles.allotmentInput, { color: Colors[colorScheme].text, borderColor: Colors[colorScheme].tint }]}
-            keyboardType="numeric"
+            style={[styles.allotmentInput, { color: Colors[colorScheme].text }]}
             value={tempAllotments[year] || "0"}
-            onChangeText={(value) => setTempAllotments((prev) => ({ ...prev, [year]: value }))}
-            placeholder="Enter allotment"
+            onChangeText={(value) => {
+              setTempAllotments((prev) => ({ ...prev, [year]: value }));
+            }}
+            onBlur={() => {
+              const value = tempAllotments[year];
+              if (!value) return;
+
+              const numValue = parseInt(value, 10);
+              if (isNaN(numValue) || numValue < 0) {
+                if (Platform.OS === "web") {
+                  alert("Please enter a valid number");
+                } else {
+                  Alert.alert("Error", "Please enter a valid number");
+                }
+                setTempAllotments((prev) => ({
+                  ...prev,
+                  [year]: getAllotmentForYear(year).toString(),
+                }));
+                return;
+              }
+
+              if (numValue !== getAllotmentForYear(year)) {
+                setConfirmDialog({
+                  isVisible: true,
+                  year,
+                  value: numValue,
+                });
+              }
+            }}
+            keyboardType="numeric"
+            placeholder="0"
             placeholderTextColor={Colors[colorScheme].text}
           />
-          <ThemedText style={styles.perDay}>per day</ThemedText>
-          <TouchableOpacity
-            style={[styles.updateButton, { backgroundColor: Colors[colorScheme].tint }]}
-            onPress={() => handleUpdateAllotment(year, tempAllotments[year] || "0")}
-            disabled={isLoading}
-            activeOpacity={0.7}
-          >
-            <ThemedText style={[styles.updateButtonText, { color: "#000000" }]}>Update</ThemedText>
-          </TouchableOpacity>
         </ThemedView>
       ))}
-
-      <ThemedText style={styles.note}>
-        Note: Changes to yearly allotments will not affect any existing daily, weekly, or monthly overrides.
-      </ThemedText>
     </ThemedView>
   );
 
@@ -360,18 +393,17 @@ export function CalendarAllotments() {
         <ThemedText type="title">Calendar Allotments</ThemedText>
       </ThemedView>
       {renderTypeSelector()}
-      {selectedType === "pld_sdv" && renderYearlyAllotments()}
+      {renderYearlyAllotments()}
       <ThemedView style={styles.content}>
         {renderCalendar()}
         {renderAllotmentDetails()}
       </ThemedView>
       <ConfirmationDialog
         isVisible={confirmDialog.isVisible}
-        title="Confirm Update"
-        message={`Are you sure you want to set the ${confirmDialog.year} daily PLD/SDV allotment to ${confirmDialog.value} for Division ${division}?`}
+        title="Update Allotment"
+        message={`Are you sure you want to update the ${confirmDialog.year} allotment to ${confirmDialog.value}?`}
         onConfirm={() => handleUpdateConfirmed(confirmDialog.year, confirmDialog.value)}
         onCancel={() => {
-          console.log("[handleUpdateAllotment] Update cancelled");
           setConfirmDialog({ isVisible: false, year: 0, value: 0 });
           setTempAllotments((prev) => ({
             ...prev,
@@ -439,17 +471,15 @@ const styles = StyleSheet.create({
   activeText: {
     color: "#000000",
   },
-  yearlyAllotments: {
+  yearlyAllotmentsContainer: {
     backgroundColor: Colors.light.background,
     borderRadius: 8,
     padding: 20,
   },
-  description: {
-    marginTop: 8,
+  sectionTitle: {
     marginBottom: 16,
-    opacity: 0.8,
   },
-  yearRow: {
+  yearContainer: {
     flexDirection: "row",
     alignItems: "center",
     marginVertical: 8,
@@ -467,24 +497,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     marginHorizontal: 12,
     fontSize: 16,
-  },
-  updateButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-    marginLeft: 12,
-  },
-  updateButtonText: {
-    fontWeight: "600",
-  },
-  perDay: {
-    opacity: 0.8,
-  },
-  note: {
-    marginTop: 16,
-    fontSize: 12,
-    opacity: 0.7,
-    fontStyle: "italic",
   },
   modalOverlay: {
     position: "absolute",

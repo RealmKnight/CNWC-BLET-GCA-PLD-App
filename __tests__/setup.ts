@@ -31,11 +31,51 @@ jest.mock("expo-secure-store", () => ({
 
 // Import testing libraries
 import "@testing-library/jest-native/extend-expect";
+import "@testing-library/jest-dom";
+import { cleanup } from "@testing-library/react";
+import { afterEach } from "vitest";
 
 // Mock zustand persist
 jest.mock("zustand/middleware", () => ({
     ...jest.requireActual("zustand/middleware"),
     persist: () => (config: any) => config,
 }));
+
+// Cleanup after each test
+afterEach(() => {
+    cleanup();
+});
+
+// Mock ResizeObserver
+class ResizeObserverMock {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+}
+
+window.ResizeObserver = ResizeObserverMock;
+
+// Mock IntersectionObserver
+const mockIntersectionObserver = jest.fn();
+mockIntersectionObserver.mockImplementation((callback, options) => ({
+    root: null,
+    rootMargin: "",
+    thresholds: [],
+    observe: () => null,
+    unobserve: () => null,
+    disconnect: () => null,
+    takeRecords: () => [],
+}));
+
+window.IntersectionObserver = mockIntersectionObserver;
+
+// Mock matchMedia
+window.matchMedia = window.matchMedia || function () {
+    return {
+        matches: false,
+        addListener: function () {},
+        removeListener: function () {},
+    };
+};
 
 // Add any additional setup code here

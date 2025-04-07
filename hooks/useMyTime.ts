@@ -6,6 +6,8 @@ import { useIsomorphicLayoutEffect } from "./useIsomorphicLayoutEffect";
 import { useUserStore } from "@/store/userStore";
 import { useCalendarStore } from "@/store/calendarStore";
 import { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
+import { useFocusEffect } from "@react-navigation/native";
+import React from "react";
 
 export interface TimeStats {
   total: {
@@ -80,6 +82,9 @@ export function useMyTime() {
   const { member: userStoreMember } = useUserStore();
   const [isDataFetching, setIsDataFetching] = useState(false);
   const initializationRef = useRef(false);
+  const mountTimeRef = useRef(Date.now());
+  const lastRefreshTimeRef = useRef(Date.now());
+  const REFRESH_COOLDOWN = 1000; // 1 second in milliseconds
 
   const fetchStats = useCallback(async () => {
     if (!member?.id || isDataFetching) {
@@ -510,27 +515,42 @@ export function useMyTime() {
 
   // Initialize data
   const initialize = useCallback(async () => {
-    if (
-      !member?.id || isInitialized || isDataFetching ||
-      initializationRef.current
-    ) {
-      console.log("[MyTime] Skipping initialization - conditions not met:", {
-        hasMemberId: !!member?.id,
-        isInitialized,
-        isDataFetching,
-        isInitializing: initializationRef.current,
-      });
+    if (!member?.id) {
+      console.log("[MyTime] Skipping initialization - no member ID");
+      setIsLoading(false);
+      return;
+    }
+
+    // If already initialized and not forced, skip
+    if (isInitialized && !isDataFetching) {
+      console.log("[MyTime] Already initialized, skipping");
+      setIsLoading(false);
+      return;
+    }
+
+    // If already initializing, skip
+    if (initializationRef.current) {
+      console.log("[MyTime] Initialization already in progress");
       return;
     }
 
     try {
-      console.log("[MyTime] Initializing data for member:", member.id);
+      console.log("[MyTime] Starting initialization for member:", member.id);
       initializationRef.current = true;
       setIsDataFetching(true);
       setIsLoading(true);
       setError(null);
 
       await Promise.all([fetchStats(), fetchRequests()]);
+
+      if (!initializationRef.current) {
+        // If initialization was cancelled, don't update state
+        console.log(
+          "[MyTime] Initialization was cancelled, skipping state updates",
+        );
+        return;
+      }
+
       setIsInitialized(true);
       console.log("[MyTime] Data initialized successfully");
     } catch (error) {
@@ -539,11 +559,62 @@ export function useMyTime() {
         error instanceof Error ? error.message : "Failed to initialize data",
       );
     } finally {
-      setIsLoading(false);
-      setIsDataFetching(false);
-      initializationRef.current = false;
+      if (initializationRef.current) {
+        setIsLoading(false);
+        setIsDataFetching(false);
+        initializationRef.current = false;
+      }
     }
   }, [member?.id, isInitialized, fetchStats, fetchRequests, isDataFetching]);
+
+  // Add cleanup effect
+  useEffect(() => {
+    return () => {
+      console.log("[MyTime] Cleaning up");
+      initializationRef.current = false;
+      setIsLoading(false);
+      setIsDataFetching(false);
+      setIsInitialized(false);
+    };
+  }, []);
+
+  // Initialize when auth is ready
+  useEffect(() => {
+    if (!isAuthLoading && member?.id) {
+      console.log("[MyTime] Auth ready, initializing");
+      initialize();
+    }
+  }, [isAuthLoading, member?.id, initialize]);
+
+  // Handle focus events with proper state reset
+  useFocusEffect(
+    React.useCallback(() => {
+      const now = Date.now();
+      // Skip refresh if we just mounted (within cooldown period)
+      if ((now - mountTimeRef.current) < REFRESH_COOLDOWN) {
+        console.log("[MyTime] Screen focused, skipping refresh (recent mount)");
+        return;
+      }
+
+      // Reset initialization state if needed
+      if (!isInitialized && !initializationRef.current) {
+        console.log("[MyTime] Screen focused, resetting initialization state");
+        setIsLoading(true);
+        initialize();
+      } else if ((now - lastRefreshTimeRef.current) > REFRESH_COOLDOWN) {
+        console.log("[MyTime] Screen focused, refreshing data");
+        setIsDataFetching(true);
+        initialize();
+        lastRefreshTimeRef.current = now;
+      } else {
+        console.log("[MyTime] Screen focused, skipping refresh:", {
+          isInitialized,
+          timeSinceLastRefresh: now - lastRefreshTimeRef.current,
+          cooldown: REFRESH_COOLDOWN,
+        });
+      }
+    }, [initialize, isInitialized, REFRESH_COOLDOWN]),
+  );
 
   // Set up realtime subscription when member is available and initialized
   useIsomorphicLayoutEffect(() => {
@@ -633,14 +704,6 @@ export function useMyTime() {
       sixMonthRequestsChannel.unsubscribe();
     };
   }, [member?.id, isInitialized, fetchStats, fetchRequests]);
-
-  // Initialize only when auth is ready and not already initialized
-  useEffect(() => {
-    if (!isAuthLoading && member?.id && !isInitialized) {
-      console.log("[MyTime] Auth ready, triggering initialization");
-      initialize();
-    }
-  }, [isAuthLoading, member?.id, isInitialized, initialize]);
 
   return {
     stats,
