@@ -143,14 +143,15 @@ function RequestRow({ request, onCancel, onCancelSixMonth }: RequestRowProps) {
       <ThemedView style={styles.typeContainer}>
         <ThemedText style={styles.type}>{request.leave_type}</ThemedText>
       </ThemedView>
-      {(request.status === "pending" || request.is_six_month_request) && (
-        <ThemedTouchableOpacity
-          style={styles.cancelButton}
-          onPress={() => (request.is_six_month_request ? onCancelSixMonth(request) : onCancel(request))}
-        >
-          <Feather name="x-circle" size={24} color={Colors[colorScheme ?? "light"].error} />
-        </ThemedTouchableOpacity>
-      )}
+      {(request.status === "pending" || request.status === "approved" || request.is_six_month_request) &&
+        parseISO(request.request_date) > new Date() && (
+          <ThemedTouchableOpacity
+            style={styles.cancelButton}
+            onPress={() => (request.is_six_month_request ? onCancelSixMonth(request) : onCancel(request))}
+          >
+            <Feather name="x-circle" size={24} color={Colors[colorScheme ?? "light"].error} />
+          </ThemedTouchableOpacity>
+        )}
     </ThemedView>
   );
 }

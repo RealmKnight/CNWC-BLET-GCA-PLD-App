@@ -479,8 +479,8 @@ export default function CompanyAdminScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      {/* Add zone filter */}
-      <View style={styles.filterContainer}>
+      {/* Add zone filter commented out for now unless needed*/}
+      {/* <View style={styles.filterContainer}>
         <Text>Filter by Zone:</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.zoneScroll}>
           <TouchableOpacityComponent
@@ -529,7 +529,7 @@ export default function CompanyAdminScreen() {
             </TouchableOpacityComponent>
           ))}
         </ScrollView>
-      </View>
+      </View> */}
 
       <FlatList
         data={pendingRequests}

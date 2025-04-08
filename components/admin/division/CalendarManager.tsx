@@ -1,28 +1,45 @@
 import React, { useState, useEffect } from "react";
-import { StyleSheet, ScrollView, Platform, ViewStyle } from "react-native";
+import { StyleSheet, ScrollView, Platform, ViewStyle, Switch, TouchableOpacity } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { Colors } from "@/constants/Colors";
 import { useUserStore } from "@/store/userStore";
-import { useZoneCalendarStore } from "@/store/zoneCalendarStore";
 import { ZoneCalendarAdmin } from "./ZoneCalendarAdmin";
 import { CalendarAllotments } from "./CalendarAllotments";
+import { useColorScheme } from "@/hooks/useColorScheme";
+import { useAdminCalendarManagementStore } from "@/store/adminCalendarManagementStore";
 
 export function CalendarManager() {
-  const [selectedZoneId, setSelectedZoneId] = useState<number | null>(null);
+  const {
+    usesZoneCalendars,
+    selectedZoneId,
+    zones,
+    isLoading,
+    error,
+    fetchDivisionSettings,
+    toggleZoneCalendars,
+    setSelectedZoneId,
+  } = useAdminCalendarManagementStore();
+
   const division = useUserStore((state) => state.division);
-  const { divisionsWithZones, fetchDivisionsWithZones } = useZoneCalendarStore();
+  const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
 
-  // Fetch divisions with zones on mount
   useEffect(() => {
-    fetchDivisionsWithZones();
-  }, []);
+    if (division) {
+      fetchDivisionSettings(division);
+    }
+  }, [division, fetchDivisionSettings]);
 
-  const hasZoneCalendars = division ? !!divisionsWithZones[division] : false;
+  const handleZoneCalendarToggle = async () => {
+    if (!division) return;
+    await toggleZoneCalendars(division, usesZoneCalendars);
+  };
 
   const handleZoneSelect = (zoneId: number) => {
     setSelectedZoneId(zoneId);
   };
+
+  const currentDivisionZones = zones[division || ""] || [];
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
@@ -31,21 +48,51 @@ export function CalendarManager() {
           Calendar Management
         </ThemedText>
 
-        {/* Zone Calendar Management */}
-        <ThemedView style={styles.section}>
-          <ZoneCalendarAdmin division={division || ""} onZoneSelect={handleZoneSelect} />
-        </ThemedView>
+        {error && (
+          <ThemedView style={[styles.section, styles.errorSection]}>
+            <ThemedText style={styles.errorText}>Error: {error}</ThemedText>
+          </ThemedView>
+        )}
 
-        {/* Division-wide Calendar */}
         <ThemedView style={styles.section}>
-          <ThemedText type="subtitle" style={styles.sectionTitle}>
-            Division Calendar
+          <ThemedView style={styles.toggleContainer}>
+            <ThemedText type="subtitle">Use Zone-Based Calendars</ThemedText>
+            <Switch
+              value={usesZoneCalendars}
+              onValueChange={handleZoneCalendarToggle}
+              disabled={isLoading}
+              trackColor={{ false: Colors[colorScheme]?.border || "#ccc", true: Colors[colorScheme]?.tint || "#000" }}
+            />
+          </ThemedView>
+          <ThemedText style={styles.description}>
+            {usesZoneCalendars
+              ? "Each zone will have its own calendar and allotments"
+              : "Using a single calendar for the entire division"}
           </ThemedText>
-          <CalendarAllotments />
         </ThemedView>
 
-        {/* Zone-specific Calendar (if a zone is selected) */}
-        {selectedZoneId && (
+        {usesZoneCalendars && (
+          <ThemedView style={styles.section}>
+            <ZoneCalendarAdmin
+              division={division || ""}
+              onZoneSelect={handleZoneSelect}
+              selectedZoneId={selectedZoneId}
+              zones={currentDivisionZones}
+              isLoading={isLoading}
+            />
+          </ThemedView>
+        )}
+
+        {!usesZoneCalendars && (
+          <ThemedView style={styles.section}>
+            <ThemedText type="subtitle" style={styles.sectionTitle}>
+              Division Calendar
+            </ThemedText>
+            <CalendarAllotments isZoneSpecific={false} />
+          </ThemedView>
+        )}
+
+        {usesZoneCalendars && selectedZoneId && (
           <ThemedView style={styles.section}>
             <ThemedText type="subtitle" style={styles.sectionTitle}>
               Zone Calendar
@@ -87,9 +134,32 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   } as ViewStyle,
+  errorSection: {
+    backgroundColor: Colors.light.error,
+    borderColor: Colors.light.error,
+    borderWidth: 1,
+    padding: 16,
+    borderRadius: 8,
+    marginBottom: 24,
+  },
+  errorText: {
+    color: Colors.dark.text,
+    fontWeight: "bold",
+  },
   sectionTitle: {
     fontSize: 18,
     fontWeight: "600",
     marginBottom: 16,
+  },
+  toggleContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  } as ViewStyle,
+  description: {
+    fontSize: 14,
+    color: Colors.light.text,
+    marginTop: 8,
   },
 });

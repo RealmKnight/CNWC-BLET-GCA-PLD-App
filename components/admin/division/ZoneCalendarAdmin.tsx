@@ -1,107 +1,58 @@
-import React, { useEffect } from "react";
-import { StyleSheet, TouchableOpacity, Platform, Alert, ActivityIndicator } from "react-native";
+import React, { useEffect, useState } from "react";
+import { StyleSheet, TouchableOpacity, ViewStyle } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
-import { useZoneCalendarStore } from "@/store/zoneCalendarStore";
+
+interface Zone {
+  id: number;
+  name: string;
+}
 
 interface ZoneCalendarAdminProps {
   division: string;
   onZoneSelect: (zoneId: number) => void;
+  selectedZoneId: number | null;
+  zones: Zone[];
+  isLoading: boolean;
 }
 
-export function ZoneCalendarAdmin({ division, onZoneSelect }: ZoneCalendarAdminProps) {
+export function ZoneCalendarAdmin({
+  division,
+  onZoneSelect,
+  selectedZoneId,
+  zones,
+  isLoading,
+}: ZoneCalendarAdminProps) {
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
-  const tintColor = Colors[colorScheme].tint;
-
-  const {
-    divisionsWithZones,
-    setDivisionZoneCalendars,
-    removeDivisionZoneCalendars,
-    isLoading,
-    error: storeError,
-    zones,
-    fetchZones,
-  } = useZoneCalendarStore();
-
-  // Fetch zones only if we don't have them cached
-  useEffect(() => {
-    if (!division || zones[division]?.length > 0) return;
-    fetchZones(division);
-  }, [division, zones, fetchZones]);
-
-  const handleZoneToggle = async (zoneId: number) => {
-    try {
-      const currentZones = divisionsWithZones[division] || [];
-      const isEnabled = currentZones.includes(zoneId);
-
-      if (isEnabled) {
-        await removeDivisionZoneCalendars(division, [zoneId]);
-      } else {
-        await setDivisionZoneCalendars(division, [...currentZones, zoneId]);
-      }
-
-      onZoneSelect(zoneId);
-    } catch (error) {
-      console.error("[ZoneCalendarAdmin] Error toggling zone calendar:", error);
-      const errorMessage = error instanceof Error ? error.message : "Failed to update zone calendar settings";
-      if (Platform.OS === "web") {
-        alert(errorMessage);
-      } else {
-        Alert.alert("Error", errorMessage);
-      }
-    }
-  };
-
-  // Only show loading state when we have no data
-  if (isLoading && !zones[division]?.length) {
-    return (
-      <ThemedView style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={tintColor} />
-        <ThemedText style={styles.loadingText}>Loading zones...</ThemedText>
-      </ThemedView>
-    );
-  }
-
-  if (storeError) {
-    return (
-      <ThemedView style={styles.container}>
-        <ThemedText style={styles.errorText}>{storeError}</ThemedText>
-      </ThemedView>
-    );
-  }
-
-  const divisionZones = zones[division] || [];
-
-  if (!divisionZones.length) {
-    return (
-      <ThemedView style={styles.container}>
-        <ThemedText style={styles.noDataText}>No zones found for this division.</ThemedText>
-      </ThemedView>
-    );
-  }
 
   return (
     <ThemedView style={styles.container}>
       <ThemedText type="subtitle" style={styles.title}>
-        Zone Calendars
+        Select Zone
       </ThemedText>
-      <ThemedView style={styles.zonesContainer}>
-        {divisionZones.map((zone) => {
-          const isEnabled = (divisionsWithZones[division] || []).includes(zone.id);
-          return (
-            <TouchableOpacity
-              key={zone.id}
-              style={[styles.zoneButton, isEnabled && styles.activeZoneButton]}
-              onPress={() => handleZoneToggle(zone.id)}
-            >
-              <ThemedText style={[styles.zoneButtonText, isEnabled && styles.activeZoneButtonText]}>
-                {zone.name}
-              </ThemedText>
-            </TouchableOpacity>
-          );
-        })}
+      <ThemedView style={styles.zoneList}>
+        {zones.map((zone) => (
+          <TouchableOpacity
+            key={zone.id}
+            style={[
+              styles.zoneButton,
+              selectedZoneId === zone.id && {
+                backgroundColor: Colors[colorScheme].tint,
+              },
+            ]}
+            onPress={() => onZoneSelect(zone.id)}
+          >
+            <ThemedText style={[styles.zoneName, selectedZoneId === zone.id && styles.selectedZoneName]}>
+              {zone.name}
+            </ThemedText>
+          </TouchableOpacity>
+        ))}
+        {isLoading && <ThemedText style={styles.loadingText}>Loading zones...</ThemedText>}
+        {!isLoading && zones.length === 0 && (
+          <ThemedText style={styles.emptyText}>No zones found for this division</ThemedText>
+        )}
       </ThemedView>
     </ThemedView>
   );
@@ -109,53 +60,38 @@ export function ZoneCalendarAdmin({ division, onZoneSelect }: ZoneCalendarAdminP
 
 const styles = StyleSheet.create({
   container: {
-    padding: 16,
-  },
-  loadingContainer: {
-    padding: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: 120,
-  },
+    flex: 1,
+  } as ViewStyle,
   title: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: "600",
     marginBottom: 16,
   },
-  zonesContainer: {
+  zoneList: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
-  },
+  } as ViewStyle,
   zoneButton: {
-    padding: 12,
+    padding: 8,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: Colors.light.tint,
-    minWidth: 120,
+    borderColor: Colors.light.border,
+    minWidth: 100,
     alignItems: "center",
+  } as ViewStyle,
+  zoneName: {
+    fontSize: 14,
   },
-  activeZoneButton: {
-    backgroundColor: Colors.light.tint,
-    borderColor: Colors.light.tint,
-  },
-  zoneButtonText: {
-    fontSize: 16,
-  },
-  activeZoneButtonText: {
-    color: "#FFFFFF",
-  },
-  errorText: {
-    color: "red",
-    textAlign: "center",
+  selectedZoneName: {
+    color: "#000000",
+    fontWeight: "600",
   },
   loadingText: {
-    marginTop: 8,
-    textAlign: "center",
+    fontStyle: "italic",
   },
-  noDataText: {
-    textAlign: "center",
-    fontSize: 16,
+  emptyText: {
+    fontStyle: "italic",
     color: Colors.light.text,
   },
 });

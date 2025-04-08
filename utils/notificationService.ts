@@ -170,7 +170,7 @@ export async function sendMessageWithNotification({
       `[Notification] Starting notification process for recipient ${recipientId}`,
     );
 
-    // First get the member's info and their auth info
+    // First get the member's info
     const { data: memberData, error: memberError } = await supabase
       .from("members")
       .select(
@@ -180,10 +180,7 @@ export async function sendMessageWithNotification({
           push_token,
           contact_preference
         ),
-        phone,
-        auth_users:id(
-          email
-        )
+        phone
       `,
       )
       .eq("id", recipientId)
@@ -196,10 +193,26 @@ export async function sendMessageWithNotification({
       throw memberError;
     }
 
+    // Get the email using MCP auth admin method
+    const { data: userData, error: userError } = await supabase.functions
+      .invoke("mcp-auth-admin", {
+        body: {
+          method: "get_user_by_id",
+          params: { uid: recipientId },
+        },
+      });
+
+    if (userError) {
+      console.error(
+        `[Notification] Error fetching user email: ${userError.message}`,
+      );
+      throw userError;
+    }
+
     const pushToken = memberData?.user_preferences?.push_token;
     const contactPreference =
       memberData?.user_preferences?.contact_preference || "email";
-    const email = memberData?.auth_users?.email;
+    const email = userData?.user?.email;
     const phone = memberData?.phone;
 
     console.log(

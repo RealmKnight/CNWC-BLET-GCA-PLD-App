@@ -3,7 +3,7 @@ import { supabase } from "@/utils/supabase";
 import { addDays, isAfter, isBefore, parseISO, startOfDay } from "date-fns";
 import { format } from "date-fns-tz";
 import { useUserStore } from "@/store/userStore";
-import { useZoneCalendarStore } from "@/store/zoneCalendarStore";
+import { useAdminCalendarManagementStore } from "@/store/adminCalendarManagementStore";
 import { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import { Database } from "@/types/supabase";
 
@@ -666,8 +666,16 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
   },
 
   hasZoneSpecificCalendar: (division: string) => {
-    const { divisionsWithZones } = useZoneCalendarStore.getState();
-    return !!divisionsWithZones[division];
+    // Get zoneCalendars directly from the ADMIN calendar store state
+    const { zoneCalendars } = useAdminCalendarManagementStore.getState();
+    // Parse division string to number for comparison
+    const divisionIdNumber = parseInt(division, 10);
+    if (isNaN(divisionIdNumber)) {
+      console.error("[CalendarStore] Invalid division ID format:", division);
+      return false; // Cannot determine if division ID is not a number
+    }
+    // Check if any calendar belongs to the specified division ID (number comparison)
+    return zoneCalendars.some((cal) => cal.division_id === divisionIdNumber);
   },
 
   getMemberZoneCalendar: async (division: string, zone: string) => {

@@ -25,11 +25,20 @@ import { format } from "date-fns-tz";
 import { supabase } from "@/utils/supabase";
 import { useUserStore } from "@/store/userStore";
 import { useFocusEffect } from "@react-navigation/native";
-import { useZoneCalendarStore } from "@/store/zoneCalendarStore";
+import { useAdminCalendarManagementStore } from "@/store/adminCalendarManagementStore";
 import { Member } from "@/types/member";
 import { useMyTime } from "@/hooks/useMyTime";
 
 type ColorScheme = keyof typeof Colors;
+
+// Define Zone type based on Supabase schema
+interface Zone {
+  id: number;
+  name: string;
+  division_id: number; // Assuming division_id is number based on zones table schema
+  created_at: string;
+  updated_at: string;
+}
 
 interface RequestDialogProps {
   isVisible: boolean;
@@ -187,13 +196,15 @@ export default function CalendarScreen() {
   const theme = (useColorScheme() ?? "light") as ColorScheme;
   const { user, session } = useAuth();
   const { member, division } = useUserStore();
-  const { divisionsWithZones } = useZoneCalendarStore();
+  const { zoneCalendars } = useAdminCalendarManagementStore();
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [requestDialogVisible, setRequestDialogVisible] = useState(false);
   const [dataChanged, setDataChanged] = useState(false);
   const [lastRefreshTime, setLastRefreshTime] = useState(0);
   const [appState, setAppState] = useState(AppState.currentState);
+  const [zones, setZones] = useState<Zone[]>([]);
+  const [isZonesLoading, setIsZonesLoading] = useState(false);
   const REFRESH_COOLDOWN = 500; // milliseconds
 
   // Add refs to track loading state and prevent duplicate loads
@@ -205,13 +216,59 @@ export default function CalendarScreen() {
   // Add a key to force re-render
   const [calendarKey, setCalendarKey] = useState(0);
 
-  // Get member's zone if division uses zone calendars
+  // --- Function to fetch zones ---
+  const fetchZones = async () => {
+    if (!division) return;
+
+    setIsZonesLoading(true);
+    setError(null);
+    try {
+      const divisionIdNumber = parseInt(division, 10);
+      if (isNaN(divisionIdNumber)) {
+        throw new Error("Invalid division ID format");
+      }
+
+      const { data, error: fetchError } = await supabase.from("zones").select("*").eq("division_id", divisionIdNumber);
+
+      if (fetchError) throw fetchError;
+
+      setZones(data || []);
+    } catch (err: any) {
+      console.error("[CalendarScreen] Error fetching zones:", err);
+      setError(`Failed to load zones: ${err.message || "Unknown error"}`);
+      setZones([]); // Clear zones on error
+    } finally {
+      setIsZonesLoading(false);
+    }
+  };
+
+  // --- Effect to fetch zones when division changes ---
+  useEffect(() => {
+    fetchZones();
+  }, [division]);
+
+  // Get member's zone ID if division uses zone calendars
   const memberZoneId = useMemo(() => {
-    if (!division || !member?.zone) return undefined;
-    const hasZoneCalendars = divisionsWithZones[division];
-    const memberRecord = member as Member;
-    return hasZoneCalendars ? memberRecord.zone_id : undefined;
-  }, [division, member?.zone, divisionsWithZones]);
+    // Ensure division, member.zone, and zones are available
+    if (!division || !member?.zone || zones.length === 0) return undefined;
+
+    // Parse division string to number for comparison
+    const divisionIdNumber = parseInt(division, 10);
+    if (isNaN(divisionIdNumber)) {
+      console.error("[CalendarScreen] Invalid division ID format:", division);
+      return undefined; // Cannot compare if division ID is not a number
+    }
+
+    // Check if any zone calendar belongs to the current division ID (number comparison)
+    const hasZoneCalendars = zoneCalendars.some((cal) => cal.division_id === divisionIdNumber);
+
+    // Find the zone object matching the member's zone name
+    const matchedZone = zones.find((z) => z.name === member.zone);
+
+    // Return the numeric ID if found and the division uses zone calendars
+    return hasZoneCalendars && matchedZone ? matchedZone.id : undefined;
+    // Update dependencies: include zones
+  }, [division, member?.zone, zoneCalendars, zones]);
 
   const {
     selectedDate,
