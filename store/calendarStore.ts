@@ -29,6 +29,33 @@ export interface DayAllotment {
   year?: number;
 }
 
+// Add type for member data
+interface RequestMember {
+  id: string;
+  first_name: string | null;
+  last_name: string | null;
+  pin_number: number;
+}
+
+interface FullRequestData {
+  id: string;
+  member_id: string;
+  division: string;
+  zone_id?: number;
+  request_date: string;
+  leave_type: "PLD" | "SDV";
+  status:
+    | "pending"
+    | "approved"
+    | "denied"
+    | "waitlisted"
+    | "cancellation_pending"
+    | "cancelled";
+  requested_at: string;
+  waitlist_position?: number;
+  member: RequestMember;
+}
+
 interface CalendarState {
   selectedDate: string | null;
   allotments: Record<string, number>;
@@ -57,6 +84,7 @@ interface CalendarState {
   fetchAllotments: (
     startDate: string,
     endDate: string,
+    zoneId: number | null,
   ) => Promise<
     {
       allotments: Record<string, number>;
@@ -66,6 +94,7 @@ interface CalendarState {
   fetchRequests: (
     startDate: string,
     endDate: string,
+    zoneId: number | null,
   ) => Promise<Record<string, DayRequest[]>>;
   submitRequest: (
     date: string,
@@ -92,6 +121,13 @@ interface CalendarState {
 
   // Add new helper function
   getActiveRequests: (date: string, zoneId?: number) => DayRequest[];
+
+  // New function specifically for user requests
+  userSubmitRequest: (
+    date: string,
+    type: "PLD" | "SDV",
+    zoneId?: number,
+  ) => Promise<DayRequest>;
 }
 
 export const useCalendarStore = create<CalendarState>((set, get) => ({
@@ -218,196 +254,185 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
     return "available";
   },
 
-  fetchAllotments: async (startDate: string, endDate: string) => {
+  fetchAllotments: async (
+    startDate: string,
+    endDate: string,
+    zoneId: number | null = null,
+  ) => {
     const division = useUserStore.getState().division;
-    const member = useUserStore.getState().member;
-    const memberZone = member?.zone;
+    if (!division) {
+      console.warn("[CalendarStore] fetchAllotments: No division found.");
+      return { allotments: {}, yearlyAllotments: {} };
+    }
+
+    // console.log("[CalendarStore] Fetching allotments with params:", { startDate, endDate, division, zoneId }); // DEBUG
 
     try {
-      // First, get the yearly allotment
-      const currentYear = new Date().getFullYear();
-      const yearlyDate = `${currentYear}-01-01`;
+      const currentYear = new Date(startDate).getFullYear(); // Use startDate's year
+      const nextYear = currentYear + 1;
+      const yearlyDateCurrent = `${currentYear}-01-01`;
+      const yearlyDateNext = `${nextYear}-01-01`;
 
       let query = supabase
         .from("pld_sdv_allotments")
-        .select("*")
+        .select("date, max_allotment, zone_id, year") // Select year as well
         .eq("division", division)
         .or(
-          `date.eq.${yearlyDate},date.gte.${startDate},date.lte.${endDate}`,
+          `year.eq.${currentYear},year.eq.${nextYear},date.gte.${startDate},date.lte.${endDate}`,
+          // `date.in.(${yearlyDateCurrent},${yearlyDateNext}),date.gte.${startDate},date.lte.${endDate}` // Fetch yearly + range
         );
 
-      // Add zone filter if applicable
-      if (memberZone) {
-        // Get zone ID from zone name
-        const { data: zoneData, error: zoneError } = await supabase
-          .from("zones")
-          .select("id")
-          .eq("name", memberZone);
-
-        if (zoneError) throw zoneError;
-        if (!zoneData || zoneData.length === 0) {
-          console.warn(
-            "[CalendarStore] No zone found for member zone:",
-            memberZone,
-          );
-        } else {
-          query = query.eq("zone_id", zoneData[0].id);
-        }
+      // Apply zone filter based on passed parameter
+      if (zoneId !== null) {
+        query = query.eq("zone_id", zoneId);
+      } else {
+        query = query.is("zone_id", null);
       }
 
-      const { data: allotments, error } = await query;
+      const { data: allotmentsData, error } = await query;
 
       if (error) throw error;
 
       const allotmentsByDate: Record<string, number> = {};
-      const yearlyAllotments: Record<number, number> = {};
+      const yearlyAllotmentsByYear: Record<string | number, number> = {}; // Key might be year or year_zoneId
 
-      // First, process yearly allotments
-      allotments?.forEach((allotment) => {
-        if (allotment.date === yearlyDate) {
-          yearlyAllotments[currentYear] = allotment.max_allotment;
-        } else {
-          allotmentsByDate[allotment.date] = allotment.max_allotment;
+      // Process all fetched data
+      allotmentsData?.forEach((allotment) => {
+        const allotmentYear = allotment.year ??
+          new Date(allotment.date).getFullYear(); // Fallback to date's year if year column is null
+        const effectiveZoneId = allotment.zone_id; // Use zone_id from the record
+        const yearKey = effectiveZoneId
+          ? `${allotmentYear}_${effectiveZoneId}`
+          : allotmentYear.toString();
+        const dateKey = effectiveZoneId
+          ? `${allotment.date}_${effectiveZoneId}`
+          : allotment.date;
+
+        // Check if it's a yearly allotment record (often date is Jan 1st, but rely on year column if available)
+        // A simple check if date is Jan 1st might suffice if 'year' column isn't reliable
+        if (allotment.date === `${allotmentYear}-01-01`) {
+          yearlyAllotmentsByYear[yearKey] = allotment.max_allotment;
         }
+        // Store specific date allotments, potentially overriding yearly if both exist
+        allotmentsByDate[dateKey] = allotment.max_allotment;
       });
 
-      // If we have a yearly allotment but no specific date allotment,
-      // we should apply the yearly allotment to all valid dates
-      if (
-        yearlyAllotments[currentYear] &&
-        Object.keys(allotmentsByDate).length === 0
-      ) {
-        const startDateObj = new Date(startDate);
-        const endDateObj = new Date(endDate);
-        const defaultAllotment = yearlyAllotments[currentYear];
+      // Apply yearly defaults to dates within range that don't have specific overrides
+      const startDateObj = parseISO(startDate);
+      const endDateObj = parseISO(endDate);
 
-        // Iterate through the date range and set the yearly allotment
-        for (
-          let date = startDateObj;
-          date <= endDateObj;
-          date.setDate(date.getDate() + 1)
+      for (
+        let date = startDateObj;
+        isBefore(date, endDateObj) || date.getTime() === endDateObj.getTime();
+        date = addDays(date, 1)
+      ) {
+        const dateStr = format(date, "yyyy-MM-dd");
+        const currentYearLoop = date.getFullYear();
+        const dateKey = zoneId ? `${dateStr}_${zoneId}` : dateStr;
+        const yearKey = zoneId
+          ? `${currentYearLoop}_${zoneId}`
+          : currentYearLoop.toString();
+
+        // If the specific date doesn't have an allotment, try applying the yearly one
+        if (
+          allotmentsByDate[dateKey] === undefined &&
+          yearlyAllotmentsByYear[yearKey] !== undefined
         ) {
-          const dateStr = format(date, "yyyy-MM-dd");
-          // Only set if there's no specific allotment for this date
-          if (!allotmentsByDate[dateStr]) {
-            allotmentsByDate[dateStr] = defaultAllotment;
-          }
+          allotmentsByDate[dateKey] = yearlyAllotmentsByYear[yearKey];
         }
+        // Ensure a 0 value if no specific or yearly allotment exists for selectable dates
+        // else if (allotmentsByDate[dateKey] === undefined) {
+        //    allotmentsByDate[dateKey] = 0;
+        // }
       }
 
-      console.log("[CalendarStore] Allotments fetched:", {
-        yearlyAllotments,
+      console.log("[CalendarStore] Allotments processed:", {
+        yearlyAllotments: yearlyAllotmentsByYear,
         allotmentsByDateCount: Object.keys(allotmentsByDate).length,
-        startDate,
-        endDate,
-        hasYearlyAllotment: !!yearlyAllotments[currentYear],
+        zoneId,
       });
 
       return {
         allotments: allotmentsByDate,
-        yearlyAllotments,
+        yearlyAllotments: yearlyAllotmentsByYear,
       };
     } catch (error) {
       console.error("[CalendarStore] Error fetching allotments:", error);
-      throw error;
+      throw error; // Rethrow to be handled by loadInitialData
     }
   },
 
-  fetchRequests: async (startDate: string, endDate: string) => {
+  fetchRequests: async (
+    startDate: string,
+    endDate: string,
+    zoneId: number | null = null,
+  ) => {
     const division = useUserStore.getState().division;
-    const member = useUserStore.getState().member;
-    const memberZone = member?.zone;
+    if (!division) {
+      console.warn("[CalendarStore] fetchRequests: No division found.");
+      return {};
+    }
+    // console.log("[CalendarStore] Fetching requests with params:", { startDate, endDate, division, zoneId }); // DEBUG
 
     try {
       let query = supabase
         .from("pld_sdv_requests")
         .select(`
-          id,
-          member_id,
-          division,
-          zone_id,
-          request_date,
-          leave_type,
-          status,
-          requested_at,
-          waitlist_position,
-          responded_at,
-          responded_by,
-          paid_in_lieu,
-          denial_reason_id,
-          denial_comment,
-          actioned_by,
-          actioned_at,
-          created_at,
-          updated_at,
-          metadata,
-          member:members!inner (
-            id,
-            first_name,
-            last_name,
-            pin_number
-          )
-        `)
+                id, member_id, division, zone_id, request_date, leave_type, status,
+                requested_at, waitlist_position, responded_at, responded_by, paid_in_lieu,
+                denial_reason_id, denial_comment, actioned_by, actioned_at, created_at, updated_at, metadata,
+                member:members!inner ( id, first_name, last_name, pin_number )
+            `)
         .eq("division", division)
         .gte("request_date", startDate)
         .lte("request_date", endDate);
 
-      // Add zone filter if applicable
-      if (memberZone) {
-        // Get zone ID from zone name
-        const { data: zoneData, error: zoneError } = await supabase
-          .from("zones")
-          .select("id")
-          .eq("name", memberZone);
-
-        if (zoneError) throw zoneError;
-        if (!zoneData || zoneData.length === 0) {
-          console.warn(
-            "[CalendarStore] No zone found for member zone:",
-            memberZone,
-          );
-        } else {
-          query = query.eq("zone_id", zoneData[0].id);
-        }
+      // Apply zone filter based on passed parameter
+      if (zoneId !== null) {
+        query = query.eq("zone_id", zoneId);
+      } else {
+        query = query.is("zone_id", null);
       }
 
-      const { data: requests, error } = await query;
+      const { data: requestsData, error } = await query;
 
       if (error) {
         console.error("[CalendarStore] Error fetching requests:", error);
         throw error;
       }
 
-      // Log the first request to understand its structure
-      if (requests && requests.length > 0) {
-        console.log(
-          "[CalendarStore] First request structure:",
-          JSON.stringify(requests[0], null, 2),
-        );
-      }
-
       const requestsByDate: Record<string, DayRequest[]> = {};
 
-      if (requests) {
-        for (const rawRequest of requests) {
-          const dateKey = rawRequest.zone_id
-            ? `${rawRequest.request_date}_${rawRequest.zone_id}`
+      if (requestsData) {
+        for (const rawRequest of requestsData) {
+          // Use the zone_id from the request record for keying
+          const effectiveZoneId = rawRequest.zone_id;
+          const dateKey = effectiveZoneId
+            ? `${rawRequest.request_date}_${effectiveZoneId}`
             : rawRequest.request_date;
 
           if (!requestsByDate[dateKey]) {
             requestsByDate[dateKey] = [];
           }
 
-          // Extract the member data from the join result
-          const memberData = {
-            id: (rawRequest as any).member.id as string,
-            first_name: (rawRequest as any).member.first_name as string | null,
-            last_name: (rawRequest as any).member.last_name as string | null,
-            pin_number: (rawRequest as any).member.pin_number as number,
-          };
+          // Ensure member data structure is correct even if join returns unexpected structure
+          const memberInfo = (rawRequest as any).member;
+          const memberData = memberInfo && typeof memberInfo === "object"
+            ? {
+              id: memberInfo.id as string ?? "", // Provide default empty string
+              first_name: memberInfo.first_name as string | null,
+              last_name: memberInfo.last_name as string | null,
+              pin_number: memberInfo.pin_number as number ?? 0, // Provide default 0
+            }
+            : { // Default structure if member is null/undefined
+              id: "",
+              first_name: "Unknown",
+              last_name: "Member",
+              pin_number: 0,
+            };
 
-          // Create a properly typed DayRequest
           const dayRequest: DayRequest = {
+            // Map all fields from rawRequest to DayRequest type
             id: rawRequest.id,
             member_id: rawRequest.member_id,
             division: rawRequest.division,
@@ -429,15 +454,14 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
             metadata: rawRequest.metadata,
             member: memberData,
           };
-
           requestsByDate[dateKey].push(dayRequest);
         }
       }
-
+      // console.log(`[CalendarStore] Requests processed for zone ${zoneId}:`, Object.keys(requestsByDate).length); // DEBUG
       return requestsByDate;
     } catch (error) {
       console.error("[CalendarStore] Error fetching requests:", error);
-      throw error;
+      throw error; // Rethrow
     }
   },
 
@@ -518,56 +542,105 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
   },
 
   loadInitialData: async (startDate: string, endDate: string) => {
-    const division = useUserStore.getState().division;
+    const { division, member } = useUserStore.getState();
+    // Get the ensure function directly
+    const ensureAdminSettingsLoaded =
+      useAdminCalendarManagementStore.getState().ensureDivisionSettingsLoaded;
+
     if (!division) {
       console.log("[CalendarStore] No division found during initialization");
       set({
         error: "No division found",
         isLoading: false,
-        isInitialized: false,
+        isInitialized: true,
       });
       return;
     }
 
-    // Get current state
     const currentState = get();
     console.log("[CalendarStore] Starting initial data load:", {
       startDate,
       endDate,
       division,
-      currentState: {
-        isLoading: currentState.isLoading,
-        isInitialized: currentState.isInitialized,
-        hasRequests: Object.keys(currentState.requests).length,
-        hasAllotments: Object.keys(currentState.allotments).length,
-      },
+      memberZone: member?.zone,
     });
 
-    // Reset error state and set loading
     set({ error: null, isLoading: true });
 
     try {
+      // ******** WAIT FOR ADMIN SETTINGS ********
+      console.log(
+        `[CalendarStore] Ensuring admin settings are loaded for division ${division}...`,
+      );
+      await ensureAdminSettingsLoaded(division);
+      console.log(
+        `[CalendarStore] Admin settings loaded for division ${division}.`,
+      );
+      // *****************************************
+
+      // Now get the potentially updated admin state
+      const adminStoreState = useAdminCalendarManagementStore.getState();
+
+      // Determine the target zone ID
+      let targetZoneId: number | null = null;
+      const divisionUsesZones = adminStoreState.usesZoneCalendars;
+      const divisionZones = adminStoreState.zones[division] || [];
+
+      console.log("[CalendarStore] Determining targetZoneId:", {
+        divisionUsesZones,
+        memberZoneRaw: member?.zone,
+        numDivisionZones: divisionZones.length,
+        availableZoneNames: divisionZones.map((z) => z.name), // Log the actual zone names
+      });
+
+      if (divisionUsesZones && member?.zone && divisionZones.length > 0) {
+        const memberZoneClean = member.zone.trim().toLowerCase();
+        console.log(
+          `[CalendarStore] Searching for cleaned member zone: '${memberZoneClean}'`,
+        ); // Log cleaned name
+
+        const matchedZone = divisionZones.find((z) => {
+          const adminZoneClean = z.name.trim().toLowerCase();
+          // console.log(`[CalendarStore] Comparing: '${adminZoneClean}' === '${memberZoneClean}'`); // DEBUG Comparison
+          return adminZoneClean === memberZoneClean;
+        });
+
+        if (matchedZone) {
+          targetZoneId = matchedZone.id;
+          console.log(
+            `[CalendarStore] Target zone ID set to: ${targetZoneId} (for zone ${member.zone})`,
+          ); // Log the result
+        } else {
+          console.warn(
+            `[CalendarStore] Member zone "${member.zone}" not found in division "${division}" zones list.`,
+          );
+          // Decide behavior: error out, or default to division-wide (null)? Let's default.
+          targetZoneId = null;
+          console.log(
+            "[CalendarStore] Proceeding with division-wide view (targetZoneId = null).",
+          );
+        }
+      } else {
+        console.log(
+          "[CalendarStore] Not using zones or member has no zone/no zones defined. Using division-wide view (targetZoneId = null).",
+        );
+        targetZoneId = null; // Explicitly set to null for division-wide
+      }
+
+      // Fetch data using the determined targetZoneId
+      console.log(
+        `[CalendarStore] Fetching data with targetZoneId: ${targetZoneId}`,
+      );
       const [allotmentsResult, requestsResult] = await Promise.all([
-        get().fetchAllotments(startDate, endDate),
-        get().fetchRequests(startDate, endDate),
+        get().fetchAllotments(startDate, endDate, targetZoneId),
+        get().fetchRequests(startDate, endDate, targetZoneId),
       ]);
 
-      // Check if we got any data
-      const hasAllotments =
-        Object.keys(allotmentsResult.allotments).length > 0 ||
-        Object.keys(allotmentsResult.yearlyAllotments).length > 0;
-      const hasRequests = Object.keys(requestsResult).length > 0;
-
-      console.log("[CalendarStore] Data load complete:", {
-        hasAllotments,
-        hasRequests,
+      console.log("[CalendarStore] Data fetched:", {
         allotmentsCount: Object.keys(allotmentsResult.allotments).length,
-        yearlyAllotmentsCount:
-          Object.keys(allotmentsResult.yearlyAllotments).length,
         requestsCount: Object.keys(requestsResult).length,
       });
 
-      // Always update state with what we have
       set({
         isLoading: false,
         isInitialized: true,
@@ -576,6 +649,7 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
         yearlyAllotments: allotmentsResult.yearlyAllotments,
         requests: requestsResult,
       });
+      console.log("[CalendarStore] Data load complete and state updated.");
     } catch (error) {
       console.error("[CalendarStore] Error loading data:", error);
       set({
@@ -583,8 +657,10 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
         error: error instanceof Error
           ? error.message
           : "Failed to load calendar data",
-        // Keep initialized state if we were already initialized
-        isInitialized: currentState.isInitialized,
+        isInitialized: true,
+        allotments: {},
+        yearlyAllotments: {},
+        requests: {},
       });
     }
   },
@@ -666,16 +742,23 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
   },
 
   hasZoneSpecificCalendar: (division: string) => {
-    // Get zoneCalendars directly from the ADMIN calendar store state
-    const { zoneCalendars } = useAdminCalendarManagementStore.getState();
+    // Get usesZoneCalendars directly from the ADMIN calendar store state
+    const { usesZoneCalendars } = useAdminCalendarManagementStore.getState();
+    // No need to parse division ID here, just return the flag for the user's division
+    // This function might need rethinking - perhaps it should check the admin store for the specific division?
+    // Assuming the flag in admin store corresponds to the current user's division context
+    return usesZoneCalendars;
+
+    // --- Old logic using zoneCalendars (which doesn't exist here) ---
+    // const { zoneCalendars } = useAdminCalendarManagementStore.getState();
     // Parse division string to number for comparison
-    const divisionIdNumber = parseInt(division, 10);
-    if (isNaN(divisionIdNumber)) {
-      console.error("[CalendarStore] Invalid division ID format:", division);
-      return false; // Cannot determine if division ID is not a number
-    }
+    // const divisionIdNumber = parseInt(division, 10);
+    // if (isNaN(divisionIdNumber)) {
+    //  console.error("[CalendarStore] Invalid division ID format:", division);
+    //  return false; // Cannot determine if division ID is not a number
+    // }
     // Check if any calendar belongs to the specified division ID (number comparison)
-    return zoneCalendars.some((cal) => cal.division_id === divisionIdNumber);
+    // return zoneCalendars.some((cal: any) => cal.division_id === divisionIdNumber); // Added 'any' temporarily, but zoneCalendars is removed
   },
 
   getMemberZoneCalendar: async (division: string, zone: string) => {
@@ -690,6 +773,11 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
   },
 
   validateMemberZone: async (memberId: string, zoneId: number) => {
+    console.log("[CalendarStore] Validating member zone access:", {
+      memberId,
+      zoneId,
+    });
+
     // Get member's zone
     const { data: memberData, error: memberError } = await supabase
       .from("members")
@@ -697,7 +785,10 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       .eq("id", memberId)
       .single();
 
-    if (memberError) throw memberError;
+    if (memberError) {
+      console.error("[CalendarStore] Error fetching member zone:", memberError);
+      throw memberError;
+    }
 
     // Get zone name from zones table
     const { data: zoneData, error: zoneError } = await supabase
@@ -706,8 +797,24 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       .eq("id", zoneId)
       .single();
 
-    if (zoneError) throw zoneError;
-    return memberData.zone === zoneData.name;
+    if (zoneError) {
+      console.error("[CalendarStore] Error fetching zone data:", zoneError);
+      throw zoneError;
+    }
+
+    // Clean and compare zone names
+    const memberZoneClean = memberData.zone?.trim().toLowerCase() || "";
+    const zoneNameClean = zoneData.name?.trim().toLowerCase() || "";
+
+    console.log("[CalendarStore] Comparing zones:", {
+      memberZone: memberData.zone,
+      zoneName: zoneData.name,
+      memberZoneClean,
+      zoneNameClean,
+      matches: memberZoneClean === zoneNameClean,
+    });
+
+    return memberZoneClean === zoneNameClean;
   },
 
   submitSixMonthRequest: async (
@@ -778,6 +885,131 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
         r.status === "waitlisted") &&
       (zoneId ? r.zone_id === zoneId : !r.zone_id)
     );
+  },
+
+  // New function specifically for user requests
+  userSubmitRequest: async (
+    date: string,
+    type: "PLD" | "SDV",
+    zoneId?: number,
+  ) => {
+    const member = useUserStore.getState().member;
+    const division = useUserStore.getState().division;
+
+    if (!member) throw new Error("No member found");
+    if (!division) throw new Error("No division found");
+
+    try {
+      console.log("[CalendarStore] User submitting request:", {
+        date,
+        type,
+        zoneId,
+        memberId: member.id,
+        division,
+      });
+
+      // First check if we can get the allotment for this date
+      const dateKey = zoneId ? `${date}_${zoneId}` : date;
+      const yearKey = zoneId
+        ? `${new Date(date).getFullYear()}_${zoneId}`
+        : new Date(date).getFullYear().toString();
+      const maxAllotment = get().allotments[dateKey] ??
+        get().yearlyAllotments[yearKey] ?? 0;
+
+      if (maxAllotment === 0) {
+        throw new Error("No allotments available for this date");
+      }
+
+      // Submit the request using the RPC function
+      const { data: requestData, error: submitError } = await supabase.rpc(
+        "submit_user_request",
+        {
+          p_member_id: member.id,
+          p_division: division,
+          p_zone_id: zoneId,
+          p_request_date: date,
+          p_leave_type: type,
+        },
+      );
+
+      if (submitError) {
+        console.error("[CalendarStore] Error submitting request:", submitError);
+        throw submitError;
+      }
+
+      if (!requestData) {
+        throw new Error("No request data returned");
+      }
+
+      // Fetch the created request with member data
+      const { data: rawRequest, error: fetchError } = await supabase
+        .from("pld_sdv_requests")
+        .select(`
+          id,
+          member_id,
+          division,
+          zone_id,
+          request_date,
+          leave_type,
+          status,
+          requested_at,
+          waitlist_position,
+          member!inner (
+            id,
+            first_name,
+            last_name,
+            pin_number
+          )
+        `)
+        .eq("id", requestData)
+        .single();
+
+      if (fetchError || !rawRequest || !rawRequest.member) {
+        console.error(
+          "[CalendarStore] Error fetching created request:",
+          fetchError,
+        );
+        throw fetchError || new Error("Failed to fetch created request");
+      }
+
+      // Cast the raw data to our expected type
+      const fullRequest = {
+        ...rawRequest,
+        member: rawRequest.member as unknown as RequestMember,
+        status: rawRequest.status as
+          | "pending"
+          | "approved"
+          | "denied"
+          | "waitlisted"
+          | "cancellation_pending"
+          | "cancelled",
+      } as FullRequestData;
+
+      // Cast the request data to match our DayRequest type
+      const request: DayRequest = {
+        ...fullRequest,
+        member: {
+          id: fullRequest.member.id,
+          first_name: fullRequest.member.first_name,
+          last_name: fullRequest.member.last_name,
+          pin_number: fullRequest.member.pin_number,
+        },
+      };
+
+      // Update local state
+      const currentRequests = get().requests[dateKey] || [];
+      set((state) => ({
+        requests: {
+          ...state.requests,
+          [dateKey]: [...currentRequests, request],
+        },
+      }));
+
+      return request;
+    } catch (error) {
+      console.error("[CalendarStore] Error submitting request:", error);
+      throw error;
+    }
   },
 }));
 
@@ -883,6 +1115,9 @@ export function setupCalendarSubscriptions() {
 
           const requestDate = newRecord?.request_date ||
             oldRecord?.request_date;
+          // *** Determine zoneId for refreshing allotments ***
+          const relevantZoneId = newRecord?.zone_id ?? oldRecord?.zone_id ??
+            null;
 
           if (requestDate) {
             console.log("[CalendarStore] Processing request change:", {
@@ -939,13 +1174,18 @@ export function setupCalendarSubscriptions() {
               store.setRequests(requestDate, filteredRequests);
             }
 
-            // Refresh allotments for the affected date
+            // Refresh allotments for the affected date, passing the zoneId
             try {
               const dateRange = {
                 start: requestDate,
                 end: requestDate,
               };
-              await store.fetchAllotments(dateRange.start, dateRange.end);
+              // *** Pass relevantZoneId ***
+              await store.fetchAllotments(
+                dateRange.start,
+                dateRange.end,
+                relevantZoneId,
+              );
             } catch (error) {
               console.error(
                 "[CalendarStore] Error refreshing allotments:",

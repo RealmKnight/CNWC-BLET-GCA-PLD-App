@@ -71,24 +71,13 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
     isInitialized,
     error,
     validateMemberZone,
+    allotments,
+    yearlyAllotments,
+    requests,
   } = useCalendarStore();
 
   // Use the selected date for the calendar view if available, otherwise use current
   const calendarDate = selectedDate || current;
-
-  // Log when component receives new props or state changes
-  useEffect(() => {
-    console.log("[Calendar] State update:", {
-      current,
-      selectedDate,
-      calendarDate,
-      zoneId,
-      isZoneSpecific,
-      isLoading,
-      isInitialized,
-      hasError: !!error,
-    });
-  }, [current, selectedDate, calendarDate, zoneId, isZoneSpecific, isLoading, isInitialized, error]);
 
   // Calculate date range for fetching data
   const dateRange = useMemo(() => {
@@ -102,41 +91,28 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
 
   // Generate marked dates for the calendar
   const markedDates = useMemo(() => {
-    if (!division) {
-      console.log("[Calendar] No division available");
+    if (!division || !isInitialized) {
+      console.log("[Calendar] Not ready to generate marks:", { hasDivision: !!division, isInitialized });
       return {};
     }
 
-    // Only show loading state if we're not initialized and actually loading
-    if (!isInitialized && isLoading) {
-      console.log("[Calendar] Still initializing:", {
-        isLoading,
-        isInitialized,
-        division,
-        zoneId,
-        isZoneSpecific,
-      });
-      return {};
-    }
-
-    const state = useCalendarStore.getState();
     console.log("[Calendar] Generating marked dates", {
-      isLoading,
       isInitialized,
       division,
       zoneId,
       isZoneSpecific,
-      hasRequests: Object.keys(state.requests).length,
-      hasAllotments: Object.keys(state.allotments).length,
+      hasRequests: Object.keys(requests).length,
+      hasAllotments: Object.keys(allotments).length,
+      hasYearlyAllotments: Object.keys(yearlyAllotments).length,
+      selectedDate,
     });
 
     const dates: any = {};
-    const now = new Date();
+    const now = startOfDay(new Date());
 
     // Get all dates in the visible range (including past month for context)
     const visibleRangeStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    // Calculate exactly 6 months from today (keeping the same date)
-    const visibleRangeEnd = new Date(now.getFullYear(), now.getMonth() + 6, now.getDate());
+    const visibleRangeEnd = addMonths(now, 6);
 
     const allDates = eachDayOfInterval({
       start: visibleRangeStart,
@@ -149,6 +125,11 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
       const availability = getDateAvailability(dateStr, zoneId);
       const colors = AVAILABILITY_COLORS[availability];
 
+      if (!colors) {
+        console.warn(`[Calendar] No colors found for availability: ${availability}`);
+        return;
+      }
+
       dates[dateStr] = {
         customStyles: {
           container: {
@@ -160,26 +141,46 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
           },
         },
       };
+
+      // Add selection styling if this is the selected date
+      if (selectedDate === dateStr) {
+        dates[dateStr] = {
+          ...dates[dateStr],
+          selected: true,
+          customStyles: {
+            ...dates[dateStr].customStyles,
+            container: {
+              ...dates[dateStr].customStyles.container,
+              borderWidth: 2,
+              borderColor: Colors[theme].tint,
+            },
+          },
+        };
+      }
     });
 
-    // Add selection styling
-    if (selectedDate) {
-      dates[selectedDate] = {
-        ...dates[selectedDate],
-        selected: true,
-        customStyles: {
-          ...(dates[selectedDate]?.customStyles || {}),
-          container: {
-            ...(dates[selectedDate]?.customStyles?.container || {}),
-            borderWidth: 2,
-            borderColor: Colors[theme].tint,
-          },
-        },
-      };
-    }
-
     return dates;
-  }, [isInitialized, isLoading, division, selectedDate, theme, zoneId, isZoneSpecific]);
+  }, [
+    division,
+    isInitialized,
+    zoneId,
+    isZoneSpecific,
+    selectedDate,
+    theme,
+    allotments,
+    yearlyAllotments,
+    requests,
+    getDateAvailability,
+  ]);
+
+  // Log when marked dates are regenerated
+  useEffect(() => {
+    console.log("[Calendar] Marked dates updated:", {
+      hasMarks: Object.keys(markedDates).length,
+      zoneId,
+      isInitialized,
+    });
+  }, [markedDates, zoneId, isInitialized]);
 
   const handleDayPress = async (day: DateData) => {
     const now = new Date();
@@ -211,21 +212,8 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
       return;
     }
 
-    // Check zone access if zone-specific
-    if (isZoneSpecific && member?.id) {
-      const hasZoneAccess = await validateMemberZone(member.id, zoneId || 0);
-      if (!hasZoneAccess) {
-        Toast.show({
-          type: "error",
-          text1: "Access Denied",
-          text2: "You don't have access to this zone's calendar",
-          position: "bottom",
-          visibilityTime: 3000,
-          topOffset: 50,
-        });
-        return;
-      }
-    }
+    // We don't need to check zone access here since we've already validated it during zone ID calculation
+    // and the calendar only shows the correct zone's data if the user has access
 
     if (isDateSelectable(day.dateString, zoneId)) {
       setSelectedDate(day.dateString);
@@ -242,8 +230,8 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
     }
   };
 
-  // Only show loading state if we're not initialized and actually loading
-  if (!isInitialized && isLoading) {
+  // Only show loading state if we're not initialized
+  if (!isInitialized) {
     return (
       <ThemedView style={[styles.container, styles.loadingContainer]}>
         <ActivityIndicator size="large" color={Colors[theme].tint} />
@@ -261,7 +249,7 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
   }
 
   // If we're initialized but don't have a division, show an error
-  if (isInitialized && !division) {
+  if (!division) {
     return (
       <ThemedView style={[styles.container, styles.loadingContainer]}>
         <ThemedText style={styles.errorText}>No division selected</ThemedText>
@@ -272,7 +260,7 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
   return (
     <ThemedView style={styles.container}>
       <RNCalendar
-        key={`calendar-inner-${calendarDate}`}
+        key={`calendar-${zoneId}-${isInitialized}`}
         theme={CALENDAR_THEME[theme]}
         markingType="custom"
         markedDates={markedDates}
