@@ -118,11 +118,14 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
         readBy.push(pinNumber.toString());
       }
 
+      const now = new Date().toISOString();
+
       const { error } = await supabase
         .from("messages")
         .update({
           is_read: true,
           read_by: readBy,
+          read_at: now,
         })
         .eq("id", messageId);
 
@@ -130,7 +133,9 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
 
       // Update local state
       const updatedMessages = messages.map((msg) =>
-        msg.id === messageId ? { ...msg, is_read: true, read_by: readBy } : msg
+        msg.id === messageId
+          ? { ...msg, is_read: true, read_by: readBy, read_at: now }
+          : msg
       );
 
       set({
@@ -143,24 +148,43 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
   },
 
   deleteMessage: async (messageId: string) => {
+    console.log("[NotificationStore] Attempting to delete message:", messageId);
     try {
       const { error } = await supabase
         .from("messages")
-        .update({ is_deleted: true })
+        .update({
+          is_deleted: true,
+          updated_at: new Date().toISOString(),
+        })
         .eq("id", messageId);
 
-      if (error) throw error;
+      if (error) {
+        console.error(
+          "[NotificationStore] Supabase error deleting message:",
+          error,
+        );
+        throw error;
+      }
+
+      console.log(
+        "[NotificationStore] Successfully marked message as deleted in database",
+      );
 
       // Update local state
       const { messages } = get();
       const updatedMessages = messages.filter((msg) => msg.id !== messageId);
 
+      console.log(
+        "[NotificationStore] Updating local state, removing message from list",
+      );
       set({
         messages: updatedMessages,
         unreadCount: updatedMessages.filter((msg) => !msg.is_read).length,
       });
+      console.log("[NotificationStore] Local state updated successfully");
     } catch (error) {
-      console.error("Error deleting message:", error);
+      console.error("[NotificationStore] Error in deleteMessage:", error);
+      throw error;
     }
   },
 
@@ -176,9 +200,69 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
           table: "messages",
           filter: `recipient_pin_number=eq.${pinNumber}`,
         },
-        () => {
-          // Refetch messages when there's a change
-          get().fetchMessages(pinNumber);
+        async (payload) => {
+          // Handle different types of changes
+          switch (payload.eventType) {
+            case "INSERT":
+              // Fetch the new message to get all related data
+              const { data: newMessage } = await supabase
+                .from("messages")
+                .select(`
+                  *,
+                  push_notification_deliveries (
+                    status,
+                    sent_at,
+                    delivered_at,
+                    error_message
+                  )
+                `)
+                .eq("id", payload.new.id)
+                .single();
+
+              if (newMessage && !newMessage.is_deleted) {
+                const { messages } = get();
+                const updatedMessages = [newMessage, ...messages];
+                set({
+                  messages: updatedMessages,
+                  unreadCount: updatedMessages.filter((msg) =>
+                    !msg.is_read
+                  ).length,
+                });
+              }
+              break;
+
+            case "UPDATE":
+              if (payload.new.is_deleted) {
+                // If message was marked as deleted, remove it from the local state
+                const { messages } = get();
+                const updatedMessages = messages.filter((msg) =>
+                  msg.id !== payload.new.id
+                );
+                set({
+                  messages: updatedMessages,
+                  unreadCount: updatedMessages.filter((msg) =>
+                    !msg.is_read
+                  ).length,
+                });
+              } else {
+                // For other updates, update the message in the local state
+                const { messages } = get();
+                const updatedMessages = messages.map((msg) =>
+                  msg.id === payload.new.id ? { ...msg, ...payload.new } : msg
+                );
+                set({
+                  messages: updatedMessages,
+                  unreadCount: updatedMessages.filter((msg) =>
+                    !msg.is_read
+                  ).length,
+                });
+              }
+              break;
+
+            default:
+              // Refetch messages for other changes
+              get().fetchMessages(pinNumber);
+          }
         },
       )
       .subscribe();
