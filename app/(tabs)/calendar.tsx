@@ -728,7 +728,7 @@ const dialogStyles = StyleSheet.create({
   remainingDaysText: {
     fontSize: 16,
     fontWeight: "500",
-    color: Colors.light.success,
+    textAlign: "center",
   } as TextStyle,
   disabledButton: {
     opacity: 0.5,

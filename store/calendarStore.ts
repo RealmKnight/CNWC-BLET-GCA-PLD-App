@@ -954,7 +954,7 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
           status,
           requested_at,
           waitlist_position,
-          member!inner (
+          members!inner (
             id,
             first_name,
             last_name,
@@ -964,7 +964,7 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
         .eq("id", requestData)
         .single();
 
-      if (fetchError || !rawRequest || !rawRequest.member) {
+      if (fetchError || !rawRequest || !rawRequest.members) {
         console.error(
           "[CalendarStore] Error fetching created request:",
           fetchError,
@@ -975,7 +975,7 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       // Cast the raw data to our expected type
       const fullRequest = {
         ...rawRequest,
-        member: rawRequest.member as unknown as RequestMember,
+        member: rawRequest.members as unknown as RequestMember,
         status: rawRequest.status as
           | "pending"
           | "approved"

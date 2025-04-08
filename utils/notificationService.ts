@@ -24,14 +24,32 @@ type MessageType =
   | "allotment_change";
 
 interface MessagePayload {
-  recipientId: string;
+  recipientPinNumber: number;
   subject: string;
   content: string;
   topic: string;
   event?: string;
   messageType: MessageType;
   requiresAcknowledgment?: boolean;
-  payload?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+}
+
+interface AuthUser {
+  id: string;
+  email: string | null;
+  phone: string | null;
+}
+
+interface MemberData {
+  id: string;
+  pin_number: number;
+  user_preferences:
+    | Array<{
+      push_token: string | null;
+      contact_preference: string | null;
+    }>
+    | null;
+  auth_users: AuthUser;
 }
 
 interface UserPreferences {
@@ -42,45 +60,68 @@ interface UserPreferences {
 interface MemberWithPreferences {
   pin_number: number;
   user_preferences: UserPreferences | null;
-  phone?: string;
   auth_users?: {
+    phone: string;
     email: string;
   } | null;
 }
 
 // Function to get unread message count for a user
-export async function getUnreadMessageCount(userId: string): Promise<number> {
-  const { count } = await supabase
-    .from("messages")
-    .select("*", { count: "exact" })
-    .eq("recipient_id", userId)
-    .eq("is_read", false);
+export async function getUnreadMessageCount(
+  pinNumber: number,
+): Promise<number> {
+  try {
+    const { count, error } = await supabase
+      .from("messages")
+      .select("*", { count: "exact", head: true })
+      .eq("recipient_pin_number", pinNumber.toString())
+      .is("read_at", null);
 
-  return count || 0;
+    if (error) throw error;
+    return count || 0;
+  } catch (error) {
+    console.error("[Notification] Error getting unread count:", error);
+    return 0;
+  }
 }
 
 // Function to mark a message as read
-export async function markMessageRead(messageId: string, userId: string) {
-  const { data: message } = await supabase.from("messages").select("read_by")
-    .eq("id", messageId).single();
+export async function markMessageRead(
+  messageId: string,
+  pinNumber: number,
+): Promise<void> {
+  try {
+    // First get current read_by array
+    const { data: message, error: fetchError } = await supabase
+      .from("messages")
+      .select("read_by")
+      .eq("id", messageId)
+      .single();
 
-  const readBy = message?.read_by || [];
-  if (!readBy.includes(userId)) {
-    readBy.push(userId);
-  }
+    if (fetchError) throw fetchError;
 
-  await supabase
-    .from("messages")
-    .update({
-      read_by: readBy,
-      is_read: readBy.length > 0,
-    })
-    .eq("id", messageId);
+    // Update with new array
+    const readBy = message?.read_by || [];
+    const pinString = pinNumber.toString();
+    if (!readBy.includes(pinString)) {
+      readBy.push(pinString);
+    }
 
-  // Update badge count
-  if (Platform.OS !== "web") {
-    const unreadCount = await getUnreadMessageCount(userId);
-    await Notifications.setBadgeCountAsync(unreadCount);
+    const now = new Date().toISOString();
+
+    const { error } = await supabase
+      .from("messages")
+      .update({
+        read_by: readBy,
+        read_at: now, // Set the read timestamp
+      })
+      .eq("id", messageId)
+      .eq("recipient_pin_number", pinString);
+
+    if (error) throw error;
+  } catch (error) {
+    console.error("[Notification] Error marking message as read:", error);
+    throw error;
   }
 }
 
@@ -152,230 +193,87 @@ interface NotificationAttempt {
   error?: string;
 }
 
-export async function sendMessageWithNotification({
-  recipientId,
-  subject,
-  content,
-  topic,
-  event,
-  messageType,
-  requiresAcknowledgment = false,
-  payload = {},
-}: MessagePayload) {
-  const attempts: NotificationAttempt[] = [];
-  let messageData;
-
+export async function sendMessageWithNotification(
+  senderPinNumber: number,
+  recipientPinNumbers: number[],
+  subject: string,
+  message: string,
+  requiresAcknowledgment: boolean = false,
+): Promise<void> {
   try {
-    console.log(
-      `[Notification] Starting notification process for recipient ${recipientId}`,
-    );
+    const messageType: MessageType = requiresAcknowledgment
+      ? "must_read"
+      : "direct_message";
 
-    // First get the member's info
-    const { data: memberData, error: memberError } = await supabase
-      .from("members")
-      .select(
-        `
-        pin_number,
-        user_preferences:user_preferences(
-          push_token,
-          contact_preference
-        ),
-        phone
-      `,
-      )
-      .eq("id", recipientId)
-      .single<MemberWithPreferences>();
+    const messagePayload: MessagePayload = {
+      recipientPinNumber: senderPinNumber,
+      subject,
+      content: message,
+      topic: "General",
+      messageType,
+      requiresAcknowledgment,
+    };
 
-    if (memberError) {
-      console.error(
-        `[Notification] Error fetching member data: ${memberError.message}`,
-      );
-      throw memberError;
-    }
+    const senderPin = senderPinNumber.toString();
+    const recipientPins = recipientPinNumbers.map((pin) => pin.toString());
 
-    // Get the email using MCP auth admin method
-    const { data: userData, error: userError } = await supabase.functions
-      .invoke("mcp-auth-admin", {
-        body: {
-          method: "get_user_by_id",
-          params: { uid: recipientId },
-        },
-      });
-
-    if (userError) {
-      console.error(
-        `[Notification] Error fetching user email: ${userError.message}`,
-      );
-      throw userError;
-    }
-
-    const pushToken = memberData?.user_preferences?.push_token;
-    const contactPreference =
-      memberData?.user_preferences?.contact_preference || "email";
-    const email = userData?.user?.email;
-    const phone = memberData?.phone;
-
-    console.log(
-      `[Notification] Recipient preferences - Method: ${contactPreference}, Push: ${!!pushToken}, Email: ${!!email}, Phone: ${!!phone}`,
-    );
-
-    // Get current unread count for badge
-    const unreadCount = await getUnreadMessageCount(recipientId);
-
-    // Insert the message into the messages table
-    const { data: msgData, error: messageError } = await supabase
-      .from("messages")
-      .insert({
-        recipient_id: recipientId,
+    // Create message records for each recipient
+    const { data: messages, error: messageError } = await supabase.from(
+      "messages",
+    ).insert(
+      recipientPins.map((recipientPin) => ({
+        sender_pin_number: senderPin,
+        recipient_pin_number: recipientPin,
         subject,
-        content,
-        topic,
-        event,
-        payload,
-        is_read: false,
-        private: true,
-        message_type: messageType,
-        requires_acknowledgment: requiresAcknowledgment ||
-          messageType === "must_read",
+        content: message,
         read_by: [],
-      })
-      .select()
-      .single();
+        message_type: messageType,
+        requires_acknowledgment: requiresAcknowledgment,
+        read_at: null, // Initialize as unread
+      })),
+    ).select();
 
-    if (messageError) {
-      console.error(
-        `[Notification] Error creating message record: ${messageError.message}`,
-      );
-      throw messageError;
-    }
+    if (messageError) throw messageError;
 
-    messageData = msgData;
-    console.log(`[Notification] Message created with ID: ${messageData.id}`);
+    // Only attempt push notifications on mobile platforms
+    if (Platform.OS !== "web" && messages) {
+      // Attempt push notifications for each recipient
+      await Promise.all(recipientPins.map(async (recipientPin) => {
+        try {
+          const { data: member } = await supabase
+            .from("members")
+            .select("notification_preferences, push_token")
+            .eq("pin_number", recipientPin)
+            .single();
 
-    // Try preferred method first
-    let notificationSent = false;
-
-    // Attempt preferred method
-    switch (contactPreference) {
-      case "push":
-        if (pushToken && Platform.OS !== "web") {
-          console.log(`[Notification] Attempting push notification`);
-          notificationSent = await attemptPushNotification(
-            pushToken,
-            subject,
-            content,
-            messageData.id,
-            messageType,
-            requiresAcknowledgment,
-            unreadCount,
-            payload,
-            recipientId,
+          if (member?.push_token && messages) {
+            // For each message, create a delivery record and attempt push notification
+            for (const msg of messages) {
+              if (msg.recipient_pin_number === recipientPin) {
+                await attemptPushNotification(
+                  member.push_token,
+                  subject,
+                  message,
+                  msg.id,
+                  messageType,
+                  requiresAcknowledgment,
+                  0, // unreadCount will be updated by the client
+                  {},
+                  recipientPin,
+                );
+              }
+            }
+          }
+        } catch (error) {
+          console.error(
+            `[Notification] Failed to send push notification to ${recipientPin}:`,
+            error,
           );
-          attempts.push({ method: "push", success: notificationSent });
         }
-        break;
-
-      case "text":
-        if (phone) {
-          console.log(`[Notification] Attempting SMS notification`);
-          notificationSent = await sendSMS(phone, truncateForSMS(content));
-          attempts.push({ method: "text", success: notificationSent });
-        }
-        break;
-
-      case "email":
-        if (email) {
-          console.log(`[Notification] Attempting email notification`);
-          notificationSent = await sendEmail(email, subject, content);
-          attempts.push({ method: "email", success: notificationSent });
-        }
-        break;
+      }));
     }
-
-    // If preferred method failed, try fallbacks in order: email -> push -> SMS
-    if (!notificationSent) {
-      console.log(`[Notification] Primary method failed, attempting fallbacks`);
-
-      // Try email fallback
-      if (!attempts.some((a) => a.method === "email") && email) {
-        console.log(`[Notification] Attempting email fallback`);
-        notificationSent = await sendEmail(email, subject, content);
-        attempts.push({ method: "email", success: notificationSent });
-      }
-
-      // Try push fallback
-      if (
-        !notificationSent && !attempts.some((a) => a.method === "push") &&
-        pushToken && Platform.OS !== "web"
-      ) {
-        console.log(`[Notification] Attempting push notification fallback`);
-        notificationSent = await attemptPushNotification(
-          pushToken,
-          subject,
-          content,
-          messageData.id,
-          messageType,
-          requiresAcknowledgment,
-          unreadCount,
-          payload,
-          recipientId,
-        );
-        attempts.push({ method: "push", success: notificationSent });
-      }
-
-      // Try SMS fallback
-      if (
-        !notificationSent && !attempts.some((a) => a.method === "text") && phone
-      ) {
-        console.log(`[Notification] Attempting SMS fallback`);
-        notificationSent = await sendSMS(phone, truncateForSMS(content));
-        attempts.push({ method: "text", success: notificationSent });
-      }
-    }
-
-    // Log final delivery status
-    const deliveryStatus = notificationSent ? "delivered" : "failed";
-    console.log(
-      `[Notification] Final delivery status: ${deliveryStatus}. Attempts:`,
-      attempts,
-    );
-
-    // Store delivery attempts in metadata
-    await supabase
-      .from("messages")
-      .update({
-        metadata: {
-          delivery_attempts: attempts,
-          final_status: deliveryStatus,
-          delivered_at: notificationSent ? new Date().toISOString() : null,
-        },
-      })
-      .eq("id", messageData.id);
-
-    return messageData;
   } catch (error) {
-    console.error(
-      "[Notification] Error in sendMessageWithNotification:",
-      error,
-    );
-
-    // If we have a message ID, log the error in metadata
-    if (messageData?.id) {
-      await supabase
-        .from("messages")
-        .update({
-          metadata: {
-            delivery_attempts: attempts,
-            final_status: "error",
-            error_message: error instanceof Error
-              ? error.message
-              : "Unknown error",
-            error_timestamp: new Date().toISOString(),
-          },
-        })
-        .eq("id", messageData.id);
-    }
-
+    console.error("[Notification] Error sending message:", error);
     throw error;
   }
 }

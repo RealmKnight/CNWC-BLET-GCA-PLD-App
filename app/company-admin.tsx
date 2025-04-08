@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { View, FlatList, Alert, TextInput, StyleSheet, ScrollView } from "react-native";
+import { View, FlatList, Alert, TextInput, StyleSheet, ScrollView, Platform, Pressable } from "react-native";
 import { Text, Button, Modal } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
 import { format, parseISO } from "date-fns";
@@ -10,6 +10,7 @@ import { TouchableOpacityComponent } from "../components/TouchableOpacityCompone
 import { supabase } from "../utils/supabase";
 import { router, useNavigation } from "expo-router";
 import { sendMessageWithNotification } from "../utils/notificationService";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 // Types
 interface PendingRequest {
@@ -75,6 +76,8 @@ function compareZoneNames(a: Zone, b: Zone): number {
   // If no numbers or numbers are equal, sort alphabetically
   return a.name.localeCompare(b.name);
 }
+
+const Container = Platform.OS === "web" ? View : SafeAreaView;
 
 export default function CompanyAdminScreen() {
   const { user, isLoading, signOut } = useAuth();
@@ -230,11 +233,19 @@ export default function CompanyAdminScreen() {
 
   // Handle logout
   const handleLogout = useCallback(async () => {
+    console.log("Logout button pressed");
     try {
-      await signOut();
+      console.log("Starting signOut process");
+      const result = await signOut();
+      console.log("SignOut completed:", result);
+
+      // Force a small delay to ensure state updates
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      console.log("Navigating to sign-in");
       router.replace("/(auth)/sign-in");
     } catch (error) {
-      console.error("Error signing out:", error);
+      console.error("Error during sign out process:", error);
       Alert.alert("Error", "Failed to sign out");
     }
   }, [signOut]);
@@ -266,11 +277,11 @@ export default function CompanyAdminScreen() {
   // If still loading or no user/not admin, show loading state
   if (isLoading || !user || user.user_metadata?.role !== "company_admin") {
     return (
-      <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <Container style={[styles.container, { backgroundColor: colors.background }]}>
         <View style={styles.loadingContainer}>
           <Text>Loading...</Text>
         </View>
-      </View>
+      </Container>
     );
   }
 
@@ -290,20 +301,16 @@ export default function CompanyAdminScreen() {
       if (error) throw error;
 
       // Send notification using the proper function
-      await sendMessageWithNotification({
-        recipientId: request.member_id,
-        subject: "Leave Request Approved",
-        content: `Your ${request.leave_type} request for ${format(
+      await sendMessageWithNotification(
+        parseInt(user?.user_metadata?.pin),
+        [parseInt(request.pin_number)],
+        "Leave Request Approved",
+        `Your ${request.leave_type} request for ${format(
           parseISO(request.request_date),
           "MMM d, yyyy"
         )} has been approved.`,
-        messageType: "approval",
-        topic: "leave_request",
-        payload: {
-          request_id: request.id,
-          status: "approved",
-        },
-      });
+        true
+      );
 
       await fetchPendingRequests();
       Alert.alert("Success", "Request approved successfully");
@@ -335,20 +342,16 @@ export default function CompanyAdminScreen() {
       if (error) throw error;
 
       // Send notification using the proper function
-      await sendMessageWithNotification({
-        recipientId: selectedRequest.member_id,
-        subject: "Leave Request Denied",
-        content: `Your ${selectedRequest.leave_type} request for ${format(
+      await sendMessageWithNotification(
+        parseInt(user?.user_metadata?.pin),
+        [parseInt(selectedRequest.pin_number)],
+        "Leave Request Denied",
+        `Your ${selectedRequest.leave_type} request for ${format(
           parseISO(selectedRequest.request_date),
           "MMM d, yyyy"
         )} has been denied.`,
-        messageType: "denial",
-        topic: "leave_request",
-        payload: {
-          request_id: selectedRequest.id,
-          status: "denied",
-        },
-      });
+        true
+      );
 
       setIsDenialModalVisible(false);
       setSelectedRequest(null);
@@ -377,20 +380,16 @@ export default function CompanyAdminScreen() {
       if (error) throw error;
 
       // Send notification using the proper function
-      await sendMessageWithNotification({
-        recipientId: request.member_id,
-        subject: "Leave Request Cancellation Approved",
-        content: `Your cancellation request for ${request.leave_type} on ${format(
+      await sendMessageWithNotification(
+        parseInt(user?.user_metadata?.pin),
+        [parseInt(request.pin_number)],
+        "Leave Request Cancellation Approved",
+        `Your cancellation request for ${request.leave_type} on ${format(
           parseISO(request.request_date),
           "MMM d, yyyy"
         )} has been approved.`,
-        messageType: "approval",
-        topic: "leave_request",
-        payload: {
-          request_id: request.id,
-          status: "cancelled",
-        },
-      });
+        true
+      );
 
       await fetchPendingRequests();
       Alert.alert("Success", "Cancellation approved successfully");
@@ -478,7 +477,10 @@ export default function CompanyAdminScreen() {
   );
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
+    <Container
+      style={[styles.container, { backgroundColor: colors.background }]}
+      {...(Platform.OS !== "web" ? { edges: ["bottom"] } : {})}
+    >
       {/* Add zone filter commented out for now unless needed*/}
       {/* <View style={styles.filterContainer}>
         <Text>Filter by Zone:</Text>
@@ -605,7 +607,7 @@ export default function CompanyAdminScreen() {
           </Button>
         </View>
       </Modal>
-    </View>
+    </Container>
   );
 }
 

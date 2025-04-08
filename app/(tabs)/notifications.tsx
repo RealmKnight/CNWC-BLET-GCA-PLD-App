@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo, useCallback } from "react";
-import { StyleSheet, RefreshControl, Platform, TouchableOpacity, Image, TextInput } from "react-native";
+import { StyleSheet, RefreshControl, Platform, TouchableOpacity, Image, TextInput, Alert } from "react-native";
 import { useRouter } from "expo-router";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
@@ -19,7 +19,7 @@ interface NotificationItemProps {
   message: Message;
   onPress: () => void;
   onAcknowledge: () => void;
-  onArchive: () => void;
+  onDelete: (messageId: string) => void;
 }
 
 type GroupBy = "none" | "date" | "type";
@@ -27,6 +27,8 @@ type FilterType = "all" | "unread" | "must_read" | "archived";
 
 interface Message {
   id: string;
+  sender_id: string | null;
+  recipient_id: string | null;
   subject: string;
   content: string;
   created_at: string;
@@ -34,24 +36,72 @@ interface Message {
   requires_acknowledgment: boolean;
   is_read: boolean;
   read_by: string[];
-  is_archived?: boolean;
+  is_deleted: boolean;
+  delivery_status?: {
+    status: "pending" | "sent" | "delivered" | "failed";
+    sent_at?: string;
+    delivered_at?: string;
+    error_message?: string;
+  };
 }
 
-function NotificationItem({ message, onPress, onAcknowledge, onArchive }: NotificationItemProps) {
+function NotificationItem({ message, onPress, onAcknowledge, onDelete }: NotificationItemProps) {
   const theme = (useColorScheme() ?? "light") as ColorScheme;
   const isUnread = !message.is_read;
   const needsAcknowledgment = message.requires_acknowledgment;
 
+  // Get delivery status icon and color
+  const getDeliveryStatus = () => {
+    if (!message.delivery_status) return null;
+
+    const { status } = message.delivery_status;
+    let icon: keyof typeof Ionicons.glyphMap;
+    let color: string;
+
+    switch (status) {
+      case "delivered":
+        icon = "checkmark-done-circle";
+        color = Colors[theme].success;
+        break;
+      case "sent":
+        icon = "checkmark-circle";
+        color = Colors[theme].primary;
+        break;
+      case "pending":
+        icon = "time";
+        color = Colors[theme].warning;
+        break;
+      case "failed":
+        icon = "alert-circle";
+        color = Colors[theme].error;
+        break;
+      default:
+        return null;
+    }
+
+    return <Ionicons name={icon} size={16} color={color} style={styles.deliveryIcon} />;
+  };
+
   return (
     <TouchableOpacity
-      style={[styles.notificationItem, { backgroundColor: Colors[theme].card }, isUnread && styles.unreadItem]}
+      style={[
+        styles.notificationItem,
+        { backgroundColor: Colors[theme].card },
+        isUnread && styles.unreadItem,
+        Platform.OS === "web" && { cursor: "pointer" },
+      ]}
       onPress={onPress}
     >
       <ThemedView style={styles.notificationHeader}>
-        <ThemedText style={styles.notificationType}>
-          {message.message_type.charAt(0).toUpperCase() + message.message_type.slice(1)}
-        </ThemedText>
-        <ThemedText style={styles.notificationDate}>{format(new Date(message.created_at), "MMM d, yyyy")}</ThemedText>
+        <ThemedView style={styles.notificationMeta}>
+          <ThemedText style={styles.notificationType}>
+            {message.message_type.charAt(0).toUpperCase() + message.message_type.slice(1).replace(/_/g, " ")}
+          </ThemedText>
+          <ThemedText style={styles.notificationDate}>
+            {format(new Date(message.created_at), "MMM d, yyyy h:mm a")}
+          </ThemedText>
+        </ThemedView>
+        {getDeliveryStatus()}
       </ThemedView>
 
       <ThemedText style={styles.notificationTitle}>{message.subject}</ThemedText>
@@ -60,14 +110,20 @@ function NotificationItem({ message, onPress, onAcknowledge, onArchive }: Notifi
       </ThemedText>
 
       <ThemedView style={styles.notificationFooter}>
-        {isUnread && <ThemedView style={styles.unreadDot} />}
+        {isUnread && <ThemedView style={[styles.unreadDot, { backgroundColor: Colors[theme].primary }]} />}
         {needsAcknowledgment && (
-          <TouchableOpacity style={styles.acknowledgeButton} onPress={onAcknowledge}>
+          <TouchableOpacity
+            style={[styles.acknowledgeButton, { backgroundColor: Colors[theme].primary }]}
+            onPress={onAcknowledge}
+          >
             <ThemedText style={styles.acknowledgeButtonText}>Acknowledge</ThemedText>
           </TouchableOpacity>
         )}
-        <TouchableOpacity style={styles.archiveButton} onPress={onArchive}>
-          <Ionicons name="archive-outline" size={20} color={Colors[theme].text} />
+        <TouchableOpacity
+          style={[styles.deleteButton, { backgroundColor: Colors[theme].error + "20" }]}
+          onPress={() => onDelete(message.id)}
+        >
+          <Ionicons name="trash-outline" size={20} color={Colors[theme].error} />
         </TouchableOpacity>
       </ThemedView>
     </TouchableOpacity>
@@ -83,7 +139,8 @@ export default function NotificationsScreen() {
   const router = useRouter();
   const theme = (useColorScheme() ?? "light") as ColorScheme;
 
-  const { messages, fetchMessages, markAsRead: markMessageRead, archiveMessage } = useNotificationStore();
+  const { messages, isLoading, error, fetchMessages, markAsRead, deleteMessage, subscribeToMessages } =
+    useNotificationStore();
 
   // Filter and group messages
   const filteredAndGroupedMessages = useMemo(() => {
@@ -107,10 +164,10 @@ export default function NotificationsScreen() {
         filtered = filtered.filter((msg) => msg.message_type === "must_read");
         break;
       case "archived":
-        filtered = filtered.filter((msg) => msg.is_archived);
+        filtered = filtered.filter((msg) => msg.is_deleted);
         break;
       default:
-        filtered = filtered.filter((msg) => !msg.is_archived);
+        filtered = filtered.filter((msg) => !msg.is_deleted);
     }
 
     // Group messages
@@ -139,7 +196,7 @@ export default function NotificationsScreen() {
 
     // Mark as read if not already read
     if (!message.is_read) {
-      await markMessageRead(message.id, user.id);
+      await markAsRead(message.id, user.id);
     }
 
     // Navigate based on message type
@@ -164,39 +221,23 @@ export default function NotificationsScreen() {
 
   const handleAcknowledge = async (message: Message) => {
     if (!user) return;
-    await markMessageRead(message.id, user.id);
+    await markAsRead(message.id, user.id);
   };
 
   const handleMarkAllRead = async () => {
     if (!user) return;
     const unreadMessages = messages.filter((msg) => !msg.is_read);
     for (const msg of unreadMessages) {
-      await markMessageRead(msg.id, user.id);
+      await markAsRead(msg.id, user.id);
     }
   };
 
   // Set up realtime subscription
   useEffect(() => {
     if (!user) return;
-
-    const subscription = supabase
-      .channel("messages")
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "messages",
-          filter: `recipient_id=eq.${user.id}`,
-        },
-        () => {
-          fetchMessages(user.id);
-        }
-      )
-      .subscribe();
-
+    const unsubscribe = subscribeToMessages(user.id);
     return () => {
-      subscription.unsubscribe();
+      unsubscribe();
     };
   }, [user]);
 
@@ -206,6 +247,30 @@ export default function NotificationsScreen() {
       fetchMessages(user.id);
     }
   }, [user]);
+
+  const handleDelete = async (messageId: string) => {
+    Alert.alert("Delete Message", "Are you sure you want to delete this message?", [
+      {
+        text: "Cancel",
+        style: "cancel",
+      },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: () => deleteMessage(messageId),
+      },
+    ]);
+  };
+
+  // Update the renderItem to use the new NotificationItem props
+  const renderItem = ({ item }: { item: Message }) => (
+    <NotificationItem
+      message={item}
+      onPress={() => handleMessagePress(item)}
+      onAcknowledge={() => handleAcknowledge(item)}
+      onDelete={handleDelete}
+    />
+  );
 
   return (
     <PlatformScrollView
@@ -285,7 +350,7 @@ export default function NotificationsScreen() {
                 message={message}
                 onPress={() => handleMessagePress(message)}
                 onAcknowledge={() => handleAcknowledge(message)}
-                onArchive={() => archiveMessage(message.id)}
+                onDelete={handleDelete}
               />
             ))}
           </ThemedView>
@@ -452,5 +517,19 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     backgroundColor: "rgba(128, 128, 128, 0.05)",
+  },
+  deliveryIcon: {
+    marginLeft: 8,
+  },
+  notificationMeta: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  deleteButton: {
+    padding: 8,
+    borderRadius: 8,
+    marginLeft: 8,
   },
 });

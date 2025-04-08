@@ -1,80 +1,213 @@
 import { create } from "zustand";
 import { supabase } from "@/utils/supabase";
 import { StateCreator } from "zustand";
+import { Platform } from "react-native";
 
 interface Message {
   id: string;
+  sender_pin_number: number | null;
+  recipient_pin_number: number | null;
   subject: string;
   content: string;
-  created_at: string;
-  message_type: string;
-  requires_acknowledgment: boolean;
   is_read: boolean;
+  is_deleted: boolean;
+  created_at: string;
+  updated_at: string;
+  message_type: string;
   read_by: string[];
-  is_archived?: boolean;
+  requires_acknowledgment: boolean;
+  metadata?: {
+    topic?: string;
+    event?: string;
+    delivery_attempts?: Array<{
+      method: string;
+      success: boolean;
+      error?: string;
+    }>;
+    final_status?: string;
+    delivered_at?: string;
+    error_message?: string;
+  };
 }
 
 interface NotificationStore {
   messages: Message[];
   unreadCount: number;
+  isLoading: boolean;
+  error: string | null;
   setMessages: (messages: Message[]) => void;
-  fetchMessages: (userId: string) => Promise<void>;
-  markAsRead: (messageId: string, userId: string) => Promise<void>;
-  archiveMessage: (messageId: string) => Promise<void>;
+  fetchMessages: (pinNumber: number) => Promise<void>;
+  markAsRead: (messageId: string, pinNumber: number) => Promise<void>;
+  deleteMessage: (messageId: string) => Promise<void>;
+  subscribeToMessages: (pinNumber: number) => () => void;
 }
 
-type NotificationStoreCreator = StateCreator<NotificationStore>;
+const useNotificationStore = create<NotificationStore>((set, get) => ({
+  messages: [],
+  unreadCount: 0,
+  isLoading: false,
+  error: null,
 
-export const useNotificationStore = create<NotificationStore>(
-  (set, get): NotificationStore => ({
-    messages: [],
-    unreadCount: 0,
-    setMessages: (messages: Message[]) => {
-      set({
-        messages,
-        unreadCount: messages.filter((msg: Message) => !msg.is_read).length,
-      });
-    },
-    fetchMessages: async (userId: string) => {
-      const { data, error } = await supabase
+  setMessages: (messages: Message[]) => {
+    set({
+      messages,
+      unreadCount: messages.filter((msg) => !msg.is_read).length,
+    });
+  },
+
+  fetchMessages: async (pinNumber: number) => {
+    try {
+      set({ isLoading: true, error: null });
+
+      const { data: messages, error: messagesError } = await supabase
         .from("messages")
-        .select("*")
-        .eq("recipient_id", userId)
+        .select(`
+          *,
+          push_notification_deliveries (
+            status,
+            sent_at,
+            delivered_at,
+            error_message
+          )
+        `)
+        .eq("recipient_pin_number", pinNumber)
+        .eq("is_deleted", false)
         .order("created_at", { ascending: false });
 
-      if (!error && data) {
-        set({
-          messages: data as Message[],
-          unreadCount: (data as Message[]).filter((msg: Message) => !msg.is_read).length,
-        });
+      if (messagesError) throw messagesError;
+
+      // Transform the data to include delivery status in metadata
+      const transformedMessages = messages.map((msg: any) => ({
+        ...msg,
+        metadata: {
+          ...msg.metadata,
+          delivery_status: msg.push_notification_deliveries?.[0]
+            ? {
+              status: msg.push_notification_deliveries[0].status,
+              sent_at: msg.push_notification_deliveries[0].sent_at,
+              delivered_at: msg.push_notification_deliveries[0].delivered_at,
+              error_message: msg.push_notification_deliveries[0].error_message,
+            }
+            : undefined,
+        },
+      }));
+
+      set({
+        messages: transformedMessages,
+        unreadCount: transformedMessages.filter((msg) => !msg.is_read).length,
+        isLoading: false,
+      });
+    } catch (error) {
+      console.error("Error fetching messages:", error);
+      set({
+        error: "Failed to fetch messages",
+        isLoading: false,
+      });
+    }
+  },
+
+  markAsRead: async (messageId: string, pinNumber: number) => {
+    try {
+      const { messages } = get();
+      const message = messages.find((m) => m.id === messageId);
+
+      if (!message) return;
+
+      const readBy = [...(message.read_by || [])];
+      if (!readBy.includes(pinNumber.toString())) {
+        readBy.push(pinNumber.toString());
       }
-    },
-    markAsRead: async (messageId: string, userId: string) => {
+
       const { error } = await supabase
         .from("messages")
         .update({
           is_read: true,
-          read_by: [...(get().messages.find((m: Message) => m.id === messageId)?.read_by || []), userId],
+          read_by: readBy,
         })
         .eq("id", messageId);
 
-      if (!error) {
-        await get().fetchMessages(userId);
-      }
-    },
-    archiveMessage: async (messageId: string) => {
-      const { error } = await supabase.from("messages").update({ is_archived: true }).eq("id", messageId);
+      if (error) throw error;
 
-      if (!error) {
-        const { messages } = get();
-        const updatedMessages = messages.map((msg: Message) =>
-          msg.id === messageId ? { ...msg, is_archived: true } : msg
-        );
-        set({
-          messages: updatedMessages,
-          unreadCount: updatedMessages.filter((msg: Message) => !msg.is_read).length,
-        });
-      }
-    },
-  })
-);
+      // Update local state
+      const updatedMessages = messages.map((msg) =>
+        msg.id === messageId ? { ...msg, is_read: true, read_by: readBy } : msg
+      );
+
+      set({
+        messages: updatedMessages,
+        unreadCount: updatedMessages.filter((msg) => !msg.is_read).length,
+      });
+    } catch (error) {
+      console.error("Error marking message as read:", error);
+    }
+  },
+
+  deleteMessage: async (messageId: string) => {
+    try {
+      const { error } = await supabase
+        .from("messages")
+        .update({ is_deleted: true })
+        .eq("id", messageId);
+
+      if (error) throw error;
+
+      // Update local state
+      const { messages } = get();
+      const updatedMessages = messages.filter((msg) => msg.id !== messageId);
+
+      set({
+        messages: updatedMessages,
+        unreadCount: updatedMessages.filter((msg) => !msg.is_read).length,
+      });
+    } catch (error) {
+      console.error("Error deleting message:", error);
+    }
+  },
+
+  subscribeToMessages: (pinNumber: number) => {
+    // Subscribe to messages table changes
+    const messagesSubscription = supabase
+      .channel("messages-channel")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "messages",
+          filter: `recipient_pin_number=eq.${pinNumber}`,
+        },
+        () => {
+          // Refetch messages when there's a change
+          get().fetchMessages(pinNumber);
+        },
+      )
+      .subscribe();
+
+    // Subscribe to push notification deliveries
+    const deliveriesSubscription = supabase
+      .channel("deliveries-channel")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "push_notification_deliveries",
+          filter: `recipient_pin_number=eq.${pinNumber}`,
+        },
+        () => {
+          // Refetch messages when there's a delivery status change
+          get().fetchMessages(pinNumber);
+        },
+      )
+      .subscribe();
+
+    // Return cleanup function
+    return () => {
+      messagesSubscription.unsubscribe();
+      deliveriesSubscription.unsubscribe();
+    };
+  },
+}));
+
+export { useNotificationStore };
+export type { Message };
