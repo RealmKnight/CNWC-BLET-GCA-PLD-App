@@ -256,10 +256,23 @@ export default function CalendarScreen() {
     };
   }, []);
 
-  // Coordinated data loading function with timeout
+  // Update loadDataSafely function
   const loadDataSafely = async () => {
     if (isLoadingRef.current && loadPromiseRef.current) {
-      console.log("[CalendarScreen] Already loading, returning existing promise");
+      console.log("[CalendarScreen] Already loading, setting safety timeout");
+      // Set a safety timeout to clear stuck state
+      if (loadingTimeoutRef.current) {
+        clearTimeout(loadingTimeoutRef.current);
+      }
+      loadingTimeoutRef.current = setTimeout(() => {
+        console.log("[CalendarScreen] Loading timeout reached during existing load, forcing reset");
+        isLoadingRef.current = false;
+        loadPromiseRef.current = null;
+        setIsLoading(false);
+        if (calculatedZoneId === undefined) {
+          setIsZoneIdCalculationDone(true);
+        }
+      }, MAX_LOADING_TIME);
       return loadPromiseRef.current;
     }
 
@@ -275,6 +288,7 @@ export default function CalendarScreen() {
       hasExistingZoneId: calculatedZoneId !== undefined,
       currentZoneId: calculatedZoneId,
       shouldResetCalculation: shouldResetZoneCalculation,
+      isLoading: isLoadingRef.current,
     });
 
     if (loadingTimeoutRef.current) {
@@ -301,9 +315,14 @@ export default function CalendarScreen() {
         setCalculatedZoneId(undefined);
       }
 
-      await loadInitialData(dateRange.start, dateRange.end);
+      loadPromiseRef.current = loadInitialData(dateRange.start, dateRange.end);
+      await loadPromiseRef.current;
       console.log("[CalendarScreen] Data loaded successfully");
-      setIsLoading(false);
+
+      // Only clear loading state if we haven't started another load
+      if (loadPromiseRef.current === loadInitialData(dateRange.start, dateRange.end)) {
+        setIsLoading(false);
+      }
     } catch (error) {
       console.error("[CalendarScreen] Error loading data:", error);
       setError("Failed to load calendar data");
@@ -379,13 +398,29 @@ export default function CalendarScreen() {
     }
   }, [isInitialized, user, division]);
 
-  // Handle focus events with proper state reset and cooldown
+  // Update focus effect
   useFocusEffect(
     React.useCallback(() => {
       const now = Date.now();
       if (now - mountTimeRef.current < REFRESH_COOLDOWN) {
         console.log("[CalendarScreen] Screen focused, skipping refresh (recent mount)");
         return;
+      }
+
+      // Clear any existing timeout
+      if (loadingTimeoutRef.current) {
+        clearTimeout(loadingTimeoutRef.current);
+      }
+
+      // Check for stuck loading state
+      if (isLoadingRef.current && now - lastRefreshTimeRef.current > MAX_LOADING_TIME) {
+        console.log("[CalendarScreen] Detected stuck loading state, forcing reset");
+        isLoadingRef.current = false;
+        loadPromiseRef.current = null;
+        setIsLoading(false);
+        if (calculatedZoneId === undefined) {
+          setIsZoneIdCalculationDone(true);
+        }
       }
 
       if (isInitialized && now - lastRefreshTimeRef.current > REFRESH_COOLDOWN) {
@@ -397,12 +432,13 @@ export default function CalendarScreen() {
           isInitialized,
           timeSinceLastRefresh: now - lastRefreshTimeRef.current,
           cooldown: REFRESH_COOLDOWN,
+          isLoading: isLoadingRef.current,
         });
       }
     }, [isInitialized, loadDataSafely])
   );
 
-  // Handle app state changes
+  // Update app state effect
   useEffect(() => {
     const subscription = AppState.addEventListener("change", async (nextAppState) => {
       console.log("[CalendarScreen] App state changed:", { from: appState, to: nextAppState });
@@ -418,6 +454,23 @@ export default function CalendarScreen() {
           if (currentSession && user) {
             console.log("[CalendarScreen] Session valid, refreshing data");
             const now = Date.now();
+
+            // Clear any existing timeout
+            if (loadingTimeoutRef.current) {
+              clearTimeout(loadingTimeoutRef.current);
+            }
+
+            // Check for stuck loading state
+            if (isLoadingRef.current && now - lastRefreshTime > MAX_LOADING_TIME) {
+              console.log("[CalendarScreen] Detected stuck loading state during app state change, forcing reset");
+              isLoadingRef.current = false;
+              loadPromiseRef.current = null;
+              setIsLoading(false);
+              if (calculatedZoneId === undefined) {
+                setIsZoneIdCalculationDone(true);
+              }
+            }
+
             if (now - lastRefreshTime > REFRESH_COOLDOWN) {
               await loadDataSafely();
               setLastRefreshTime(now);

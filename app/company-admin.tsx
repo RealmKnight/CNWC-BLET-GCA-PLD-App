@@ -300,10 +300,20 @@ export default function CompanyAdminScreen() {
 
       if (error) throw error;
 
+      // Get the sender's PIN number (company admin)
+      const senderPin = parseInt(user?.user_metadata?.pin || "0");
+      // Get the recipient's PIN number from the request
+      const recipientPin = parseInt(request.pin_number);
+
+      // Validate PIN numbers
+      if (isNaN(senderPin) || isNaN(recipientPin)) {
+        throw new Error("Invalid PIN numbers for notification");
+      }
+
       // Send notification using the proper function
       await sendMessageWithNotification(
-        parseInt(user?.user_metadata?.pin),
-        [parseInt(request.pin_number)],
+        senderPin,
+        [recipientPin],
         "Leave Request Approved",
         `Your ${request.leave_type} request for ${format(
           parseISO(request.request_date),
@@ -379,10 +389,20 @@ export default function CompanyAdminScreen() {
 
       if (error) throw error;
 
+      // Get the sender's PIN number (company admin)
+      const senderPin = parseInt(user?.user_metadata?.pin || "0");
+      // Get the recipient's PIN number from the request
+      const recipientPin = parseInt(request.pin_number);
+
+      // Validate PIN numbers
+      if (isNaN(senderPin) || isNaN(recipientPin)) {
+        throw new Error("Invalid PIN numbers for notification");
+      }
+
       // Send notification using the proper function
       await sendMessageWithNotification(
-        parseInt(user?.user_metadata?.pin),
-        [parseInt(request.pin_number)],
+        senderPin,
+        [recipientPin],
         "Leave Request Cancellation Approved",
         `Your cancellation request for ${request.leave_type} on ${format(
           parseISO(request.request_date),

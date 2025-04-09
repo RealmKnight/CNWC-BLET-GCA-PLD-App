@@ -1,5 +1,14 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
-import { StyleSheet, useWindowDimensions, Alert, Modal, Animated, ActivityIndicator, Platform } from "react-native";
+import {
+  StyleSheet,
+  useWindowDimensions,
+  Alert,
+  Modal,
+  Animated,
+  ActivityIndicator,
+  Platform,
+  AppState,
+} from "react-native";
 import { useColorScheme } from "react-native";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
@@ -12,6 +21,8 @@ import { useMyTime } from "@/hooks/useMyTime";
 import { format } from "date-fns-tz";
 import { parseISO } from "date-fns";
 import { useFocusEffect } from "@react-navigation/native";
+import { useUserStore } from "@/store/userStore";
+import { useAuth } from "@/hooks/useAuth";
 
 interface LeaveRowProps {
   label: string;
@@ -243,6 +254,14 @@ export default function MyTimeScreen() {
   const [selectedType, setSelectedType] = useState<"PLD" | "SDV" | null>(null);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState<TimeOffRequest | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [appState, setAppState] = useState(AppState.currentState);
+  const didSkipInitialFocusRef = useRef(false);
+
+  // Get auth and store state
+  const { session } = useAuth();
+  const member = useUserStore((state) => state.member);
+
   const {
     stats,
     requests,
@@ -254,70 +273,28 @@ export default function MyTimeScreen() {
     cancelRequest,
     cancelSixMonthRequest,
   } = useMyTime();
-  const [isCancelling, setIsCancelling] = useState(false);
-  const [dataChanged, setDataChanged] = useState(false);
-  const [lastRefreshTime, setLastRefreshTime] = useState(0);
-  const REFRESH_COOLDOWN = 2000; // 2 seconds cooldown
-  const mountTimeRef = useRef(Date.now());
 
-  // Handle visibility change for web browsers
-  useEffect(() => {
-    if (Platform.OS !== "web") return;
+  // Calculate responsive card width
+  const cardWidth = Math.min(width * 0.9, 600);
 
-    function handleVisibilityChange() {
-      if (document.visibilityState === "visible") {
-        console.log("[MyTime] Page became visible, checking data");
-        const now = Date.now();
-        if (now - lastRefreshTime > REFRESH_COOLDOWN) {
-          console.log("[MyTime] Refreshing data after visibility change");
-          initialize();
-          setLastRefreshTime(now);
-        } else {
-          console.log("[MyTime] Skipping refresh due to cooldown");
-        }
-      }
-    }
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, [initialize, lastRefreshTime, REFRESH_COOLDOWN]);
-
-  // Initialize data when component mounts
-  useEffect(() => {
-    if (!isInitialized) {
-      console.log("[MyTime] Screen mounted, initializing data");
-      initialize();
-      mountTimeRef.current = Date.now();
-    }
-  }, [isInitialized]);
-
-  // Handle focus events with debounce
+  // Handle focus events
   useFocusEffect(
     React.useCallback(() => {
-      const now = Date.now();
-      // Skip refresh if we just mounted (within cooldown period)
-      if (now - mountTimeRef.current < REFRESH_COOLDOWN) {
-        console.log("[MyTime] Screen focused, skipping refresh (recent mount)");
+      if (!didSkipInitialFocusRef.current) {
+        didSkipInitialFocusRef.current = true;
+        console.log("[MyTimeScreen] Skipping initial focus event refresh.");
         return;
       }
 
-      // Only refresh if initialized and outside cooldown period
-      if (isInitialized && now - lastRefreshTime > REFRESH_COOLDOWN) {
-        console.log("[MyTime] Screen focused, refreshing data");
-        initialize();
-        setLastRefreshTime(now);
-      } else {
-        console.log("[MyTime] Screen focused, skipping refresh:", {
-          isInitialized,
-          timeSinceLastRefresh: now - lastRefreshTime,
-          cooldown: REFRESH_COOLDOWN,
-        });
+      if (!session || !member?.id) {
+        console.log("[MyTimeScreen] Focus but no auth/member, skipping refresh attempt");
+        return;
       }
-    }, [initialize, lastRefreshTime, isInitialized])
-  );
 
-  // Calculate responsive card width
-  const cardWidth = Math.min(width * 0.9, 600); // 90% of screen width, max 600px
+      console.log("[MyTimeScreen] Screen focused, attempting refresh");
+      initialize(true);
+    }, [session, member?.id])
+  );
 
   // Memoize the filtered and sorted requests
   const { pendingAndApproved, waitlisted } = useMemo(() => {
@@ -420,20 +397,18 @@ export default function MyTimeScreen() {
     }
   };
 
-  if (isLoading || !stats) {
+  if (!session || !member?.id || isLoading || !isInitialized || !stats) {
     return (
       <ThemedScrollView
         style={[
           styles.container,
-          {
-            backgroundColor: Colors[colorScheme ?? "light"].background,
-            paddingTop: insets.top,
-          },
+          { backgroundColor: Colors[colorScheme ?? "light"].background, paddingTop: insets.top },
         ]}
         contentContainerStyle={styles.contentContainer}
       >
         <ThemedView style={[styles.card, { width: cardWidth }]}>
           <ThemedView style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={Colors[colorScheme ?? "light"].tint} />
             <ThemedText style={styles.loadingText}>Loading time statistics...</ThemedText>
           </ThemedView>
         </ThemedView>

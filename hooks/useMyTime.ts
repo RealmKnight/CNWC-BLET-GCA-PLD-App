@@ -8,6 +8,7 @@ import { useCalendarStore } from "@/store/calendarStore";
 import { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import { useFocusEffect } from "@react-navigation/native";
 import React from "react";
+import { AppState } from "react-native";
 
 export interface TimeStats {
   total: {
@@ -73,31 +74,28 @@ export function useMyTime() {
   const [stats, setStats] = useState<TimeStats | null>(null);
   const [requests, setRequests] = useState<TimeOffRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { member, isLoading: isAuthLoading } = useAuth();
+  const { member: authMember, session } = useAuth();
+  const member = useUserStore((state) => state.member);
   const [realtimeChannel, setRealtimeChannel] = useState<
     RealtimeChannel | null
   >(null);
-  const { member: userStoreMember } = useUserStore();
-  const [isDataFetching, setIsDataFetching] = useState(false);
-  const initializationRef = useRef(false);
   const mountTimeRef = useRef(Date.now());
-  const lastRefreshTimeRef = useRef(Date.now());
-  const REFRESH_COOLDOWN = 1000; // 1 second in milliseconds
+  const lastRefreshTimeRef = useRef<number | null>(null);
+  const isLoadingRef = useRef(false);
+  const REFRESH_COOLDOWN = 1000; // 1 second cooldown
+  const initialAuthLoadCompleteRef = useRef(false);
 
   const fetchStats = useCallback(async () => {
-    if (!member?.id || isDataFetching) {
-      console.log(
-        "[MyTime] Skipping fetchStats - no member ID or already fetching",
-      );
+    if (!member?.id) {
+      console.log("[MyTime] Skipping fetchStats - no member ID");
       return;
     }
 
     try {
-      setIsDataFetching(true);
       console.log("[MyTime] Fetching stats for member:", member.id);
-      setIsLoading(true);
       setError(null);
 
       const currentYear = new Date().getFullYear();
@@ -109,10 +107,7 @@ export function useMyTime() {
         .eq("id", member.id)
         .single();
 
-      if (memberError) {
-        console.error("[MyTime] Error fetching member data:", memberError);
-        throw memberError;
-      }
+      if (memberError) throw memberError;
 
       console.log("[MyTime] Member data:", memberData);
 
@@ -217,6 +212,13 @@ export function useMyTime() {
       currentRequests?.forEach((request) => {
         const type = request.leave_type.toLowerCase() as "pld" | "sdv";
 
+        console.log("[MyTime] Processing request for stats:", {
+          id: request.id,
+          type,
+          status: request.status,
+          paid_in_lieu: request.paid_in_lieu,
+        });
+
         if (request.paid_in_lieu) {
           if (request.status === "pending") {
             baseStats.requested[type]++;
@@ -224,14 +226,19 @@ export function useMyTime() {
             baseStats.paidInLieu[type]++;
           }
         } else {
-          if (
-            request.status === "pending" ||
-            request.status === "cancellation_pending"
-          ) {
+          if (request.status === "pending") {
+            console.log(`[MyTime] Adding pending ${type} request to stats`);
+            baseStats.requested[type]++;
+          } else if (request.status === "cancellation_pending") {
+            console.log(
+              `[MyTime] Adding cancellation pending ${type} request to stats`,
+            );
             baseStats.requested[type]++;
           } else if (request.status === "waitlisted") {
+            console.log(`[MyTime] Adding waitlisted ${type} request to stats`);
             baseStats.waitlisted[type]++;
           } else if (request.status === "approved") {
+            console.log(`[MyTime] Adding approved ${type} request to stats`);
             baseStats.approved[type]++;
           }
         }
@@ -281,7 +288,6 @@ export function useMyTime() {
       setError(
         err instanceof Error ? err.message : "Failed to fetch time statistics",
       );
-      // Set default stats on error
       setStats({
         total: { pld: 0, sdv: 0 },
         rolledOver: { pld: 0 },
@@ -291,11 +297,8 @@ export function useMyTime() {
         approved: { pld: 0, sdv: 0 },
         paidInLieu: { pld: 0, sdv: 0 },
       });
-    } finally {
-      setIsLoading(false);
-      setIsDataFetching(false);
     }
-  }, [member?.id, isDataFetching]);
+  }, [member?.id]);
 
   const requestPaidInLieu = useCallback(
     async (type: "PLD" | "SDV") => {
@@ -372,20 +375,17 @@ export function useMyTime() {
         id: request.id,
         request_date: request.request_date,
         leave_type: request.leave_type as "PLD" | "SDV",
-        status: "pending",
+        status: "pending", // Assume pending for display
         requested_at: request.requested_at,
         is_six_month_request: true,
       }));
 
-      // Combine all requests and update stats
+      // Combine all requests and update state
       const allRequests = [
         ...(regularRequests || []),
         ...transformedSixMonthRequests,
       ];
       setRequests(allRequests);
-
-      // Recalculate stats to ensure consistency
-      await fetchStats();
     } catch (err) {
       console.error("[MyTime] Error fetching requests:", err);
       setError(
@@ -394,7 +394,7 @@ export function useMyTime() {
           : "Failed to fetch time off requests",
       );
     }
-  }, [member?.id, fetchStats]);
+  }, [member?.id]);
 
   const cancelRequest = useCallback(
     async (requestId: string) => {
@@ -513,121 +513,56 @@ export function useMyTime() {
     [member?.id, fetchStats],
   );
 
-  // Initialize data
-  const initialize = useCallback(async () => {
+  const refreshData = useCallback(async (force = false) => {
+    if (isRefreshing) {
+      console.log("[MyTime] Skipping refresh - already refreshing");
+      return;
+    }
+
     if (!member?.id) {
-      console.log("[MyTime] Skipping initialization - no member ID");
-      setIsLoading(false);
+      console.log("[MyTime] Skipping refresh - no member ID");
       return;
     }
 
-    // If already initialized and not forced, skip
-    if (isInitialized && !isDataFetching) {
-      console.log("[MyTime] Already initialized, skipping");
-      setIsLoading(false);
-      return;
-    }
-
-    // If already initializing, skip
-    if (initializationRef.current) {
-      console.log("[MyTime] Initialization already in progress");
+    const now = Date.now();
+    if (
+      !force && lastRefreshTimeRef.current &&
+      now - lastRefreshTimeRef.current < REFRESH_COOLDOWN
+    ) {
+      console.log("[MyTime] Skipping refresh - within cooldown period");
       return;
     }
 
     try {
-      console.log("[MyTime] Starting initialization for member:", member.id);
-      initializationRef.current = true;
-      setIsDataFetching(true);
-      setIsLoading(true);
+      console.log("[MyTime] Starting data refresh (setting isRefreshing true)");
+      setIsRefreshing(true);
       setError(null);
 
       await Promise.all([fetchStats(), fetchRequests()]);
 
-      if (!initializationRef.current) {
-        // If initialization was cancelled, don't update state
-        console.log(
-          "[MyTime] Initialization was cancelled, skipping state updates",
-        );
-        return;
-      }
-
       setIsInitialized(true);
-      console.log("[MyTime] Data initialized successfully");
+      lastRefreshTimeRef.current = now;
+      console.log("[MyTime] Data refreshed successfully");
     } catch (error) {
-      console.error("[MyTime] Error initializing data:", error);
+      console.error("[MyTime] Error refreshing data:", error);
       setError(
-        error instanceof Error ? error.message : "Failed to initialize data",
+        error instanceof Error ? error.message : "Failed to refresh data",
       );
+      if (!isInitialized) setIsInitialized(true);
     } finally {
-      if (initializationRef.current) {
-        setIsLoading(false);
-        setIsDataFetching(false);
-        initializationRef.current = false;
-      }
+      console.log(
+        "[MyTime] Refresh attempt finished, setting isRefreshing state to false.",
+      );
+      setIsRefreshing(false);
     }
-  }, [member?.id, isInitialized, fetchStats, fetchRequests, isDataFetching]);
+  }, [member?.id, fetchStats, fetchRequests, isInitialized, isRefreshing]);
 
-  // Add cleanup effect
-  useEffect(() => {
-    return () => {
-      console.log("[MyTime] Cleaning up");
-      initializationRef.current = false;
-      setIsLoading(false);
-      setIsDataFetching(false);
-      setIsInitialized(false);
-    };
-  }, []);
-
-  // Initialize when auth is ready
-  useEffect(() => {
-    if (!isAuthLoading && member?.id) {
-      console.log("[MyTime] Auth ready, initializing");
-      initialize();
-    }
-  }, [isAuthLoading, member?.id, initialize]);
-
-  // Handle focus events with proper state reset
-  useFocusEffect(
-    React.useCallback(() => {
-      const now = Date.now();
-      // Skip refresh if we just mounted (within cooldown period)
-      if ((now - mountTimeRef.current) < REFRESH_COOLDOWN) {
-        console.log("[MyTime] Screen focused, skipping refresh (recent mount)");
-        return;
-      }
-
-      // Reset initialization state if needed
-      if (!isInitialized && !initializationRef.current) {
-        console.log("[MyTime] Screen focused, resetting initialization state");
-        setIsLoading(true);
-        initialize();
-      } else if ((now - lastRefreshTimeRef.current) > REFRESH_COOLDOWN) {
-        console.log("[MyTime] Screen focused, refreshing data");
-        setIsDataFetching(true);
-        initialize();
-        lastRefreshTimeRef.current = now;
-      } else {
-        console.log("[MyTime] Screen focused, skipping refresh:", {
-          isInitialized,
-          timeSinceLastRefresh: now - lastRefreshTimeRef.current,
-          cooldown: REFRESH_COOLDOWN,
-        });
-      }
-    }, [initialize, isInitialized, REFRESH_COOLDOWN]),
-  );
-
-  // Set up realtime subscription when member is available and initialized
   useIsomorphicLayoutEffect(() => {
-    if (!member?.id || !isInitialized) {
-      console.log("[MyTime] Skipping realtime setup - not ready:", {
-        hasMemberId: !!member?.id,
-        isInitialized,
-      });
+    if (!member?.id /* || !session */) {
+      console.log("[MyTime] Skipping realtime setup - no member ID");
       return;
     }
-
     console.log("[MyTime] Setting up realtime subscriptions");
-    // Set up realtime subscription for regular requests
     const regularRequestsChannel = supabase
       .channel("mytime-regular")
       .on(
@@ -649,20 +584,21 @@ export function useMyTime() {
               status: newRequest?.status || oldRequest?.status,
             });
 
+            // Update requests first
             if (payload.eventType === "INSERT" && newRequest) {
               setRequests((prev) => [...prev, newRequest]);
-              await fetchStats();
             } else if (payload.eventType === "UPDATE" && newRequest) {
               setRequests((prev) =>
                 prev.map((req) => (req.id === newRequest.id ? newRequest : req))
               );
-              await fetchStats();
             } else if (payload.eventType === "DELETE" && oldRequest) {
               setRequests((prev) =>
                 prev.filter((req) => req.id !== oldRequest.id)
               );
-              await fetchStats();
             }
+
+            // Ensure stats are updated after request changes
+            await fetchStats();
           } catch (error) {
             console.error(
               "[MyTime] Error processing regular request update:",
@@ -673,7 +609,6 @@ export function useMyTime() {
       )
       .subscribe();
 
-    // Set up realtime subscription for six-month requests
     const sixMonthRequestsChannel = supabase
       .channel("mytime-six-month")
       .on(
@@ -684,9 +619,8 @@ export function useMyTime() {
           table: "six_month_requests",
           filter: `member_id=eq.${member.id}`,
         },
-        async (payload: RealtimePostgresChangesPayload<SixMonthRequest>) => {
+        async () => {
           try {
-            console.log("[MyTime] Processing six-month request update");
             await Promise.all([fetchStats(), fetchRequests()]);
           } catch (error) {
             console.error(
@@ -703,15 +637,79 @@ export function useMyTime() {
       regularRequestsChannel.unsubscribe();
       sixMonthRequestsChannel.unsubscribe();
     };
-  }, [member?.id, isInitialized, fetchStats, fetchRequests]);
+  }, [member?.id, fetchStats, fetchRequests]);
+
+  useEffect(() => {
+    if (member?.id && session && !initialAuthLoadCompleteRef.current) {
+      console.log(
+        "[MyTime] Member/Session ready and initial load pending, initializing (setting isLoading true)",
+      );
+      initialAuthLoadCompleteRef.current = true;
+      setIsLoading(true);
+      refreshData(true)
+        .catch((err) => {
+          console.error("[MyTime] Error during initial refreshData:", err);
+        })
+        .finally(() => {
+          console.log(
+            "[MyTime] Initial refreshData call completed (setting isLoading false).",
+          );
+          setIsLoading(false);
+        });
+      mountTimeRef.current = Date.now();
+    } else if (!member?.id && !session) {
+      initialAuthLoadCompleteRef.current = false;
+      setIsInitialized(false);
+      setStats(null);
+      setRequests([]);
+      setIsLoading(true);
+      setIsRefreshing(false);
+      console.log(
+        "[MyTime] Member/Session lost, resetting initial load flag and state",
+      );
+    }
+  }, [member?.id, session, refreshData]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener(
+      "change",
+      async (nextAppState) => {
+        if (nextAppState === "active" && member?.id) {
+          console.log(
+            "[MyTime] App active, attempting refresh via refreshData()",
+          );
+          await refreshData();
+        }
+      },
+    );
+
+    return () => {
+      subscription.remove();
+    };
+  }, [member?.id, refreshData]);
+
+  useEffect(() => {
+    return () => {
+      console.log("[MyTime] Cleaning up on unmount");
+      setIsLoading(true);
+      setIsRefreshing(false);
+      setIsInitialized(false);
+      setError(null);
+      setStats(null);
+      setRequests([]);
+      lastRefreshTimeRef.current = null;
+      initialAuthLoadCompleteRef.current = false;
+    };
+  }, []);
 
   return {
     stats,
     requests,
     isLoading,
+    isRefreshing,
     error,
     isInitialized,
-    initialize,
+    initialize: refreshData,
     requestPaidInLieu,
     cancelRequest,
     cancelSixMonthRequest,

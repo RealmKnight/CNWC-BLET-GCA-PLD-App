@@ -205,16 +205,16 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       ? `${dateObj.getFullYear()}_${zoneId}`
       : dateObj.getFullYear();
 
-    console.log("[CalendarStore] getDateAvailability called for date:", date, {
-      isLoading: state.isLoading,
-      isInitialized: state.isInitialized,
-      hasAllotments: Object.keys(state.allotments).length,
-      hasYearlyAllotments: Object.keys(state.yearlyAllotments).length,
-      yearlyAllotment: state.yearlyAllotments[yearKey],
-      dateAllotment: state.allotments[dateKey],
-      requests: state.requests[dateKey]?.length ?? 0,
-      zoneId,
-    });
+    // console.log("[CalendarStore] getDateAvailability called for date:", date, {
+    //   isLoading: state.isLoading,
+    //   isInitialized: state.isInitialized,
+    //   hasAllotments: Object.keys(state.allotments).length,
+    //   hasYearlyAllotments: Object.keys(state.yearlyAllotments).length,
+    //   yearlyAllotment: state.yearlyAllotments[yearKey],
+    //   dateAllotment: state.allotments[dateKey],
+    //   requests: state.requests[dateKey]?.length ?? 0,
+    //   zoneId,
+    // });
 
     // Calculate 48 hours from now
     const fortyEightHoursFromNow = addDays(now, 2);

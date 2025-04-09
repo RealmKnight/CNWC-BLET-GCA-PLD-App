@@ -77,6 +77,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
       return;
     }
 
+    // *** Declare shouldSetLoading here to use it in finally block ***
+    let shouldSetLoading = false;
+
     try {
       isUpdatingAuth.current = true;
       console.log(`[Auth] Updating auth state from ${source}`);
@@ -84,34 +87,35 @@ export function AuthProvider({ children }: AuthProviderProps) {
       const newUser = newSession?.user ?? null;
       const currentUser = user;
 
-      // Skip update if nothing has changed and we have complete data
+      // Skip update if user ID is the same AND it's a background check/refresh event
+      // AND the session access token hasn't changed (best check for actual session change)
       if (
         newUser?.id === currentUser?.id &&
-        member !== null &&
-        (source.includes("APP_STATE") ||
-          source.includes("state_change_SIGNED_IN") ||
-          (source === "initial" && initialAuthCompleteRef.current))
+        newSession?.access_token === session?.access_token && // Compare access tokens
+        (source.includes("APP_STATE") || source.includes("state_change_SIGNED_IN"))
       ) {
-        console.log("[Auth] Skipping redundant auth update");
-        return;
+        console.log("[Auth] Skipping redundant auth update (user ID and access token match)");
+        isUpdatingAuth.current = false; // Need to reset this flag before returning
+        // Process pending updates if any, BEFORE returning
+        if (pendingAuthUpdate.current) {
+          const { session: pendingSession, source: pendingSource } = pendingAuthUpdate.current;
+          pendingAuthUpdate.current = null;
+          // Use await here to ensure pending update completes before another starts
+          await updateAuthState(pendingSession, pendingSource);
+        }
+        return; // Return after potentially processing pending
       }
 
-      // Only set loading if:
-      // 1. Not a user metadata update
-      // 2. Not an app state change
-      // 3. Not a sign-in event when we already have a session
-      // 4. Not a redundant session check
-      // 5. Not after initial auth is complete
-      const shouldSetLoading =
-        !source.includes("USER_UPDATED") &&
-        !source.includes("APP_STATE") &&
-        !(source.includes("state_change_SIGNED_IN") && !!session) &&
-        !(source === "initial" && !!session && !!member) &&
-        !(initialAuthCompleteRef.current && source.includes("state_change_"));
+      // Simplified loading logic:
+      // Only set loading if user changes, on initial load, or explicit sign-in/up
+      shouldSetLoading =
+        newUser?.id !== currentUser?.id ||
+        (source === "initial" && !initialAuthCompleteRef.current) ||
+        source === "signIn" ||
+        source === "signUp";
 
       if (shouldSetLoading) {
-        console.log("[Auth] Setting loading state for auth update");
-        setIsLoading(true);
+        console.log("[Auth] Skipping isLoading=true for this auth update:", source);
       }
 
       console.log("[Auth] Setting session and user:", {
@@ -190,8 +194,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
         useUserStore.getState().reset();
       }
     } finally {
-      if (!source.includes("USER_UPDATED") && !source.includes("APP_STATE")) {
-        console.log("[Auth] Finished updating auth state, setting isLoading to false");
+      if (shouldSetLoading || (source === "initial" && !initialAuthCompleteRef.current)) {
+        console.log("[Auth] Finished auth update potentially involving loading state, setting isLoading false");
         setIsLoading(false);
       }
 
