@@ -451,7 +451,7 @@ export default function MyTimeScreen() {
       >
         <ThemedView style={[styles.card, { width: cardWidth }]}>
           <ThemedView style={styles.sectionHeader}>
-            <ThemedText style={styles.sectionTitle}>My Time</ThemedText>
+            <ThemedText style={styles.sectionTitle}>Current Allocations</ThemedText>
           </ThemedView>
           <ThemedView style={styles.tableHeader}>
             <ThemedText style={styles.headerLabel}>Type</ThemedText>

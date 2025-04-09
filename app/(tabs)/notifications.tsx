@@ -332,14 +332,6 @@ export default function NotificationsScreen() {
       style={styles.container}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
     >
-      <ThemedView style={styles.header}>
-        <Image source={require("@/assets/images/BLETblackgold.png")} style={styles.logo} resizeMode="contain" />
-        <ThemedText type="title" style={styles.headerTitle}>
-          Notifications
-        </ThemedText>
-        <ThemedView style={styles.headerRight} />
-      </ThemedView>
-
       <ThemedView style={styles.controls}>
         <ThemedView style={styles.searchContainer}>
           <Ionicons name="search" size={20} color={Colors[theme].text} style={styles.searchIcon} />
@@ -427,24 +419,82 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  header: {
+  controls: {
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(128, 128, 128, 0.2)",
+    borderBottomColor: "rgba(128, 128, 128, 0.1)",
+  },
+  searchContainer: {
     flexDirection: "row",
     alignItems: "center",
+    backgroundColor: "rgba(128, 128, 128, 0.1)",
+    borderRadius: 8,
+    padding: 8,
+    marginBottom: 12,
+  },
+  searchIcon: {
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 16,
+    padding: 0,
+  },
+  filterRow: {
+    marginBottom: 12,
+  },
+  filterScroll: {
+    flexGrow: 0,
+  },
+  filterButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 16,
+    marginRight: 8,
+    backgroundColor: "rgba(128, 128, 128, 0.1)",
+  },
+  filterButtonActive: {
+    backgroundColor: Colors.light.tint,
+  },
+  filterButtonText: {
+    fontSize: 14,
+  },
+  filterButtonTextActive: {
+    color: "#fff",
+  },
+  actionRow: {
+    flexDirection: "row",
     justifyContent: "space-between",
   },
-  logo: {
-    width: 32,
-    height: 32,
+  actionButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 8,
   },
-  headerTitle: {
+  actionButtonText: {
+    marginLeft: 4,
+    fontSize: 14,
+  },
+  group: {
+    marginBottom: 8,
+  },
+  groupHeader: {
+    padding: 16,
+    paddingBottom: 8,
+    fontSize: 16,
+    fontWeight: "600",
+    backgroundColor: "rgba(128, 128, 128, 0.05)",
+  },
+  emptyState: {
     flex: 1,
-    textAlign: "center",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 32,
   },
-  headerRight: {
-    width: 32, // Same as logo width to maintain center alignment
+  emptyText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: "gray",
   },
   notificationItem: {
     flexDirection: "row",
@@ -547,82 +597,5 @@ const styles = StyleSheet.create({
   },
   deliveryIcon: {
     marginLeft: 4,
-  },
-  controls: {
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(128, 128, 128, 0.1)",
-  },
-  searchContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "rgba(128, 128, 128, 0.1)",
-    borderRadius: 8,
-    padding: 8,
-    marginBottom: 12,
-  },
-  searchIcon: {
-    marginRight: 8,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 16,
-    padding: 0,
-  },
-  filterRow: {
-    marginBottom: 12,
-  },
-  filterScroll: {
-    flexGrow: 0,
-  },
-  filterButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 16,
-    marginRight: 8,
-    backgroundColor: "rgba(128, 128, 128, 0.1)",
-  },
-  filterButtonActive: {
-    backgroundColor: Colors.light.tint,
-  },
-  filterButtonText: {
-    fontSize: 14,
-  },
-  filterButtonTextActive: {
-    color: "#fff",
-  },
-  actionRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  actionButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 8,
-  },
-  actionButtonText: {
-    marginLeft: 4,
-    fontSize: 14,
-  },
-  group: {
-    marginBottom: 8,
-  },
-  groupHeader: {
-    padding: 16,
-    paddingBottom: 8,
-    fontSize: 16,
-    fontWeight: "600",
-    backgroundColor: "rgba(128, 128, 128, 0.05)",
-  },
-  emptyState: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 32,
-  },
-  emptyText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: "gray",
   },
 });

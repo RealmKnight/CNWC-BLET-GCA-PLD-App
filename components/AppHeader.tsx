@@ -1,6 +1,8 @@
-import { StyleSheet, TouchableOpacity } from "react-native";
+import React from "react";
+import { StyleSheet, TouchableOpacity, Image } from "react-native";
 import { usePathname, useRouter, useSegments } from "expo-router";
 import { ThemedView } from "@/components/ThemedView";
+import { ThemedText } from "@/components/ThemedText";
 import { useAuth } from "@/hooks/useAuth";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
@@ -15,6 +17,7 @@ export function AppHeader() {
   const isAdminRoute = segments[0] === "(admin)";
   const isAdmin = userRole?.includes("admin");
   const isProfileRoute = segments[0] === "(profile)";
+  const isTabsRoute = segments[0] === "(tabs)";
 
   console.log("[AppHeader] State:", {
     pathname,
@@ -51,28 +54,72 @@ export function AppHeader() {
 
   const iconColor = Colors[colorScheme].tint;
 
+  // Get the current tab title
+  const getTabTitle = () => {
+    if (!isTabsRoute) return "";
+    const tabSegment = segments[1] as "index" | "notifications" | "calendar" | "mytime" | undefined;
+    switch (tabSegment) {
+      case "index":
+        return "Home";
+      case "notifications":
+        return "Notifications";
+      case "calendar":
+        return "Calendar";
+      case "mytime":
+        return "My Time";
+      default:
+        return "";
+    }
+  };
+
   return (
     <ThemedView style={styles.header}>
-      <ThemedView style={styles.leftIcons}>
-        {isAdmin && (
-          <TouchableOpacity onPress={handleSettingsPress} style={styles.iconButton}>
-            <Ionicons name={isAdminRoute ? "home-outline" : "settings-outline"} size={28} color={iconColor} />
-          </TouchableOpacity>
-        )}
-        {isProfileRoute && (
-          <TouchableOpacity onPress={handleHomePress} style={styles.iconButton}>
-            <Ionicons name="home-outline" size={28} color={iconColor} />
-          </TouchableOpacity>
-        )}
-      </ThemedView>
-      <ThemedView style={styles.rightIcons}>
-        <TouchableOpacity onPress={handleProfilePress} style={styles.iconButton}>
-          <Ionicons name="person-circle-outline" size={28} color={iconColor} />
-        </TouchableOpacity>
-        <TouchableOpacity onPress={handleLogoutPress} style={styles.iconButton}>
-          <Ionicons name="log-out-outline" size={28} color={iconColor} />
-        </TouchableOpacity>
-      </ThemedView>
+      {isTabsRoute ? (
+        <>
+          <ThemedView style={styles.leftIcons}>
+            {isAdmin && (
+              <TouchableOpacity onPress={handleSettingsPress} style={styles.iconButton}>
+                <Ionicons name="settings-outline" size={28} color={iconColor} />
+              </TouchableOpacity>
+            )}
+          </ThemedView>
+          <Image source={require("@/assets/images/BLETblackgold.png")} style={styles.logo} resizeMode="contain" />
+          <ThemedText type="title" style={styles.headerTitle}>
+            {getTabTitle()}
+          </ThemedText>
+          <ThemedView style={styles.rightIcons}>
+            <TouchableOpacity onPress={handleProfilePress} style={styles.iconButton}>
+              <Ionicons name="person-circle-outline" size={28} color={iconColor} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleLogoutPress} style={styles.iconButton}>
+              <Ionicons name="log-out-outline" size={28} color={iconColor} />
+            </TouchableOpacity>
+          </ThemedView>
+        </>
+      ) : (
+        <>
+          <ThemedView style={styles.leftIcons}>
+            {isAdmin && (
+              <TouchableOpacity onPress={handleSettingsPress} style={styles.iconButton}>
+                <Ionicons name={isAdminRoute ? "home-outline" : "settings-outline"} size={28} color={iconColor} />
+              </TouchableOpacity>
+            )}
+            {isProfileRoute && (
+              <TouchableOpacity onPress={handleHomePress} style={styles.iconButton}>
+                <Ionicons name="home-outline" size={28} color={iconColor} />
+              </TouchableOpacity>
+            )}
+          </ThemedView>
+          <ThemedView style={styles.rightIcons}>
+            <TouchableOpacity onPress={handleProfilePress} style={styles.iconButton}>
+              <Ionicons name="person-circle-outline" size={28} color={iconColor} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleLogoutPress} style={styles.iconButton}>
+              <Ionicons name="log-out-outline" size={28} color={iconColor} />
+            </TouchableOpacity>
+          </ThemedView>
+        </>
+      )}
     </ThemedView>
   );
 }
@@ -91,6 +138,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
+    minWidth: 44, // Ensure consistent width whether there's an icon or not
   },
   rightIcons: {
     flexDirection: "row",
@@ -99,5 +147,13 @@ const styles = StyleSheet.create({
   },
   iconButton: {
     padding: 8,
+  },
+  logo: {
+    width: 32,
+    height: 32,
+  },
+  headerTitle: {
+    flex: 1,
+    textAlign: "center",
   },
 });
