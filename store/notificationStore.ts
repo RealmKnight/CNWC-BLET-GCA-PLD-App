@@ -189,9 +189,11 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
   },
 
   subscribeToMessages: (pinNumber: number) => {
+    const channelId = `messages-${pinNumber}-${Date.now()}`;
+
     // Subscribe to messages table changes
     const messagesSubscription = supabase
-      .channel("messages-channel")
+      .channel(channelId)
       .on(
         "postgres_changes",
         {
@@ -201,11 +203,14 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
           filter: `recipient_pin_number=eq.${pinNumber}`,
         },
         async (payload) => {
+          console.log("[NotificationStore] Received realtime update:", payload);
+          const { messages } = get();
+
           // Handle different types of changes
           switch (payload.eventType) {
-            case "INSERT":
+            case "INSERT": {
               // Fetch the new message to get all related data
-              const { data: newMessage } = await supabase
+              const { data: newMessage, error } = await supabase
                 .from("messages")
                 .select(`
                   *,
@@ -219,8 +224,15 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
                 .eq("id", payload.new.id)
                 .single();
 
+              if (error) {
+                console.error(
+                  "[NotificationStore] Error fetching new message:",
+                  error,
+                );
+                return;
+              }
+
               if (newMessage && !newMessage.is_deleted) {
-                const { messages } = get();
                 const updatedMessages = [newMessage, ...messages];
                 set({
                   messages: updatedMessages,
@@ -230,13 +242,13 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
                 });
               }
               break;
+            }
 
-            case "UPDATE":
+            case "UPDATE": {
               if (payload.new.is_deleted) {
                 // If message was marked as deleted, remove it from the local state
-                const { messages } = get();
-                const updatedMessages = messages.filter((msg) =>
-                  msg.id !== payload.new.id
+                const updatedMessages = messages.filter(
+                  (msg) => msg.id !== payload.new.id,
                 );
                 set({
                   messages: updatedMessages,
@@ -246,7 +258,6 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
                 });
               } else {
                 // For other updates, update the message in the local state
-                const { messages } = get();
                 const updatedMessages = messages.map((msg) =>
                   msg.id === payload.new.id ? { ...msg, ...payload.new } : msg
                 );
@@ -258,18 +269,35 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
                 });
               }
               break;
+            }
 
-            default:
-              // Refetch messages for other changes
-              get().fetchMessages(pinNumber);
+            case "DELETE": {
+              // Remove the message from local state
+              const updatedMessages = messages.filter(
+                (msg) => msg.id !== payload.old.id,
+              );
+              set({
+                messages: updatedMessages,
+                unreadCount: updatedMessages.filter((msg) =>
+                  !msg.is_read
+                ).length,
+              });
+              break;
+            }
           }
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log(
+          `[NotificationStore] Subscription status for ${channelId}:`,
+          status,
+        );
+      });
 
-    // Subscribe to push notification deliveries
+    // Subscribe to push notification deliveries with a separate channel
+    const deliveriesChannelId = `deliveries-${pinNumber}-${Date.now()}`;
     const deliveriesSubscription = supabase
-      .channel("deliveries-channel")
+      .channel(deliveriesChannelId)
       .on(
         "postgres_changes",
         {
@@ -278,15 +306,21 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
           table: "push_notification_deliveries",
           filter: `recipient_pin_number=eq.${pinNumber}`,
         },
-        () => {
+        async () => {
           // Refetch messages when there's a delivery status change
-          get().fetchMessages(pinNumber);
+          await get().fetchMessages(pinNumber);
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log(
+          `[NotificationStore] Deliveries subscription status for ${deliveriesChannelId}:`,
+          status,
+        );
+      });
 
     // Return cleanup function
     return () => {
+      console.log("[NotificationStore] Cleaning up subscriptions");
       messagesSubscription.unsubscribe();
       deliveriesSubscription.unsubscribe();
     };
