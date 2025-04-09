@@ -11,6 +11,7 @@ import { configureNotifications, setupNotificationListeners } from "@/utils/noti
 import Toast, { BaseToast, ErrorToast, BaseToastProps } from "react-native-toast-message";
 import { Colors } from "@/constants/Colors";
 import { ThemedToast } from "@/components/ThemedToast";
+import { useNotificationStore } from "@/store/notificationStore";
 
 // Define toast config
 const toastConfig = {
@@ -36,9 +37,10 @@ const toastConfig = {
 };
 
 function RootLayoutContent() {
-  const { isLoading, session, userRole } = useAuth();
+  const { isLoading, session, userRole, member } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+  const { fetchMessages, subscribeToMessages } = useNotificationStore();
 
   useEffect(() => {
     // Configure notifications when the app starts
@@ -52,6 +54,22 @@ function RootLayoutContent() {
       cleanupNotifications();
     };
   }, []);
+
+  // Initialize notifications when user is authenticated
+  useEffect(() => {
+    if (session && member?.pin_number) {
+      console.log("[Notifications] Initializing notifications for user:", member.pin_number);
+      // Fetch initial messages
+      fetchMessages(member.pin_number);
+      // Subscribe to real-time updates
+      const unsubscribe = subscribeToMessages(member.pin_number);
+
+      return () => {
+        console.log("[Notifications] Cleaning up notifications subscription");
+        unsubscribe();
+      };
+    }
+  }, [session, member?.pin_number, fetchMessages, subscribeToMessages]);
 
   useEffect(() => {
     console.log("[Router] State:", { isLoading, hasSession: !!session, userRole, currentSegment: segments[0] });
