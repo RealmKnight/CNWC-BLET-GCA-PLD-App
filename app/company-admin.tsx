@@ -94,6 +94,36 @@ export default function CompanyAdminScreen() {
   const [zones, setZones] = useState<Zone[]>([]);
   const [selectedZone, setSelectedZone] = useState<number | null>(null);
 
+  // Set up real-time subscription
+  useEffect(() => {
+    if (user?.user_metadata?.role !== "company_admin") return;
+
+    const subscription = supabase
+      .channel("pld-sdv-requests-changes")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "pld_sdv_requests",
+          filter: `status=in.(pending,cancellation_pending)`,
+        },
+        (payload) => {
+          console.log("Real-time update received:", payload);
+          // Refresh the pending requests when we receive an update
+          fetchPendingRequests();
+        }
+      )
+      .subscribe((status) => {
+        console.log("Subscription status:", status);
+      });
+
+    // Cleanup subscription on unmount
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [user]);
+
   // Fetch zones
   const fetchZones = useCallback(async () => {
     try {
@@ -310,17 +340,23 @@ export default function CompanyAdminScreen() {
         throw new Error("Invalid PIN numbers for notification");
       }
 
+      // Determine notification title and message based on request type and paid_in_lieu status
+      const notificationTitle = request.paid_in_lieu
+        ? `${request.leave_type} Paid in Lieu Approved`
+        : `${request.leave_type} Day Off Approved`;
+
+      const notificationMessage = request.paid_in_lieu
+        ? `Your ${request.leave_type} payment request for ${format(
+            parseISO(request.request_date),
+            "MMM d, yyyy"
+          )} has been approved.`
+        : `Your ${request.leave_type} day off request for ${format(
+            parseISO(request.request_date),
+            "MMM d, yyyy"
+          )} has been approved.`;
+
       // Send notification using the proper function
-      await sendMessageWithNotification(
-        senderPin,
-        [recipientPin],
-        "Leave Request Approved",
-        `Your ${request.leave_type} request for ${format(
-          parseISO(request.request_date),
-          "MMM d, yyyy"
-        )} has been approved.`,
-        true
-      );
+      await sendMessageWithNotification(senderPin, [recipientPin], notificationTitle, notificationMessage, true);
 
       await fetchPendingRequests();
       Alert.alert("Success", "Request approved successfully");
