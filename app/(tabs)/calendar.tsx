@@ -632,6 +632,7 @@ export default function CalendarScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    paddingTop: 16,
   } as ViewStyle,
   scrollView: {
     flex: 1,

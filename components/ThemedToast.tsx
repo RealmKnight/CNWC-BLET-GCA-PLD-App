@@ -31,24 +31,26 @@ const ActionToast = (props: ActionToastProps) => {
 
   return (
     <View style={[styles.actionToast, { backgroundColor: Colors[theme].card }]}>
-      <View style={styles.textContainer}>
+      <View style={[styles.textContainer, !customProps?.onAction && styles.noActionTextContainer]}>
         <ThemedText style={styles.title}>{text1}</ThemedText>
         {text2 && <ThemedText style={styles.message}>{text2}</ThemedText>}
       </View>
-      <View style={styles.actionButtons}>
-        <TouchableOpacity
-          style={[styles.button, { backgroundColor: Colors[theme].error + "20" }]}
-          onPress={handleDelete}
-        >
-          <ThemedText style={[styles.buttonText, { color: Colors[theme].error }]}>Delete</ThemedText>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.button, { backgroundColor: Colors[theme].background }]}
-          onPress={() => Toast.hide()}
-        >
-          <ThemedText style={styles.buttonText}>Cancel</ThemedText>
-        </TouchableOpacity>
-      </View>
+      {customProps?.onAction && (
+        <View style={styles.actionButtons}>
+          <TouchableOpacity
+            style={[styles.button, { backgroundColor: Colors[theme].error + "20" }]}
+            onPress={handleDelete}
+          >
+            <ThemedText style={[styles.buttonText, { color: Colors[theme].error }]}>Delete</ThemedText>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.button, { backgroundColor: Colors[theme].background }]}
+            onPress={() => Toast.hide()}
+          >
+            <ThemedText style={styles.buttonText}>Cancel</ThemedText>
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 };
@@ -103,6 +105,9 @@ const styles = StyleSheet.create({
   },
   textContainer: {
     marginBottom: 12,
+  },
+  noActionTextContainer: {
+    marginBottom: 0,
   },
   title: {
     fontSize: 16,
