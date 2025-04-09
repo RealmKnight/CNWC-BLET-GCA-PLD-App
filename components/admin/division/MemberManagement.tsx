@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
 import { StyleSheet, Platform, Pressable } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -11,7 +11,6 @@ import { MemberList } from "./MemberList";
 type MemberAction = "list" | "add" | "edit";
 
 interface Member {
-  id: string;
   first_name: string;
   last_name: string;
   pin_number: string | number;
@@ -21,12 +20,18 @@ interface Member {
 export function MemberManagement() {
   const [currentAction, setCurrentAction] = useState<MemberAction>("list");
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const tintColor = Colors[colorScheme].tint;
 
-  const handleEditMember = (member: Member) => {
+  const handleEditMember = useCallback((member: Member) => {
     setSelectedMember(member);
     setCurrentAction("edit");
+  }, []);
+
+  const triggerRefresh = () => {
+    setRefreshKey((prevKey) => prevKey + 1);
+    setCurrentAction("list");
   };
 
   const ButtonComponent = Platform.OS === "web" ? Pressable : TouchableOpacity;
@@ -56,14 +61,14 @@ export function MemberManagement() {
       case "list":
         return (
           <ThemedView style={styles.contentContainer}>
-            <MemberList onEditMember={handleEditMember} />
+            <MemberList onEditMember={handleEditMember} refreshTrigger={refreshKey} />
           </ThemedView>
         );
       case "add":
         return (
           <ThemedView style={styles.contentContainer}>
             <ThemedText type="subtitle">Add New Member</ThemedText>
-            {/* TODO: Implement add member form */}
+            {/* TODO: Implement add member form and call triggerRefresh on success */}
           </ThemedView>
         );
       case "edit":
@@ -75,7 +80,7 @@ export function MemberManagement() {
                 Editing: {selectedMember.first_name} {selectedMember.last_name}
               </ThemedText>
             )}
-            {/* TODO: Implement edit member form */}
+            {/* TODO: Implement edit member form and call triggerRefresh on success */}
           </ThemedView>
         );
       default:

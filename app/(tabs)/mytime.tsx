@@ -286,14 +286,14 @@ export default function MyTimeScreen() {
         return;
       }
 
-      if (!session || !member?.id) {
+      if (!member?.id) {
         console.log("[MyTimeScreen] Focus but no auth/member, skipping refresh attempt");
         return;
       }
 
       console.log("[MyTimeScreen] Screen focused, attempting refresh");
       initialize(true);
-    }, [session, member?.id])
+    }, [member?.id])
   );
 
   // Memoize the filtered and sorted requests
@@ -397,7 +397,7 @@ export default function MyTimeScreen() {
     }
   };
 
-  if (!session || !member?.id || isLoading || !isInitialized || !stats) {
+  if (!member?.id || isLoading || !isInitialized || !stats) {
     return (
       <ThemedScrollView
         style={[

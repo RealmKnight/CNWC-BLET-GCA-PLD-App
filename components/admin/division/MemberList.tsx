@@ -9,6 +9,7 @@ import {
   useWindowDimensions,
   ViewStyle,
   TextStyle,
+  AppState,
 } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -29,6 +30,7 @@ interface Member {
 
 interface MemberListProps {
   onEditMember: (member: Member) => void;
+  refreshTrigger: number;
 }
 
 const WebButton = ({ onPress, children }: { onPress: () => void; children: React.ReactNode }) => (
@@ -63,25 +65,40 @@ const MemberItem = React.memo(({ item, onPress }: { item: Member; onPress: () =>
   );
 });
 
-export function MemberList({ onEditMember }: MemberListProps) {
+export const MemberList = React.memo(({ onEditMember, refreshTrigger }: MemberListProps) => {
   const [members, setMembers] = useState<Member[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const themeTintColor = useThemeColor({}, "tint");
   const { user } = useAuth();
-  const isMounted = useRef(true);
+  const isFetchInProgressRef = useRef(false);
+  const initialLoadCompleteRef = useRef(false);
+  const lastFetchTimeRef = useRef<number>(0);
+  const FETCH_COOLDOWN = 2000;
 
   const fetchMembers = useCallback(async () => {
+    const currentUserId = user?.id;
+    if (!currentUserId) {
+      console.log("[MemberList] Skipping fetchMembers - no user ID at execution time.");
+      return;
+    }
+
+    if (isFetchInProgressRef.current) {
+      console.log("[MemberList] Skipping fetchMembers - already in progress.");
+      return;
+    }
+
     console.log("[MemberList] Starting fetchMembers...");
-    if (!user?.id) return;
 
     try {
+      isFetchInProgressRef.current = true;
+      lastFetchTimeRef.current = Date.now();
       setIsLoading(true);
       const { data: adminData, error: adminError } = await supabase
         .from("members")
         .select("division")
-        .eq("id", user.id)
+        .eq("id", currentUserId)
         .single();
 
       if (adminError) throw adminError;
@@ -97,31 +114,42 @@ export function MemberList({ onEditMember }: MemberListProps) {
 
       if (membersError) throw membersError;
 
-      if (isMounted.current) {
-        setMembers(membersData || []);
-      }
+      setMembers(membersData || []);
     } catch (error) {
       console.error("[MemberList] Error in fetchMembers:", error);
-      if (isMounted.current) setMembers([]);
+      setMembers([]);
     } finally {
-      if (isMounted.current) setIsLoading(false);
+      setIsLoading(false);
+      isFetchInProgressRef.current = false;
     }
   }, [user?.id]);
 
   useEffect(() => {
-    isMounted.current = true;
-    fetchMembers();
-
-    const subscription = supabase
-      .channel("members_changes")
-      .on("postgres_changes", { event: "*", schema: "public", table: "members" }, fetchMembers)
-      .subscribe();
-
+    if (user?.id && !initialLoadCompleteRef.current) {
+      console.log("[MemberList] Initial load trigger.");
+      initialLoadCompleteRef.current = true;
+      fetchMembers();
+    }
     return () => {
-      isMounted.current = false;
-      subscription.unsubscribe();
+      console.log("[MemberList] Cleaning up component on unmount/user change.");
+      initialLoadCompleteRef.current = false;
+      isFetchInProgressRef.current = false;
+      setMembers([]);
+      setIsLoading(true);
     };
-  }, [fetchMembers]);
+  }, [user?.id, fetchMembers]);
+
+  const isInitialMount = useRef(true);
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+    if (user?.id) {
+      console.log("[MemberList] Refresh trigger changed, fetching members.");
+      fetchMembers();
+    }
+  }, [refreshTrigger, user?.id, fetchMembers]);
 
   const filteredMembers = members.filter(
     (member) =>
@@ -176,7 +204,7 @@ export function MemberList({ onEditMember }: MemberListProps) {
       )}
     </ThemedView>
   );
-}
+});
 
 const styles = StyleSheet.create({
   container: {

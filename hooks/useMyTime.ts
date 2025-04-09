@@ -84,7 +84,7 @@ export function useMyTime() {
   >(null);
   const mountTimeRef = useRef(Date.now());
   const lastRefreshTimeRef = useRef<number | null>(null);
-  const isLoadingRef = useRef(false);
+  const isFetchInProgressRef = useRef(false);
   const REFRESH_COOLDOWN = 1000; // 1 second cooldown
   const initialAuthLoadCompleteRef = useRef(false);
 
@@ -514,8 +514,10 @@ export function useMyTime() {
   );
 
   const refreshData = useCallback(async (force = false) => {
-    if (isRefreshing) {
-      console.log("[MyTime] Skipping refresh - already refreshing");
+    if (isFetchInProgressRef.current) {
+      console.log(
+        "[MyTime] Skipping refresh - fetch already in progress (ref check).",
+      );
       return;
     }
 
@@ -534,6 +536,7 @@ export function useMyTime() {
     }
 
     try {
+      isFetchInProgressRef.current = true;
       console.log("[MyTime] Starting data refresh (setting isRefreshing true)");
       setIsRefreshing(true);
       setError(null);
@@ -554,8 +557,9 @@ export function useMyTime() {
         "[MyTime] Refresh attempt finished, setting isRefreshing state to false.",
       );
       setIsRefreshing(false);
+      isFetchInProgressRef.current = false;
     }
-  }, [member?.id, fetchStats, fetchRequests, isInitialized, isRefreshing]);
+  }, [member?.id, fetchStats, fetchRequests, isInitialized]);
 
   useIsomorphicLayoutEffect(() => {
     if (!member?.id /* || !session */) {
@@ -574,37 +578,10 @@ export function useMyTime() {
           filter: `member_id=eq.${member.id}`,
         },
         async (payload: RealtimePostgresChangesPayload<TimeOffRequest>) => {
-          try {
-            const newRequest = payload.new as TimeOffRequest | null;
-            const oldRequest = payload.old as TimeOffRequest | null;
-
-            console.log("[MyTime] Processing regular request update:", {
-              eventType: payload.eventType,
-              requestId: newRequest?.id || oldRequest?.id,
-              status: newRequest?.status || oldRequest?.status,
-            });
-
-            // Update requests first
-            if (payload.eventType === "INSERT" && newRequest) {
-              setRequests((prev) => [...prev, newRequest]);
-            } else if (payload.eventType === "UPDATE" && newRequest) {
-              setRequests((prev) =>
-                prev.map((req) => (req.id === newRequest.id ? newRequest : req))
-              );
-            } else if (payload.eventType === "DELETE" && oldRequest) {
-              setRequests((prev) =>
-                prev.filter((req) => req.id !== oldRequest.id)
-              );
-            }
-
-            // Ensure stats are updated after request changes
-            await fetchStats();
-          } catch (error) {
-            console.error(
-              "[MyTime] Error processing regular request update:",
-              error,
-            );
-          }
+          console.log(
+            "[MyTime] Realtime regular request change detected, triggering refreshData.",
+          );
+          await refreshData();
         },
       )
       .subscribe();
@@ -620,14 +597,10 @@ export function useMyTime() {
           filter: `member_id=eq.${member.id}`,
         },
         async () => {
-          try {
-            await Promise.all([fetchStats(), fetchRequests()]);
-          } catch (error) {
-            console.error(
-              "[MyTime] Error processing six-month request update:",
-              error,
-            );
-          }
+          console.log(
+            "[MyTime] Realtime six-month request change detected, triggering refreshData.",
+          );
+          await refreshData();
         },
       )
       .subscribe();
@@ -637,7 +610,7 @@ export function useMyTime() {
       regularRequestsChannel.unsubscribe();
       sixMonthRequestsChannel.unsubscribe();
     };
-  }, [member?.id, fetchStats, fetchRequests]);
+  }, [member?.id, refreshData]);
 
   useEffect(() => {
     if (member?.id && session && !initialAuthLoadCompleteRef.current) {

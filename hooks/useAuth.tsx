@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, ReactNode, useRef } from "react";
+import { createContext, useContext, useEffect, useState, ReactNode, useRef, useMemo, useCallback } from "react";
 import { Session, User } from "@supabase/supabase-js";
 import { supabase } from "../utils/supabase";
 import { Database } from "../types/supabase";
@@ -45,7 +45,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const appStateTimeout = useRef<NodeJS.Timeout | null>(null);
   const initialAuthCompleteRef = useRef(false);
 
-  async function fetchMemberData(userId: string) {
+  // Stable fetchMemberData (depends on supabase which is stable)
+  const fetchMemberData = useCallback(async (userId: string) => {
     try {
       const { data: memberData, error: memberError } = await supabase
         .from("members")
@@ -65,162 +66,166 @@ export function AuthProvider({ children }: AuthProviderProps) {
       return memberData;
     } catch (error) {
       console.error("[Auth] Error fetching member data:", error);
-      throw error;
+      throw error; // Re-throw error after logging
     }
-  }
+  }, []); // Empty dependency array as supabase is stable
 
-  const updateAuthState = async (newSession: Session | null, source: string) => {
-    // If already updating, queue the update
-    if (isUpdatingAuth.current) {
-      console.log("[Auth] Update already in progress, queueing update from:", source);
-      pendingAuthUpdate.current = { session: newSession, source };
-      return;
-    }
-
-    // *** Declare shouldSetLoading here to use it in finally block ***
-    let shouldSetLoading = false;
-
-    try {
-      isUpdatingAuth.current = true;
-      console.log(`[Auth] Updating auth state from ${source}`);
-
-      const newUser = newSession?.user ?? null;
-      const currentUser = user;
-
-      // Skip update if user ID is the same AND it's a background check/refresh event
-      // AND the session access token hasn't changed (best check for actual session change)
-      if (
-        newUser?.id === currentUser?.id &&
-        newSession?.access_token === session?.access_token && // Compare access tokens
-        (source.includes("APP_STATE") || source.includes("state_change_SIGNED_IN"))
-      ) {
-        console.log("[Auth] Skipping redundant auth update (user ID and access token match)");
-        isUpdatingAuth.current = false; // Need to reset this flag before returning
-        // Process pending updates if any, BEFORE returning
-        if (pendingAuthUpdate.current) {
-          const { session: pendingSession, source: pendingSource } = pendingAuthUpdate.current;
-          pendingAuthUpdate.current = null;
-          // Use await here to ensure pending update completes before another starts
-          await updateAuthState(pendingSession, pendingSource);
-        }
-        return; // Return after potentially processing pending
+  // Stable updateAuthState (depends on stable fetchMemberData and state setters)
+  const updateAuthState = useCallback(
+    async (newSession: Session | null, source: string) => {
+      // If already updating, queue the update
+      if (isUpdatingAuth.current) {
+        console.log("[Auth] Update already in progress, queueing update from:", source);
+        pendingAuthUpdate.current = { session: newSession, source };
+        return;
       }
 
-      // Simplified loading logic:
-      // Only set loading if user changes, on initial load, or explicit sign-in/up
-      shouldSetLoading =
-        newUser?.id !== currentUser?.id ||
-        (source === "initial" && !initialAuthCompleteRef.current) ||
-        source === "signIn" ||
-        source === "signUp";
+      let shouldSetLoading = false;
 
-      if (shouldSetLoading) {
-        console.log("[Auth] Skipping isLoading=true for this auth update:", source);
-      }
+      try {
+        isUpdatingAuth.current = true;
+        console.log(`[Auth] Updating auth state from ${source}`);
 
-      console.log("[Auth] Setting session and user:", {
-        hasSession: !!newSession,
-        userId: newUser?.id,
-        email: newUser?.email,
-      });
+        const newUser = newSession?.user ?? null;
+        // Get current user from state directly for comparison
+        const currentUserId = user?.id; // Get ID from state
+        const currentAccessToken = session?.access_token; // Get token from state
 
-      setSession(newSession);
-      setUser(newUser);
-
-      if (newUser) {
-        // Check for company admin role first
-        const isCompanyAdmin = newUser.user_metadata?.role === "company_admin";
-        if (isCompanyAdmin) {
-          console.log("[Auth] User is a company admin, skipping member data fetch");
-          setMember(null);
-          setUserRole(null);
-          useUserStore.getState().reset();
-          // Delay navigation to ensure root layout is mounted
-          setTimeout(() => {
-            try {
-              router.replace("/company-admin");
-            } catch (error) {
-              console.warn("[Auth] Navigation failed, will retry on next state update:", error);
-            }
-          }, 100);
+        // Skip update if user ID and access token are the same AND it's a background/refresh event
+        if (
+          newUser?.id === currentUserId &&
+          newSession?.access_token === currentAccessToken &&
+          (source.includes("APP_STATE") || source.includes("state_change_SIGNED_IN"))
+        ) {
+          console.log("[Auth] Skipping redundant auth update (user ID and access token match)");
+          isUpdatingAuth.current = false; // Reset flag
+          // Process pending updates if any
+          if (pendingAuthUpdate.current) {
+            const { session: pendingSession, source: pendingSource } = pendingAuthUpdate.current;
+            pendingAuthUpdate.current = null;
+            await updateAuthState(pendingSession, pendingSource); // Recursive call needs await
+          }
           return;
         }
 
-        console.log("[Auth] User is not a company admin, proceeding with member data fetch");
-        try {
-          // Skip member refetch if we already have the correct data
-          const shouldSkipMemberFetch =
-            source.includes("USER_UPDATED") ||
-            source.includes("APP_STATE") ||
-            (source.includes("state_change_SIGNED_IN") && member?.id === newUser.id) ||
-            (source === "initial" && member?.id === newUser.id) ||
-            (initialAuthCompleteRef.current && member?.id === newUser.id);
+        // Simplified loading logic
+        shouldSetLoading =
+          newUser?.id !== currentUserId ||
+          (source === "initial" && !initialAuthCompleteRef.current) ||
+          source === "signIn" ||
+          source === "signUp";
 
-          if (!shouldSkipMemberFetch) {
-            const memberData = await fetchMemberData(newUser.id);
-            if (memberData) {
-              console.log("[Auth] Setting member data and role:", {
-                id: memberData.id,
-                role: memberData.role,
-                name: `${memberData.first_name} ${memberData.last_name}`,
-              });
-              setMember(memberData);
-              setUserRole(memberData.role as UserRole);
-              // Sync with user store
-              useUserStore.getState().setMember(memberData);
-              useUserStore.getState().setUserRole(memberData.role as UserRole);
-            } else {
-              console.warn("[Auth] No member data found");
-              setMember(null);
-              setUserRole(null);
-              // Reset user store
-              useUserStore.getState().reset();
-            }
-          } else {
-            console.log("[Auth] Skipping member fetch for:", source);
+        if (shouldSetLoading) {
+          // Only set loading to true if it's currently false
+          setIsLoading(true); // Explicitly set loading true here
+          console.log("[Auth] Setting isLoading=true for auth update:", source);
+        } else {
+          console.log("[Auth] Skipping isLoading=true for this auth update:", source);
+        }
+
+        console.log("[Auth] Setting session and user:", {
+          hasSession: !!newSession,
+          userId: newUser?.id,
+          email: newUser?.email,
+        });
+
+        setSession(newSession);
+        setUser(newUser);
+
+        if (newUser) {
+          const isCompanyAdmin = newUser.user_metadata?.role === "company_admin";
+          if (isCompanyAdmin) {
+            console.log("[Auth] User is a company admin, skipping member data fetch");
+            setMember(null);
+            setUserRole(null);
+            useUserStore.getState().reset();
+            setTimeout(() => {
+              try {
+                router.replace("/company-admin");
+              } catch (error) {
+                console.warn("[Auth] Navigation failed during admin redirect:", error);
+              }
+            }, 100);
+            // Return early AFTER setting state but BEFORE resetting loading potentially
+            // The finally block will handle isLoading
+            return;
           }
-        } catch (error) {
-          console.error("[Auth] Error fetching member data:", error);
+
+          console.log("[Auth] User is not a company admin, proceeding with member data fetch");
+          try {
+            const currentMemberId = member?.id; // Get from state
+            const shouldSkipMemberFetch =
+              source.includes("USER_UPDATED") ||
+              source.includes("APP_STATE") ||
+              (source.includes("state_change_SIGNED_IN") && currentMemberId === newUser.id) ||
+              (source === "initial" && currentMemberId === newUser.id) ||
+              (initialAuthCompleteRef.current && currentMemberId === newUser.id);
+
+            if (!shouldSkipMemberFetch) {
+              console.log("[Auth] Fetching member data for non-admin user:", newUser.id);
+              const memberData = await fetchMemberData(newUser.id); // Use memoized version
+              if (memberData) {
+                console.log("[Auth] Setting member data and role:", {
+                  id: memberData.id,
+                  role: memberData.role,
+                });
+                setMember(memberData);
+                setUserRole(memberData.role as UserRole);
+                useUserStore.getState().setMember(memberData);
+                useUserStore.getState().setUserRole(memberData.role as UserRole);
+              } else {
+                console.warn("[Auth] No member data found for user:", newUser.id);
+                setMember(null);
+                setUserRole(null);
+                useUserStore.getState().reset();
+              }
+            } else {
+              console.log("[Auth] Skipping member fetch for:", source);
+            }
+          } catch (error) {
+            console.error("[Auth] Error during member data fetch:", error);
+            setMember(null);
+            setUserRole(null);
+            useUserStore.getState().reset();
+          }
+        } else {
+          console.log("[Auth] No user, clearing member data and role");
           setMember(null);
           setUserRole(null);
-          // Reset user store
           useUserStore.getState().reset();
         }
-      } else {
-        console.log("[Auth] No user, clearing member data and role");
-        setMember(null);
-        setUserRole(null);
-        // Reset user store
-        useUserStore.getState().reset();
-      }
-    } finally {
-      if (shouldSetLoading || (source === "initial" && !initialAuthCompleteRef.current)) {
-        console.log("[Auth] Finished auth update potentially involving loading state, setting isLoading false");
-        setIsLoading(false);
-      }
+      } finally {
+        // Always set loading false if it was set true, or if initial load completes
+        if (shouldSetLoading || (source === "initial" && !initialAuthCompleteRef.current)) {
+          console.log("[Auth] Finished auth update, setting isLoading false");
+          setIsLoading(false); // Set loading false here
+        }
+        isUpdatingAuth.current = false;
 
-      isUpdatingAuth.current = false;
-
-      // Process any pending updates
-      if (pendingAuthUpdate.current) {
-        const { session: pendingSession, source: pendingSource } = pendingAuthUpdate.current;
-        pendingAuthUpdate.current = null;
-        await updateAuthState(pendingSession, pendingSource);
+        // Process any pending updates AFTER resetting the flag and loading state
+        if (pendingAuthUpdate.current) {
+          console.log("[Auth] Processing pending auth update");
+          const { session: pendingSession, source: pendingSource } = pendingAuthUpdate.current;
+          pendingAuthUpdate.current = null;
+          await updateAuthState(pendingSession, pendingSource); // Ensure this completes
+        }
       }
-    }
-  };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [fetchMemberData, user?.id, session?.access_token, member?.id]
+  ); // Add state values used in checks
 
+  // Effect for initial load and auth state changes
   useEffect(() => {
     let mounted = true;
 
     async function initAuth() {
       if (!mounted) return;
-
+      // ... (rest of initAuth, uses updateAuthState)
       try {
         console.log("[Auth] Starting initial auth check...");
         if (Platform.OS === "web" && typeof window === "undefined") return;
 
-        // Add a small delay on web to ensure root layout is mounted
         if (Platform.OS === "web") {
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
@@ -232,78 +237,78 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
         if (error) {
           console.error("[Auth] Session error:", error);
-          throw error;
+          // Don't throw here, let updateAuthState handle null session
         }
 
         console.log("[Auth] Initial session check:", {
           status: initialSession ? "active" : "none",
-          email: initialSession?.user?.email,
           userId: initialSession?.user?.id,
         });
 
         if (mounted) {
-          if (initialSession) {
-            console.log("[Auth] Processing initial session");
-            await updateAuthState(initialSession, "initial");
-          } else {
-            console.log("[Auth] No initial session, setting isLoading false");
-            setIsLoading(false);
-          }
-          initialAuthCompleteRef.current = true;
+          // Await the initial update to ensure loading state is handled correctly
+          await updateAuthState(initialSession, "initial");
+          initialAuthCompleteRef.current = true; // Mark complete AFTER first update
+          console.log("[Auth] Initial auth processing complete.");
         }
       } catch (error) {
         console.error("[Auth] Initial auth error:", error);
         if (mounted) {
-          await updateAuthState(null, "error");
+          await updateAuthState(null, "error"); // Ensure state is cleared on error
+          initialAuthCompleteRef.current = true; // Mark complete even on error
         }
-        initialAuthCompleteRef.current = true;
       }
     }
 
-    // Handle app state changes with debounce
+    // App state listener (uses updateAuthState)
     const subscription = AppState.addEventListener("change", async (nextAppState) => {
       console.log("[Auth] App state changed:", { from: appState, to: nextAppState });
 
-      // Clear any existing timeout
       if (appStateTimeout.current) {
         clearTimeout(appStateTimeout.current);
       }
 
-      // Set a new timeout for handling the app state change
       appStateTimeout.current = setTimeout(async () => {
         if (appState.match(/inactive|background/) && nextAppState === "active" && mounted) {
           console.log("[Auth] App came to foreground, checking session");
-          const {
-            data: { session: currentSession },
-          } = await supabase.auth.getSession();
-          if (currentSession && mounted) {
-            await updateAuthState(currentSession, "APP_STATE");
+          try {
+            const {
+              data: { session: currentSession },
+              error,
+            } = await supabase.auth.getSession();
+            if (error) {
+              console.error("[Auth] Error getting session on foreground:", error);
+            } else if (currentSession && mounted) {
+              await updateAuthState(currentSession, "APP_STATE");
+            }
+          } catch (error) {
+            console.error("[Auth] Exception getting session on foreground:", error);
           }
         }
         if (mounted) {
           setAppState(nextAppState);
         }
-      }, 100);
+      }, 300); // Increased debounce slightly
     });
 
     console.log("[Auth] Starting initialization");
-    initAuth();
+    initAuth(); // Call async init function
 
+    // Auth state change listener (uses updateAuthState)
     const {
       data: { subscription: authSubscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log("[Auth] Auth state change:", {
+      console.log("[Auth] Auth state change event:", {
         event,
-        email: session?.user?.email,
         userId: session?.user?.id,
+        hasSession: !!session,
         initialAuthComplete: initialAuthCompleteRef.current,
       });
 
       if (!mounted) return;
 
-      // Skip auth updates during initialization
       if (!initialAuthCompleteRef.current) {
-        console.log("[Auth] Waiting for initial auth to complete...");
+        console.log("[Auth] Auth state change ignored, initial auth not complete.");
         return;
       }
 
@@ -317,135 +322,177 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
       subscription.remove();
       authSubscription.unsubscribe();
+      console.log("[Auth] AuthProvider unmounted, cleaned up listeners.");
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [updateAuthState]); // Depend only on the stable updateAuthState
 
-  const signIn = async (email: string, password: string) => {
+  // --- Memoized Functions ---
+  const signIn = useCallback(async (email: string, password: string) => {
     try {
       console.log("[Auth] Sign in attempt:", email);
+      // updateAuthState will be triggered by onAuthStateChange
       const { error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
-
       if (error) throw error;
-      console.log("[Auth] Sign in successful:", email);
+      console.log("[Auth] Sign in successful trigger:", email);
     } catch (error) {
       console.error("[Auth] Sign in error:", error);
-      throw error;
+      throw error; // Re-throw
     }
-  };
+  }, []);
 
-  const signUp = async (email: string, password: string) => {
+  const signUp = useCallback(async (email: string, password: string) => {
     try {
-      const { error } = await supabase.auth.signUp({
-        email,
-        password,
-      });
+      // updateAuthState will be triggered by onAuthStateChange
+      const { error } = await supabase.auth.signUp({ email, password });
       if (error) throw error;
     } catch (error) {
-      throw error;
+      console.error("[Auth] Sign up error:", error);
+      throw error; // Re-throw
     }
-  };
+  }, []);
 
-  const signOut = async () => {
+  const signOut = useCallback(async () => {
     try {
+      // updateAuthState will be triggered by onAuthStateChange
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
+      console.log("[Auth] Sign out successful trigger");
     } catch (error) {
-      throw error;
+      console.error("[Auth] Sign out error:", error);
+      throw error; // Re-throw
     }
-  };
+  }, []);
 
-  const resetPassword = async (email: string) => {
+  const resetPassword = useCallback(async (email: string) => {
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email);
       if (error) throw error;
     } catch (error) {
-      throw error;
+      console.error("[Auth] Reset password error:", error);
+      throw error; // Re-throw
     }
-  };
+  }, []);
 
-  const associateMember = async (pinNumber: string) => {
-    if (!user) throw new Error("No user logged in");
+  const associateMember = useCallback(
+    async (pinNumber: string) => {
+      if (!user?.id) throw new Error("No user logged in");
+      const userId = user.id; // Capture stable userId
+      try {
+        const { data: validationResult, error: validationError } = await supabase.rpc("validate_member_association", {
+          pin_number: pinNumber,
+        });
+        if (validationError) throw validationError;
+        if (!validationResult?.length || !validationResult[0].is_valid) {
+          throw new Error(validationResult?.[0]?.error_message || "Invalid PIN number");
+        }
 
-    try {
-      // Call our validation function
-      const { data: validationResult, error: validationError } = await supabase.rpc("validate_member_association", {
-        pin_number: pinNumber,
-      });
+        const { error: updateError } = await supabase.from("members").update({ user_id: userId }).eq("pin", pinNumber);
+        if (updateError) throw updateError;
 
-      if (validationError) throw validationError;
-      if (!validationResult?.length || !validationResult[0].is_valid) {
-        throw new Error(validationResult?.[0]?.error_message || "Invalid PIN number");
+        // Manually trigger auth state refresh IF NEEDED (onAuthStateChange might not detect this)
+        // Getting the current session should be sufficient if the user record itself hasn't changed
+        const {
+          data: { session: currentSession },
+        } = await supabase.auth.getSession();
+        await updateAuthState(currentSession, "associateMember"); // Use stable updateAuthState
+      } catch (error) {
+        console.error("Error associating member:", error);
+        throw error; // Re-throw
       }
+    },
+    [user?.id, updateAuthState]
+  ); // Depend on user ID and stable updateAuthState
 
-      // If validation passed, update the member
-      const { error: updateError } = await supabase.from("members").update({ user_id: user.id }).eq("pin", pinNumber);
+  const updateProfile = useCallback(
+    async (updates: Partial<UserProfile>) => {
+      if (!user?.id) throw new Error("No user logged in");
+      const userId = user.id; // Capture stable userId
+      try {
+        const { error: memberError } = await supabase.from("members").update(updates).eq("id", userId);
+        if (memberError) throw memberError;
 
-      if (updateError) throw updateError;
+        // Refresh member data by re-fetching session which triggers updateAuthState
+        const {
+          data: { session: currentSession },
+        } = await supabase.auth.getSession();
+        await updateAuthState(currentSession, "updateProfile"); // Use stable updateAuthState
+      } catch (error) {
+        console.error("[Auth] Error updating profile:", error);
+        throw error; // Re-throw
+      }
+    },
+    [user?.id, updateAuthState]
+  ); // Depend on user ID and stable updateAuthState
 
-      // Refresh auth state
-      await updateAuthState(session, "associateMember");
-    } catch (error) {
-      console.error("Error associating member:", error);
-      throw error;
-    }
-  };
+  const associateMemberWithPin = useCallback(
+    async (pin: string) => {
+      if (!user?.id) throw new Error("No user logged in");
+      const userId = user.id; // Capture stable userId
+      try {
+        const { data, error } = await supabase
+          .from("members")
+          .update({ id: userId }) // Should likely be user_id? Check DB schema if this is correct
+          .eq("pin_number", pin)
+          .select()
+          .single();
 
-  const updateProfile = async (updates: Partial<UserProfile>) => {
-    if (!user?.id) throw new Error("No user logged in");
+        if (error) throw error;
+        if (!data) throw new Error("No member found with that PIN");
 
-    try {
-      // Update member data
-      const { error: memberError } = await supabase.from("members").update(updates).eq("id", user.id);
+        // Manually update state and trigger session refresh
+        setMember(data);
+        setUserRole(data.role as UserRole);
+        const {
+          data: { session: currentSession },
+        } = await supabase.auth.getSession();
+        await updateAuthState(currentSession, "associateMemberWithPin"); // Use stable updateAuthState
+      } catch (error) {
+        console.error("[Auth] Error associating member with PIN:", error);
+        throw error; // Re-throw
+      }
+    },
+    [user?.id, updateAuthState]
+  ); // Depend on user ID and stable updateAuthState
 
-      if (memberError) throw memberError;
-
-      // Refresh member data
-      await updateAuthState(session, "updateProfile");
-    } catch (error) {
-      console.error("[Auth] Error updating profile:", error);
-      throw error;
-    }
-  };
-
-  const associateMemberWithPin = async (pin: string) => {
-    try {
-      if (!user) throw new Error("No user logged in");
-
-      const { data, error } = await supabase
-        .from("members")
-        .update({ id: user.id })
-        .eq("pin_number", pin)
-        .select()
-        .single();
-
-      if (error) throw error;
-      if (!data) throw new Error("No member found with that PIN");
-
-      setMember(data);
-      setUserRole(data.role as UserRole);
-    } catch (error) {
-      throw error;
-    }
-  };
-
-  const value: AuthContextType = {
-    user,
-    session,
-    member,
-    isCompanyAdmin: user?.user_metadata.role === "company_admin",
-    isLoading,
-    userRole,
-    signOut,
-    signIn,
-    signUp,
-    associateMember,
-    resetPassword,
-    updateProfile,
-    associateMemberWithPin,
-  };
+  // --- Memoized Context Value ---
+  const value = useMemo(
+    () => ({
+      user,
+      session,
+      member,
+      // Calculate derived state directly in the memoized value
+      isCompanyAdmin: user?.user_metadata.role === "company_admin",
+      isLoading,
+      userRole,
+      // Pass memoized functions
+      signOut,
+      signIn,
+      signUp,
+      associateMember,
+      resetPassword,
+      updateProfile,
+      associateMemberWithPin,
+    }),
+    [
+      user,
+      session,
+      member,
+      isLoading,
+      userRole,
+      // Function dependencies (already stable via useCallback)
+      signOut,
+      signIn,
+      signUp,
+      associateMember,
+      resetPassword,
+      updateProfile,
+      associateMemberWithPin,
+    ]
+  );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

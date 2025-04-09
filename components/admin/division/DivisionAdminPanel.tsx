@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { StyleSheet, Platform, Pressable, useWindowDimensions } from "react-native";
+import React, { useState, forwardRef, Ref } from "react";
+import { StyleSheet, Platform, Pressable, useWindowDimensions, View } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { TouchableOpacity } from "react-native";
@@ -53,7 +53,7 @@ interface DivisionAdminPanelProps {
   division: string;
 }
 
-export function DivisionAdminPanel({ division }: DivisionAdminPanelProps) {
+export const DivisionAdminPanel = forwardRef<View, DivisionAdminPanelProps>(({ division }, ref: Ref<View>) => {
   const [activeSection, setActiveSection] = useState<Section>("members");
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const tintColor = Colors[colorScheme].tint;
@@ -134,7 +134,7 @@ export function DivisionAdminPanel({ division }: DivisionAdminPanelProps) {
   };
 
   return (
-    <ThemedView style={styles.container}>
+    <ThemedView style={styles.container} ref={ref}>
       <AnimatedThemedView style={isWeb ? styles.webNavigation : styles.mobileNavigation}>
         {sections.map(renderNavigationButton)}
       </AnimatedThemedView>
@@ -142,7 +142,7 @@ export function DivisionAdminPanel({ division }: DivisionAdminPanelProps) {
       {renderSection()}
     </ThemedView>
   );
-}
+});
 
 const styles = StyleSheet.create({
   container: {

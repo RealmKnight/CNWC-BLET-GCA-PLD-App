@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, forwardRef, Ref } from "react";
 import { StyleSheet, TouchableOpacity, View } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -22,7 +22,7 @@ interface AdminMessage {
   requiresResponse: boolean;
 }
 
-export function AdminMessages() {
+export const AdminMessages = forwardRef<View, {}>((props, ref: Ref<View>) => {
   const [selectedMessage, setSelectedMessage] = useState<AdminMessage | null>(null);
   const [currentFilter, setCurrentFilter] = useState<"all" | "urgent">("all");
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
@@ -97,7 +97,7 @@ export function AdminMessages() {
   };
 
   return (
-    <ThemedView style={styles.container}>
+    <ThemedView style={styles.container} ref={ref}>
       <ThemedView style={styles.header}>
         <ThemedText type="title">Admin Messages</ThemedText>
       </ThemedView>
@@ -108,7 +108,7 @@ export function AdminMessages() {
       </ThemedView>
     </ThemedView>
   );
-}
+});
 
 const styles = StyleSheet.create({
   container: {
