@@ -510,9 +510,12 @@ const styles = StyleSheet.create({
     },
     shadowOpacity: 0.1,
     shadowRadius: 3.84,
+    borderLeftWidth: 4,
+    borderLeftColor: "transparent",
   },
   unreadItem: {
-    backgroundColor: Colors.light.primary + "10",
+    backgroundColor: Colors.light.primary + "15",
+    borderLeftColor: Colors.light.primary,
   },
   iconColumn: {
     padding: 16,
@@ -526,9 +529,11 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(128, 128, 128, 0.1)",
     alignItems: "center",
     justifyContent: "center",
+    opacity: 0.7,
   },
   unreadIconWrapper: {
-    backgroundColor: Colors.light.primary + "20",
+    backgroundColor: Colors.light.primary + "30",
+    opacity: 1,
   },
   contentColumn: {
     flex: 1,
@@ -558,16 +563,18 @@ const styles = StyleSheet.create({
   },
   subject: {
     fontSize: 16,
-    fontWeight: "600",
+    fontWeight: "500",
     marginBottom: 4,
+    opacity: 0.8,
   },
   unreadText: {
     fontWeight: "700",
     color: Colors.light.primary,
+    opacity: 1,
   },
   preview: {
     fontSize: 14,
-    opacity: 0.7,
+    opacity: 0.6,
     lineHeight: 20,
     marginBottom: 12,
   },
