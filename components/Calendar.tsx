@@ -76,8 +76,17 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
     requests,
   } = useCalendarStore();
 
-  // Use the selected date for the calendar view if available, otherwise use current
-  const calendarDate = selectedDate || current;
+  // Use the current prop directly for the calendar view
+  const calendarDate = current || selectedDate || format(new Date(), "yyyy-MM-dd");
+
+  // Log when the calendar date changes
+  useEffect(() => {
+    console.log("[Calendar] Calendar date updated:", {
+      current,
+      selectedDate,
+      calendarDate,
+    });
+  }, [current, selectedDate, calendarDate]);
 
   // Calculate date range for fetching data
   const dateRange = useMemo(() => {
@@ -260,7 +269,7 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
   return (
     <ThemedView style={styles.container}>
       <RNCalendar
-        key={`calendar-${zoneId}-${isInitialized}`}
+        key={`calendar-${zoneId}-${isInitialized}-${calendarDate}`}
         theme={CALENDAR_THEME[theme]}
         markingType="custom"
         markedDates={markedDates}

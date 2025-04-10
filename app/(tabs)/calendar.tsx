@@ -236,17 +236,17 @@ function DateControls({ selectedDate, onDateChange, onCurrentDateChange }: DateC
 
     if (date) {
       const formattedDate = format(date, "yyyy-MM-dd");
-      onDateChange(formattedDate);
+      // Update both states in sequence to ensure proper updates
       onCurrentDateChange(formattedDate);
+      onDateChange(formattedDate);
     }
   };
 
   const handleWebDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const date = e.target.value;
     if (date) {
-      // Update the current date first to ensure calendar moves
+      // Update both states in sequence
       onCurrentDateChange(date);
-      // Then update the selected date for the request button
       onDateChange(date);
     } else {
       onDateChange(null);
@@ -268,8 +268,9 @@ function DateControls({ selectedDate, onDateChange, onCurrentDateChange }: DateC
       }),
     ]).start();
 
-    onDateChange(today);
+    // Update both states in sequence
     onCurrentDateChange(today);
+    onDateChange(today);
   };
 
   const minDate = new Date();
