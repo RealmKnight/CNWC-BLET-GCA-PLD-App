@@ -5,29 +5,52 @@ import { useAuth } from "@/hooks/useAuth";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { HapticTab } from "@/components/HapticTab";
-import { Platform } from "react-native";
+import { Platform, ViewStyle } from "react-native";
 import TabBarBackground from "@/components/ui/TabBarBackground";
 import { Ionicons } from "@expo/vector-icons";
+import { BottomTabNavigationOptions } from "@react-navigation/bottom-tabs";
 
 export default function AdminLayout() {
   const { userRole } = useAuth();
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const tintColor = Colors[colorScheme].tint;
 
-  // Only show tabs for application_admin and union_admin
-  const showTabs = userRole === "application_admin" || userRole === "union_admin";
+  const commonScreenOptions: BottomTabNavigationOptions = {
+    tabBarActiveTintColor: tintColor,
+    headerShown: false,
+    tabBarButton: HapticTab,
+    tabBarBackground: TabBarBackground,
+    tabBarStyle: Platform.select<ViewStyle>({
+      ios: {
+        position: "absolute",
+      },
+      default: {},
+    }),
+  };
 
-  if (!showTabs) {
+  // Show only division_admin tab for division admins
+  if (userRole === "division_admin") {
     return (
       <>
         <AppHeader />
-        <Tabs
-          screenOptions={{
-            headerShown: false,
-          }}
-        >
+        <Tabs screenOptions={commonScreenOptions}>
           <Tabs.Screen
             name="division_admin"
+            options={{
+              title: "Division Admin",
+              tabBarIcon: ({ color, focused }) => (
+                <Ionicons name={focused ? "people" : "people-outline"} size={28} color={color} />
+              ),
+            }}
+          />
+          <Tabs.Screen
+            name="application_admin"
+            options={{
+              href: null, // Hide from tab bar
+            }}
+          />
+          <Tabs.Screen
+            name="union_admin"
             options={{
               href: null, // Hide from tab bar
             }}
@@ -37,23 +60,11 @@ export default function AdminLayout() {
     );
   }
 
+  // For application_admin and union_admin roles
   return (
     <>
       <AppHeader />
-      <Tabs
-        screenOptions={{
-          tabBarActiveTintColor: tintColor,
-          headerShown: false,
-          tabBarButton: HapticTab,
-          tabBarBackground: TabBarBackground,
-          tabBarStyle: Platform.select({
-            ios: {
-              position: "absolute",
-            },
-            default: {},
-          }),
-        }}
-      >
+      <Tabs screenOptions={commonScreenOptions}>
         {userRole === "application_admin" && (
           <Tabs.Screen
             name="application_admin"

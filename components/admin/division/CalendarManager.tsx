@@ -40,6 +40,7 @@ export function CalendarManager() {
   };
 
   const currentDivisionZones = zones[division || ""] || [];
+  const hasSingleZone = currentDivisionZones.length === 1;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
@@ -54,24 +55,32 @@ export function CalendarManager() {
           </ThemedView>
         )}
 
-        <ThemedView style={styles.section}>
-          <ThemedView style={styles.toggleContainer}>
-            <ThemedText type="subtitle">Use Zone-Based Calendars</ThemedText>
-            <Switch
-              value={usesZoneCalendars}
-              onValueChange={handleZoneCalendarToggle}
-              disabled={isLoading}
-              trackColor={{ false: Colors[colorScheme]?.border || "#ccc", true: Colors[colorScheme]?.tint || "#000" }}
-            />
+        {!hasSingleZone && (
+          <ThemedView style={styles.section}>
+            <ThemedView style={styles.toggleContainer}>
+              <ThemedText type="subtitle">Use Zone-Based Calendars</ThemedText>
+              <Switch
+                value={usesZoneCalendars}
+                onValueChange={handleZoneCalendarToggle}
+                disabled={isLoading}
+                trackColor={{ false: Colors[colorScheme]?.border || "#ccc", true: Colors[colorScheme]?.tint || "#000" }}
+              />
+            </ThemedView>
+            <ThemedText style={styles.description}>
+              {usesZoneCalendars
+                ? "Each zone will have its own calendar and allotments"
+                : "Using a single calendar for the entire division"}
+            </ThemedText>
           </ThemedView>
-          <ThemedText style={styles.description}>
-            {usesZoneCalendars
-              ? "Each zone will have its own calendar and allotments"
-              : "Using a single calendar for the entire division"}
-          </ThemedText>
-        </ThemedView>
+        )}
 
-        {usesZoneCalendars && (
+        {hasSingleZone && (
+          <ThemedView style={styles.section}>
+            <ThemedText style={styles.description}>Using a single calendar for the entire division</ThemedText>
+          </ThemedView>
+        )}
+
+        {usesZoneCalendars && !hasSingleZone && (
           <ThemedView style={styles.section}>
             <ZoneCalendarAdmin
               division={division || ""}
@@ -83,7 +92,7 @@ export function CalendarManager() {
           </ThemedView>
         )}
 
-        {!usesZoneCalendars && (
+        {(!usesZoneCalendars || hasSingleZone) && (
           <ThemedView style={styles.section}>
             <ThemedText type="subtitle" style={styles.sectionTitle}>
               Division Calendar
@@ -92,7 +101,7 @@ export function CalendarManager() {
           </ThemedView>
         )}
 
-        {usesZoneCalendars && selectedZoneId && (
+        {usesZoneCalendars && selectedZoneId && !hasSingleZone && (
           <ThemedView style={styles.section}>
             <ThemedText type="subtitle" style={styles.sectionTitle}>
               Zone Calendar

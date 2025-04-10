@@ -21,7 +21,8 @@ type MessageType =
   | "approval"
   | "denial"
   | "waitlist_promotion"
-  | "allotment_change";
+  | "allotment_change"
+  | "admin_message";
 
 interface MessagePayload {
   recipientPinNumber: number;

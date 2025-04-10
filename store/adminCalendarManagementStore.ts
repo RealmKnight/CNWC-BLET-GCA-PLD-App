@@ -143,19 +143,13 @@ export const useAdminCalendarManagementStore = create<
     fetchDivisionSettings: async (division) => {
         if (!division) return Promise.resolve(); // Return resolved promise if no division
 
-        // Prevent refetch if already loaded (ensureDivisionSettingsLoaded handles this check primarily)
-        // if (get().loadedDivisions.has(division)) {
-        //     console.log(`[AdminStore] Settings already loaded for division ${division}`);
-        //     return Promise.resolve();
-        // }
-
         set({ isLoading: true, error: null });
         let divisionId: number | null = null;
 
         try {
             console.log(
                 `[AdminStore] Fetching settings for division ${division}`,
-            ); // Log start
+            );
             const { data: divisionData, error: divisionError } = await supabase
                 .from("divisions")
                 .select("id, uses_zone_calendars")
@@ -168,37 +162,55 @@ export const useAdminCalendarManagementStore = create<
             }
 
             divisionId = divisionData.id;
-            const usesZones = divisionData.uses_zone_calendars || false;
+
+            // Always fetch zones first, regardless of uses_zone_calendars setting
+            const { data: zonesData, error: zonesError } = await supabase
+                .from("zones")
+                .select("id, name")
+                .eq("division_id", divisionId)
+                .order("name");
+
+            if (zonesError) throw zonesError;
+
+            const fetchedZones = zonesData || [];
+            set((state) => ({
+                zones: { ...state.zones, [division]: fetchedZones },
+            }));
+
+            // Now set usesZoneCalendars based on both the division setting and zone count
+            const hasSingleZone = fetchedZones.length === 1;
+            const usesZones = hasSingleZone
+                ? false
+                : (divisionData.uses_zone_calendars || false);
             set({ usesZoneCalendars: usesZones });
+
             console.log(
-                `[AdminStore] Division ${division} uses zones: ${usesZones}`,
+                `[AdminStore] Division ${division} uses zones: ${usesZones}, has ${fetchedZones.length} zones`,
             );
 
-            if (usesZones) {
-                await get().fetchZones(division); // fetchZones now handles its own loading state
-                // REMOVE fetchZoneCalendars
+            if (usesZones && fetchedZones.length > 0) {
+                // Auto-select first zone if using zones and none selected
+                if (get().selectedZoneId === null) {
+                    get().setSelectedZoneId(fetchedZones[0].id);
+                }
             } else {
-                // If not using zones, clear relevant state and fetch division-wide allotments
-                set((state) => ({
-                    selectedZoneId: null,
-                    zones: { ...state.zones, [division]: [] },
-                    // REMOVE zoneCalendars clear
-                }));
-                get().resetAllotments(); // Reset first
-                // Fetch allotments after clearing state
+                // If not using zones or no zones exist, clear selection and fetch division-wide allotments
+                get().setSelectedZoneId(null);
+                get().resetAllotments();
                 await get().fetchAllotments(division, new Date().getFullYear());
                 await get().fetchAllotments(
                     division,
                     new Date().getFullYear() + 1,
                 );
             }
-            // Mark as loaded *after* all dependent fetches are complete
+
+            // Mark as loaded after all dependent fetches are complete
             set((state) => ({
                 loadedDivisions: new Set(state.loadedDivisions).add(division),
             }));
             console.log(
                 `[AdminStore] Successfully loaded settings for division ${division}`,
-            ); // Log success
+            );
         } catch (error) {
             console.error(
                 `[AdminStore] Error fetching division settings for ${division}:`,
@@ -207,16 +219,9 @@ export const useAdminCalendarManagementStore = create<
             const message = error instanceof Error
                 ? error.message
                 : "Failed to load division settings";
-            set({ error: message }); // Keep error state specific
-            // Don't mark as loaded on error
+            set({ error: message });
         } finally {
-            // Only set loading false if no sub-fetches are happening (fetchZones/Allotments handle their own)
-            // Simplified: let the sub-fetches manage the final isLoading state.
-            // If not using zones and fetchAllotments finished, set loading false.
-            if (!get().usesZoneCalendars) {
-                set({ isLoading: false });
-            }
-            // If using zones, fetchZones will set isLoading false eventually.
+            set({ isLoading: false });
         }
     },
 
