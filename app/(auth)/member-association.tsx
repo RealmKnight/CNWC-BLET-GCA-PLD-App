@@ -18,14 +18,14 @@ export default function MemberAssociationScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [showMessageModal, setShowMessageModal] = useState(false);
   const [message, setMessage] = useState("");
-  const { associateMember, user } = useAuth();
+  const { associateMemberWithPin, user } = useAuth();
   const router = useRouter();
 
   const handleAssociate = async () => {
     try {
       setError(null);
       setIsLoading(true);
-      await associateMember(pinNumber);
+      await associateMemberWithPin(pinNumber);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "An error occurred";
       // These specific error messages should match the ones from our validate_member_association function

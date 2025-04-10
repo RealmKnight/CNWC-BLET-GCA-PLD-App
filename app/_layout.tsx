@@ -81,11 +81,16 @@ function RootLayoutContent() {
       const inProfileGroup = segments[0] === "(profile)";
       const isCompanyAdmin = session?.user?.user_metadata?.role === "company_admin";
       const isModalRoute = segments[0] === "assign-officer";
+      const inMemberAssociation = segments[0] === "(auth)" && segments[1] === "member-association";
 
       if (!session && !inAuthGroup) {
         // Redirect to sign-in if not authenticated
         console.log("[Router] Redirecting to sign-in");
         router.replace("/(auth)/sign-in");
+      } else if (session && !member && !inMemberAssociation && !isCompanyAdmin) {
+        // Redirect to member association if authenticated but not associated
+        console.log("[Router] Redirecting to member association - no member record found");
+        router.replace("/(auth)/member-association");
       } else if (session && isCompanyAdmin && segments[0] !== "company-admin") {
         // Redirect company admin to their page
         console.log("[Router] Redirecting company admin to their page");
@@ -94,9 +99,9 @@ function RootLayoutContent() {
         // Redirect non-company admin away from company admin page
         console.log("[Router] Redirecting non-company admin away from company admin page");
         router.replace("/");
-      } else if (session && !isCompanyAdmin) {
+      } else if (session && !isCompanyAdmin && member) {
         // Handle regular user routing
-        if (userRole && inAuthGroup) {
+        if (userRole && inAuthGroup && !inMemberAssociation) {
           // Redirect from auth group if authenticated
           console.log("[Router] Redirecting from auth group");
           if (userRole.includes("admin")) {
@@ -115,7 +120,7 @@ function RootLayoutContent() {
         }
       }
     }
-  }, [isLoading, session, segments, userRole]);
+  }, [isLoading, session, segments, userRole, member]);
 
   if (isLoading) {
     return (

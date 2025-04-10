@@ -19,7 +19,6 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
-  associateMember: (pinNumber: string) => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   updateProfile: (updates: Partial<UserProfile>) => Promise<void>;
   associateMemberWithPin: (pin: string) => Promise<void>;
@@ -52,7 +51,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         .from("members")
         .select("*")
         .eq("id", userId)
-        .single();
+        .maybeSingle();
 
       if (memberError) throw memberError;
 
@@ -377,36 +376,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }, []);
 
-  const associateMember = useCallback(
-    async (pinNumber: string) => {
-      if (!user?.id) throw new Error("No user logged in");
-      const userId = user.id; // Capture stable userId
-      try {
-        const { data: validationResult, error: validationError } = await supabase.rpc("validate_member_association", {
-          pin_number: pinNumber,
-        });
-        if (validationError) throw validationError;
-        if (!validationResult?.length || !validationResult[0].is_valid) {
-          throw new Error(validationResult?.[0]?.error_message || "Invalid PIN number");
-        }
-
-        const { error: updateError } = await supabase.from("members").update({ user_id: userId }).eq("pin", pinNumber);
-        if (updateError) throw updateError;
-
-        // Manually trigger auth state refresh IF NEEDED (onAuthStateChange might not detect this)
-        // Getting the current session should be sufficient if the user record itself hasn't changed
-        const {
-          data: { session: currentSession },
-        } = await supabase.auth.getSession();
-        await updateAuthState(currentSession, "associateMember"); // Use stable updateAuthState
-      } catch (error) {
-        console.error("Error associating member:", error);
-        throw error; // Re-throw
-      }
-    },
-    [user?.id, updateAuthState]
-  ); // Depend on user ID and stable updateAuthState
-
   const updateProfile = useCallback(
     async (updates: Partial<UserProfile>) => {
       if (!user?.id) throw new Error("No user logged in");
@@ -431,32 +400,89 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const associateMemberWithPin = useCallback(
     async (pin: string) => {
       if (!user?.id) throw new Error("No user logged in");
-      const userId = user.id; // Capture stable userId
+      const userId = user.id;
       try {
-        const { data, error } = await supabase
+        // Convert pin to bigint by removing any non-numeric characters and parsing
+        const numericPin = parseInt(pin.replace(/\D/g, ""), 10);
+        if (isNaN(numericPin)) throw new Error("Invalid PIN format");
+
+        // First verify the PIN exists and isn't already associated
+        const { data: members, error: checkError } = await supabase
           .from("members")
-          .update({ id: userId }) // Should likely be user_id? Check DB schema if this is correct
-          .eq("pin_number", pin)
+          .select("id, pin_number")
+          .eq("pin_number", numericPin)
+          .maybeSingle();
+
+        if (checkError) throw checkError;
+        if (!members) throw new Error("No member found with that PIN");
+
+        // If member already has an ID and it's not this user's ID, it's taken
+        if (members.id && members.id !== userId) {
+          throw new Error("This PIN is already associated with another user");
+        }
+
+        // Update the member record with the user's ID
+        const { data: updatedMember, error: updateError } = await supabase
+          .from("members")
+          .update({ id: userId })
+          .eq("pin_number", numericPin)
           .select()
-          .single();
+          .maybeSingle();
 
-        if (error) throw error;
-        if (!data) throw new Error("No member found with that PIN");
+        if (updateError) {
+          console.error("[Auth] Update error:", updateError);
+          throw updateError;
+        }
+        if (!updatedMember) {
+          // If update succeeded but returned no data, fetch the member data directly
+          const { data: fetchedMember, error: fetchError } = await supabase
+            .from("members")
+            .select("*")
+            .eq("id", userId)
+            .maybeSingle();
 
-        // Manually update state and trigger session refresh
-        setMember(data);
-        setUserRole(data.role as UserRole);
+          if (fetchError) throw fetchError;
+          if (!fetchedMember) throw new Error("Failed to associate member");
+
+          console.log("[Auth] Successfully associated member (fetched after update):", {
+            userId,
+            pin: numericPin,
+            memberId: fetchedMember.id,
+            role: fetchedMember.role,
+          });
+
+          // Update local state with fetched data
+          setMember(fetchedMember);
+          setUserRole(fetchedMember.role as UserRole);
+          useUserStore.getState().setMember(fetchedMember);
+          useUserStore.getState().setUserRole(fetchedMember.role as UserRole);
+        } else {
+          console.log("[Auth] Successfully associated member:", {
+            userId,
+            pin: numericPin,
+            memberId: updatedMember.id,
+            role: updatedMember.role,
+          });
+
+          // Update local state with returned data
+          setMember(updatedMember);
+          setUserRole(updatedMember.role as UserRole);
+          useUserStore.getState().setMember(updatedMember);
+          useUserStore.getState().setUserRole(updatedMember.role as UserRole);
+        }
+
+        // Refresh session to trigger auth state update
         const {
           data: { session: currentSession },
         } = await supabase.auth.getSession();
-        await updateAuthState(currentSession, "associateMemberWithPin"); // Use stable updateAuthState
+        await updateAuthState(currentSession, "associateMemberWithPin");
       } catch (error) {
         console.error("[Auth] Error associating member with PIN:", error);
-        throw error; // Re-throw
+        throw error;
       }
     },
     [user?.id, updateAuthState]
-  ); // Depend on user ID and stable updateAuthState
+  );
 
   // --- Memoized Context Value ---
   const value = useMemo(
@@ -472,7 +498,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
       signOut,
       signIn,
       signUp,
-      associateMember,
       resetPassword,
       updateProfile,
       associateMemberWithPin,
@@ -487,7 +512,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
       signOut,
       signIn,
       signUp,
-      associateMember,
       resetPassword,
       updateProfile,
       associateMemberWithPin,
