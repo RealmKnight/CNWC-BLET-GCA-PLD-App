@@ -19,7 +19,7 @@ import { Colors } from "@/constants/Colors";
 import { Feather } from "@expo/vector-icons";
 import { useMyTime } from "@/hooks/useMyTime";
 import { format } from "date-fns-tz";
-import { parseISO } from "date-fns";
+import { parseISO, isWithinInterval } from "date-fns";
 import { useFocusEffect } from "@react-navigation/native";
 import { useUserStore } from "@/store/userStore";
 import { useAuth } from "@/hooks/useAuth";
@@ -246,6 +246,35 @@ function sortRequestsByDate(requests: TimeOffRequest[]): {
   );
 }
 
+function RolloverWarningBanner({ unusedPlds }: { unusedPlds: number }) {
+  const colorScheme = useColorScheme();
+  const now = new Date();
+  const q1End = new Date(now.getFullYear(), 2, 31); // March 31st
+
+  // Only show warning in Q1 and if there are unused PLDs
+  if (unusedPlds <= 0 || !isWithinInterval(now, { start: new Date(now.getFullYear(), 0, 1), end: q1End })) {
+    return null;
+  }
+
+  return (
+    <ThemedView
+      style={[
+        styles.warningBanner,
+        {
+          backgroundColor: Colors[colorScheme ?? "light"].warning + "20",
+          borderColor: Colors[colorScheme ?? "light"].warning,
+        },
+      ]}
+    >
+      <Feather name="alert-triangle" size={24} color={Colors[colorScheme ?? "light"].warning} />
+      <ThemedText style={styles.warningText}>
+        You have {unusedPlds} unused rolled over PLD{unusedPlds > 1 ? "s" : ""} that must be used by March 31st or{" "}
+        {unusedPlds > 1 ? "they" : "it"} will be automatically converted to paid in lieu.
+      </ThemedText>
+    </ThemedView>
+  );
+}
+
 export default function MyTimeScreen() {
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
@@ -449,6 +478,7 @@ export default function MyTimeScreen() {
         ]}
         contentContainerStyle={styles.contentContainer}
       >
+        {stats && <RolloverWarningBanner unusedPlds={stats.rolledOver.unusedPlds} />}
         <ThemedView style={[styles.card, { width: cardWidth }]}>
           <ThemedView style={styles.sectionHeader}>
             <ThemedText style={styles.sectionTitle}>Current Allocations</ThemedText>
@@ -865,5 +895,20 @@ const styles = StyleSheet.create({
   type: {
     fontSize: 16,
     fontWeight: "600",
+  },
+  warningBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 16,
+    marginBottom: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    width: "100%",
+    maxWidth: 600,
+  },
+  warningText: {
+    flex: 1,
+    marginLeft: 12,
+    fontSize: 16,
   },
 });

@@ -17,6 +17,7 @@ export interface TimeStats {
   };
   rolledOver: {
     pld: number;
+    unusedPlds: number;
   };
   available: {
     pld: number;
@@ -119,7 +120,23 @@ export function useMyTime() {
 
       const maxPlds = maxPldsResult;
 
-      console.log("[MyTime] Max PLDs from database:", maxPlds);
+      // Calculate used rolled over PLDs in Q1
+      const { data: usedRolledOverPlds, error: usedRolledOverError } =
+        await supabase
+          .from("pld_sdv_requests")
+          .select("id")
+          .eq("member_id", member.id)
+          .eq("leave_type", "PLD")
+          .gte("request_date", `${currentYear}-01-01`)
+          .lte("request_date", `${currentYear}-03-31`)
+          .in("status", ["approved", "pending"])
+          .not("paid_in_lieu", "is", true)
+          .eq("is_rollover_pld", true);
+
+      if (usedRolledOverError) throw usedRolledOverError;
+
+      const unusedRolledOverPlds = (memberData.pld_rolled_over || 0) -
+        (usedRolledOverPlds?.length || 0);
 
       // Calculate base stats
       const baseStats: TimeStats = {
@@ -129,6 +146,7 @@ export function useMyTime() {
         },
         rolledOver: {
           pld: memberData.pld_rolled_over ?? 0,
+          unusedPlds: Math.max(0, unusedRolledOverPlds),
         },
         available: {
           pld: maxPlds + (memberData.pld_rolled_over ?? 0),
@@ -270,7 +288,7 @@ export function useMyTime() {
       );
       setStats({
         total: { pld: 0, sdv: 0 },
-        rolledOver: { pld: 0 },
+        rolledOver: { pld: 0, unusedPlds: 0 },
         available: { pld: 0, sdv: 0 },
         requested: { pld: 0, sdv: 0 },
         waitlisted: { pld: 0, sdv: 0 },
