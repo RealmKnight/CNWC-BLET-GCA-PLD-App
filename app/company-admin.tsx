@@ -355,8 +355,15 @@ export default function CompanyAdminScreen() {
             "MMM d, yyyy"
           )} has been approved.`;
 
-      // Send notification using the proper function
-      await sendMessageWithNotification(senderPin, [recipientPin], notificationTitle, notificationMessage, true);
+      // Send notification using the proper function with "approval" message type and no acknowledgment required
+      await sendMessageWithNotification(
+        senderPin,
+        [recipientPin],
+        notificationTitle,
+        notificationMessage,
+        false,
+        "approval"
+      );
 
       await fetchPendingRequests();
       Alert.alert("Success", "Request approved successfully");
@@ -387,7 +394,7 @@ export default function CompanyAdminScreen() {
 
       if (error) throw error;
 
-      // Send notification using the proper function
+      // Send notification using the proper function with "denial" message type and no acknowledgment required
       await sendMessageWithNotification(
         parseInt(user?.user_metadata?.pin),
         [parseInt(selectedRequest.pin_number)],
@@ -396,7 +403,8 @@ export default function CompanyAdminScreen() {
           parseISO(selectedRequest.request_date),
           "MMM d, yyyy"
         )} has been denied.`,
-        true
+        false,
+        "denial"
       );
 
       setIsDenialModalVisible(false);
@@ -435,7 +443,7 @@ export default function CompanyAdminScreen() {
         throw new Error("Invalid PIN numbers for notification");
       }
 
-      // Send notification using the proper function
+      // Send notification using the proper function with "approval" message type and no acknowledgment required
       await sendMessageWithNotification(
         senderPin,
         [recipientPin],
@@ -444,7 +452,8 @@ export default function CompanyAdminScreen() {
           parseISO(request.request_date),
           "MMM d, yyyy"
         )} has been approved.`,
-        true
+        false,
+        "approval"
       );
 
       await fetchPendingRequests();

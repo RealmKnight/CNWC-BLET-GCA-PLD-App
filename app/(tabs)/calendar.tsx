@@ -11,7 +11,9 @@ import {
   ActivityIndicator,
   View,
   AppState,
+  Animated,
 } from "react-native";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import { Calendar } from "@/components/Calendar";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
@@ -208,6 +210,168 @@ interface SubscriptionHandle {
   unsubscribe: () => void;
 }
 
+interface DateControlsProps {
+  selectedDate: string | null;
+  onDateChange: (date: string | null) => void;
+  onCurrentDateChange: (date: string) => void;
+}
+
+function DateControls({ selectedDate, onDateChange, onCurrentDateChange }: DateControlsProps) {
+  const theme = (useColorScheme() ?? "light") as ColorScheme;
+  const [showPicker, setShowPicker] = useState(false);
+  const fadeAnim = useRef(new Animated.Value(1)).current;
+  const today = format(new Date(), "yyyy-MM-dd");
+  const isToday = selectedDate === today;
+
+  const handleDateChange = (event: any, date?: Date) => {
+    if (Platform.OS === "android") {
+      setShowPicker(false);
+    }
+
+    // For iOS, we only want to update when the user taps "Done"
+    if (Platform.OS === "ios" && event.type === "dismissed") {
+      setShowPicker(false);
+      return;
+    }
+
+    if (date) {
+      const formattedDate = format(date, "yyyy-MM-dd");
+      onDateChange(formattedDate);
+      onCurrentDateChange(formattedDate);
+    }
+  };
+
+  const handleWebDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const date = e.target.value;
+    if (date) {
+      // Update the current date first to ensure calendar moves
+      onCurrentDateChange(date);
+      // Then update the selected date for the request button
+      onDateChange(date);
+    } else {
+      onDateChange(null);
+    }
+  };
+
+  const handleTodayPress = () => {
+    // Animate the button
+    Animated.sequence([
+      Animated.timing(fadeAnim, {
+        toValue: 0.5,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+    ]).start();
+
+    onDateChange(today);
+    onCurrentDateChange(today);
+  };
+
+  const minDate = new Date();
+  minDate.setHours(0, 0, 0, 0);
+
+  return (
+    <View style={controlStyles.container}>
+      <View style={controlStyles.datePickerContainer}>
+        {Platform.OS === "web" ? (
+          <input
+            type="date"
+            value={selectedDate || ""}
+            min={format(minDate, "yyyy-MM-dd")}
+            onChange={handleWebDateChange}
+            style={{
+              padding: 8,
+              borderRadius: 8,
+              backgroundColor: Colors.dark.card,
+              border: `1px solid ${Colors.dark.border}`,
+              color: Colors.dark.text,
+              outline: "none",
+            }}
+          />
+        ) : (
+          <>
+            <TouchableOpacity style={controlStyles.dateButton} onPress={() => setShowPicker(true)}>
+              <ThemedText>{selectedDate || "Select Date"}</ThemedText>
+            </TouchableOpacity>
+            {showPicker && (
+              <DateTimePicker
+                value={selectedDate ? new Date(selectedDate) : new Date()}
+                mode="date"
+                display={Platform.OS === "ios" ? "spinner" : "default"}
+                onChange={handleDateChange}
+                minimumDate={minDate}
+              />
+            )}
+          </>
+        )}
+      </View>
+      <Animated.View style={{ opacity: fadeAnim }}>
+        <TouchableOpacity
+          style={[controlStyles.todayButton, isToday && controlStyles.todayButtonDisabled]}
+          onPress={handleTodayPress}
+          disabled={isToday}
+        >
+          <ThemedText style={controlStyles.todayButtonText}>Today</ThemedText>
+        </TouchableOpacity>
+      </Animated.View>
+    </View>
+  );
+}
+
+const controlStyles = StyleSheet.create({
+  container: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: Colors.dark.background,
+    ...(Platform.OS === "web" && {
+      position: "sticky",
+      top: 0,
+      zIndex: 1,
+    }),
+  } as ViewStyle,
+  datePickerContainer: Platform.select({
+    web: {
+      width: 200,
+      marginRight: 16,
+      paddingHorizontal: 16,
+    },
+    default: {
+      flex: 1,
+      marginRight: 16,
+    },
+  }) as ViewStyle,
+  dateButton: {
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: Colors.dark.card,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+  } as ViewStyle,
+  todayButton: {
+    backgroundColor: Colors.light.tint,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    minWidth: 100,
+    alignItems: "center",
+  } as ViewStyle,
+  todayButtonDisabled: {
+    opacity: 0.5,
+  } as ViewStyle,
+  todayButtonText: {
+    color: "white",
+    fontWeight: "600",
+  } as TextStyle,
+});
+
 export default function CalendarScreen() {
   const theme = (useColorScheme() ?? "light") as ColorScheme;
   const { user, session } = useAuth();
@@ -219,6 +383,7 @@ export default function CalendarScreen() {
   const [dataChanged, setDataChanged] = useState(false);
   const [lastRefreshTime, setLastRefreshTime] = useState(0);
   const [appState, setAppState] = useState(AppState.currentState);
+  const [currentDate, setCurrentDate] = useState<string>(format(new Date(), "yyyy-MM-dd"));
   const REFRESH_COOLDOWN = 2000; // 2 seconds cooldown
 
   // --- State for calculated zone ID ---
@@ -610,9 +775,22 @@ export default function CalendarScreen() {
 
   return (
     <ThemedView style={styles.container}>
+      <DateControls
+        selectedDate={selectedDate}
+        onDateChange={(date) => {
+          setSelectedDate(date);
+          if (!date) {
+            setRequestDialogVisible(false);
+          }
+        }}
+        onCurrentDateChange={(date) => {
+          setCurrentDate(date);
+        }}
+      />
       <ScrollView style={styles.scrollView}>
         <Calendar
-          current={selectedDate || undefined}
+          key={`calendar-${currentDate}`}
+          current={currentDate}
           zoneId={calculatedZoneId ?? undefined}
           isZoneSpecific={!!calculatedZoneId}
         />

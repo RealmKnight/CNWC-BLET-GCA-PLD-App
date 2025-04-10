@@ -111,35 +111,15 @@ export function useMyTime() {
 
       console.log("[MyTime] Member data:", memberData);
 
-      // Calculate PLD entitlement based on years of service
-      const today = new Date();
-      const hireDate = new Date(memberData.company_hire_date);
-      const yearsOfService = currentYear - hireDate.getFullYear();
-      const hasHitAnniversary = today.getMonth() > hireDate.getMonth() ||
-        (today.getMonth() === hireDate.getMonth() &&
-          today.getDate() >= hireDate.getDate());
+      // Get max PLDs from database function
+      const { data: maxPldsResult, error: maxPldsError } = await supabase
+        .rpc("update_member_max_plds", { p_member_id: member.id });
 
-      // If they haven't hit their anniversary this year, use previous year's service time
-      const effectiveYearsOfService = hasHitAnniversary
-        ? yearsOfService
-        : yearsOfService - 1;
+      if (maxPldsError) throw maxPldsError;
 
-      // Calculate max PLDs based on years of service
-      let maxPlds = 5;
-      if (effectiveYearsOfService >= 10) {
-        maxPlds = 13;
-      } else if (effectiveYearsOfService >= 6) {
-        maxPlds = 11;
-      } else if (effectiveYearsOfService >= 3) {
-        maxPlds = 8;
-      }
+      const maxPlds = maxPldsResult;
 
-      console.log("[MyTime] PLD calculation:", {
-        yearsOfService,
-        hasHitAnniversary,
-        effectiveYearsOfService,
-        maxPlds,
-      });
+      console.log("[MyTime] Max PLDs from database:", maxPlds);
 
       // Calculate base stats
       const baseStats: TimeStats = {

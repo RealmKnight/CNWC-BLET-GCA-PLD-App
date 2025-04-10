@@ -199,12 +199,9 @@ export async function sendMessageWithNotification(
   subject: string,
   message: string,
   requiresAcknowledgment: boolean = false,
+  messageType: MessageType = "direct_message",
 ): Promise<void> {
   try {
-    const messageType: MessageType = requiresAcknowledgment
-      ? "must_read"
-      : "direct_message";
-
     const messagePayload: MessagePayload = {
       recipientPinNumber: senderPinNumber,
       subject,
