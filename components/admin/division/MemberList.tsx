@@ -10,6 +10,7 @@ import {
   ViewStyle,
   TextStyle,
   AppState,
+  Alert,
 } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -26,6 +27,8 @@ interface Member {
   first_name: string;
   last_name: string;
   division: string;
+  sdv_entitlement: number | null;
+  sdv_election: number | null;
 }
 
 interface MemberListProps {
@@ -50,20 +53,224 @@ const WebButton = ({ onPress, children }: { onPress: () => void; children: React
   </button>
 );
 
-const MemberItem = React.memo(({ item, onPress }: { item: Member; onPress: () => void }) => {
-  const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
-  return (
-    <TouchableOpacityComponent style={styles.memberItem} onPress={onPress} activeOpacity={0.7}>
-      <View style={styles.memberInfo}>
-        <ThemedText style={styles.memberName}>
-          {item.last_name}, {item.first_name}
-        </ThemedText>
-        <ThemedText style={styles.memberPin}>PIN: {item.pin_number}</ThemedText>
-      </View>
-      <Ionicons name="chevron-forward" size={20} color={Colors[colorScheme].text} />
-    </TouchableOpacityComponent>
-  );
-});
+const MemberItem = React.memo(
+  ({ item, onPress, onUpdate }: { item: Member; onPress: () => void; onUpdate: () => void }) => {
+    const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
+    const [isEditing, setIsEditing] = useState(false);
+    const [isExpanded, setIsExpanded] = useState(false);
+    const [entitlement, setEntitlement] = useState<string>(item.sdv_entitlement?.toString() ?? "0");
+    const [election, setElection] = useState<string>(item.sdv_election?.toString() ?? "0");
+    const [hasChanges, setHasChanges] = useState(false);
+    const isWeb = Platform.OS === "web";
+
+    const handleSave = async () => {
+      try {
+        const entitlementNum = parseInt(entitlement);
+        const electionNum = parseInt(election);
+
+        if (
+          isNaN(entitlementNum) ||
+          isNaN(electionNum) ||
+          entitlementNum < 0 ||
+          entitlementNum > 12 ||
+          electionNum < 0 ||
+          electionNum > 12
+        ) {
+          Alert.alert("Invalid Input", "SDV values must be between 0 and 12");
+          return;
+        }
+
+        const { error } = await supabase
+          .from("members")
+          .update({
+            sdv_entitlement: entitlementNum,
+            sdv_election: electionNum,
+          })
+          .eq("pin_number", item.pin_number);
+
+        if (error) throw error;
+
+        // Update the item's values locally
+        item.sdv_entitlement = entitlementNum;
+        item.sdv_election = electionNum;
+
+        setIsEditing(false);
+        setHasChanges(false);
+        onUpdate(); // Trigger parent refresh
+      } catch (error) {
+        console.error("Error updating SDV values:", error);
+        Alert.alert("Error", "Failed to update SDV values");
+      }
+    };
+
+    const handleTextInput = (text: string, setter: (value: string) => void) => {
+      // Only allow numbers 0-9
+      const numericText = text.replace(/[^0-9]/g, "");
+      if (numericText === "" || parseInt(numericText) <= 12) {
+        setter(numericText);
+        setHasChanges(true);
+      }
+    };
+
+    const renderSDVContent = () => {
+      if (isWeb) {
+        return (
+          <View style={styles.sdvContainer}>
+            <View style={styles.sdvSection}>
+              <ThemedText style={styles.sdvLabel}>Current SDV</ThemedText>
+              {isEditing ? (
+                <TextInput
+                  style={[styles.sdvInput, { color: Colors[colorScheme].text }]}
+                  value={entitlement}
+                  onChangeText={(text) => handleTextInput(text, setEntitlement)}
+                  keyboardType="number-pad"
+                  maxLength={2}
+                  placeholder="0"
+                />
+              ) : (
+                <ThemedText style={styles.sdvValue}>{item.sdv_entitlement ?? 0}</ThemedText>
+              )}
+            </View>
+
+            <View style={styles.sdvSection}>
+              <ThemedText style={styles.sdvLabel}>Next Year SDV</ThemedText>
+              {isEditing ? (
+                <TextInput
+                  style={[styles.sdvInput, { color: Colors[colorScheme].text }]}
+                  value={election}
+                  onChangeText={(text) => handleTextInput(text, setElection)}
+                  keyboardType="number-pad"
+                  maxLength={2}
+                  placeholder="0"
+                />
+              ) : (
+                <ThemedText style={styles.sdvValue}>{item.sdv_election ?? 0}</ThemedText>
+              )}
+            </View>
+
+            <TouchableOpacityComponent
+              style={styles.editButton}
+              onPress={() => {
+                if (isEditing && hasChanges) {
+                  handleSave();
+                } else {
+                  setIsEditing(!isEditing);
+                }
+              }}
+            >
+              <Ionicons
+                name={isEditing ? (hasChanges ? "save" : "close") : "create"}
+                size={20}
+                color={Colors[colorScheme].text}
+              />
+            </TouchableOpacityComponent>
+          </View>
+        );
+      }
+
+      // Mobile accordion content
+      return (
+        <View style={styles.mobileSDVWrapper}>
+          <TouchableOpacityComponent
+            style={[styles.mobileSDVButton, isExpanded && styles.mobileSDVButtonExpanded]}
+            onPress={() => setIsExpanded(!isExpanded)}
+          >
+            <View style={styles.mobileSDVButtonContent}>
+              <ThemedText style={styles.mobileSDVButtonText}>SDV Values {isExpanded ? "▼" : "▶"}</ThemedText>
+            </View>
+          </TouchableOpacityComponent>
+
+          {isExpanded && (
+            <View style={styles.mobileSDVContent}>
+              <View style={styles.mobileSDVRow}>
+                <View style={styles.mobileSDVField}>
+                  <ThemedText style={styles.mobileSDVLabel}>Current SDV</ThemedText>
+                  {isEditing ? (
+                    <TextInput
+                      style={[styles.mobileSDVInput, { color: Colors[colorScheme].text }]}
+                      value={entitlement}
+                      onChangeText={(text) => handleTextInput(text, setEntitlement)}
+                      keyboardType="number-pad"
+                      maxLength={2}
+                      placeholder="0"
+                      returnKeyType="done"
+                    />
+                  ) : (
+                    <ThemedText style={styles.mobileSDVValue}>{item.sdv_entitlement ?? 0}</ThemedText>
+                  )}
+                </View>
+
+                <View style={styles.mobileSDVField}>
+                  <ThemedText style={styles.mobileSDVLabel}>Next Year SDV</ThemedText>
+                  {isEditing ? (
+                    <TextInput
+                      style={[styles.mobileSDVInput, { color: Colors[colorScheme].text }]}
+                      value={election}
+                      onChangeText={(text) => handleTextInput(text, setElection)}
+                      keyboardType="number-pad"
+                      maxLength={2}
+                      placeholder="0"
+                      returnKeyType="done"
+                    />
+                  ) : (
+                    <ThemedText style={styles.mobileSDVValue}>{item.sdv_election ?? 0}</ThemedText>
+                  )}
+                </View>
+              </View>
+
+              <TouchableOpacityComponent
+                style={[
+                  styles.mobileEditButton,
+                  isEditing && hasChanges && styles.mobileEditButtonActive,
+                  (!entitlement || !election) && styles.mobileEditButtonDisabled,
+                ]}
+                onPress={() => {
+                  if (isEditing && hasChanges && entitlement && election) {
+                    handleSave();
+                  } else if (!isEditing) {
+                    setIsEditing(true);
+                  }
+                }}
+                disabled={isEditing && (!entitlement || !election)}
+              >
+                <Ionicons
+                  name={isEditing ? (hasChanges ? "save" : "close") : "create"}
+                  size={20}
+                  color={isEditing && hasChanges ? "#fff" : Colors[colorScheme].tint}
+                />
+                <ThemedText
+                  style={[
+                    styles.mobileEditButtonText,
+                    isEditing && hasChanges && styles.mobileEditButtonTextActive,
+                    (!entitlement || !election) && styles.mobileEditButtonTextDisabled,
+                  ]}
+                >
+                  {isEditing ? (hasChanges ? "Save Changes" : "Cancel") : "Edit SDV Values"}
+                </ThemedText>
+              </TouchableOpacityComponent>
+            </View>
+          )}
+        </View>
+      );
+    };
+
+    return (
+      <TouchableOpacityComponent
+        style={[styles.memberItem, !isWeb && isExpanded && styles.memberItemExpanded]}
+        onPress={isWeb ? onPress : undefined}
+        activeOpacity={0.7}
+      >
+        <View style={styles.memberInfo}>
+          <ThemedText style={styles.memberName}>
+            {item.last_name}, {item.first_name}
+          </ThemedText>
+          <ThemedText style={styles.memberPin}>PIN: {item.pin_number}</ThemedText>
+        </View>
+        {renderSDVContent()}
+      </TouchableOpacityComponent>
+    );
+  }
+);
 
 export const MemberList = React.memo(({ onEditMember, refreshTrigger }: MemberListProps) => {
   const [members, setMembers] = useState<Member[]>([]);
@@ -108,7 +315,7 @@ export const MemberList = React.memo(({ onEditMember, refreshTrigger }: MemberLi
 
       const { data: membersData, error: membersError } = await supabase
         .from("members")
-        .select("first_name, last_name, pin_number, division")
+        .select("first_name, last_name, pin_number, division, sdv_entitlement, sdv_election")
         .eq("division", adminDivision)
         .order("last_name", { ascending: true });
 
@@ -161,7 +368,15 @@ export const MemberList = React.memo(({ onEditMember, refreshTrigger }: MemberLi
   const getItem = (data: Member[], index: number) => data[index];
   const getItemCount = (data: Member[]) => data.length;
   const keyExtractor = (item: Member) => item.pin_number.toString();
-  const renderItem = ({ item }: { item: Member }) => <MemberItem item={item} onPress={() => onEditMember(item)} />;
+
+  const handleMemberUpdate = useCallback(() => {
+    // Force a re-render of the list
+    setMembers([...members]);
+  }, [members]);
+
+  const renderItem = ({ item }: { item: Member }) => (
+    <MemberItem item={item} onPress={() => onEditMember(item)} onUpdate={handleMemberUpdate} />
+  );
 
   return (
     <ThemedView style={styles.container}>
@@ -258,5 +473,132 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
+  },
+  sdvContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 16,
+  },
+  sdvSection: {
+    alignItems: "center",
+    minWidth: 80,
+  },
+  sdvLabel: {
+    fontSize: 12,
+    opacity: 0.7,
+    marginBottom: 4,
+  },
+  sdvValue: {
+    fontSize: 16,
+    fontWeight: "500",
+  },
+  sdvInput: {
+    width: 50,
+    height: 32,
+    borderWidth: 1,
+    borderColor: "#ccc",
+    borderRadius: 4,
+    textAlign: "center",
+    fontSize: 16,
+  },
+  editButton: {
+    padding: 8,
+  },
+  memberItemExpanded: {
+    marginBottom: 8,
+  },
+  mobileSDVWrapper: {
+    flex: 1,
+    maxWidth: "100%",
+  },
+  mobileSDVButton: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    backgroundColor: Colors.light.background,
+    borderRadius: 4,
+  },
+  mobileSDVButtonExpanded: {
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.light.border,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
+  },
+  mobileSDVButtonContent: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  mobileSDVButtonText: {
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  mobileSDVContent: {
+    padding: 16,
+    paddingBottom: 20,
+    backgroundColor: Colors.light.background,
+    borderBottomLeftRadius: 4,
+    borderBottomRightRadius: 4,
+  },
+  mobileSDVRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 16,
+    paddingHorizontal: 8,
+  },
+  mobileSDVField: {
+    flex: 1,
+    alignItems: "center",
+    marginHorizontal: 4,
+  },
+  mobileSDVLabel: {
+    fontSize: 12,
+    opacity: 0.7,
+    marginBottom: 4,
+  },
+  mobileSDVValue: {
+    fontSize: 16,
+    fontWeight: "500",
+  },
+  mobileSDVInput: {
+    width: 60,
+    height: 40,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    borderRadius: 4,
+    textAlign: "center",
+    fontSize: 16,
+    paddingVertical: 8,
+  },
+  mobileEditButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: Colors.light.background,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: Colors.light.tint,
+    gap: 8,
+    marginTop: 4,
+  },
+  mobileEditButtonActive: {
+    backgroundColor: Colors.light.tint,
+  },
+  mobileEditButtonText: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: Colors.light.tint,
+  },
+  mobileEditButtonTextActive: {
+    color: "#fff",
+  },
+  mobileEditButtonDisabled: {
+    opacity: 0.5,
+    backgroundColor: Colors.light.background,
+  },
+  mobileEditButtonTextDisabled: {
+    color: Colors.light.text,
+    opacity: 0.5,
   },
 });
