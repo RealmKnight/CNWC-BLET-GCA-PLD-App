@@ -57,10 +57,14 @@ export function AppHeader() {
   // Get the current tab title
   const getTabTitle = () => {
     if (!isTabsRoute) return "";
+    // On the home page, segments[1] is undefined
+    if (segments.length === 1 && segments[0] === "(tabs)") {
+      return "CN/WC GCA BLET PLD App";
+    }
     const tabSegment = segments[1] as "index" | "notifications" | "calendar" | "mytime" | undefined;
     switch (tabSegment) {
       case "index":
-        return "Home";
+        return "CN/WC GCA BLET PLD App";
       case "notifications":
         return "Notifications";
       case "calendar":
@@ -85,7 +89,11 @@ export function AppHeader() {
           </ThemedView>
           <Image source={require("@/assets/images/BLETblackgold.png")} style={styles.logo} resizeMode="contain" />
           <ThemedText type="title" style={styles.headerTitle}>
-            {getTabTitle()}
+            {(() => {
+              const title = getTabTitle();
+              console.log("[AppHeader] Rendering title:", { title, segments, isTabsRoute });
+              return title;
+            })()}
           </ThemedText>
           <ThemedView style={styles.rightIcons}>
             <TouchableOpacity onPress={handleProfilePress} style={styles.iconButton}>
