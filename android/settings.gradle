@@ -21,7 +21,7 @@ extensions.configure(com.facebook.react.ReactSettingsExtension) { ex ->
   }
 }
 
-rootProject.name = 'pldappcnwcgcablet'
+rootProject.name = 'pld-app-cnwc-gca-blet'
 
 dependencyResolutionManagement {
   versionCatalogs {
