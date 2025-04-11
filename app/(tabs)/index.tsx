@@ -15,44 +15,50 @@ export default function HomeScreen() {
             title="My Division"
             description="View and manage your division information, officers, and members"
             icon="people"
-            href="/division"
+            href="/(division)/[divisionID]"
+            params={{ divisionID: "current" }}
           />
           <NavigationCard
             title="Rosters"
             description="Access and manage division rosters and schedules"
             icon="calendar"
-            href="/rosters"
+            href="/(rosters)"
           />
           <NavigationCard
             title="Agreements"
             description="View and search through union agreements and contracts"
             icon="document-text"
-            href="/agreements"
+            href="/(agreements)"
           />
           <NavigationCard
             title="Claims"
             description="File and track claims and grievances"
             icon="file-tray-full"
-            href="/claims"
+            href="/(claims)"
           />
-          <NavigationCard title="GCA" description="Access GCA resources and information" icon="business" href="/gca" />
+          <NavigationCard
+            title="GCA"
+            description="Access GCA resources and information"
+            icon="business"
+            href="/(gca)"
+          />
           <NavigationCard
             title="Tools & Links"
             description="Access helpful tools and important links"
             icon="construct"
-            href="/tools"
+            href="/(tools)"
           />
           <NavigationCard
             title="Safety"
             description="Report safety concerns and access safety resources"
             icon="shield-checkmark"
-            href="/safety"
+            href="/(safety)"
           />
           <NavigationCard
             title="Training"
             description="Access training materials and resources"
             icon="school"
-            href="/training"
+            href="/(training)"
           />
         </ThemedView>
       </ThemedView>

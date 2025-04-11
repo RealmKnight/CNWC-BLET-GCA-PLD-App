@@ -136,6 +136,14 @@ function RootLayoutContent() {
       <Stack.Screen name="(auth)" options={{ headerShown: false }} />
       <Stack.Screen name="(admin)" options={{ headerShown: false }} />
       <Stack.Screen name="(profile)" options={{ headerShown: false }} />
+      <Stack.Screen name="(division)" options={{ headerShown: false }} />
+      <Stack.Screen name="(rosters)" options={{ headerShown: false }} />
+      <Stack.Screen name="(agreements)" options={{ headerShown: false }} />
+      <Stack.Screen name="(claims)" options={{ headerShown: false }} />
+      <Stack.Screen name="(gca)" options={{ headerShown: false }} />
+      <Stack.Screen name="(tools)" options={{ headerShown: false }} />
+      <Stack.Screen name="(safety)" options={{ headerShown: false }} />
+      <Stack.Screen name="(training)" options={{ headerShown: false }} />
       <Stack.Screen
         name="assign-officer"
         options={{

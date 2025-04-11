@@ -4,7 +4,7 @@ import { useColorScheme } from "@/hooks/useColorScheme";
 
 type ColorSchemeName = keyof typeof Colors;
 
-export default function DivisionLayout() {
+export default function SafetyLayout() {
   const colorScheme = (useColorScheme() ?? "light") as ColorSchemeName;
 
   return (
@@ -23,13 +23,7 @@ export default function DivisionLayout() {
       <Stack.Screen
         name="index"
         options={{
-          title: "My Division",
-        }}
-      />
-      <Stack.Screen
-        name="[divisionID]"
-        options={{
-          title: "Division Details",
+          title: "Safety",
         }}
       />
     </Stack>
