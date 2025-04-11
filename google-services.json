@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1047345873483",
+    "project_id": "cn-wc-gca-pld-app",
+    "storage_bucket": "cn-wc-gca-pld-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1047345873483:android:9799281eb3188fb529c3ce",
+        "android_client_info": {
+          "package_name": "com.cnwcgcablet.pldapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDe3WqBUpiOi31W802HLX0Ho-TDfn12k-w"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
