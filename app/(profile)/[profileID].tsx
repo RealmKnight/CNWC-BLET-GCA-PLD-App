@@ -13,6 +13,7 @@ import { Database } from "@/types/supabase";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import { testEmailFunction } from "@/utils/notificationService";
+import Constants from "expo-constants";
 
 type Member = Database["public"]["Tables"]["members"]["Row"];
 type ContactPreference = "phone" | "text" | "email" | "push";
@@ -30,31 +31,62 @@ interface UserPreferences {
 
 async function registerForPushNotificationsAsync() {
   let token;
+  let errorMessage = "";
 
-  if (Platform.OS === "web") {
-    return null;
-  }
-
-  if (Device.isDevice) {
-    const { status: existingStatus } = await Notifications.getPermissionsAsync();
-    let finalStatus = existingStatus;
-
-    if (existingStatus !== "granted") {
-      const { status } = await Notifications.requestPermissionsAsync();
-      finalStatus = status;
-    }
-
-    if (finalStatus !== "granted") {
-      Alert.alert("Failed to get push token for push notification!");
+  try {
+    if (Platform.OS === "web") {
+      console.log("Push notifications are not supported on web platform");
       return null;
     }
 
-    token = (await Notifications.getExpoPushTokenAsync()).data;
-  } else {
-    Alert.alert("Must use physical device for Push Notifications");
-  }
+    if (!Device.isDevice) {
+      console.log("Push notifications require a physical device");
+      return null;
+    }
 
-  return token;
+    // Check if we have permission
+    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    console.log("Existing notification permission status:", existingStatus);
+
+    let finalStatus = existingStatus;
+    if (existingStatus !== "granted") {
+      console.log("Requesting notification permission...");
+      const { status } = await Notifications.requestPermissionsAsync();
+      finalStatus = status;
+      console.log("New notification permission status:", finalStatus);
+    }
+
+    if (finalStatus !== "granted") {
+      errorMessage = "Permission not granted for push notifications";
+      throw new Error(errorMessage);
+    }
+
+    console.log("Getting Expo push token...");
+    const response = await Notifications.getExpoPushTokenAsync({
+      projectId: Constants.expoConfig?.extra?.eas?.projectId,
+    });
+    token = response.data;
+    console.log("Successfully obtained push token:", token);
+
+    // On Android, we need to set the notification channel
+    if (Platform.OS === "android") {
+      await Notifications.setNotificationChannelAsync("default", {
+        name: "default",
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: "#FF231F7C",
+      });
+    }
+
+    return token;
+  } catch (error) {
+    console.error("Error setting up push notifications:", error);
+    Alert.alert(
+      "Push Notification Setup Error",
+      errorMessage || "Failed to set up push notifications. Please check your device settings and try again."
+    );
+    return null;
+  }
 }
 
 // Utility functions for phone number formatting
