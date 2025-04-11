@@ -117,7 +117,7 @@ interface CalendarState {
     date: string,
     type: "PLD" | "SDV",
     zoneId?: number,
-  ) => Promise<void>;
+  ) => Promise<DayRequest>;
 
   // Add new helper function
   getActiveRequests: (date: string, zoneId?: number) => DayRequest[];
@@ -835,8 +835,9 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       throw new Error("Invalid zone for member");
     }
 
+    // Check for existing six-month request
     const { data: existingRequest, error: checkError } = await supabase
-      .from("pld_sdv_requests")
+      .from("six_month_requests")
       .select("*")
       .eq("member_id", member.id)
       .eq("request_date", date)
@@ -846,32 +847,64 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
 
     if (checkError) throw checkError;
     if (existingRequest) {
-      throw new Error("Request already exists for this date");
+      throw new Error("A six-month request already exists for this date");
     }
 
+    // Insert into six_month_requests table
     const { data: result, error: insertError } = await supabase
-      .from("pld_sdv_requests")
+      .from("six_month_requests")
       .insert({
         member_id: member.id,
         division,
         zone_id: zoneId,
         request_date: date,
         leave_type: type,
-        status: "pending",
+        requested_at: new Date().toISOString(),
+        processed: false,
       })
-      .select()
+      .select(`
+        *,
+        members:members!inner (
+          id,
+          first_name,
+          last_name,
+          pin_number
+        )
+      `)
       .single();
 
     if (insertError) throw insertError;
+    if (!result) throw new Error("No result returned from insert");
+
+    // Transform the result to match DayRequest format for local state
+    const transformedRequest: DayRequest = {
+      id: result.id,
+      member_id: result.member_id,
+      division: result.division,
+      zone_id: result.zone_id,
+      request_date: result.request_date,
+      leave_type: result.leave_type,
+      status: "pending", // Six-month requests are always pending until processed
+      requested_at: result.requested_at,
+      member: {
+        id: result.members.id,
+        first_name: result.members.first_name,
+        last_name: result.members.last_name,
+        pin_number: result.members.pin_number,
+      },
+    };
 
     // Update local state
-    const dateRequests = state.requests[date] || [];
+    const dateKey = zoneId ? `${date}_${zoneId}` : date;
+    const currentRequests = state.requests[dateKey] || [];
     set((state) => ({
       requests: {
         ...state.requests,
-        [date]: [...dateRequests, result],
+        [dateKey]: [...currentRequests, transformedRequest],
       },
     }));
+
+    return transformedRequest;
   },
 
   getActiveRequests: (date: string, zoneId?: number) => {

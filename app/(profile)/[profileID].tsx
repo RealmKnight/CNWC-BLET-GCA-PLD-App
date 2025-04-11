@@ -156,19 +156,32 @@ function PhoneUpdateModal({
       // Format phone number for Supabase (E.164 format)
       const formattedPhone = `+1${phoneNumber}`; // Assuming US numbers for now
 
-      // Update phone in auth.users
+      // Update phone in auth.users and metadata
       const { error: updateError } = await supabase.auth.updateUser({
         phone: formattedPhone,
+        data: {
+          phone_number: phoneNumber,
+        },
       });
 
       if (updateError) {
         // Special handling for SMS provider not configured
         if (updateError.message.includes("SMS provider")) {
           console.warn("SMS provider not configured:", updateError);
-          // For now, we'll allow the update but warn about verification
+          // Update just the metadata since SMS verification is not available
+          const { error: metadataError } = await supabase.auth.updateUser({
+            data: {
+              phone_number: phoneNumber,
+            },
+          });
+
+          if (metadataError) {
+            throw metadataError;
+          }
+
           Alert.alert(
             "Notice",
-            "Phone number updated, but verification is not available yet. SMS notifications will be enabled once the system is fully configured."
+            "Phone number saved in profile. SMS verification will be enabled once the system is fully configured."
           );
           onSuccess(phoneNumber);
           onClose();
@@ -255,9 +268,18 @@ export default function ProfileScreen() {
   // Fetch user data including phone number from metadata
   useEffect(() => {
     if (user && isOwnProfile) {
-      setPhoneNumber(user.phone || "");
+      // Get phone from session metadata if available
+      const phoneFromMetadata = session?.user?.user_metadata?.phone_number;
+      if (phoneFromMetadata) {
+        // Remove any non-numeric characters and set the phone number
+        const cleanedPhone = phoneFromMetadata.replace(/\D/g, "");
+        setPhoneNumber(cleanedPhone);
+      } else {
+        // Fallback to user.phone if metadata is not available
+        setPhoneNumber(user.phone?.replace(/\D/g, "") || "");
+      }
     }
-  }, [user, isOwnProfile]);
+  }, [user, isOwnProfile, session?.user?.user_metadata]);
 
   // Add debug effect for session changes
   useEffect(() => {
@@ -328,45 +350,90 @@ export default function ProfileScreen() {
           return;
         }
 
-        // Update preferences with new token and preference
-        const { error } = await supabase
+        // First try to update existing preference
+        const { data: existingPref, error: fetchError } = await supabase
           .from("user_preferences")
-          .upsert({
+          .select()
+          .eq("user_id", user?.id)
+          .single();
+
+        if (fetchError && fetchError.code !== "PGRST116") {
+          // PGRST116 means no rows returned
+          throw fetchError;
+        }
+
+        if (existingPref) {
+          // Update existing preference
+          const { error: updateError } = await supabase
+            .from("user_preferences")
+            .update({
+              push_token: token,
+              contact_preference: preference,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("user_id", user?.id);
+
+          if (updateError) throw updateError;
+        } else {
+          // Insert new preference
+          const { error: insertError } = await supabase.from("user_preferences").insert({
             user_id: user?.id,
             pin_number: member.pin_number,
             push_token: token,
             contact_preference: preference,
-          })
+          });
+
+          if (insertError) throw insertError;
+        }
+      } else {
+        // Handle non-push preferences (email, text, etc.)
+        const { data: existingPref, error: fetchError } = await supabase
+          .from("user_preferences")
           .select()
+          .eq("user_id", user?.id)
           .single();
 
-        if (error) throw error;
-      } else {
-        // Update preference without token
-        const { error } = await supabase
-          .from("user_preferences")
-          .upsert({
+        if (fetchError && fetchError.code !== "PGRST116") {
+          throw fetchError;
+        }
+
+        if (existingPref) {
+          // Update existing preference
+          const { error: updateError } = await supabase
+            .from("user_preferences")
+            .update({
+              push_token: null,
+              contact_preference: preference,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("user_id", user?.id);
+
+          if (updateError) throw updateError;
+        } else {
+          // Insert new preference
+          const { error: insertError } = await supabase.from("user_preferences").insert({
             user_id: user?.id,
             pin_number: member.pin_number,
             push_token: null,
             contact_preference: preference,
-          })
-          .select()
-          .single();
+          });
 
-        if (error) throw error;
+          if (insertError) throw insertError;
+        }
       }
 
-      // Refresh preferences
-      const { data: updatedPrefs, error: fetchError } = await supabase
+      // Refresh preferences after update
+      const { data: updatedPrefs, error: refreshError } = await supabase
         .from("user_preferences")
         .select("*")
-        .eq("pin_number", member.pin_number)
+        .eq("user_id", user?.id)
         .single();
 
-      if (fetchError) throw fetchError;
+      if (refreshError) throw refreshError;
       setUserPreferences(updatedPrefs as UserPreferences);
-    } catch (error) {
+
+      Alert.alert("Success", "Contact preference updated successfully!");
+    } catch (error: any) {
       console.error("Error updating preference:", error);
       Alert.alert("Error", "Failed to update contact preference. Please try again.");
     }
