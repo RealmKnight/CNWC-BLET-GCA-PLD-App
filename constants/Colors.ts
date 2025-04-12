@@ -56,6 +56,8 @@ export const Colors = {
     card: "#1a1a1a",
     textDim: "#666666",
     warning: "#F59E0B",
+    disabled: "#6c757d80", // 50% opacity gray
+    secondary: "#6c757d",
   },
   light: {
     // Light theme preserved for future use, currently defaulting to dark
@@ -81,5 +83,7 @@ export const Colors = {
     card: "#f8f9fa",
     textDim: "#6c757d",
     warning: "#F59E0B",
+    disabled: "#6c757d80", // 50% opacity gray
+    secondary: "#6c757d",
   },
 } as const;

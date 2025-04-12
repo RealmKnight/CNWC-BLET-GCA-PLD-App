@@ -20,15 +20,17 @@ interface NotificationItemProps {
   onPress: () => void;
   onAcknowledge: () => void;
   handleDelete: (messageId: string) => void;
+  handleArchive: (messageId: string) => void;
 }
 
 type GroupBy = "none" | "date" | "type";
 type FilterType = "all" | "unread" | "must_read" | "archived";
 
-function NotificationItem({ message, onPress, onAcknowledge, handleDelete }: NotificationItemProps) {
+function NotificationItem({ message, onPress, onAcknowledge, handleDelete, handleArchive }: NotificationItemProps) {
   const theme = (useColorScheme() ?? "light") as ColorScheme;
   const isUnread = !message.is_read;
   const needsAcknowledgment = message.requires_acknowledgment;
+  const isAcknowledged = message.acknowledged_by?.includes(message.recipient_pin_number?.toString() || "");
 
   // Get delivery status icon and color
   const getDeliveryStatus = () => {
@@ -92,14 +94,25 @@ function NotificationItem({ message, onPress, onAcknowledge, handleDelete }: Not
         styles.notificationItem,
         { backgroundColor: Colors[theme].card },
         isUnread && styles.unreadItem,
+        needsAcknowledgment && !isAcknowledged && styles.mustAcknowledgeItem,
         Platform.OS === "web" && { cursor: "pointer" },
       ]}
       onPress={onPress}
     >
       {/* Left Icon Column */}
       <ThemedView style={styles.iconColumn}>
-        <ThemedView style={[styles.iconWrapper, isUnread && styles.unreadIconWrapper]}>
-          <Ionicons name={messageTypeIcon} size={24} color={isUnread ? Colors[theme].primary : Colors[theme].text} />
+        <ThemedView
+          style={[
+            styles.iconWrapper,
+            isUnread && styles.unreadIconWrapper,
+            needsAcknowledgment && !isAcknowledged && styles.mustAcknowledgeIconWrapper,
+          ]}
+        >
+          <Ionicons
+            name={messageTypeIcon}
+            size={24}
+            color={needsAcknowledgment && !isAcknowledged ? Colors[theme].primary : Colors[theme].text}
+          />
         </ThemedView>
       </ThemedView>
 
@@ -111,6 +124,11 @@ function NotificationItem({ message, onPress, onAcknowledge, handleDelete }: Not
             <ThemedText style={styles.messageType}>
               {message.message_type.charAt(0).toUpperCase() + message.message_type.slice(1).replace(/_/g, " ")}
             </ThemedText>
+            {needsAcknowledgment && !isAcknowledged && (
+              <ThemedView style={[styles.acknowledgmentBadge, { backgroundColor: Colors[theme].primary }]}>
+                <ThemedText style={styles.acknowledgmentBadgeText}>Needs Acknowledgment</ThemedText>
+              </ThemedView>
+            )}
             {getDeliveryStatus()}
           </ThemedView>
           <ThemedText style={styles.timestamp}>{format(new Date(message.created_at), "MMM d, h:mm a")}</ThemedText>
@@ -128,21 +146,27 @@ function NotificationItem({ message, onPress, onAcknowledge, handleDelete }: Not
 
         {/* Footer Actions */}
         <ThemedView style={styles.messageFooter}>
-          {needsAcknowledgment && (
+          <ThemedView style={styles.actionButtons}>
+            {!message.is_archived && (
+              <TouchableOpacity
+                style={[styles.iconButton, { backgroundColor: Colors[theme].secondary + "20" }]}
+                onPress={() => handleArchive(message.id)}
+                disabled={!message.is_read}
+              >
+                <Ionicons
+                  name="archive-outline"
+                  size={20}
+                  color={message.is_read ? Colors[theme].secondary : Colors[theme].disabled}
+                />
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
-              style={[styles.acknowledgeButton, { backgroundColor: Colors[theme].primary }]}
-              onPress={onAcknowledge}
+              style={[styles.iconButton, { backgroundColor: Colors[theme].error + "20" }]}
+              onPress={() => handleDelete(message.id)}
             >
-              <Ionicons name="checkmark" size={16} color="#fff" />
-              <ThemedText style={styles.acknowledgeButtonText}>Acknowledge</ThemedText>
+              <Ionicons name="trash-outline" size={20} color={Colors[theme].error} />
             </TouchableOpacity>
-          )}
-          <TouchableOpacity
-            style={[styles.deleteButton, { backgroundColor: Colors[theme].error + "20" }]}
-            onPress={onDeletePress}
-          >
-            <Ionicons name="trash-outline" size={20} color={Colors[theme].error} />
-          </TouchableOpacity>
+          </ThemedView>
         </ThemedView>
       </ThemedView>
     </TouchableOpacity>
@@ -227,7 +251,7 @@ export default function NotificationsScreen() {
 
   const handleAcknowledge = async (message: Message) => {
     if (!member?.pin_number) return;
-    await markAsRead(message.id, member.pin_number);
+    await useNotificationStore.getState().acknowledgeMessage(message.id, member.pin_number);
   };
 
   const handleMarkAllRead = async () => {
@@ -317,6 +341,36 @@ export default function NotificationsScreen() {
     });
   };
 
+  const handleArchive = async (messageId: string) => {
+    try {
+      await useNotificationStore.getState().archiveMessage(messageId);
+      Toast.show({
+        type: "success",
+        text1: "Message archived",
+        position: "bottom",
+        visibilityTime: 2000,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === "Message must be read before archiving") {
+        Toast.show({
+          type: "error",
+          text1: "Error",
+          text2: "Message must be read before archiving",
+          position: "bottom",
+          visibilityTime: 3000,
+        });
+      } else {
+        Toast.show({
+          type: "error",
+          text1: "Error",
+          text2: "Failed to archive message",
+          position: "bottom",
+          visibilityTime: 3000,
+        });
+      }
+    }
+  };
+
   // Update the renderItem to use the new NotificationItem props
   const renderItem = ({ item }: { item: Message }) => (
     <NotificationItem
@@ -324,6 +378,7 @@ export default function NotificationsScreen() {
       onPress={() => handleMessagePress(item)}
       onAcknowledge={() => handleAcknowledge(item)}
       handleDelete={handleDelete}
+      handleArchive={handleArchive}
     />
   );
 
@@ -398,6 +453,7 @@ export default function NotificationsScreen() {
                 onPress={() => handleMessagePress(message)}
                 onAcknowledge={() => handleAcknowledge(message)}
                 handleDelete={handleDelete}
+                handleArchive={handleArchive}
               />
             ))}
           </ThemedView>
@@ -604,5 +660,32 @@ const styles = StyleSheet.create({
   },
   deliveryIcon: {
     marginLeft: 4,
+  },
+  mustAcknowledgeItem: {
+    borderLeftColor: Colors.light.primary,
+    borderLeftWidth: 4,
+  },
+  mustAcknowledgeIconWrapper: {
+    backgroundColor: Colors.light.primary + "20",
+  },
+  acknowledgmentBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  acknowledgmentBadgeText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "500",
+  },
+  actionButtons: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  iconButton: {
+    padding: 8,
+    borderRadius: 8,
+    justifyContent: "center",
+    alignItems: "center",
   },
 });

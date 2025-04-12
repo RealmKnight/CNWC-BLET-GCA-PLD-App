@@ -11,11 +11,14 @@ interface Message {
   content: string;
   is_read: boolean;
   is_deleted: boolean;
+  is_archived: boolean;
   created_at: string;
   updated_at: string;
   message_type: string;
   read_by: string[];
   requires_acknowledgment: boolean;
+  acknowledged_at: string | null;
+  acknowledged_by: string[];
   metadata?: {
     topic?: string;
     event?: string;
@@ -40,6 +43,8 @@ interface NotificationStore {
   markAsRead: (messageId: string, pinNumber: number) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
   subscribeToMessages: (pinNumber: number) => () => void;
+  acknowledgeMessage: (messageId: string, pinNumber: number) => Promise<void>;
+  archiveMessage: (messageId: string) => Promise<void>;
 }
 
 const useNotificationStore = create<NotificationStore>((set, get) => ({
@@ -144,6 +149,50 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
       });
     } catch (error) {
       console.error("Error marking message as read:", error);
+    }
+  },
+
+  acknowledgeMessage: async (messageId: string, pinNumber: number) => {
+    try {
+      const { messages } = get();
+      const message = messages.find((m) => m.id === messageId);
+
+      if (!message) return;
+
+      const acknowledgedBy = [...(message.acknowledged_by || [])];
+      if (!acknowledgedBy.includes(pinNumber.toString())) {
+        acknowledgedBy.push(pinNumber.toString());
+      }
+
+      const now = new Date().toISOString();
+
+      const { error } = await supabase
+        .from("messages")
+        .update({
+          acknowledged_by: acknowledgedBy,
+          acknowledged_at: now,
+        })
+        .eq("id", messageId);
+
+      if (error) throw error;
+
+      // Update local state
+      const updatedMessages = messages.map((msg) =>
+        msg.id === messageId
+          ? { ...msg, acknowledged_by: acknowledgedBy, acknowledged_at: now }
+          : msg
+      );
+
+      set({
+        messages: updatedMessages,
+      });
+
+      // Also mark as read if not already read
+      if (!message.is_read) {
+        await get().markAsRead(messageId, pinNumber);
+      }
+    } catch (error) {
+      console.error("Error acknowledging message:", error);
     }
   },
 
@@ -324,6 +373,42 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
       messagesSubscription.unsubscribe();
       deliveriesSubscription.unsubscribe();
     };
+  },
+
+  archiveMessage: async (messageId: string) => {
+    try {
+      const { messages } = get();
+      const message = messages.find((m) => m.id === messageId);
+
+      if (!message) return;
+
+      // Check if message is read
+      if (!message.is_read) {
+        throw new Error("Message must be read before archiving");
+      }
+
+      const { error } = await supabase
+        .from("messages")
+        .update({
+          is_archived: true,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", messageId);
+
+      if (error) throw error;
+
+      // Update local state
+      const updatedMessages = messages.map((msg) =>
+        msg.id === messageId ? { ...msg, is_archived: true } : msg
+      );
+
+      set({
+        messages: updatedMessages,
+      });
+    } catch (error) {
+      console.error("[NotificationStore] Error archiving message:", error);
+      throw error;
+    }
   },
 }));
 
