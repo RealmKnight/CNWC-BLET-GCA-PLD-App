@@ -98,7 +98,7 @@ function RootLayoutContent() {
       } else if (session && !isCompanyAdmin && member) {
         if (inAuthGroup && !inMemberAssociation) {
           router.replace("/(tabs)");
-        } else if (!segments[0] || segments[0] === "index") {
+        } else if (!segments.length || segments[0] === undefined) {
           router.replace("/(tabs)");
         }
       }
@@ -142,6 +142,18 @@ function RootLayoutContent() {
       <Stack.Screen
         name="company-admin"
         options={{
+          headerShown: true,
+          title: "CN/WC BLET PLD/SDV App - Company Admin",
+          headerBackVisible: false,
+          headerTitleStyle: {
+            fontFamily: "Inter",
+            fontSize: 16,
+          },
+          headerStyle: {
+            backgroundColor: Colors.light.background,
+          },
+          headerShadowVisible: false,
+          headerTitleAlign: "center",
           headerLeft: () => (
             <Image
               source={require("../assets/images/BLETblackgold.png")}
