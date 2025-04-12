@@ -37,7 +37,7 @@ const toastConfig = {
 };
 
 function RootLayoutContent() {
-  const { isLoading, session, userRole, member } = useAuth();
+  const { isLoading, session, userRole, member, signOut } = useAuth();
   const segments = useSegments();
   const router = useRouter();
   const { fetchMessages, subscribeToMessages } = useNotificationStore();
@@ -85,11 +85,18 @@ function RootLayoutContent() {
         inAdminGroup,
         inTabsGroup,
         isCompanyAdmin,
+        hasSession: !!session,
       });
 
-      if (!session && !inAuthGroup) {
+      // Enhanced auth check
+      if ((!session || !session.user) && !inAuthGroup) {
+        console.log("[Router] No valid session found, redirecting to sign-in");
         router.replace("/(auth)/sign-in");
-      } else if (session && !member && !inMemberAssociation && !isCompanyAdmin) {
+        return;
+      }
+
+      // Rest of the routing logic
+      if (session && !member && !inMemberAssociation && !isCompanyAdmin) {
         router.replace("/(auth)/member-association");
       } else if (session && isCompanyAdmin && segments[0] !== "company-admin") {
         router.replace("/company-admin");
@@ -164,6 +171,18 @@ function RootLayoutContent() {
                 resizeMode: "contain",
               }}
             />
+          ),
+          headerRight: () => (
+            <ThemedText
+              onPress={signOut}
+              style={{
+                marginRight: 16,
+                color: Colors.light.tint,
+                fontSize: 16,
+              }}
+            >
+              Sign Out
+            </ThemedText>
           ),
         }}
       />
