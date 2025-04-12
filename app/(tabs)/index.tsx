@@ -2,8 +2,12 @@ import { Image, StyleSheet, Platform } from "react-native";
 import ParallaxScrollView from "@/components/ParallaxScrollView";
 import { ThemedView } from "@/components/ThemedView";
 import { NavigationCard } from "@/components/NavigationCard";
+import { useAuth } from "@/hooks/useAuth";
 
 export default function HomeScreen() {
+  const { member } = useAuth();
+  const divisionId = member?.division ? parseInt(member.division, 10) : null;
+
   return (
     <ParallaxScrollView
       headerBackgroundColor={{ light: "#A1CEDC", dark: "#000000FF" }}
@@ -15,8 +19,7 @@ export default function HomeScreen() {
             title="My Division"
             description="View and manage your division information, officers, and members"
             icon="people"
-            href="/(division)/[divisionID]"
-            params={{ divisionID: "current" }}
+            href={member?.division ? `/(division)/${member.division}` : "/(division)"}
           />
           <NavigationCard
             title="Rosters"

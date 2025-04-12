@@ -1,9 +1,9 @@
-import { Stack } from "expo-router";
+import { Stack, Slot } from "expo-router";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { StyleSheet, Image } from "react-native";
-import { Slot, useRouter, useSegments } from "expo-router";
+import { useRouter, useSegments } from "expo-router";
 import { useEffect } from "react";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -72,55 +72,38 @@ function RootLayoutContent() {
   }, [session, member?.pin_number, fetchMessages, subscribeToMessages]);
 
   useEffect(() => {
-    console.log("[Router] State:", { isLoading, hasSession: !!session, userRole, currentSegment: segments[0] });
-
     if (!isLoading) {
       const inAuthGroup = segments[0] === "(auth)";
       const inAdminGroup = segments[0] === "(admin)";
       const inTabsGroup = segments[0] === "(tabs)";
-      const inProfileGroup = segments[0] === "(profile)";
       const isCompanyAdmin = session?.user?.user_metadata?.role === "company_admin";
-      const isModalRoute = segments[0] === "assign-officer";
       const inMemberAssociation = segments[0] === "(auth)" && segments[1] === "member-association";
 
+      console.log("[Router] Processing route:", {
+        segments,
+        inAuthGroup,
+        inAdminGroup,
+        inTabsGroup,
+        isCompanyAdmin,
+      });
+
       if (!session && !inAuthGroup) {
-        // Redirect to sign-in if not authenticated
-        console.log("[Router] Redirecting to sign-in");
         router.replace("/(auth)/sign-in");
       } else if (session && !member && !inMemberAssociation && !isCompanyAdmin) {
-        // Redirect to member association if authenticated but not associated
-        console.log("[Router] Redirecting to member association - no member record found");
         router.replace("/(auth)/member-association");
       } else if (session && isCompanyAdmin && segments[0] !== "company-admin") {
-        // Redirect company admin to their page
-        console.log("[Router] Redirecting company admin to their page");
         router.replace("/company-admin");
       } else if (session && !isCompanyAdmin && segments[0] === "company-admin") {
-        // Redirect non-company admin away from company admin page
-        console.log("[Router] Redirecting non-company admin away from company admin page");
-        router.replace("/");
+        router.replace("/(tabs)");
       } else if (session && !isCompanyAdmin && member) {
-        // Handle regular user routing
-        if (userRole && inAuthGroup && !inMemberAssociation) {
-          // Redirect from auth group if authenticated
-          console.log("[Router] Redirecting from auth group");
-          if (userRole.includes("admin")) {
-            router.replace(`/(admin)/${userRole}`);
-          } else {
-            router.replace("/(tabs)");
-          }
-        } else if (userRole?.includes("admin") && !inAdminGroup && !inTabsGroup && !inProfileGroup && !isModalRoute) {
-          // Redirect admin to admin area if not in admin, tabs, profile, or modal route
-          console.log("[Router] Redirecting admin to admin area");
-          router.replace(`/(admin)/${userRole}`);
-        } else if (!userRole?.includes("admin") && !inTabsGroup && !inAuthGroup) {
-          // Redirect non-admin to tabs if not in tabs or auth group
-          console.log("[Router] Redirecting to tabs");
+        if (inAuthGroup && !inMemberAssociation) {
+          router.replace("/(tabs)");
+        } else if (!segments[0] || segments[0] === "index") {
           router.replace("/(tabs)");
         }
       }
     }
-  }, [isLoading, session, segments, userRole, member]);
+  }, [isLoading, session, segments, userRole, member, router]);
 
   if (isLoading) {
     return (
@@ -131,43 +114,34 @@ function RootLayoutContent() {
   }
 
   return (
-    <Stack>
-      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-      <Stack.Screen name="(admin)" options={{ headerShown: false }} />
-      <Stack.Screen name="(profile)" options={{ headerShown: false }} />
-      <Stack.Screen name="(division)" options={{ headerShown: false }} />
-      <Stack.Screen name="(rosters)" options={{ headerShown: false }} />
-      <Stack.Screen name="(agreements)" options={{ headerShown: false }} />
-      <Stack.Screen name="(claims)" options={{ headerShown: false }} />
-      <Stack.Screen name="(gca)" options={{ headerShown: false }} />
-      <Stack.Screen name="(tools)" options={{ headerShown: false }} />
-      <Stack.Screen name="(safety)" options={{ headerShown: false }} />
-      <Stack.Screen name="(training)" options={{ headerShown: false }} />
+    <Stack
+      screenOptions={{
+        headerShown: false,
+      }}
+    >
+      <Stack.Screen name="index" />
+      <Stack.Screen name="(tabs)" />
+      <Stack.Screen name="(auth)" />
+      <Stack.Screen name="(admin)" />
+      <Stack.Screen name="(division)" />
+      <Stack.Screen name="(rosters)" />
+      <Stack.Screen name="(agreements)" />
+      <Stack.Screen name="(claims)" />
+      <Stack.Screen name="(gca)" />
+      <Stack.Screen name="(tools)" />
+      <Stack.Screen name="(safety)" />
+      <Stack.Screen name="(training)" />
       <Stack.Screen
         name="assign-officer"
         options={{
           presentation: "modal",
           animation: "slide_from_bottom",
-          headerShown: false,
           gestureEnabled: false,
         }}
       />
       <Stack.Screen
         name="company-admin"
         options={{
-          headerShown: true,
-          title: "CN/WC BLET PLD/SDV App - Company Admin",
-          headerBackVisible: false,
-          headerTitleStyle: {
-            fontFamily: "Inter",
-            fontSize: 16, // Reduced font size to accommodate longer title
-          },
-          headerStyle: {
-            backgroundColor: Colors.light.background,
-          },
-          headerShadowVisible: false,
-          headerTitleAlign: "center",
           headerLeft: () => (
             <Image
               source={require("../assets/images/BLETblackgold.png")}

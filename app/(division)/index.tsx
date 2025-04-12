@@ -4,7 +4,6 @@ import { useRouter } from "expo-router";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/utils/supabase";
 
 export default function DivisionIndex() {
   const router = useRouter();
@@ -15,11 +14,6 @@ export default function DivisionIndex() {
       if (member?.division) {
         router.replace(`/(division)/${member.division}`);
       } else {
-        // If no division, we could either:
-        // 1. Show an error message
-        // 2. Redirect to a division selection screen
-        // 3. Redirect back to home
-        // For now, we'll redirect back to home
         router.replace("/(tabs)");
       }
     }
