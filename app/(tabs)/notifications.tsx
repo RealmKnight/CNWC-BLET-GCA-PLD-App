@@ -202,16 +202,18 @@ export default function NotificationsScreen() {
     // Apply filters
     switch (filterType) {
       case "unread":
-        filtered = filtered.filter((msg) => !msg.is_read);
+        filtered = filtered.filter((msg) => !msg.is_read && !msg.is_archived);
         break;
       case "must_read":
-        filtered = filtered.filter((msg) => msg.message_type === "must_read");
+        filtered = filtered.filter((msg) => msg.message_type === "must_read" && !msg.is_archived);
         break;
       case "archived":
-        filtered = filtered.filter((msg) => msg.is_deleted);
+        filtered = filtered.filter((msg) => msg.is_archived);
         break;
+      case "all":
       default:
-        filtered = filtered.filter((msg) => !msg.is_deleted);
+        filtered = filtered.filter((msg) => !msg.is_archived && !msg.is_deleted);
+        break;
     }
 
     // Group messages
