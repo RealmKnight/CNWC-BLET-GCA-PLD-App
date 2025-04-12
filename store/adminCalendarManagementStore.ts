@@ -3,11 +3,7 @@ import { supabase } from "@/utils/supabase";
 import { Alert, Platform } from "react-native";
 import { isValid, parseISO } from "date-fns";
 import { useUserStore } from "@/store/userStore";
-
-interface Zone {
-    id: number;
-    name: string;
-}
+import { Zone } from "@/types/calendar";
 
 interface YearlyAllotment {
     year: number;
@@ -16,6 +12,18 @@ interface YearlyAllotment {
     override_by?: string | null;
     override_at?: string | null;
     override_reason?: string | null;
+}
+
+interface WeeklyVacationAllotment {
+    id: string;
+    division: string;
+    week_start_date: string;
+    max_allotment: number;
+    current_requests: number;
+    vac_year: number;
+    zone_id?: number | null;
+    updated_at?: string;
+    updated_by?: string;
 }
 
 type AllotmentType = "pld_sdv" | "vacation";
@@ -40,6 +48,9 @@ interface AdminCalendarManagementState {
 
     // New state for tracking loaded settings
     loadedDivisions: Set<string>; // Track loaded divisions
+
+    // New state for vacation allotments
+    weeklyVacationAllotments: WeeklyVacationAllotment[];
 
     // Actions
     setError: (error: string | null) => void;
@@ -74,7 +85,20 @@ interface AdminCalendarManagementState {
         maxAllotment: number,
         userId: string,
         zoneId?: number | null,
-        reason?: string, // Optional reason for override
+        reason?: string,
+    ) => Promise<void>;
+    fetchVacationAllotments: (
+        division: string,
+        year: number,
+        zoneId?: number | null,
+    ) => Promise<void>;
+    updateVacationAllotment: (
+        division: string,
+        weekStartDate: string,
+        maxAllotment: number,
+        userId: string,
+        zoneId?: number | null,
+        reason?: string,
     ) => Promise<void>;
     resetAllotments: () => void; // Reset allotments when scope changes
 
@@ -104,6 +128,7 @@ export const useAdminCalendarManagementStore = create<
     isLoading: false,
     error: null,
     loadedDivisions: new Set<string>(), // Initialize set
+    weeklyVacationAllotments: [],
 
     // Simple Setters
     setError: (error) => set({ error }),
@@ -137,7 +162,12 @@ export const useAdminCalendarManagementStore = create<
             set({ tempAllotments: updater });
         }
     },
-    resetAllotments: () => set({ yearlyAllotments: [], tempAllotments: {} }),
+    resetAllotments: () =>
+        set({
+            yearlyAllotments: [],
+            weeklyVacationAllotments: [],
+            tempAllotments: {},
+        }),
 
     // Fetch Division Settings (modified to return Promise and update loadedDivisions)
     fetchDivisionSettings: async (division) => {
@@ -166,7 +196,7 @@ export const useAdminCalendarManagementStore = create<
             // Always fetch zones first, regardless of uses_zone_calendars setting
             const { data: zonesData, error: zonesError } = await supabase
                 .from("zones")
-                .select("id, name")
+                .select("id, name, division_id, created_at, updated_at")
                 .eq("division_id", divisionId)
                 .order("name");
 
@@ -273,7 +303,7 @@ export const useAdminCalendarManagementStore = create<
 
             const { data: zonesData, error: zonesError } = await supabase
                 .from("zones")
-                .select("id, name")
+                .select("id, name, division_id, created_at, updated_at")
                 .eq("division_id", divisionData.id)
                 .order("name");
 
@@ -381,6 +411,12 @@ export const useAdminCalendarManagementStore = create<
 
     // Fetch Yearly Allotments (no change needed here for this specific issue)
     fetchAllotments: async (division, year, zoneId = null) => {
+        const type = get().selectedType;
+
+        if (type === "vacation") {
+            return get().fetchVacationAllotments(division, year, zoneId);
+        }
+
         if (!division) {
             console.warn(
                 "[AdminStore] fetchAllotments called without division.",
@@ -479,97 +515,214 @@ export const useAdminCalendarManagementStore = create<
         }
     },
 
+    // Fetch Vacation Allotments
+    fetchVacationAllotments: async (
+        division: string,
+        year: number,
+        zoneId?: number | null,
+    ) => {
+        if (!division) {
+            console.warn(
+                "[AdminStore] fetchVacationAllotments called without division.",
+            );
+            return;
+        }
+
+        set({ isLoading: true, error: null });
+        const effectiveZoneId = get().usesZoneCalendars ? zoneId : null;
+
+        console.log("[AdminStore] Fetching vacation allotments for:", {
+            division,
+            year,
+            zoneId: effectiveZoneId,
+            usesZoneCalendars: get().usesZoneCalendars,
+        });
+
+        if (get().usesZoneCalendars && effectiveZoneId === null) {
+            console.log(
+                "[AdminStore] Zone calendars enabled, but no zone selected. Skipping vacation allotment fetch.",
+            );
+            get().resetAllotments(); // Clear stale data
+            return;
+        }
+
+        try {
+            let query = supabase
+                .from("vacation_allotments")
+                .select("*")
+                .eq("division", division)
+                .eq("vac_year", year);
+
+            if (effectiveZoneId !== null) {
+                query = query.eq("zone_id", effectiveZoneId);
+            } else {
+                query = query.is("zone_id", null);
+            }
+
+            query = query.order("week_start_date");
+
+            const { data, error } = await query;
+
+            if (error) throw error;
+
+            set((state) => ({
+                weeklyVacationAllotments: data || [],
+                // Set tempAllotments to the first week's allotment as a starting point
+                tempAllotments: {
+                    ...state.tempAllotments,
+                    [year]: data?.[0]?.max_allotment?.toString() || "0",
+                },
+            }));
+        } catch (error) {
+            console.error("[fetchVacationAllotments] Error:", error);
+            const message = error instanceof Error
+                ? error.message
+                : "Failed to fetch vacation allotments";
+            set({ error: message });
+        } finally {
+            set({ isLoading: false });
+        }
+    },
+
     // Update/Insert Yearly Allotment (no change needed here for this specific issue)
     updateAllotment: async (
-        division,
-        year,
-        maxAllotment,
-        userId,
-        zoneId = null,
-        reason = "",
+        division: string,
+        year: number,
+        maxAllotment: number,
+        userId: string,
+        zoneId?: number | null,
+        reason?: string,
+    ) => {
+        const type = get().selectedType;
+
+        if (type === "vacation") {
+            // For vacation type, we'll need a week start date
+            const today = new Date();
+            const weekStartDate =
+                new Date(today.setDate(today.getDate() - today.getDay()))
+                    .toISOString().split("T")[0];
+            return get().updateVacationAllotment(
+                division,
+                weekStartDate,
+                maxAllotment,
+                userId,
+                zoneId,
+                reason,
+            );
+        }
+
+        set({ isLoading: true, error: null });
+        try {
+            const { data, error } = await supabase
+                .from("yearly_allotments")
+                .upsert({
+                    division,
+                    year,
+                    max_allotment: maxAllotment,
+                    zone_id: zoneId,
+                    is_override: true,
+                    override_by: userId,
+                    override_at: new Date().toISOString(),
+                    override_reason: reason,
+                })
+                .select()
+                .single();
+
+            if (error) throw error;
+
+            set((state) => ({
+                yearlyAllotments: [
+                    ...state.yearlyAllotments.filter((a) => a.year !== year),
+                    data,
+                ],
+                tempAllotments: {
+                    ...state.tempAllotments,
+                    [year]: maxAllotment.toString(),
+                },
+            }));
+        } catch (error) {
+            console.error("[updateAllotment] Error:", error);
+            const message = error instanceof Error
+                ? error.message
+                : "Failed to update allotment";
+            set({ error: message });
+            throw error;
+        } finally {
+            set({ isLoading: false });
+        }
+    },
+
+    // Update Vacation Allotment
+    updateVacationAllotment: async (
+        division: string,
+        weekStartDate: string,
+        maxAllotment: number,
+        userId: string,
+        zoneId?: number | null,
+        reason?: string,
     ) => {
         if (!division || !userId) {
             throw new Error(
                 "Division and User ID are required to update allotment.",
             );
         }
+
         set({ isLoading: true, error: null });
-
-        const effectiveZoneId = get().usesZoneCalendars ? zoneId : null;
-
         try {
-            // Check current allotment to see if it's an override
-            const currentData = get().yearlyAllotments.find((a) =>
-                a.year === year
+            const year = new Date(weekStartDate).getFullYear();
+            const effectiveZoneId = get().usesZoneCalendars ? zoneId : null;
+
+            // Build the query
+            let query = supabase
+                .from("vacation_allotments")
+                .update({
+                    max_allotment: maxAllotment,
+                    updated_at: new Date().toISOString(),
+                    updated_by: userId,
+                    is_override: true,
+                    override_at: new Date().toISOString(),
+                    override_by: userId,
+                    override_reason: reason || null,
+                })
+                .eq("division", division)
+                .eq("vac_year", year);
+
+            // Handle zone_id filtering
+            if (effectiveZoneId !== null) {
+                query = query.eq("zone_id", effectiveZoneId);
+            } else {
+                query = query.is("zone_id", null);
+            }
+
+            const { data, error } = await query.select();
+
+            if (error) throw error;
+
+            set((state) => ({
+                weeklyVacationAllotments: data || [],
+                tempAllotments: {
+                    ...state.tempAllotments,
+                    [year]: maxAllotment.toString(),
+                },
+            }));
+
+            console.log(
+                "[AdminStore] Successfully updated vacation allotments for year:",
+                {
+                    year,
+                    division,
+                    zoneId: effectiveZoneId,
+                    maxAllotment,
+                    updatedCount: data?.length || 0,
+                },
             );
-            const isOverride = currentData?.max_allotment !== maxAllotment;
-
-            const updateData: any = {
-                division,
-                year,
-                max_allotment: maxAllotment,
-                date: `${year}-01-01`, // Add the date field
-                // Keep updated_at and updated_by
-                updated_at: new Date().toISOString(),
-                updated_by: userId,
-                // Only include zone_id if it's not null
-                ...(effectiveZoneId !== null && { zone_id: effectiveZoneId }),
-            };
-
-            if (isOverride) {
-                updateData.is_override = true;
-                updateData.override_at = new Date().toISOString();
-                updateData.override_by = userId;
-                updateData.override_reason = reason || null; // Allow empty string turning into null
-            }
-            // No need to explicitly clear override fields if not overriding,
-            // rely on existing values or defaults unless schema requires it.
-            // else {
-            //     updateData.is_override = false;
-            //     updateData.override_at = null;
-            //     updateData.override_by = null;
-            //     updateData.override_reason = null;
-            // }
-
-            // Perform upsert operation
-            const { error: upsertError } = await supabase
-                .from("pld_sdv_allotments")
-                .upsert(
-                    updateData,
-                    {
-                        onConflict: effectiveZoneId
-                            ? "division, year, zone_id"
-                            : "division, year, zone_id",
-                    }, // Handle potential null zone_id conflict separately? Need to test. For now assume zone_id constraint works.
-                );
-
-            if (upsertError) {
-                console.error("[AdminStore] Upsert Error:", upsertError);
-                // Check for unique constraint violation (e.g., duplicate for year+division without zone)
-                if (
-                    upsertError.message.includes(
-                        "duplicate key value violates unique constraint",
-                    )
-                ) {
-                    // Handle potential conflict when zone_id is null.
-                    // Maybe try update first, then insert? Or adjust constraint.
-                    // For now, rethrow a more specific error.
-                    throw new Error(
-                        "Potential conflict updating allotment. Check if a division-wide allotment exists.",
-                    );
-                }
-                throw upsertError;
-            }
-
-            // Refetch the updated allotment to update local state correctly
-            await get().fetchAllotments(division, year, effectiveZoneId);
         } catch (error) {
-            console.error("[AdminStore] Error updating allotment:", error);
+            console.error("[updateVacationAllotment] Error:", error);
             const message = error instanceof Error
                 ? error.message
-                : "Failed to update allotment";
+                : "Failed to update vacation allotment";
             set({ error: message });
-            throw error; // Rethrow to be caught in the component
+            throw error;
         } finally {
             set({ isLoading: false });
         }

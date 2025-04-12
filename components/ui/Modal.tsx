@@ -9,10 +9,17 @@ interface ModalProps {
   visible: boolean;
   onClose: () => void;
   title: string;
-  children: React.ReactNode;
+  children?: React.ReactNode;
+  content?: string;
+  buttons?: Array<{
+    text: string;
+    onPress: () => void;
+    style?: any;
+    textStyle?: any;
+  }>;
 }
 
-export function Modal({ visible, onClose, title, children }: ModalProps) {
+export function Modal({ visible, onClose, title, children, content, buttons }: ModalProps) {
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const colors = Colors[colorScheme];
 
@@ -34,7 +41,19 @@ export function Modal({ visible, onClose, title, children }: ModalProps) {
               <Ionicons name="close" size={24} color={colors.text} />
             </TouchableOpacity>
           </View>
-          <View style={styles.body}>{children}</View>
+          <View style={styles.body}>
+            {content && <Text style={styles.contentText}>{content}</Text>}
+            {children}
+            {buttons && (
+              <View style={styles.buttonContainer}>
+                {buttons.map((button, index) => (
+                  <TouchableOpacity key={index} onPress={button.onPress} style={[styles.button, button.style]}>
+                    <Text style={[styles.buttonText, button.textStyle]}>{button.text}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+          </View>
         </View>
       </View>
     </RNModal>
@@ -73,5 +92,23 @@ const styles = StyleSheet.create({
   },
   body: {
     padding: 16,
+  },
+  contentText: {
+    fontSize: 16,
+    marginBottom: 16,
+  },
+  buttonContainer: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    marginTop: 16,
+  },
+  button: {
+    padding: 8,
+    borderRadius: 4,
+    marginLeft: 8,
+  },
+  buttonText: {
+    fontSize: 14,
+    fontWeight: "500",
   },
 });

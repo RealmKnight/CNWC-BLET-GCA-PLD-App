@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { StyleSheet, ScrollView, Platform, ViewStyle, Switch, TouchableOpacity } from "react-native";
+import { StyleSheet, ScrollView, Platform, ViewStyle, Switch, TouchableOpacity, View } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { Colors } from "@/constants/Colors";
@@ -8,6 +8,7 @@ import { ZoneCalendarAdmin } from "./ZoneCalendarAdmin";
 import { CalendarAllotments } from "./CalendarAllotments";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { useAdminCalendarManagementStore } from "@/store/adminCalendarManagementStore";
+import { DivisionSelector } from "./DivisionSelector";
 
 export function CalendarManager() {
   const {
@@ -19,156 +20,210 @@ export function CalendarManager() {
     fetchDivisionSettings,
     toggleZoneCalendars,
     setSelectedZoneId,
+    resetAllotments,
+    ensureDivisionSettingsLoaded,
   } = useAdminCalendarManagementStore();
 
-  const division = useUserStore((state) => state.division);
+  const { member, division: userDivision } = useUserStore();
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
+  const [selectedDivision, setSelectedDivision] = useState(userDivision || "");
+
+  const isAdmin = member?.role === "application_admin" || member?.role === "union_admin";
 
   useEffect(() => {
-    if (division) {
-      fetchDivisionSettings(division);
+    if (selectedDivision) {
+      const loadDivisionData = async () => {
+        try {
+          // Reset state before loading new division
+          setSelectedZoneId(null);
+          resetAllotments();
+
+          // Load division settings and wait for completion
+          await ensureDivisionSettingsLoaded(selectedDivision);
+        } catch (error) {
+          console.error("[CalendarManager] Error loading division data:", error);
+        }
+      };
+
+      loadDivisionData();
     }
-  }, [division, fetchDivisionSettings]);
+  }, [selectedDivision, ensureDivisionSettingsLoaded, setSelectedZoneId, resetAllotments]);
 
   const handleZoneCalendarToggle = async () => {
-    if (!division) return;
-    await toggleZoneCalendars(division, usesZoneCalendars);
+    if (!selectedDivision) return;
+    await toggleZoneCalendars(selectedDivision, usesZoneCalendars);
   };
 
   const handleZoneSelect = (zoneId: number) => {
     setSelectedZoneId(zoneId);
   };
 
-  const currentDivisionZones = zones[division || ""] || [];
+  const currentDivisionZones = zones[selectedDivision || ""] || [];
   const hasSingleZone = currentDivisionZones.length === 1;
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
-      <ThemedView style={styles.content}>
-        <ThemedText type="title" style={styles.title}>
-          Calendar Management
-        </ThemedText>
-
-        {error && (
-          <ThemedView style={[styles.section, styles.errorSection]}>
-            <ThemedText style={styles.errorText}>Error: {error}</ThemedText>
-          </ThemedView>
-        )}
-
-        {!hasSingleZone && (
-          <ThemedView style={styles.section}>
-            <ThemedView style={styles.toggleContainer}>
-              <ThemedText type="subtitle">Use Zone-Based Calendars</ThemedText>
-              <Switch
-                value={usesZoneCalendars}
-                onValueChange={handleZoneCalendarToggle}
+    <ThemedView style={styles.container}>
+      <ThemedView style={styles.header}>
+        <ThemedText style={styles.title}>Calendar Management</ThemedText>
+        <View style={styles.divisionContainer}>
+          <View style={styles.divisionRow}>
+            <ThemedText style={styles.divisionLabel}>Division: </ThemedText>
+            {isAdmin ? (
+              <DivisionSelector
+                currentDivision={selectedDivision}
+                onDivisionChange={setSelectedDivision}
+                isAdmin={isAdmin}
                 disabled={isLoading}
-                trackColor={{ false: Colors[colorScheme]?.border || "#ccc", true: Colors[colorScheme]?.tint || "#000" }}
               />
-            </ThemedView>
-            <ThemedText style={styles.description}>
-              {usesZoneCalendars
-                ? "Each zone will have its own calendar and allotments"
-                : "Using a single calendar for the entire division"}
+            ) : (
+              <ThemedText style={styles.divisionText}>{selectedDivision}</ThemedText>
+            )}
+          </View>
+          <View style={styles.divisionRow}>
+            <ThemedText style={styles.divisionLabel}>Zone(s): </ThemedText>
+            <ThemedText style={[styles.divisionText, styles.zoneText]}>
+              {currentDivisionZones.length > 0
+                ? currentDivisionZones.map((zone) => zone.name).join(", ")
+                : "No zones found"}
             </ThemedText>
-          </ThemedView>
-        )}
-
-        {hasSingleZone && (
-          <ThemedView style={styles.section}>
-            <ThemedText style={styles.description}>Using a single calendar for the entire division</ThemedText>
-          </ThemedView>
-        )}
-
-        {usesZoneCalendars && !hasSingleZone && (
-          <ThemedView style={styles.section}>
-            <ZoneCalendarAdmin
-              division={division || ""}
-              onZoneSelect={handleZoneSelect}
-              selectedZoneId={selectedZoneId}
-              zones={currentDivisionZones}
-              isLoading={isLoading}
-            />
-          </ThemedView>
-        )}
-
-        {(!usesZoneCalendars || hasSingleZone) && (
-          <ThemedView style={styles.section}>
-            <ThemedText type="subtitle" style={styles.sectionTitle}>
-              Division Calendar
-            </ThemedText>
-            <CalendarAllotments isZoneSpecific={false} />
-          </ThemedView>
-        )}
-
-        {usesZoneCalendars && selectedZoneId && !hasSingleZone && (
-          <ThemedView style={styles.section}>
-            <ThemedText type="subtitle" style={styles.sectionTitle}>
-              Zone Calendar
-            </ThemedText>
-            <CalendarAllotments zoneId={selectedZoneId} isZoneSpecific={true} />
-          </ThemedView>
-        )}
+          </View>
+        </View>
       </ThemedView>
-    </ScrollView>
+
+      {error ? (
+        <ThemedText style={styles.errorText}>{error}</ThemedText>
+      ) : (
+        <ScrollView style={styles.content}>
+          {!hasSingleZone && (
+            <ThemedView style={styles.zoneToggleContainer}>
+              <ThemedText>Use Zone Calendars</ThemedText>
+              <Switch value={usesZoneCalendars} onValueChange={handleZoneCalendarToggle} disabled={isLoading} />
+            </ThemedView>
+          )}
+          {usesZoneCalendars && (
+            <ThemedText style={styles.subtitleText}>Each Zone has its own calendar and allotments</ThemedText>
+          )}
+
+          {usesZoneCalendars && currentDivisionZones.length > 0 && (
+            <ZoneCalendarAdmin
+              zones={currentDivisionZones}
+              selectedZoneId={selectedZoneId}
+              onZoneSelect={handleZoneSelect}
+            />
+          )}
+
+          <CalendarAllotments zoneId={selectedZoneId || undefined} isZoneSpecific={usesZoneCalendars} />
+        </ScrollView>
+      )}
+    </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-  } as ViewStyle,
-  contentContainer: {
-    flexGrow: 1,
-  } as ViewStyle,
-  content: {
     padding: 16,
-  } as ViewStyle,
+  },
+  header: {
+    marginBottom: 16,
+  },
   title: {
     fontSize: 24,
     fontWeight: "bold",
-    marginBottom: 24,
+    marginBottom: 8,
   },
-  section: {
-    marginBottom: 24,
-    padding: 16,
-    borderRadius: 8,
-    backgroundColor: Colors.light.background,
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  } as ViewStyle,
-  errorSection: {
-    backgroundColor: Colors.light.error,
-    borderColor: Colors.light.error,
-    borderWidth: 1,
-    padding: 16,
-    borderRadius: 8,
-    marginBottom: 24,
+  content: {
+    flex: 1,
+  },
+  zoneToggleContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 16,
+    paddingHorizontal: 8,
   },
   errorText: {
-    color: Colors.dark.text,
-    fontWeight: "bold",
+    color: Colors.light.error,
+    textAlign: "center",
+    marginTop: 16,
   },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: "600",
-    marginBottom: 16,
-  },
-  toggleContainer: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
+  divisionContainer: {
     marginBottom: 8,
-  } as ViewStyle,
-  description: {
+    ...Platform.select({
+      web: {
+        flexDirection: "row",
+        alignItems: "center",
+      },
+      ios: {
+        flexDirection: "column",
+        width: "100%",
+      },
+      android: {
+        flexDirection: "column",
+        width: "100%",
+      },
+      default: {
+        flexDirection: "column",
+        width: "100%",
+      },
+    }),
+  },
+  divisionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    width: "100%",
+    ...Platform.select({
+      web: {
+        marginRight: 24,
+        flexShrink: 1,
+      },
+      ios: {
+        marginBottom: 8,
+        paddingRight: 16,
+      },
+      android: {
+        marginBottom: 8,
+        paddingRight: 16,
+      },
+      default: {
+        marginBottom: 8,
+        paddingRight: 16,
+      },
+    }),
+  },
+  divisionLabel: {
+    fontSize: 16,
+    marginRight: 8,
+    ...Platform.select({
+      ios: {
+        minWidth: 80,
+      },
+      android: {
+        minWidth: 80,
+      },
+    }),
+  },
+  divisionText: {
+    fontSize: 16,
+    fontWeight: "500",
+    flex: 1,
+    ...Platform.select({
+      ios: {
+        flexShrink: 1,
+      },
+      android: {
+        flexShrink: 1,
+      },
+    }),
+  },
+  zoneText: {
+    flexShrink: 1,
+  },
+  subtitleText: {
     fontSize: 14,
-    color: Colors.light.text,
-    marginTop: 8,
+    color: Colors.light.textDim,
+    marginTop: -8,
+    marginBottom: 16,
+    marginLeft: 8,
   },
 });

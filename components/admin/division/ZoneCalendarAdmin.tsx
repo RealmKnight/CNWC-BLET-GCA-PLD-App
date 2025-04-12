@@ -1,58 +1,32 @@
-import React, { useEffect, useState } from "react";
-import { StyleSheet, TouchableOpacity, ViewStyle } from "react-native";
+import React from "react";
+import { StyleSheet, TouchableOpacity, View } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { Colors } from "@/constants/Colors";
-import { useColorScheme } from "@/hooks/useColorScheme";
-
-interface Zone {
-  id: number;
-  name: string;
-}
+import { Zone } from "../../../types/calendar";
 
 interface ZoneCalendarAdminProps {
-  division: string;
-  onZoneSelect: (zoneId: number) => void;
-  selectedZoneId: number | null;
   zones: Zone[];
-  isLoading: boolean;
+  selectedZoneId: number | null;
+  onZoneSelect: (zoneId: number) => void;
 }
 
-export function ZoneCalendarAdmin({
-  division,
-  onZoneSelect,
-  selectedZoneId,
-  zones,
-  isLoading,
-}: ZoneCalendarAdminProps) {
-  const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
-
+export function ZoneCalendarAdmin({ zones, selectedZoneId, onZoneSelect }: ZoneCalendarAdminProps) {
   return (
     <ThemedView style={styles.container}>
-      <ThemedText type="subtitle" style={styles.title}>
-        Select Zone
-      </ThemedText>
+      <ThemedText style={styles.title}>Select Zone</ThemedText>
       <ThemedView style={styles.zoneList}>
         {zones.map((zone) => (
           <TouchableOpacity
             key={zone.id}
-            style={[
-              styles.zoneButton,
-              selectedZoneId === zone.id && {
-                backgroundColor: Colors[colorScheme].tint,
-              },
-            ]}
+            style={[styles.zoneButton, selectedZoneId === zone.id && styles.selectedZone]}
             onPress={() => onZoneSelect(zone.id)}
           >
-            <ThemedText style={[styles.zoneName, selectedZoneId === zone.id && styles.selectedZoneName]}>
+            <ThemedText style={[styles.zoneText, selectedZoneId === zone.id && styles.selectedZoneText]}>
               {zone.name}
             </ThemedText>
           </TouchableOpacity>
         ))}
-        {isLoading && <ThemedText style={styles.loadingText}>Loading zones...</ThemedText>}
-        {!isLoading && zones.length === 0 && (
-          <ThemedText style={styles.emptyText}>No zones found for this division</ThemedText>
-        )}
       </ThemedView>
     </ThemedView>
   );
@@ -60,38 +34,33 @@ export function ZoneCalendarAdmin({
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
-  } as ViewStyle,
-  title: {
-    fontSize: 18,
-    fontWeight: "600",
     marginBottom: 16,
+  },
+  title: {
+    fontSize: 16,
+    fontWeight: "600",
+    marginBottom: 8,
   },
   zoneList: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
-  } as ViewStyle,
+  },
   zoneButton: {
     padding: 8,
-    borderRadius: 8,
+    borderRadius: 4,
     borderWidth: 1,
     borderColor: Colors.light.border,
-    minWidth: 100,
-    alignItems: "center",
-  } as ViewStyle,
-  zoneName: {
-    fontSize: 14,
+    backgroundColor: Colors.light.background,
   },
-  selectedZoneName: {
-    color: "#000000",
-    fontWeight: "600",
+  selectedZone: {
+    backgroundColor: Colors.light.tint,
+    borderColor: Colors.light.tint,
   },
-  loadingText: {
-    fontStyle: "italic",
-  },
-  emptyText: {
-    fontStyle: "italic",
+  zoneText: {
     color: Colors.light.text,
+  },
+  selectedZoneText: {
+    color: Colors.light.background,
   },
 });

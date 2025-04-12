@@ -33,6 +33,14 @@ interface YearlyAllotment {
   override_reason?: string | null;
 }
 
+interface WeeklyVacationAllotment {
+  id: string;
+  vac_year: number;
+  week_start_date: string;
+  current_requests: number;
+  max_allotment: number;
+}
+
 interface ConfirmationDialogProps {
   isVisible: boolean;
   title: string;
@@ -65,13 +73,14 @@ function ConfirmationDialog({ isVisible, title, message, onConfirm, onCancel }: 
 }
 
 interface CalendarAllotmentsProps {
-  zoneId?: number;
+  zoneId: number | undefined;
   isZoneSpecific?: boolean;
 }
 
 export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarAllotmentsProps) {
   const {
     yearlyAllotments,
+    weeklyVacationAllotments,
     tempAllotments,
     selectedType,
     isLoading,
@@ -158,6 +167,10 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
     return yearlyAllotments.find((a) => a.year === year);
   };
 
+  const getVacationAllotmentsForYear = (year: number): WeeklyVacationAllotment[] => {
+    return weeklyVacationAllotments.filter((a) => a.vac_year === year);
+  };
+
   const handleUpdateConfirmed = async (year: number, numValue: number) => {
     if (!user || !division) return;
 
@@ -197,7 +210,8 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
     }
   };
 
-  const handleUpdateAllotment = async (year: number) => {
+  const handleUpdateAllotment = async (year: number, type: AllotmentType) => {
+    setSelectedType(type);
     if (!division) {
       const msg = "No division found. Please contact your administrator.";
       if (Platform.OS === "web") {
@@ -260,8 +274,14 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
     });
   };
 
-  const renderYearInput = (year: number) => {
-    const allotment = getAllotmentForYear(year);
+  useEffect(() => {
+    setSelectedType("pld_sdv");
+  }, []);
+
+  const renderYearInput = (year: number, type: AllotmentType) => {
+    const allotment = type === "pld_sdv" ? getAllotmentForYear(year) : undefined;
+    const vacationAllotments = type === "vacation" ? getVacationAllotmentsForYear(year) : [];
+
     const isOverridden = allotment?.is_override;
     const overrideInfo =
       isOverridden && allotment
@@ -272,15 +292,19 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
           }
         : null;
 
-    const currentTempValue = tempAllotments[year] ?? (allotment?.max_allotment ?? 0).toString();
+    const currentTempValue =
+      tempAllotments[year] ??
+      (type === "pld_sdv"
+        ? (allotment?.max_allotment ?? 0).toString()
+        : (vacationAllotments[0]?.max_allotment ?? 0).toString());
 
     return (
-      <ThemedView key={year} style={styles.yearContainerInternal}>
+      <ThemedView key={`${year}-${type}`} style={styles.yearContainerInternal}>
         <ThemedView style={styles.yearHeader}>
           <ThemedText type="subtitle" style={styles.yearTitle}>
             {year}
           </ThemedText>
-          {isOverridden && (
+          {isOverridden && type === "pld_sdv" && (
             <Tooltip
               content={
                 <ThemedView style={styles.tooltipContent}>
@@ -318,12 +342,25 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
                 opacity: isLoading ? 0.5 : 1,
               },
             ]}
-            onPress={() => handleUpdateAllotment(year)}
+            onPress={() => handleUpdateAllotment(year, type)}
             disabled={isLoading}
           >
             <ThemedText style={styles.updateButtonText}>Update</ThemedText>
           </TouchableOpacity>
         </ThemedView>
+        {type === "vacation" && vacationAllotments.length > 0 && (
+          <ThemedView style={styles.weeklyAllotmentsContainer}>
+            <ThemedText style={styles.weeklyAllotmentsTitle}>Weekly Breakdown</ThemedText>
+            {vacationAllotments.map((weekAllotment) => (
+              <ThemedView key={weekAllotment.id} style={styles.weeklyAllotmentRow}>
+                <ThemedText>Week of {format(new Date(weekAllotment.week_start_date), "MMM d, yyyy")}</ThemedText>
+                <ThemedText>
+                  {weekAllotment.current_requests} / {weekAllotment.max_allotment} spots taken
+                </ThemedText>
+              </ThemedView>
+            ))}
+          </ThemedView>
+        )}
       </ThemedView>
     );
   };
@@ -334,7 +371,7 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
         <ThemedView style={styles.zoneInfo}>
           <ThemedText type="title">Zone Calendar</ThemedText>
           <ThemedText style={styles.zoneDescription}>
-            {zoneName ? `Managing calendar for zone: ${zoneName}` : "Loading zone information..."}
+            {zoneName ? `Managing calendar allotments for zone: ${zoneName}` : "Loading zone information..."}
           </ThemedText>
         </ThemedView>
       )}
@@ -345,14 +382,25 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
         </ThemedView>
       )}
 
+      <ThemedText type="title" style={styles.titleStyle}>
+        Single Day Allotments
+      </ThemedText>
       <ThemedView style={styles.yearSectionsContainer}>
-        {renderYearInput(currentYear)}
-        {renderYearInput(nextYear)}
+        {renderYearInput(currentYear, "pld_sdv")}
+        {renderYearInput(nextYear, "pld_sdv")}
+      </ThemedView>
+
+      <ThemedText type="title" style={styles.titleStyle}>
+        Vacation Allotments
+      </ThemedText>
+      <ThemedView style={styles.yearSectionsContainer}>
+        {renderYearInput(currentYear, "vacation")}
+        {renderYearInput(nextYear, "vacation")}
       </ThemedView>
 
       <ConfirmationDialog
         isVisible={confirmDialog.isVisible}
-        title="Update Allotment"
+        title={`Update ${selectedType === "vacation" ? "Vacation" : "Single Day"} Allotment`}
         message={`Are you sure you want to update the allotment for ${confirmDialog.year} to ${confirmDialog.value}?`}
         onConfirm={() => handleUpdateConfirmed(confirmDialog.year, confirmDialog.value)}
         onCancel={() => setConfirmDialog({ isVisible: false, year: 0, value: 0 })}
@@ -365,6 +413,10 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     padding: 16,
+  },
+  titleStyle: {
+    marginBottom: 16,
+    marginTop: 6,
   },
   zoneInfo: {
     marginBottom: 16,
@@ -395,6 +447,7 @@ const styles = StyleSheet.create({
   },
   yearSectionsContainer: {
     gap: 24,
+    marginBottom: 24,
   },
   yearContainerInternal: {
     gap: 8,
@@ -485,5 +538,24 @@ const styles = StyleSheet.create({
   },
   modalButtonText: {
     fontWeight: "600",
+  },
+  weeklyAllotmentsContainer: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: Colors.light.background,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+  },
+  weeklyAllotmentsTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    marginBottom: 8,
+  },
+  weeklyAllotmentRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 4,
   },
 });
