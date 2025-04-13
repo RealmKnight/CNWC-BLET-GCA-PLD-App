@@ -68,8 +68,11 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false, selectedDiv
     updateVacationAllotment,
     resetAllotments,
     selectedZoneId,
-    usesZoneCalendars,
   } = useAdminCalendarManagementStore();
+
+  // Select usesZoneCalendars reactively
+  const usesZoneCalendars = useAdminCalendarManagementStore((state) => state.usesZoneCalendars);
+  const isDivisionReadyMap = useAdminCalendarManagementStore((state) => state.isDivisionReadyMap);
 
   const [zoneName, setZoneName] = useState<string>("");
 
@@ -109,36 +112,79 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false, selectedDiv
   useEffect(() => {
     if (!user || !effectiveDivision) return;
 
-    const fetchZoneId = isZoneSpecific ? zoneId : null;
+    // Check readiness using the reactive map from the store
+    const isReady = !!isDivisionReadyMap[effectiveDivision];
 
-    if (isZoneSpecific && (fetchZoneId === undefined || fetchZoneId === null)) {
-      console.log("[CalendarAllotments] Zone specific view, but zoneId is not ready. Skipping fetch.");
+    // Guard: Check if the division is ready first
+    if (!isReady) {
+      console.log(
+        "[CalendarAllotments] Division " + effectiveDivision + " is not ready yet (isReady flag). Skipping fetch."
+      );
       return;
     }
 
-    console.log("[CalendarAllotments] Fetching allotments effect triggered", {
+    // Now that we know it's ready, get the definitive current state for this fetch
+    const currentState = useAdminCalendarManagementStore.getState();
+    const divisionUsesZonesNow = currentState.usesZoneCalendars;
+    const effectiveFetchZoneId = divisionUsesZonesNow ? zoneId : null;
+
+    // Guard: Don't fetch if zone-specific and the zoneId prop isn't ready
+    if (divisionUsesZonesNow && (zoneId === undefined || zoneId === null)) {
+      console.log("[CalendarAllotments] Zone specific view, but zoneId prop is not ready. Skipping fetch.", {
+        propZoneId: zoneId,
+      });
+      return;
+    }
+
+    console.log("[CalendarAllotments] useEffect Triggered (Division Ready). Preparing to fetch...", {
       division: effectiveDivision,
       currentYear,
       nextYear,
-      fetchZoneId,
-      isZoneSpecific,
+      effectiveFetchZoneId,
+      divisionUsesZones: divisionUsesZonesNow, // Use the latest confirmed value
+      propZoneId: zoneId,
     });
 
+    const abortController = new AbortController();
+
     const loadAllotments = async () => {
-      await fetchAllotments(effectiveDivision, currentYear, fetchZoneId);
-      await fetchAllotments(effectiveDivision, nextYear, fetchZoneId);
+      try {
+        // Check if the signal is already aborted
+        if (abortController.signal.aborted) {
+          console.log("[CalendarAllotments] Aborted before fetching year", currentYear);
+          return;
+        }
+
+        console.log("[CalendarAllotments] Fetching year", currentYear, "with zone", effectiveFetchZoneId);
+        await fetchAllotments(effectiveDivision, currentYear, effectiveFetchZoneId);
+
+        // Check again before fetching next year
+        if (abortController.signal.aborted) {
+          console.log("[CalendarAllotments] Aborted before fetching year", nextYear);
+          return;
+        }
+
+        console.log("[CalendarAllotments] Fetching year", nextYear, "with zone", effectiveFetchZoneId);
+        await fetchAllotments(effectiveDivision, nextYear, effectiveFetchZoneId);
+        console.log("[CalendarAllotments] Fetches completed for zone", effectiveFetchZoneId);
+      } catch (error) {
+        if (!abortController.signal.aborted) {
+          console.error("[CalendarAllotments] Error loading allotments:", error);
+        }
+      }
     };
 
     loadAllotments();
 
-    // Only reset allotments when unmounting or when zone changes within the same division
+    // Cleanup function
     return () => {
-      if (isZoneSpecific && fetchZoneId !== zoneId) {
-        console.log("[CalendarAllotments] Cleanup: Resetting allotments for zone change", { zoneId: fetchZoneId });
-        resetAllotments();
-      }
+      console.log("[CalendarAllotments] Cleanup for effect with zone", effectiveFetchZoneId);
+      abortController.abort();
+      // Resetting allotments is handled by the store when zone/division actually changes
     };
-  }, [user, effectiveDivision, zoneId, isZoneSpecific, fetchAllotments, resetAllotments]);
+    // Dependencies: Fetch when user, division, the specific zoneId prop, OR the zone mode changes.
+    // fetchAllotments ref should be stable.
+  }, [user, effectiveDivision, zoneId, usesZoneCalendars, isDivisionReadyMap, fetchAllotments]);
 
   const getAllotmentForYear = (year: number): YearlyAllotment | undefined => {
     return yearlyAllotments.find((a) => a.year === year);

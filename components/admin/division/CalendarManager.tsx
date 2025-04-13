@@ -22,11 +22,13 @@ export function CalendarManager() {
     resetAllotments,
     ensureDivisionSettingsLoaded,
     prepareDivisionSwitch,
+    isSwitchingDivision,
   } = useAdminCalendarManagementStore();
 
   const { member, division: userDivision } = useUserStore();
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const [selectedDivision, setSelectedDivision] = useState(userDivision || "");
+  const [prevSelectedDivision, setPrevSelectedDivision] = useState<string | null>(null);
 
   const isAdmin = member?.role === "application_admin" || member?.role === "union_admin";
   const currentDivisionZones = zones[selectedDivision || ""] || [];
@@ -36,11 +38,17 @@ export function CalendarManager() {
   useEffect(() => {
     if (!selectedDivision) return;
 
+    // Update previous division *before* the async logic
+    if (prevSelectedDivision !== selectedDivision) {
+      setPrevSelectedDivision(selectedDivision);
+    }
+
     const loadDivisionData = async () => {
       try {
         if (isAdmin) {
           // For admin users, handle division switching properly
-          await prepareDivisionSwitch(userDivision || "", selectedDivision);
+          // Use the *previous* selected division as the 'from' argument
+          await prepareDivisionSwitch(prevSelectedDivision || userDivision || "", selectedDivision);
         } else {
           // For division admins, just load their division once
           await ensureDivisionSettingsLoaded(selectedDivision);
@@ -51,11 +59,17 @@ export function CalendarManager() {
     };
 
     loadDivisionData();
+    // Dependency on selectedDivision triggers this, prevSelectedDivision is handled internally
   }, [selectedDivision, isAdmin, userDivision, ensureDivisionSettingsLoaded, prepareDivisionSwitch]);
 
   const handleZoneCalendarToggle = async () => {
     if (!selectedDivision) return;
     await toggleZoneCalendars(selectedDivision, usesZoneCalendars);
+  };
+
+  const handleDivisionChange = (newDivision: string) => {
+    setPrevSelectedDivision(selectedDivision); // Store current before changing
+    setSelectedDivision(newDivision);
   };
 
   const handleZoneSelect = (zoneId: number) => {
@@ -72,9 +86,9 @@ export function CalendarManager() {
             {isAdmin ? (
               <DivisionSelector
                 currentDivision={selectedDivision}
-                onDivisionChange={setSelectedDivision}
+                onDivisionChange={handleDivisionChange}
                 isAdmin={isAdmin}
-                disabled={isLoading}
+                disabled={isLoading || isSwitchingDivision}
               />
             ) : (
               <ThemedText style={styles.divisionText}>{selectedDivision}</ThemedText>

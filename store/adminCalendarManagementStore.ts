@@ -61,6 +61,19 @@ interface AdminCalendarManagementState {
     // New state for tracking loaded settings
     loadedDivisions: Set<string>;
 
+    // Add new properties for caching allotments per division
+    allotmentCache: Record<string, {
+        yearlyAllotments: YearlyAllotment[];
+        weeklyVacationAllotments: WeeklyVacationAllotment[];
+        pldSdvTempAllotments: Record<number, string>;
+        vacationTempAllotments: Record<number, string>;
+    }>;
+
+    // New properties
+    currentFetchingDivision: string | null;
+    isSwitchingDivision: boolean;
+    isDivisionReadyMap: Record<string, boolean>; // NEW: Track readiness per division
+
     // Actions
     setError: (error: string | null) => void;
     setIsLoading: (isLoading: boolean) => void;
@@ -140,6 +153,17 @@ interface AdminCalendarManagementState {
 
 // Keep track of ongoing fetches outside the store state
 const divisionLoadPromises = new Map<string, Promise<void>>();
+const allotmentFetchPromises = new Map<string, Promise<void>>();
+
+// Helper function to generate allotment fetch key
+function getAllotmentFetchKey(
+    division: string,
+    year: number,
+    zoneId: number | null,
+    type: "pld_sdv" | "vacation",
+): string {
+    return `${division}-${year}-${zoneId}-${type}`;
+}
 
 export const useAdminCalendarManagementStore = create<
     AdminCalendarManagementState
@@ -165,6 +189,12 @@ export const useAdminCalendarManagementStore = create<
     currentLoadingDivision: null,
     lastLoadedDivision: null,
 
+    // New properties
+    currentFetchingDivision: null,
+    isSwitchingDivision: false,
+    allotmentCache: {},
+    isDivisionReadyMap: {}, // NEW: Initialize
+
     // Simple Setters
     setError: (error) => set({ error }),
     setIsLoading: (isLoading) => set({ isLoading }),
@@ -179,23 +209,86 @@ export const useAdminCalendarManagementStore = create<
             zoneId,
         );
         const prevZoneId = get().selectedZoneId;
-        const division = useUserStore.getState().division;
+        // Use the currently loaded division from this store's state
+        const currentViewedDivision = get().lastLoadedDivision;
 
         // Only reset and refetch if actually changing zones
         if (prevZoneId !== zoneId) {
-            set({ selectedZoneId: zoneId });
+            // Get the currently viewed division from the store's state
+            // const currentViewedDivision = get().lastLoadedDivision || division; // Already defined above
+            set((state) => ({
+                selectedZoneId: zoneId,
+                // Mark division as not ready during zone change within it
+                isDivisionReadyMap: {
+                    ...state.isDivisionReadyMap,
+                    [String(currentViewedDivision)]: false,
+                },
+            }));
             get().resetAllotments(); // Reset allotments when zone selection changes
 
             // Fetch allotments for the new zone if we have a division
-            if (division) {
+            if (currentViewedDivision) {
                 const currentYear = new Date().getFullYear();
-                if (zoneId !== null && get().usesZoneCalendars) {
-                    get().fetchAllotments(division, currentYear, zoneId);
-                    get().fetchAllotments(division, currentYear + 1, zoneId);
-                } else if (zoneId === null && !get().usesZoneCalendars) {
-                    get().fetchAllotments(division, currentYear);
-                    get().fetchAllotments(division, currentYear + 1);
-                }
+                const fetchAndMarkReady = async () => {
+                    try {
+                        // Set loading/not ready state
+                        set((state) => ({
+                            isAllotmentsLoading: true,
+                            isDivisionReadyMap: {
+                                ...state.isDivisionReadyMap,
+                                [String(currentViewedDivision)]: false,
+                            },
+                        }));
+
+                        if (zoneId !== null && get().usesZoneCalendars) {
+                            await get().fetchAllotments(
+                                currentViewedDivision,
+                                currentYear,
+                                zoneId,
+                            );
+                            await get().fetchAllotments(
+                                currentViewedDivision,
+                                currentYear + 1,
+                                zoneId,
+                            );
+                        } else if (
+                            zoneId === null && !get().usesZoneCalendars
+                        ) {
+                            await get().fetchAllotments(
+                                currentViewedDivision,
+                                currentYear,
+                            );
+                            await get().fetchAllotments(
+                                currentViewedDivision,
+                                currentYear + 1,
+                            );
+                        }
+                        // Mark as ready ONLY after fetches complete
+                        set((state) => ({
+                            isAllotmentsLoading: false,
+                            isDivisionReadyMap: {
+                                ...state.isDivisionReadyMap,
+                                [String(currentViewedDivision)]: true,
+                            },
+                        }));
+                        console.log(
+                            `[AdminStore] Marked division ${currentViewedDivision} as ready after zone change to ${zoneId}`,
+                        );
+                    } catch (error) {
+                        console.error(
+                            `[AdminStore] Error fetching allotments after zone change for ${currentViewedDivision}:`,
+                            error,
+                        );
+                        set((state) => ({
+                            isAllotmentsLoading: false,
+                            error:
+                                `Failed to load allotments for zone ${zoneId}`,
+                            // Leave readiness as false on error?
+                            // isDivisionReadyMap: { ...state.isDivisionReadyMap, [String(currentViewedDivision)]: false },
+                        }));
+                    }
+                };
+                fetchAndMarkReady();
             }
         }
     },
@@ -227,40 +320,53 @@ export const useAdminCalendarManagementStore = create<
     },
     resetAllotments: () => {
         console.log("[AdminStore] Resetting allotments state");
-        const currentZoneId = get().selectedZoneId;
-        set((state) => ({
-            yearlyAllotments: [],
-            weeklyVacationAllotments: [],
-            pldSdvTempAllotments: {},
-            vacationTempAllotments: {},
-            // Maintain zone ID during reset unless explicitly clearing it
-            selectedZoneId: currentZoneId,
-        }));
+        const currentState = get();
+        const currentDivision = useUserStore.getState().division;
+
+        if (!currentDivision) return;
+
+        // Clear current division's cache
+        set((state) => {
+            const { [currentDivision]: _, ...restCache } = state.allotmentCache;
+            return {
+                yearlyAllotments: [],
+                weeklyVacationAllotments: [],
+                pldSdvTempAllotments: {},
+                vacationTempAllotments: {},
+                allotmentCache: restCache,
+                selectedZoneId: currentState.selectedZoneId, // Maintain zone ID during reset
+            };
+        });
     },
 
     // Fetch Division Settings (modified to handle state better)
     fetchDivisionSettings: async (division) => {
         if (!division) return Promise.resolve();
 
-        set({
+        const currentFetching = get().currentFetchingDivision;
+        if (currentFetching && currentFetching !== division) {
+            console.log(
+                `[AdminStore] Skipping fetch for ${division}, currently fetching ${currentFetching}`,
+            );
+            return;
+        }
+
+        set((state) => ({
             isDivisionLoading: true,
             isZonesLoading: true,
             error: null,
-        });
+            currentFetchingDivision: division,
+            isDivisionReadyMap: {
+                ...state.isDivisionReadyMap,
+                [division]: false,
+            }, // Mark as not ready
+        }));
         let divisionId: number | null = null;
 
         try {
             console.log(
                 `[AdminStore] Fetching settings for division ${division}`,
             );
-
-            // Check if we already have settings for this division
-            if (get().loadedDivisions.has(division)) {
-                console.log(
-                    `[AdminStore] Using cached settings for division ${division}`,
-                );
-                return;
-            }
 
             const { data: divisionData, error: divisionError } = await supabase
                 .from("divisions")
@@ -330,6 +436,7 @@ export const useAdminCalendarManagementStore = create<
             set({
                 isDivisionLoading: false,
                 isZonesLoading: false,
+                currentFetchingDivision: null,
             });
         }
     },
@@ -337,24 +444,46 @@ export const useAdminCalendarManagementStore = create<
     // Ensure Division Settings are Loaded (New Action)
     ensureDivisionSettingsLoaded: async (division) => {
         if (!division) return Promise.resolve();
-        if (get().loadedDivisions.has(division)) {
-            // console.log(`[AdminStore] ensureDivisionSettingsLoaded: Already loaded for ${division}`); // DEBUG
+
+        const currentState = get();
+        // Also check readiness map
+        if (
+            currentState.loadedDivisions.has(division) &&
+            currentState.isDivisionReadyMap[division]
+        ) {
             return Promise.resolve();
         }
 
-        // Check if a fetch is already in progress
         if (divisionLoadPromises.has(division)) {
-            // console.log(`[AdminStore] ensureDivisionSettingsLoaded: Awaiting existing fetch for ${division}`); // DEBUG
             return divisionLoadPromises.get(division);
         }
 
-        // Start a new fetch
-        // console.log(`[AdminStore] ensureDivisionSettingsLoaded: Starting fetch for ${division}`); // DEBUG
+        // Mark as not ready before starting fetch
+        set((state) => ({
+            isDivisionReadyMap: {
+                ...state.isDivisionReadyMap,
+                [division]: false,
+            },
+        }));
+
         const fetchPromise = get().fetchDivisionSettings(division)
+            .then(() => {
+                // After fetch succeeds, mark as ready ONLY if not currently switching
+                // (prepareDivisionSwitch handles readiness in its own flow)
+                if (!get().isSwitchingDivision) {
+                    set((state) => ({
+                        isDivisionReadyMap: {
+                            ...state.isDivisionReadyMap,
+                            [division]: true,
+                        },
+                    }));
+                    console.log(
+                        `[AdminStore] Marked division ${division} as ready via ensureDivisionSettingsLoaded`,
+                    );
+                }
+            })
             .finally(() => {
-                // Remove the promise from the map once it's settled (succeeded or failed)
                 divisionLoadPromises.delete(division);
-                // console.log(`[AdminStore] ensureDivisionSettingsLoaded: Fetch settled for ${division}`); // DEBUG
             });
 
         divisionLoadPromises.set(division, fetchPromise);
@@ -488,7 +617,7 @@ export const useAdminCalendarManagementStore = create<
         }
     },
 
-    // Split fetchAllotments into two separate functions
+    // Update fetchPldSdvAllotments to use cache
     fetchPldSdvAllotments: async (
         division: string,
         year: number,
@@ -509,13 +638,6 @@ export const useAdminCalendarManagementStore = create<
             year,
             zoneId: effectiveZoneId,
         });
-
-        if (get().usesZoneCalendars && effectiveZoneId === null) {
-            console.log(
-                "[AdminStore] Zone calendars enabled, but no zone selected. Skipping PLD/SDV allotment fetch.",
-            );
-            return;
-        }
 
         try {
             let query = supabase
@@ -547,21 +669,45 @@ export const useAdminCalendarManagementStore = create<
             };
 
             set((state) => {
-                const existingIndex = state.yearlyAllotments.findIndex((a) =>
-                    a.year === year
-                );
-                let updatedAllotments = [...state.yearlyAllotments];
+                // Get or initialize cache for this division
+                const divisionCache = state.allotmentCache[division] || {
+                    yearlyAllotments: [],
+                    weeklyVacationAllotments: [],
+                    pldSdvTempAllotments: {},
+                    vacationTempAllotments: {},
+                };
+
+                // Update the cache
+                const existingIndex = divisionCache.yearlyAllotments.findIndex((
+                    a,
+                ) => a.year === year);
+                let updatedYearlyAllotments = [
+                    ...divisionCache.yearlyAllotments,
+                ];
                 if (existingIndex > -1) {
-                    updatedAllotments[existingIndex] = newAllotment;
+                    updatedYearlyAllotments[existingIndex] = newAllotment;
                 } else {
-                    updatedAllotments.push(newAllotment);
+                    updatedYearlyAllotments.push(newAllotment);
                 }
 
+                const updatedCache = {
+                    ...divisionCache,
+                    yearlyAllotments: updatedYearlyAllotments,
+                    pldSdvTempAllotments: {
+                        ...divisionCache.pldSdvTempAllotments,
+                        [year]: newAllotment.max_allotment.toString(),
+                    },
+                };
+
                 return {
-                    yearlyAllotments: updatedAllotments,
+                    yearlyAllotments: updatedYearlyAllotments,
                     pldSdvTempAllotments: {
                         ...state.pldSdvTempAllotments,
                         [year]: newAllotment.max_allotment.toString(),
+                    },
+                    allotmentCache: {
+                        ...state.allotmentCache,
+                        [division]: updatedCache,
                     },
                 };
             });
@@ -646,12 +792,85 @@ export const useAdminCalendarManagementStore = create<
         }
     },
 
-    // Keep fetchAllotments as a convenience method that calls both
+    // Update fetchAllotments to handle concurrent fetches
     fetchAllotments: async (division: string, year: number, zoneId = null) => {
-        await Promise.all([
-            get().fetchPldSdvAllotments(division, year, zoneId),
-            get().fetchVacationAllotments(division, year, zoneId),
-        ]);
+        const currentState = get();
+
+        // Don't skip fetches during division switch anymore - we want the data
+        // Instead, ensure we're fetching for the right division
+        if (
+            currentState.currentFetchingDivision &&
+            currentState.currentFetchingDivision !== division
+        ) {
+            console.log("[AdminStore] Deferring allotment fetch:", {
+                requestedDivision: division,
+                currentFetching: currentState.currentFetchingDivision,
+            });
+            return;
+        }
+
+        // Determine the effective zone ID based on division settings
+        const divisionZones = currentState.zones[division] || [];
+        const divisionUsesZones = currentState.usesZoneCalendars &&
+            divisionZones.length > 0;
+        const effectiveZoneId = divisionUsesZones ? zoneId : null;
+
+        console.log("[AdminStore] Preparing allotment fetch:", {
+            division,
+            year,
+            requestedZoneId: zoneId,
+            effectiveZoneId,
+            usesZones: divisionUsesZones,
+        });
+
+        // Create promises for both types of allotments
+        const pldKey = getAllotmentFetchKey(
+            division,
+            year,
+            effectiveZoneId,
+            "pld_sdv",
+        );
+        const vacKey = getAllotmentFetchKey(
+            division,
+            year,
+            effectiveZoneId,
+            "vacation",
+        );
+
+        // If either fetch is already in progress, wait for it
+        const existingPldFetch = allotmentFetchPromises.get(pldKey);
+        const existingVacFetch = allotmentFetchPromises.get(vacKey);
+
+        if (existingPldFetch || existingVacFetch) {
+            console.log(
+                "[AdminStore] Waiting for existing allotment fetches to complete",
+            );
+            await Promise.all(
+                [existingPldFetch, existingVacFetch].filter(Boolean),
+            );
+            return;
+        }
+
+        // Create new fetch promises
+        const pldPromise = get().fetchPldSdvAllotments(
+            division,
+            year,
+            effectiveZoneId,
+        )
+            .finally(() => allotmentFetchPromises.delete(pldKey));
+        const vacPromise = get().fetchVacationAllotments(
+            division,
+            year,
+            effectiveZoneId,
+        )
+            .finally(() => allotmentFetchPromises.delete(vacKey));
+
+        // Store the promises
+        allotmentFetchPromises.set(pldKey, pldPromise);
+        allotmentFetchPromises.set(vacKey, vacPromise);
+
+        // Wait for both to complete
+        await Promise.all([pldPromise, vacPromise]);
     },
 
     // Update/Insert Yearly Allotment for PLD/SDV only
@@ -878,64 +1097,162 @@ export const useAdminCalendarManagementStore = create<
         console.log("[AdminStore] Division state cleanup complete");
     },
 
-    // New division switch preparation
+    // Update prepareDivisionSwitch to use cache
     prepareDivisionSwitch: async (fromDivision: string, toDivision: string) => {
         if (fromDivision === toDivision) {
-            // If switching to the same division, just ensure it's loaded
-            // and maintain the current zone ID
+            if (
+                get().loadedDivisions.has(toDivision) &&
+                !get().isDivisionReadyMap[toDivision]
+            ) {
+                set((state) => ({
+                    isDivisionReadyMap: {
+                        ...state.isDivisionReadyMap,
+                        [toDivision]: true,
+                    },
+                }));
+            }
             return get().ensureDivisionSettingsLoaded(toDivision);
         }
 
-        console.log("[AdminStore] Preparing division switch:", {
+        console.log("[AdminStore] Prepare Switch START:", {
             from: fromDivision,
             to: toDivision,
         });
 
-        // Store current state before reset
-        const currentState = get();
-        const shouldPreserveZoneId = currentState.usesZoneCalendars &&
-            currentState.selectedZoneId !== null &&
-            currentState.zones[toDivision]?.some((z) =>
-                z.id === currentState.selectedZoneId
-            );
-
-        set({
+        // Step 1: Set Loading/Switching State & Clear Old Data
+        set((state) => ({
             isDivisionLoading: true,
+            isSwitchingDivision: true,
+            currentFetchingDivision: toDivision,
             currentLoadingDivision: toDivision,
             error: null,
-            // Only reset zone ID if it's not valid in the new division
-            selectedZoneId: shouldPreserveZoneId
-                ? currentState.selectedZoneId
-                : null,
-        });
+            isDivisionReadyMap: {
+                ...state.isDivisionReadyMap,
+                [toDivision]: false,
+            },
+            usesZoneCalendars: false, // Default to false until settings load
+            selectedZoneId: null,
+            yearlyAllotments: [],
+            weeklyVacationAllotments: [],
+            pldSdvTempAllotments: {},
+            vacationTempAllotments: {},
+        }));
 
         try {
-            // Don't clean up old division state, just load new division settings
+            // Step 2: Fetch Settings (this updates usesZoneCalendars/zones internally)
             await get().ensureDivisionSettingsLoaded(toDivision);
 
-            // Validate new state
-            if (!get().validateDivisionState(toDivision)) {
-                throw new Error("Division state validation failed");
+            // Step 3: Determine New State (read state *after* settings load)
+            const newDivisionState = get();
+            const newDivisionZones = newDivisionState.zones[toDivision] || [];
+            const newDivisionUsesZones = newDivisionState.usesZoneCalendars; // Read the definitive value
+
+            // Need previous state *before* the switch started to check if zone should be preserved
+            // This is tricky as state is mutable. We might need a snapshot, or rely on props passed initially.
+            // For now, let's assume if the new division uses zones, we select the first one or null.
+            const targetZoneId = newDivisionUsesZones
+                ? (newDivisionZones[0]?.id ?? null)
+                : null;
+
+            console.log("[AdminStore] Prepare Switch - Settings Loaded:", {
+                division: toDivision,
+                usesZones: newDivisionUsesZones,
+                zonesFound: newDivisionZones.length,
+                calculatedTargetZoneId: targetZoneId,
+            });
+
+            // Step 4: Apply Core State Update
+            const cachedData = newDivisionState.allotmentCache[toDivision]; // Check cache using latest state
+            set((state) => ({
+                lastLoadedDivision: toDivision,
+                selectedZoneId: targetZoneId, // Apply the calculated zone ID
+                // Restore cached data if available
+                ...(cachedData
+                    ? {
+                        yearlyAllotments: cachedData.yearlyAllotments,
+                        weeklyVacationAllotments:
+                            cachedData.weeklyVacationAllotments,
+                        pldSdvTempAllotments: cachedData.pldSdvTempAllotments,
+                        vacationTempAllotments:
+                            cachedData.vacationTempAllotments,
+                    }
+                    : {}),
+                // isDivisionReadyMap is still false
+            }));
+
+            console.log("[AdminStore] Prepare Switch - Core State Updated:", {
+                selectedZoneId: get().selectedZoneId,
+            });
+
+            // Step 5: Fetch Allotments (if needed)
+            if (!cachedData) {
+                console.log(
+                    "[AdminStore] Prepare Switch - Fetching allotments for",
+                    toDivision,
+                    "Zone:",
+                    targetZoneId,
+                );
+                const currentYear = new Date().getFullYear();
+                await get().fetchAllotments(
+                    toDivision,
+                    currentYear,
+                    targetZoneId,
+                );
+                await get().fetchAllotments(
+                    toDivision,
+                    currentYear + 1,
+                    targetZoneId,
+                );
+                console.log(
+                    "[AdminStore] Prepare Switch - Allotment fetch complete",
+                );
+            } else {
+                console.log(
+                    "[AdminStore] Prepare Switch - Using cached allotments for",
+                    toDivision,
+                );
             }
 
-            set({ lastLoadedDivision: toDivision });
+            // Step 6: Mark Ready (Last Step)
+            set({ isSwitchingDivision: false }); // Set switching false first
+            set((state) => ({
+                isDivisionReadyMap: {
+                    ...state.isDivisionReadyMap,
+                    [toDivision]: true,
+                },
+            }));
             console.log(
-                "[AdminStore] Successfully switched to division:",
+                "[AdminStore] Prepare Switch END - Marked Ready:",
                 toDivision,
-                shouldPreserveZoneId ? "preserving zone ID" : "zone ID reset",
             );
         } catch (error) {
-            console.error("[AdminStore] Error during division switch:", error);
+            // ... (error handling remains similar, ensure reset) ...
+            console.error("[AdminStore] Prepare Switch ERROR:", error);
             const message = error instanceof Error
                 ? error.message
                 : "Failed to switch divisions";
-            set({ error: message });
-            throw error;
+            set((state) => ({
+                error: message,
+                isSwitchingDivision: false,
+                isDivisionLoading: false,
+                currentFetchingDivision: null,
+                currentLoadingDivision: null,
+                usesZoneCalendars: false,
+                selectedZoneId: null,
+                isDivisionReadyMap: {
+                    ...state.isDivisionReadyMap,
+                    [toDivision]: false,
+                },
+            }));
+            // Potentially re-throw or handle differently depending on requirements
+            // throw error;
         } finally {
-            set({
+            // Minimal cleanup in finally, most flags are reset within try/catch
+            set((state) => ({
                 isDivisionLoading: false,
                 currentLoadingDivision: null,
-            });
+                currentFetchingDivision: null,
+            }));
         }
     },
 
