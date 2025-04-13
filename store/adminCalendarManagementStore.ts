@@ -33,15 +33,22 @@ interface AdminCalendarManagementState {
     divisionsWithZones: Record<string, number[]>;
     zones: Record<string, Zone[]>; // Store zones per division
 
+    // Enhanced loading states
+    isDivisionLoading: boolean;
+    isAllotmentsLoading: boolean;
+    isZonesLoading: boolean;
+    currentLoadingDivision: string | null;
+    lastLoadedDivision: string | null;
+
     // State for PLD/SDV allotments
     yearlyAllotments: YearlyAllotment[];
-    pldSdvTempAllotments: Record<number, string>; // Temporary input values for PLD/SDV yearly allotments
+    pldSdvTempAllotments: Record<number, string>;
 
     // State for vacation allotments
     weeklyVacationAllotments: WeeklyVacationAllotment[];
-    vacationTempAllotments: Record<number, string>; // Temporary input values for vacation allotments
+    vacationTempAllotments: Record<number, string>;
 
-    selectedType: AllotmentType; // "pld_sdv" or "vacation"
+    selectedType: AllotmentType;
 
     // New state moved from CalendarManager local state
     usesZoneCalendars: boolean;
@@ -52,7 +59,7 @@ interface AdminCalendarManagementState {
     error: string | null;
 
     // New state for tracking loaded settings
-    loadedDivisions: Set<string>; // Track loaded divisions
+    loadedDivisions: Set<string>;
 
     // Actions
     setError: (error: string | null) => void;
@@ -99,6 +106,11 @@ interface AdminCalendarManagementState {
         zoneId?: number | null,
         reason?: string,
     ) => Promise<void>;
+    fetchPldSdvAllotments: (
+        division: string,
+        year: number,
+        zoneId?: number | null,
+    ) => Promise<void>;
     fetchVacationAllotments: (
         division: string,
         year: number,
@@ -114,13 +126,16 @@ interface AdminCalendarManagementState {
     ) => Promise<void>;
     resetAllotments: () => void; // Reset allotments when scope changes
 
-    // REMOVE Actions for Zone Calendars
-    // fetchZoneCalendars: (divisionId: number) => Promise<void>;
-    // createZoneCalendar: (calendarData: Omit<ZoneCalendar, 'id' | 'current_requests'>) => Promise<void>;
-    // updateZoneCalendar: (calendarData: ZoneCalendar) => Promise<void>;
-    // deleteZoneCalendar: (calendarId: number) => Promise<void>;
-    // validateCalendarDates: (startDate: string, endDate: string) => boolean;
-    // hasOverlappingCalendars: (zoneId, startDate, endDate, excludeCalendarId) => boolean;
+    // New actions
+    cleanupDivisionState: (
+        division: string,
+        preserveZoneId?: number | null,
+    ) => void;
+    prepareDivisionSwitch: (
+        fromDivision: string,
+        toDivision: string,
+    ) => Promise<void>;
+    validateDivisionState: (division: string) => boolean;
 }
 
 // Keep track of ongoing fetches outside the store state
@@ -134,38 +149,54 @@ export const useAdminCalendarManagementStore = create<
     zones: {},
     yearlyAllotments: [],
     pldSdvTempAllotments: {},
-    selectedType: "pld_sdv",
+    selectedType: "pld_sdv" as AllotmentType,
     usesZoneCalendars: false,
     selectedZoneId: null,
     isLoading: false,
     error: null,
-    loadedDivisions: new Set<string>(), // Initialize set
+    loadedDivisions: new Set<string>(),
     weeklyVacationAllotments: [],
     vacationTempAllotments: {},
+
+    // New loading states
+    isDivisionLoading: false,
+    isAllotmentsLoading: false,
+    isZonesLoading: false,
+    currentLoadingDivision: null,
+    lastLoadedDivision: null,
 
     // Simple Setters
     setError: (error) => set({ error }),
     setIsLoading: (isLoading) => set({ isLoading }),
-    setSelectedType: (type) => set({ selectedType: type }),
+    setSelectedType: (type) => {
+        console.log("[AdminStore] Setting selected type:", type);
+        set({ selectedType: type });
+    },
     setUsesZoneCalendars: (usesZones) => set({ usesZoneCalendars: usesZones }),
     setSelectedZoneId: (zoneId) => {
         console.log(
             "[AdminCalendarManagementStore] Setting selectedZoneId:",
             zoneId,
         );
-        set({ selectedZoneId: zoneId });
-        get().resetAllotments(); // Reset allotments when zone selection changes
-        // Fetch allotments AND zone calendars for the selected zone
-        const division = useUserStore.getState().division; // Need division context
-        const currentYear = new Date().getFullYear();
-        if (zoneId !== null && division) {
-            get().fetchAllotments(division, currentYear, zoneId);
-            get().fetchAllotments(division, currentYear + 1, zoneId);
-            // No need to call fetchZoneCalendars here again, it's fetched at division level
-        } else if (zoneId === null && division && !get().usesZoneCalendars) {
-            // If zone deselected AND division doesn't use zones, fetch division-wide
-            get().fetchAllotments(division, currentYear);
-            get().fetchAllotments(division, currentYear + 1);
+        const prevZoneId = get().selectedZoneId;
+        const division = useUserStore.getState().division;
+
+        // Only reset and refetch if actually changing zones
+        if (prevZoneId !== zoneId) {
+            set({ selectedZoneId: zoneId });
+            get().resetAllotments(); // Reset allotments when zone selection changes
+
+            // Fetch allotments for the new zone if we have a division
+            if (division) {
+                const currentYear = new Date().getFullYear();
+                if (zoneId !== null && get().usesZoneCalendars) {
+                    get().fetchAllotments(division, currentYear, zoneId);
+                    get().fetchAllotments(division, currentYear + 1, zoneId);
+                } else if (zoneId === null && !get().usesZoneCalendars) {
+                    get().fetchAllotments(division, currentYear);
+                    get().fetchAllotments(division, currentYear + 1);
+                }
+            }
         }
     },
     setPldSdvTempAllotments: (updater) => {
@@ -194,19 +225,28 @@ export const useAdminCalendarManagementStore = create<
             get().setPldSdvTempAllotments(updater);
         }
     },
-    resetAllotments: () =>
-        set({
+    resetAllotments: () => {
+        console.log("[AdminStore] Resetting allotments state");
+        const currentZoneId = get().selectedZoneId;
+        set((state) => ({
             yearlyAllotments: [],
             weeklyVacationAllotments: [],
             pldSdvTempAllotments: {},
             vacationTempAllotments: {},
-        }),
+            // Maintain zone ID during reset unless explicitly clearing it
+            selectedZoneId: currentZoneId,
+        }));
+    },
 
     // Fetch Division Settings (modified to return Promise and update loadedDivisions)
     fetchDivisionSettings: async (division) => {
-        if (!division) return Promise.resolve(); // Return resolved promise if no division
+        if (!division) return Promise.resolve();
 
-        set({ isLoading: true, error: null });
+        set({
+            isDivisionLoading: true,
+            isZonesLoading: true,
+            error: null,
+        });
         let divisionId: number | null = null;
 
         try {
@@ -284,7 +324,10 @@ export const useAdminCalendarManagementStore = create<
                 : "Failed to load division settings";
             set({ error: message });
         } finally {
-            set({ isLoading: false });
+            set({
+                isDivisionLoading: false,
+                isZonesLoading: false,
+            });
         }
     },
 
@@ -442,164 +485,101 @@ export const useAdminCalendarManagementStore = create<
         }
     },
 
-    // Fetch Allotments
-    fetchAllotments: async (division, year, zoneId = null) => {
+    // Split fetchAllotments into two separate functions
+    fetchPldSdvAllotments: async (
+        division: string,
+        year: number,
+        zoneId = null,
+    ) => {
         if (!division) {
             console.warn(
-                "[AdminStore] fetchAllotments called without division.",
+                "[AdminStore] fetchPldSdvAllotments called without division.",
             );
             return;
         }
 
-        // Clear previous errors and set loading state
-        set({ error: null });
-
+        set({ isAllotmentsLoading: true, error: null });
         const effectiveZoneId = get().usesZoneCalendars ? zoneId : null;
 
-        console.log("[AdminStore] Fetching all allotments for:", {
+        console.log("[AdminStore] Fetching PLD/SDV allotments:", {
             division,
             year,
             zoneId: effectiveZoneId,
-            usesZoneCalendars: get().usesZoneCalendars,
         });
 
         if (get().usesZoneCalendars && effectiveZoneId === null) {
             console.log(
-                "[AdminStore] Zone calendars enabled, but no zone selected. Skipping allotment fetch.",
+                "[AdminStore] Zone calendars enabled, but no zone selected. Skipping PLD/SDV allotment fetch.",
             );
-            get().resetAllotments(); // Clear stale data
             return;
         }
 
-        // Fetch both types of allotments in parallel
         try {
-            await Promise.all([
-                // Fetch PLD/SDV allotments
-                (async () => {
-                    try {
-                        let query = supabase
-                            .from("pld_sdv_allotments")
-                            .select(
-                                "year, max_allotment, is_override, override_by, override_at, override_reason",
-                            )
-                            .eq("division", division)
-                            .eq("year", year);
+            let query = supabase
+                .from("pld_sdv_allotments")
+                .select(
+                    "year, max_allotment, is_override, override_by, override_at, override_reason",
+                )
+                .eq("division", division)
+                .eq("year", year);
 
-                        if (effectiveZoneId !== null) {
-                            query = query.eq("zone_id", effectiveZoneId);
-                        } else {
-                            query = query.is("zone_id", null);
-                        }
+            if (effectiveZoneId !== null) {
+                query = query.eq("zone_id", effectiveZoneId);
+            } else {
+                query = query.is("zone_id", null);
+            }
 
-                        const { data, error } = await query.maybeSingle();
+            const { data, error } = await query.maybeSingle();
+            if (error) throw error;
 
-                        if (error) throw error;
+            console.log("[AdminStore] PLD/SDV allotment result:", data);
 
-                        const newAllotment: YearlyAllotment = {
-                            year: year,
-                            max_allotment: data?.max_allotment ?? 0,
-                            is_override: data?.is_override ?? null,
-                            override_by: data?.override_by ?? null,
-                            override_at: data?.override_at ?? null,
-                            override_reason: data?.override_reason ?? null,
-                        };
+            const newAllotment: YearlyAllotment = {
+                year: year,
+                max_allotment: data?.max_allotment ?? 0,
+                is_override: data?.is_override ?? null,
+                override_by: data?.override_by ?? null,
+                override_at: data?.override_at ?? null,
+                override_reason: data?.override_reason ?? null,
+            };
 
-                        set((state) => {
-                            const existingIndex = state.yearlyAllotments
-                                .findIndex(
-                                    (a) => a.year === year,
-                                );
-                            let updatedAllotments = [...state.yearlyAllotments];
-                            if (existingIndex > -1) {
-                                updatedAllotments[existingIndex] = newAllotment;
-                            } else {
-                                updatedAllotments.push(newAllotment);
-                            }
+            set((state) => {
+                const existingIndex = state.yearlyAllotments.findIndex((a) =>
+                    a.year === year
+                );
+                let updatedAllotments = [...state.yearlyAllotments];
+                if (existingIndex > -1) {
+                    updatedAllotments[existingIndex] = newAllotment;
+                } else {
+                    updatedAllotments.push(newAllotment);
+                }
 
-                            const currentTemp =
-                                state.pldSdvTempAllotments[year];
-                            const newMaxValue = newAllotment.max_allotment
-                                .toString();
-                            let updatedTempAllotments =
-                                state.pldSdvTempAllotments;
-
-                            if (
-                                currentTemp === undefined ||
-                                currentTemp === null ||
-                                currentTemp !== newMaxValue
-                            ) {
-                                updatedTempAllotments = {
-                                    ...state.pldSdvTempAllotments,
-                                    [year]: newMaxValue,
-                                };
-                            }
-
-                            return {
-                                yearlyAllotments: updatedAllotments,
-                                pldSdvTempAllotments: updatedTempAllotments,
-                            };
-                        });
-                    } catch (error) {
-                        console.error(
-                            `[AdminStore] Error fetching PLD/SDV allotment for ${year}:`,
-                            error,
-                        );
-                        throw error;
-                    }
-                })(),
-
-                // Fetch Vacation allotments
-                (async () => {
-                    try {
-                        let query = supabase
-                            .from("vacation_allotments")
-                            .select("*")
-                            .eq("division", division)
-                            .eq("vac_year", year);
-
-                        if (effectiveZoneId !== null) {
-                            query = query.eq("zone_id", effectiveZoneId);
-                        } else {
-                            query = query.is("zone_id", null);
-                        }
-
-                        query = query.order("week_start_date");
-
-                        const { data, error } = await query;
-
-                        if (error) throw error;
-
-                        set((state) => ({
-                            weeklyVacationAllotments: data || [],
-                            vacationTempAllotments: {
-                                ...state.vacationTempAllotments,
-                                [year]: data?.[0]?.max_allotment?.toString() ||
-                                    "0",
-                            },
-                        }));
-                    } catch (error) {
-                        console.error(
-                            `[AdminStore] Error fetching vacation allotments for ${year}:`,
-                            error,
-                        );
-                        throw error;
-                    }
-                })(),
-            ]);
+                return {
+                    yearlyAllotments: updatedAllotments,
+                    pldSdvTempAllotments: {
+                        ...state.pldSdvTempAllotments,
+                        [year]: newAllotment.max_allotment.toString(),
+                    },
+                };
+            });
         } catch (error) {
-            console.error("[AdminStore] Error fetching allotments:", error);
+            console.error(
+                "[AdminStore] Error fetching PLD/SDV allotment:",
+                error,
+            );
             const message = error instanceof Error
                 ? error.message
-                : "Failed to fetch allotments";
+                : "Failed to fetch PLD/SDV allotment";
             set({ error: message });
+        } finally {
+            set({ isAllotmentsLoading: false });
         }
     },
 
-    // Fetch Vacation Allotments
     fetchVacationAllotments: async (
         division: string,
         year: number,
-        zoneId?: number | null,
+        zoneId = null,
     ) => {
         if (!division) {
             console.warn(
@@ -608,21 +588,19 @@ export const useAdminCalendarManagementStore = create<
             return;
         }
 
-        set({ isLoading: true, error: null });
+        set({ isAllotmentsLoading: true, error: null });
         const effectiveZoneId = get().usesZoneCalendars ? zoneId : null;
 
-        console.log("[AdminStore] Fetching vacation allotments for:", {
+        console.log("[AdminStore] Fetching vacation allotments:", {
             division,
             year,
             zoneId: effectiveZoneId,
-            usesZoneCalendars: get().usesZoneCalendars,
         });
 
         if (get().usesZoneCalendars && effectiveZoneId === null) {
             console.log(
                 "[AdminStore] Zone calendars enabled, but no zone selected. Skipping vacation allotment fetch.",
             );
-            get().resetAllotments(); // Clear stale data
             return;
         }
 
@@ -640,28 +618,37 @@ export const useAdminCalendarManagementStore = create<
             }
 
             query = query.order("week_start_date");
-
             const { data, error } = await query;
 
             if (error) throw error;
 
             set((state) => ({
                 weeklyVacationAllotments: data || [],
-                // Set vacationTempAllotments to the first week's allotment as a starting point
                 vacationTempAllotments: {
                     ...state.vacationTempAllotments,
                     [year]: data?.[0]?.max_allotment?.toString() || "0",
                 },
             }));
         } catch (error) {
-            console.error("[fetchVacationAllotments] Error:", error);
+            console.error(
+                "[AdminStore] Error fetching vacation allotments:",
+                error,
+            );
             const message = error instanceof Error
                 ? error.message
                 : "Failed to fetch vacation allotments";
             set({ error: message });
         } finally {
-            set({ isLoading: false });
+            set({ isAllotmentsLoading: false });
         }
+    },
+
+    // Keep fetchAllotments as a convenience method that calls both
+    fetchAllotments: async (division: string, year: number, zoneId = null) => {
+        await Promise.all([
+            get().fetchPldSdvAllotments(division, year, zoneId),
+            get().fetchVacationAllotments(division, year, zoneId),
+        ]);
     },
 
     // Update/Insert Yearly Allotment for PLD/SDV only
@@ -673,9 +660,39 @@ export const useAdminCalendarManagementStore = create<
         zoneId?: number | null,
         reason?: string,
     ) => {
+        const state = get();
+        console.log("[AdminStore] Attempting allotment update:", {
+            type: state.selectedType,
+            division,
+            year,
+            maxAllotment,
+            zoneId,
+        });
+
+        // Handle based on selected type
+        if (state.selectedType === "vacation") {
+            return state.updateVacationAllotment(
+                division,
+                `${year}-01-01`,
+                maxAllotment,
+                userId,
+                zoneId,
+                reason,
+            );
+        }
+
         set({ isLoading: true, error: null });
         try {
-            const yearDate = `${year}-01-01`; // Set to January 1st of the year
+            const yearDate = `${year}-01-01`;
+            const effectiveZoneId = get().usesZoneCalendars ? zoneId : null;
+
+            console.log("[AdminStore] Updating PLD/SDV allotment:", {
+                division,
+                year,
+                maxAllotment,
+                zoneId: effectiveZoneId,
+            });
+
             const { data, error } = await supabase
                 .from("pld_sdv_allotments")
                 .upsert(
@@ -684,14 +701,16 @@ export const useAdminCalendarManagementStore = create<
                         year,
                         date: yearDate,
                         max_allotment: maxAllotment,
-                        zone_id: zoneId,
+                        zone_id: effectiveZoneId,
                         is_override: true,
                         override_by: userId,
                         override_at: new Date().toISOString(),
                         override_reason: reason,
+                        updated_at: new Date().toISOString(),
+                        updated_by: userId,
                     },
                     {
-                        onConflict: "division,date,zone_id",
+                        onConflict: "division,year,zone_id",
                         ignoreDuplicates: false,
                     },
                 )
@@ -703,18 +722,27 @@ export const useAdminCalendarManagementStore = create<
             set((state) => ({
                 yearlyAllotments: [
                     ...state.yearlyAllotments.filter((a) => a.year !== year),
-                    data,
+                    {
+                        year,
+                        max_allotment: maxAllotment,
+                        is_override: true,
+                        override_by: userId,
+                        override_at: new Date().toISOString(),
+                        override_reason: reason,
+                    },
                 ],
                 pldSdvTempAllotments: {
                     ...state.pldSdvTempAllotments,
                     [year]: maxAllotment.toString(),
                 },
             }));
+
+            console.log("[AdminStore] Successfully updated PLD/SDV allotment");
         } catch (error) {
             console.error("[updateAllotment] Error:", error);
             const message = error instanceof Error
                 ? error.message
-                : "Failed to update allotment";
+                : "Failed to update PLD/SDV allotment";
             set({ error: message });
             throw error;
         } finally {
@@ -733,7 +761,7 @@ export const useAdminCalendarManagementStore = create<
     ) => {
         if (!division || !userId) {
             throw new Error(
-                "Division and User ID are required to update allotment.",
+                "Division and User ID are required to update vacation allotment.",
             );
         }
 
@@ -742,6 +770,13 @@ export const useAdminCalendarManagementStore = create<
             const year = parseInt(weekStartDate.split("-")[0], 10);
             const effectiveZoneId = get().usesZoneCalendars ? zoneId : null;
 
+            console.log("[AdminStore] Updating vacation allotment:", {
+                division,
+                year,
+                maxAllotment,
+                zoneId: effectiveZoneId,
+            });
+
             // Generate all week start dates for the year
             const weekStartDates: string[] = [];
             const startOfYear = new Date(year, 0, 1);
@@ -749,17 +784,14 @@ export const useAdminCalendarManagementStore = create<
             let currentDate = startOfYear;
 
             while (currentDate <= endOfYear) {
-                // Adjust to start of week (Monday)
                 const dayOfWeek = currentDate.getDay();
-                const diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // Days to subtract to get to Monday
+                const diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
                 const weekStart = new Date(currentDate);
                 weekStart.setDate(weekStart.getDate() - diff);
 
                 if (weekStart.getFullYear() === year) {
                     weekStartDates.push(weekStart.toISOString().split("T")[0]);
                 }
-
-                // Move to next week
                 currentDate.setDate(currentDate.getDate() + 7);
             }
 
@@ -778,7 +810,6 @@ export const useAdminCalendarManagementStore = create<
                 updated_by: userId,
             }));
 
-            // Upsert all records
             const { data, error } = await supabase
                 .from("vacation_allotments")
                 .upsert(records, {
@@ -798,14 +829,7 @@ export const useAdminCalendarManagementStore = create<
             }));
 
             console.log(
-                "[AdminStore] Successfully updated vacation allotments for year:",
-                {
-                    year,
-                    division,
-                    zoneId: effectiveZoneId,
-                    maxAllotment,
-                    updatedCount: data?.length || 0,
-                },
+                "[AdminStore] Successfully updated vacation allotments",
             );
         } catch (error) {
             console.error("[updateVacationAllotment] Error:", error);
@@ -817,5 +841,131 @@ export const useAdminCalendarManagementStore = create<
         } finally {
             set({ isLoading: false });
         }
+    },
+
+    // New cleanup function
+    cleanupDivisionState: (
+        division: string,
+        preserveZoneId?: number | null,
+    ) => {
+        console.log("[AdminStore] Cleaning up division state:", division);
+        const state = get();
+
+        // Only reset zone ID if we're not preserving it
+        if (!preserveZoneId) {
+            set({ selectedZoneId: null });
+        }
+
+        // Reset other division-specific state
+        set({
+            yearlyAllotments: [],
+            weeklyVacationAllotments: [],
+            pldSdvTempAllotments: {},
+            vacationTempAllotments: {},
+        });
+
+        console.log("[AdminStore] Division state cleanup complete");
+    },
+
+    // New division switch preparation
+    prepareDivisionSwitch: async (fromDivision: string, toDivision: string) => {
+        if (fromDivision === toDivision) {
+            // If switching to the same division, just ensure it's loaded
+            // and maintain the current zone ID
+            return get().ensureDivisionSettingsLoaded(toDivision);
+        }
+
+        console.log("[AdminStore] Preparing division switch:", {
+            from: fromDivision,
+            to: toDivision,
+        });
+
+        // Store current state before reset
+        const currentState = get();
+        const shouldPreserveZoneId = currentState.usesZoneCalendars &&
+            currentState.selectedZoneId !== null &&
+            currentState.zones[toDivision]?.some((z) =>
+                z.id === currentState.selectedZoneId
+            );
+
+        set({
+            isDivisionLoading: true,
+            currentLoadingDivision: toDivision,
+            error: null,
+            // Only reset zone ID if it's not valid in the new division
+            selectedZoneId: shouldPreserveZoneId
+                ? currentState.selectedZoneId
+                : null,
+            yearlyAllotments: [],
+            weeklyVacationAllotments: [],
+            pldSdvTempAllotments: {},
+            vacationTempAllotments: {},
+        });
+
+        try {
+            // Clean up old division state first
+            if (fromDivision) {
+                // Modify cleanupDivisionState to not reset selectedZoneId if we're preserving it
+                const preserveZoneId = shouldPreserveZoneId
+                    ? currentState.selectedZoneId
+                    : null;
+                get().cleanupDivisionState(fromDivision, preserveZoneId);
+            }
+
+            // Load new division settings
+            await get().ensureDivisionSettingsLoaded(toDivision);
+
+            // Validate new state
+            if (!get().validateDivisionState(toDivision)) {
+                throw new Error("Division state validation failed");
+            }
+
+            set({ lastLoadedDivision: toDivision });
+            console.log(
+                "[AdminStore] Successfully switched to division:",
+                toDivision,
+                shouldPreserveZoneId ? "preserving zone ID" : "zone ID reset",
+            );
+        } catch (error) {
+            console.error("[AdminStore] Error during division switch:", error);
+            const message = error instanceof Error
+                ? error.message
+                : "Failed to switch divisions";
+            set({ error: message });
+            throw error;
+        } finally {
+            set({
+                isDivisionLoading: false,
+                currentLoadingDivision: null,
+            });
+        }
+    },
+
+    // New state validation
+    validateDivisionState: (division: string) => {
+        const state = get();
+
+        // Check if division settings are loaded
+        if (!state.loadedDivisions.has(division)) {
+            console.error(
+                "[AdminStore] Division settings not loaded:",
+                division,
+            );
+            return false;
+        }
+
+        // Check if zones are loaded when needed
+        if (
+            state.usesZoneCalendars &&
+            (!state.zones[division] || state.zones[division].length === 0)
+        ) {
+            console.error(
+                "[AdminStore] Zones not loaded for division:",
+                division,
+            );
+            return false;
+        }
+
+        return true;
     },
 }));

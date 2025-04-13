@@ -82,6 +82,8 @@ export function DivisionSelector({
       selectedValue={currentDivision}
       onValueChange={onDivisionChange}
       enabled={!disabled && !isLoading}
+      mode="dropdown"
+      dropdownIconColor={Colors[colorScheme].text}
       style={[
         styles.picker,
         {
@@ -111,7 +113,8 @@ const styles = StyleSheet.create({
   picker: {
     ...Platform.select({
       android: {
-        height: 65, // Increased height for Android
+        height: 75,
+        width: 150, // Increased height for Android
       },
       default: {
         height: 40,

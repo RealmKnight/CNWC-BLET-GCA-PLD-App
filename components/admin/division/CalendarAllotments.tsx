@@ -109,7 +109,6 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
 
     if (isZoneSpecific && (fetchZoneId === undefined || fetchZoneId === null)) {
       console.log("[CalendarAllotments] Zone specific view, but zoneId is not ready. Skipping fetch.");
-      resetAllotments();
       return;
     }
 
@@ -130,7 +129,9 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
 
     return () => {
       console.log("[CalendarAllotments] Cleanup: Resetting allotments for", { zoneId: fetchZoneId });
-      resetAllotments();
+      if (!isZoneSpecific || fetchZoneId !== zoneId) {
+        resetAllotments();
+      }
     };
   }, [user, division, zoneId, isZoneSpecific, fetchAllotments, resetAllotments]);
 
@@ -161,13 +162,26 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
     }
 
     try {
-      if (selectedType === "vacation") {
+      // Get the current type from state to ensure we're using the correct one
+      const currentType = selectedType;
+      console.log("[CalendarAllotments] Updating allotment:", {
+        type: currentType,
+        year,
+        value: numValue,
+        zoneId: updateZoneId,
+      });
+
+      if (currentType === "vacation") {
         // For vacation type, we need a week start date
         const weekStartDate = `${year}-01-01`; // Use the selected year
         await updateVacationAllotment(division, weekStartDate, numValue, user.id, updateZoneId);
-      } else {
+      } else if (currentType === "pld_sdv") {
         await updateAllotment(division, year, numValue, user.id, updateZoneId);
+      } else {
+        throw new Error(`Invalid allotment type: ${currentType}`);
       }
+
+      await fetchAllotments(division, year, updateZoneId);
 
       Toast.show({
         type: "success",
@@ -190,7 +204,9 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
   };
 
   const handleUpdateAllotment = async (year: number, type: AllotmentType) => {
+    // Set the type first before proceeding with the update
     setSelectedType(type);
+
     if (!division) {
       Toast.show({
         type: "error",
@@ -401,11 +417,18 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
       }}
       scrollEventThrottle={16}
     >
-      {isZoneSpecific && (
+      {isZoneSpecific ? (
         <ThemedView style={styles.zoneInfo}>
           <ThemedText type="title">Zone Calendar</ThemedText>
           <ThemedText style={styles.zoneDescription}>
             {zoneName ? `Managing calendar allotments for zone: ${zoneName}` : "Loading zone information..."}
+          </ThemedText>
+        </ThemedView>
+      ) : (
+        <ThemedView style={styles.zoneInfo}>
+          <ThemedText type="title">Division Calendar</ThemedText>
+          <ThemedText style={styles.zoneDescription}>
+            {division ? `Managing calendar allotments for division: ${division}` : "Loading division information..."}
           </ThemedText>
         </ThemedView>
       )}

@@ -65,6 +65,10 @@ interface CalendarState {
   error: string | null;
   isInitialized: boolean;
 
+  // New division switching states
+  isDivisionSwitching: boolean;
+  currentDivisionContext: string | null;
+
   // Actions
   setSelectedDate: (date: string | null) => void;
   setAllotments: (date: string, allotment: DayAllotment) => void;
@@ -128,6 +132,15 @@ interface CalendarState {
     type: "PLD" | "SDV",
     zoneId?: number,
   ) => Promise<DayRequest>;
+
+  // New cleanup function
+  cleanupCalendarState: () => void;
+
+  // New division change handler
+  handleDivisionChange: (newDivision: string) => Promise<void>;
+
+  // New state validation
+  validateCalendarState: () => boolean;
 }
 
 export const useCalendarStore = create<CalendarState>((set, get) => ({
@@ -138,6 +151,10 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
   isLoading: false,
   error: null,
   isInitialized: false,
+
+  // New division switching states
+  isDivisionSwitching: false,
+  currentDivisionContext: null,
 
   setSelectedDate: (date) => set({ selectedDate: date }),
   setAllotments: (date, allotment) =>
@@ -151,6 +168,28 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
   setError: (error) => set({ error }),
   setIsLoading: (isLoading) => set({ isLoading }),
   setIsInitialized: (isInitialized) => set({ isInitialized }),
+
+  validateCalendarState: () => {
+    const state = get();
+    const division = useUserStore.getState().division;
+
+    if (!division) {
+      console.error("[CalendarStore] No division found in user store");
+      return false;
+    }
+
+    if (state.currentDivisionContext !== division) {
+      console.error("[CalendarStore] Division context mismatch");
+      return false;
+    }
+
+    if (!state.isInitialized) {
+      console.error("[CalendarStore] Calendar not initialized");
+      return false;
+    }
+
+    return true;
+  },
 
   isDateSelectable: (date: string, zoneId?: number) => {
     const state = get();
@@ -205,17 +244,6 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       ? `${dateObj.getFullYear()}_${zoneId}`
       : dateObj.getFullYear();
 
-    // console.log("[CalendarStore] getDateAvailability called for date:", date, {
-    //   isLoading: state.isLoading,
-    //   isInitialized: state.isInitialized,
-    //   hasAllotments: Object.keys(state.allotments).length,
-    //   hasYearlyAllotments: Object.keys(state.yearlyAllotments).length,
-    //   yearlyAllotment: state.yearlyAllotments[yearKey],
-    //   dateAllotment: state.allotments[dateKey],
-    //   requests: state.requests[dateKey]?.length ?? 0,
-    //   zoneId,
-    // });
-
     // Calculate 48 hours from now
     const fortyEightHoursFromNow = addDays(now, 2);
 
@@ -265,8 +293,6 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       return { allotments: {}, yearlyAllotments: {} };
     }
 
-    // console.log("[CalendarStore] Fetching allotments with params:", { startDate, endDate, division, zoneId }); // DEBUG
-
     try {
       const currentYear = new Date(startDate).getFullYear(); // Use startDate's year
       const nextYear = currentYear + 1;
@@ -279,7 +305,6 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
         .eq("division", division)
         .or(
           `year.eq.${currentYear},year.eq.${nextYear},date.gte.${startDate},date.lte.${endDate}`,
-          // `date.in.(${yearlyDateCurrent},${yearlyDateNext}),date.gte.${startDate},date.lte.${endDate}` // Fetch yearly + range
         );
 
       // Apply zone filter based on passed parameter
@@ -340,10 +365,6 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
         ) {
           allotmentsByDate[dateKey] = yearlyAllotmentsByYear[yearKey];
         }
-        // Ensure a 0 value if no specific or yearly allotment exists for selectable dates
-        // else if (allotmentsByDate[dateKey] === undefined) {
-        //    allotmentsByDate[dateKey] = 0;
-        // }
       }
 
       console.log("[CalendarStore] Allotments processed:", {
@@ -372,7 +393,6 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       console.warn("[CalendarStore] fetchRequests: No division found.");
       return {};
     }
-    // console.log("[CalendarStore] Fetching requests with params:", { startDate, endDate, division, zoneId }); // DEBUG
 
     try {
       let query = supabase
@@ -457,7 +477,6 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
           requestsByDate[dateKey].push(dayRequest);
         }
       }
-      // console.log(`[CalendarStore] Requests processed for zone ${zoneId}:`, Object.keys(requestsByDate).length); // DEBUG
       return requestsByDate;
     } catch (error) {
       console.error("[CalendarStore] Error fetching requests:", error);
@@ -543,9 +562,7 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
 
   loadInitialData: async (startDate: string, endDate: string) => {
     const { division, member } = useUserStore.getState();
-    // Get the ensure function directly
-    const ensureAdminSettingsLoaded =
-      useAdminCalendarManagementStore.getState().ensureDivisionSettingsLoaded;
+    const adminStore = useAdminCalendarManagementStore.getState();
 
     if (!division) {
       console.log("[CalendarStore] No division found during initialization");
@@ -553,30 +570,20 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
         error: "No division found",
         isLoading: false,
         isInitialized: true,
+        currentDivisionContext: null,
       });
       return;
     }
 
-    const currentState = get();
-    console.log("[CalendarStore] Starting initial data load:", {
-      startDate,
-      endDate,
-      division,
-      memberZone: member?.zone,
+    set({
+      error: null,
+      isLoading: true,
+      currentDivisionContext: division,
     });
 
-    set({ error: null, isLoading: true });
-
     try {
-      // ******** WAIT FOR ADMIN SETTINGS ********
-      console.log(
-        `[CalendarStore] Ensuring admin settings are loaded for division ${division}...`,
-      );
-      await ensureAdminSettingsLoaded(division);
-      console.log(
-        `[CalendarStore] Admin settings loaded for division ${division}.`,
-      );
-      // *****************************************
+      // Wait for admin settings
+      await adminStore.ensureDivisionSettingsLoaded(division);
 
       // Now get the potentially updated admin state
       const adminStoreState = useAdminCalendarManagementStore.getState();
@@ -661,6 +668,7 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
         allotments: {},
         yearlyAllotments: {},
         requests: {},
+        currentDivisionContext: null,
       });
     }
   },
@@ -748,17 +756,6 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
     // This function might need rethinking - perhaps it should check the admin store for the specific division?
     // Assuming the flag in admin store corresponds to the current user's division context
     return usesZoneCalendars;
-
-    // --- Old logic using zoneCalendars (which doesn't exist here) ---
-    // const { zoneCalendars } = useAdminCalendarManagementStore.getState();
-    // Parse division string to number for comparison
-    // const divisionIdNumber = parseInt(division, 10);
-    // if (isNaN(divisionIdNumber)) {
-    //  console.error("[CalendarStore] Invalid division ID format:", division);
-    //  return false; // Cannot determine if division ID is not a number
-    // }
-    // Check if any calendar belongs to the specified division ID (number comparison)
-    // return zoneCalendars.some((cal: any) => cal.division_id === divisionIdNumber); // Added 'any' temporarily, but zoneCalendars is removed
   },
 
   getMemberZoneCalendar: async (division: string, zone: string) => {
@@ -1042,6 +1039,65 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
     } catch (error) {
       console.error("[CalendarStore] Error submitting request:", error);
       throw error;
+    }
+  },
+
+  // New cleanup function
+  cleanupCalendarState: () => {
+    console.log("[CalendarStore] Cleaning up calendar state");
+    set({
+      allotments: {},
+      yearlyAllotments: {},
+      requests: {},
+      selectedDate: null,
+      error: null,
+      isInitialized: false,
+      currentDivisionContext: null,
+    });
+  },
+
+  // New division change handler
+  handleDivisionChange: async (newDivision: string) => {
+    console.log("[CalendarStore] Handling division change to:", newDivision);
+    set({
+      isDivisionSwitching: true,
+      error: null,
+    });
+
+    try {
+      // Clean up current state
+      get().cleanupCalendarState();
+
+      // Set new division context
+      set({ currentDivisionContext: newDivision });
+
+      // Reload data for the new division
+      const today = new Date();
+      const sixMonthsFromNow = new Date(
+        today.getFullYear(),
+        today.getMonth() + 6,
+        today.getDate(),
+      );
+
+      await get().loadInitialData(
+        today.toISOString().split("T")[0],
+        sixMonthsFromNow.toISOString().split("T")[0],
+      );
+
+      if (!get().validateCalendarState()) {
+        throw new Error(
+          "Calendar state validation failed after division change",
+        );
+      }
+    } catch (error) {
+      console.error("[CalendarStore] Error during division change:", error);
+      const message = error instanceof Error
+        ? error.message
+        : "Failed to change division";
+      set({ error: message });
+      throw error;
+    } finally {
+      set({ isDivisionSwitching: false });
     }
   },
 }));

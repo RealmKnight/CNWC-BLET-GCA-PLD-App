@@ -17,11 +17,11 @@ export function CalendarManager() {
     zones,
     isLoading,
     error,
-    fetchDivisionSettings,
     toggleZoneCalendars,
     setSelectedZoneId,
     resetAllotments,
     ensureDivisionSettingsLoaded,
+    prepareDivisionSwitch,
   } = useAdminCalendarManagementStore();
 
   const { member, division: userDivision } = useUserStore();
@@ -29,25 +29,29 @@ export function CalendarManager() {
   const [selectedDivision, setSelectedDivision] = useState(userDivision || "");
 
   const isAdmin = member?.role === "application_admin" || member?.role === "union_admin";
+  const currentDivisionZones = zones[selectedDivision || ""] || [];
+  const hasSingleZone = currentDivisionZones.length === 1;
 
+  // Effect to handle initial load and division changes
   useEffect(() => {
-    if (selectedDivision) {
-      const loadDivisionData = async () => {
-        try {
-          // Reset state before loading new division
-          setSelectedZoneId(null);
-          resetAllotments();
+    if (!selectedDivision) return;
 
-          // Load division settings and wait for completion
+    const loadDivisionData = async () => {
+      try {
+        if (isAdmin) {
+          // For admin users, handle division switching properly
+          await prepareDivisionSwitch(userDivision || "", selectedDivision);
+        } else {
+          // For division admins, just load their division once
           await ensureDivisionSettingsLoaded(selectedDivision);
-        } catch (error) {
-          console.error("[CalendarManager] Error loading division data:", error);
         }
-      };
+      } catch (error) {
+        console.error("[CalendarManager] Error loading division data:", error);
+      }
+    };
 
-      loadDivisionData();
-    }
-  }, [selectedDivision, ensureDivisionSettingsLoaded, setSelectedZoneId, resetAllotments]);
+    loadDivisionData();
+  }, [selectedDivision, isAdmin, userDivision, ensureDivisionSettingsLoaded, prepareDivisionSwitch]);
 
   const handleZoneCalendarToggle = async () => {
     if (!selectedDivision) return;
@@ -57,9 +61,6 @@ export function CalendarManager() {
   const handleZoneSelect = (zoneId: number) => {
     setSelectedZoneId(zoneId);
   };
-
-  const currentDivisionZones = zones[selectedDivision || ""] || [];
-  const hasSingleZone = currentDivisionZones.length === 1;
 
   return (
     <ThemedView style={styles.container}>
@@ -79,14 +80,14 @@ export function CalendarManager() {
               <ThemedText style={styles.divisionText}>{selectedDivision}</ThemedText>
             )}
           </View>
-          <View style={styles.divisionRow}>
-            <ThemedText style={styles.divisionLabel}>Zone(s): </ThemedText>
-            <ThemedText style={[styles.divisionText, styles.zoneText]}>
-              {currentDivisionZones.length > 0
-                ? currentDivisionZones.map((zone) => zone.name).join(", ")
-                : "No zones found"}
-            </ThemedText>
-          </View>
+          {currentDivisionZones.length > 0 && (
+            <View style={styles.divisionRow}>
+              <ThemedText style={styles.divisionLabel}>Zone(s): </ThemedText>
+              <ThemedText style={[styles.divisionText, styles.zoneText]}>
+                {currentDivisionZones.map((zone) => zone.name).join(", ")}
+              </ThemedText>
+            </View>
+          )}
         </View>
       </ThemedView>
 
