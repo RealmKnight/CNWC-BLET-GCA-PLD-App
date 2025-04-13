@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react";
-import { StyleSheet, TextInput, Alert, TouchableOpacity, Platform } from "react-native";
+import React, { useState, useEffect, useRef } from "react";
+import { StyleSheet, TextInput, Alert, TouchableOpacity, Platform, Dimensions, ScrollView } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { Ionicons } from "@expo/vector-icons";
@@ -47,14 +47,61 @@ interface ConfirmationDialogProps {
   message: string;
   onConfirm: () => void;
   onCancel: () => void;
+  scrollOffset: number;
+  type: AllotmentType;
 }
 
-function ConfirmationDialog({ isVisible, title, message, onConfirm, onCancel }: ConfirmationDialogProps) {
+function ConfirmationDialog({
+  isVisible,
+  title,
+  message,
+  onConfirm,
+  onCancel,
+  scrollOffset,
+  type,
+}: ConfirmationDialogProps) {
+  const [dimensions, setDimensions] = useState(() => Dimensions.get("window"));
+
+  useEffect(() => {
+    const subscription = Dimensions.addEventListener("change", ({ window }) => {
+      setDimensions(window);
+    });
+
+    return () => subscription.remove();
+  }, []);
+
   if (!isVisible) return null;
 
+  // Calculate center position
+  const modalHeight = 200; // Approximate height of modal content
+  const modalWidth = Math.min(300, dimensions.width * 0.9);
+  const centerY = scrollOffset + (dimensions.height - modalHeight) / 2;
+  const centerX = (dimensions.width - modalWidth) / 2;
+
   return (
-    <ThemedView style={styles.modalOverlay}>
-      <ThemedView style={styles.modalContent}>
+    <ThemedView
+      style={[
+        styles.modalOverlay,
+        {
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: dimensions.width,
+          height: dimensions.height + scrollOffset,
+        },
+      ]}
+    >
+      <ThemedView
+        style={[
+          styles.modalContent,
+          {
+            position: "absolute",
+            top: centerY,
+            left: centerX,
+            width: modalWidth,
+          },
+        ]}
+      >
         <ThemedText type="title" style={styles.modalTitle}>
           {title}
         </ThemedText>
@@ -78,17 +125,23 @@ interface CalendarAllotmentsProps {
 }
 
 export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarAllotmentsProps) {
+  const scrollViewRef = useRef<ScrollView>(null);
+  const [scrollOffset, setScrollOffset] = useState(0);
+
   const {
     yearlyAllotments,
     weeklyVacationAllotments,
-    tempAllotments,
+    pldSdvTempAllotments,
+    vacationTempAllotments,
     selectedType,
     isLoading,
     error,
     setSelectedType,
-    setTempAllotments,
+    setPldSdvTempAllotments,
+    setVacationTempAllotments,
     fetchAllotments,
     updateAllotment,
+    updateVacationAllotment,
     resetAllotments,
     selectedZoneId,
     usesZoneCalendars,
@@ -189,7 +242,13 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
     }
 
     try {
-      await updateAllotment(division, year, numValue, user.id, updateZoneId);
+      if (selectedType === "vacation") {
+        // For vacation type, we need a week start date
+        const weekStartDate = `${year}-01-01`; // Use the selected year
+        await updateVacationAllotment(division, weekStartDate, numValue, user.id, updateZoneId);
+      } else {
+        await updateAllotment(division, year, numValue, user.id, updateZoneId);
+      }
 
       const successMsg = "Allotment updated successfully";
       if (Platform.OS === "web") {
@@ -238,7 +297,11 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
       return;
     }
 
-    const value = parseInt(tempAllotments[year], 10);
+    const value =
+      type === "vacation"
+        ? parseInt(vacationTempAllotments[year] ?? "", 10)
+        : parseInt(pldSdvTempAllotments[year] ?? "", 10);
+
     if (isNaN(value) || value < 0) {
       const msg = "Please enter a valid number";
       if (Platform.OS === "web") {
@@ -252,26 +315,41 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
     setConfirmDialog({ isVisible: true, year, value });
   };
 
-  const handleInputChange = (year: number, value: string) => {
+  const handleInputChange = (year: number, type: AllotmentType, value: string) => {
     const numValue = parseInt(value, 10);
     if (isNaN(numValue)) {
       Alert.alert("Error", "Please enter a valid number");
-      setTempAllotments((prev) => {
-        const currentVal = getAllotmentForYear(year)?.max_allotment ?? 0;
-        return {
-          ...prev,
-          [year]: currentVal.toString(),
-        };
-      });
+      if (type === "vacation") {
+        setVacationTempAllotments((prev) => {
+          const currentVal = getVacationAllotmentsForYear(year)?.[0]?.max_allotment ?? 0;
+          return {
+            ...prev,
+            [year]: currentVal.toString(),
+          };
+        });
+      } else {
+        setPldSdvTempAllotments((prev) => {
+          const currentVal = getAllotmentForYear(year)?.max_allotment ?? 0;
+          return {
+            ...prev,
+            [year]: currentVal.toString(),
+          };
+        });
+      }
       return;
     }
 
-    setTempAllotments((prev) => {
-      return {
+    if (type === "vacation") {
+      setVacationTempAllotments((prev) => ({
         ...prev,
         [year]: value,
-      };
-    });
+      }));
+    } else {
+      setPldSdvTempAllotments((prev) => ({
+        ...prev,
+        [year]: value,
+      }));
+    }
   };
 
   useEffect(() => {
@@ -293,10 +371,9 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
         : null;
 
     const currentTempValue =
-      tempAllotments[year] ??
-      (type === "pld_sdv"
-        ? (allotment?.max_allotment ?? 0).toString()
-        : (vacationAllotments[0]?.max_allotment ?? 0).toString());
+      type === "vacation"
+        ? vacationTempAllotments[year] ?? (vacationAllotments[0]?.max_allotment ?? 0).toString()
+        : pldSdvTempAllotments[year] ?? (allotment?.max_allotment ?? 0).toString();
 
     return (
       <ThemedView key={`${year}-${type}`} style={styles.yearContainerInternal}>
@@ -328,7 +405,7 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
               },
             ]}
             value={currentTempValue}
-            onChangeText={(text) => handleInputChange(year, text)}
+            onChangeText={(text) => handleInputChange(year, type, text)}
             keyboardType="numeric"
             placeholder="Enter allotment"
             placeholderTextColor={Colors[colorScheme].text}
@@ -366,7 +443,14 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
   };
 
   return (
-    <ThemedView style={styles.container}>
+    <ScrollView
+      ref={scrollViewRef}
+      style={styles.container}
+      onScroll={(event) => {
+        setScrollOffset(event.nativeEvent.contentOffset.y);
+      }}
+      scrollEventThrottle={16}
+    >
       {isZoneSpecific && (
         <ThemedView style={styles.zoneInfo}>
           <ThemedText type="title">Zone Calendar</ThemedText>
@@ -401,11 +485,15 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
       <ConfirmationDialog
         isVisible={confirmDialog.isVisible}
         title={`Update ${selectedType === "vacation" ? "Vacation" : "Single Day"} Allotment`}
-        message={`Are you sure you want to update the allotment for ${confirmDialog.year} to ${confirmDialog.value}?`}
+        message={`Are you sure you want to update the ${
+          selectedType === "vacation" ? "vacation" : "single day"
+        } allotment for ${confirmDialog.year} to ${confirmDialog.value}?`}
         onConfirm={() => handleUpdateConfirmed(confirmDialog.year, confirmDialog.value)}
         onCancel={() => setConfirmDialog({ isVisible: false, year: 0, value: 0 })}
+        scrollOffset={scrollOffset}
+        type={selectedType}
       />
-    </ThemedView>
+    </ScrollView>
   );
 }
 
@@ -494,22 +582,21 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   modalOverlay: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
     backgroundColor: "rgba(0, 0, 0, 0.5)",
-    justifyContent: "center",
-    alignItems: "center",
     zIndex: 1000,
   },
   modalContent: {
     backgroundColor: Colors.light.background,
     borderRadius: 8,
     padding: 20,
-    minWidth: 300,
-    maxWidth: "90%",
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
   },
   modalTitle: {
     marginBottom: 12,

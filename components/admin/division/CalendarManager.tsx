@@ -126,6 +126,10 @@ const styles = StyleSheet.create({
   },
   header: {
     marginBottom: 16,
+    padding: 16,
+    borderWidth: 2,
+    borderRadius: 10,
+    borderColor: Colors.dark.border,
   },
   title: {
     fontSize: 24,
