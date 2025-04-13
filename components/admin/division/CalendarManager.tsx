@@ -113,7 +113,11 @@ export function CalendarManager() {
             />
           )}
 
-          <CalendarAllotments zoneId={selectedZoneId || undefined} isZoneSpecific={usesZoneCalendars} />
+          <CalendarAllotments
+            zoneId={selectedZoneId || undefined}
+            isZoneSpecific={usesZoneCalendars}
+            selectedDivision={isAdmin ? selectedDivision : undefined}
+          />
         </ScrollView>
       )}
     </ThemedView>

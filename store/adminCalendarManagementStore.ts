@@ -238,7 +238,7 @@ export const useAdminCalendarManagementStore = create<
         }));
     },
 
-    // Fetch Division Settings (modified to return Promise and update loadedDivisions)
+    // Fetch Division Settings (modified to handle state better)
     fetchDivisionSettings: async (division) => {
         if (!division) return Promise.resolve();
 
@@ -253,6 +253,15 @@ export const useAdminCalendarManagementStore = create<
             console.log(
                 `[AdminStore] Fetching settings for division ${division}`,
             );
+
+            // Check if we already have settings for this division
+            if (get().loadedDivisions.has(division)) {
+                console.log(
+                    `[AdminStore] Using cached settings for division ${division}`,
+                );
+                return;
+            }
+
             const { data: divisionData, error: divisionError } = await supabase
                 .from("divisions")
                 .select("id, uses_zone_calendars")
@@ -297,14 +306,8 @@ export const useAdminCalendarManagementStore = create<
                     get().setSelectedZoneId(fetchedZones[0].id);
                 }
             } else {
-                // If not using zones or no zones exist, clear selection and fetch division-wide allotments
+                // If not using zones or no zones exist, clear selection
                 get().setSelectedZoneId(null);
-                get().resetAllotments();
-                await get().fetchAllotments(division, new Date().getFullYear());
-                await get().fetchAllotments(
-                    division,
-                    new Date().getFullYear() + 1,
-                );
             }
 
             // Mark as loaded after all dependent fetches are complete
@@ -849,7 +852,15 @@ export const useAdminCalendarManagementStore = create<
         preserveZoneId?: number | null,
     ) => {
         console.log("[AdminStore] Cleaning up division state:", division);
-        const state = get();
+
+        // Don't reset state if we're just switching divisions temporarily
+        if (get().loadedDivisions.has(division)) {
+            console.log(
+                "[AdminStore] Skipping cleanup for previously loaded division:",
+                division,
+            );
+            return;
+        }
 
         // Only reset zone ID if we're not preserving it
         if (!preserveZoneId) {
@@ -896,23 +907,10 @@ export const useAdminCalendarManagementStore = create<
             selectedZoneId: shouldPreserveZoneId
                 ? currentState.selectedZoneId
                 : null,
-            yearlyAllotments: [],
-            weeklyVacationAllotments: [],
-            pldSdvTempAllotments: {},
-            vacationTempAllotments: {},
         });
 
         try {
-            // Clean up old division state first
-            if (fromDivision) {
-                // Modify cleanupDivisionState to not reset selectedZoneId if we're preserving it
-                const preserveZoneId = shouldPreserveZoneId
-                    ? currentState.selectedZoneId
-                    : null;
-                get().cleanupDivisionState(fromDivision, preserveZoneId);
-            }
-
-            // Load new division settings
+            // Don't clean up old division state, just load new division settings
             await get().ensureDivisionSettingsLoaded(toDivision);
 
             // Validate new state

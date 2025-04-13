@@ -45,9 +45,10 @@ interface WeeklyVacationAllotment {
 interface CalendarAllotmentsProps {
   zoneId: number | undefined;
   isZoneSpecific?: boolean;
+  selectedDivision?: string;
 }
 
-export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarAllotmentsProps) {
+export function CalendarAllotments({ zoneId, isZoneSpecific = false, selectedDivision }: CalendarAllotmentsProps) {
   const scrollViewRef = useRef<ScrollView>(null);
   const [scrollOffset, setScrollOffset] = useState(0);
 
@@ -75,8 +76,11 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const tintColor = Colors[colorScheme].tint;
   const { user } = useAuth();
-  const division = useUserStore((state) => state.division);
+  const userDivision = useUserStore((state) => state.division);
   const userRole = useUserStore((state) => state.userRole);
+
+  // Use selectedDivision if provided (admin mode), otherwise fall back to userDivision
+  const effectiveDivision = selectedDivision || userDivision;
 
   const currentYear = new Date().getFullYear();
   const nextYear = currentYear + 1;
@@ -103,7 +107,7 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
   }, [zoneId]);
 
   useEffect(() => {
-    if (!user || !division) return;
+    if (!user || !effectiveDivision) return;
 
     const fetchZoneId = isZoneSpecific ? zoneId : null;
 
@@ -113,7 +117,7 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
     }
 
     console.log("[CalendarAllotments] Fetching allotments effect triggered", {
-      division,
+      division: effectiveDivision,
       currentYear,
       nextYear,
       fetchZoneId,
@@ -121,19 +125,20 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
     });
 
     const loadAllotments = async () => {
-      await fetchAllotments(division, currentYear, fetchZoneId);
-      await fetchAllotments(division, nextYear, fetchZoneId);
+      await fetchAllotments(effectiveDivision, currentYear, fetchZoneId);
+      await fetchAllotments(effectiveDivision, nextYear, fetchZoneId);
     };
 
     loadAllotments();
 
+    // Only reset allotments when unmounting or when zone changes within the same division
     return () => {
-      console.log("[CalendarAllotments] Cleanup: Resetting allotments for", { zoneId: fetchZoneId });
-      if (!isZoneSpecific || fetchZoneId !== zoneId) {
+      if (isZoneSpecific && fetchZoneId !== zoneId) {
+        console.log("[CalendarAllotments] Cleanup: Resetting allotments for zone change", { zoneId: fetchZoneId });
         resetAllotments();
       }
     };
-  }, [user, division, zoneId, isZoneSpecific, fetchAllotments, resetAllotments]);
+  }, [user, effectiveDivision, zoneId, isZoneSpecific, fetchAllotments, resetAllotments]);
 
   const getAllotmentForYear = (year: number): YearlyAllotment | undefined => {
     return yearlyAllotments.find((a) => a.year === year);
@@ -144,7 +149,7 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
   };
 
   const handleUpdateConfirmed = async (year: number, numValue: number) => {
-    if (!user || !division) return;
+    if (!user || !effectiveDivision) return;
 
     const updateZoneId = isZoneSpecific ? zoneId : null;
 
@@ -174,14 +179,14 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
       if (currentType === "vacation") {
         // For vacation type, we need a week start date
         const weekStartDate = `${year}-01-01`; // Use the selected year
-        await updateVacationAllotment(division, weekStartDate, numValue, user.id, updateZoneId);
+        await updateVacationAllotment(effectiveDivision, weekStartDate, numValue, user.id, updateZoneId);
       } else if (currentType === "pld_sdv") {
-        await updateAllotment(division, year, numValue, user.id, updateZoneId);
+        await updateAllotment(effectiveDivision, year, numValue, user.id, updateZoneId);
       } else {
         throw new Error(`Invalid allotment type: ${currentType}`);
       }
 
-      await fetchAllotments(division, year, updateZoneId);
+      await fetchAllotments(effectiveDivision, year, updateZoneId);
 
       Toast.show({
         type: "success",
@@ -207,7 +212,7 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
     // Set the type first before proceeding with the update
     setSelectedType(type);
 
-    if (!division) {
+    if (!effectiveDivision) {
       Toast.show({
         type: "error",
         text1: "Error",
@@ -428,7 +433,9 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
         <ThemedView style={styles.zoneInfo}>
           <ThemedText type="title">Division Calendar</ThemedText>
           <ThemedText style={styles.zoneDescription}>
-            {division ? `Managing calendar allotments for division: ${division}` : "Loading division information..."}
+            {effectiveDivision
+              ? `Managing calendar allotments for the whole division: ${effectiveDivision}`
+              : "Loading division information..."}
           </ThemedText>
         </ThemedView>
       )}
