@@ -12,6 +12,7 @@ type ColorScheme = keyof typeof Colors;
 interface ActionToastProps extends BaseToastProps {
   props?: {
     onAction?: (action: string) => void;
+    actionType?: "delete" | "confirm";
   };
 }
 
@@ -19,29 +20,25 @@ const ActionToast = (props: ActionToastProps) => {
   const theme = (useColorScheme() ?? "light") as ColorScheme;
   const { text1, text2, props: customProps } = props;
 
-  const handleDelete = () => {
-    console.log("[ThemedToast] Delete button clicked");
+  const handleAction = (action: string) => {
+    console.log(`[ThemedToast] ${action} button clicked`);
     if (customProps?.onAction) {
-      console.log("[ThemedToast] Calling onAction with 'delete'");
-      customProps.onAction("delete");
+      console.log(`[ThemedToast] Calling onAction with '${action}'`);
+      customProps.onAction(action);
     } else {
       console.log("[ThemedToast] No onAction handler found");
     }
   };
 
-  return (
-    <View style={[styles.actionToast, { backgroundColor: Colors[theme].card }]}>
-      <View style={[styles.textContainer, !customProps?.onAction && styles.noActionTextContainer]}>
-        <ThemedText style={styles.title}>{text1}</ThemedText>
-        {text2 && <ThemedText style={styles.message}>{text2}</ThemedText>}
-      </View>
-      {customProps?.onAction && (
+  const renderActionButtons = () => {
+    if (customProps?.actionType === "confirm") {
+      return (
         <View style={styles.actionButtons}>
           <TouchableOpacity
-            style={[styles.button, { backgroundColor: Colors[theme].error + "20" }]}
-            onPress={handleDelete}
+            style={[styles.button, { backgroundColor: Colors[theme].tint + "20" }]}
+            onPress={() => handleAction("confirm")}
           >
-            <ThemedText style={[styles.buttonText, { color: Colors[theme].error }]}>Delete</ThemedText>
+            <ThemedText style={[styles.buttonText, { color: Colors[theme].tint }]}>Update</ThemedText>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.button, { backgroundColor: Colors[theme].background }]}
@@ -50,7 +47,34 @@ const ActionToast = (props: ActionToastProps) => {
             <ThemedText style={styles.buttonText}>Cancel</ThemedText>
           </TouchableOpacity>
         </View>
-      )}
+      );
+    }
+
+    return (
+      <View style={styles.actionButtons}>
+        <TouchableOpacity
+          style={[styles.button, { backgroundColor: Colors[theme].error + "20" }]}
+          onPress={() => handleAction("delete")}
+        >
+          <ThemedText style={[styles.buttonText, { color: Colors[theme].error }]}>Delete</ThemedText>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.button, { backgroundColor: Colors[theme].background }]}
+          onPress={() => Toast.hide()}
+        >
+          <ThemedText style={styles.buttonText}>Cancel</ThemedText>
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
+  return (
+    <View style={[styles.actionToast, { backgroundColor: Colors[theme].card }]}>
+      <View style={[styles.textContainer, !customProps?.onAction && styles.noActionTextContainer]}>
+        <ThemedText style={styles.title}>{text1}</ThemedText>
+        {text2 && <ThemedText style={styles.message}>{text2}</ThemedText>}
+      </View>
+      {customProps?.onAction && renderActionButtons()}
     </View>
   );
 };

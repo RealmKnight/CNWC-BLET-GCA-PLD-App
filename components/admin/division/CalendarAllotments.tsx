@@ -12,6 +12,7 @@ import { UserRole, CompanyAdminRole } from "@/types/auth";
 import { format } from "date-fns";
 import { Tooltip } from "../../../components/Tooltip";
 import { useAdminCalendarManagementStore } from "@/store/adminCalendarManagementStore";
+import Toast from "react-native-toast-message";
 
 type AllotmentType = "pld_sdv" | "vacation";
 
@@ -39,84 +40,6 @@ interface WeeklyVacationAllotment {
   week_start_date: string;
   current_requests: number;
   max_allotment: number;
-}
-
-interface ConfirmationDialogProps {
-  isVisible: boolean;
-  title: string;
-  message: string;
-  onConfirm: () => void;
-  onCancel: () => void;
-  scrollOffset: number;
-  type: AllotmentType;
-}
-
-function ConfirmationDialog({
-  isVisible,
-  title,
-  message,
-  onConfirm,
-  onCancel,
-  scrollOffset,
-  type,
-}: ConfirmationDialogProps) {
-  const [dimensions, setDimensions] = useState(() => Dimensions.get("window"));
-
-  useEffect(() => {
-    const subscription = Dimensions.addEventListener("change", ({ window }) => {
-      setDimensions(window);
-    });
-
-    return () => subscription.remove();
-  }, []);
-
-  if (!isVisible) return null;
-
-  // Calculate center position
-  const modalHeight = 200; // Approximate height of modal content
-  const modalWidth = Math.min(300, dimensions.width * 0.9);
-  const centerY = scrollOffset + (dimensions.height - modalHeight) / 2;
-  const centerX = (dimensions.width - modalWidth) / 2;
-
-  return (
-    <ThemedView
-      style={[
-        styles.modalOverlay,
-        {
-          position: "absolute",
-          top: 0,
-          left: 0,
-          width: dimensions.width,
-          height: dimensions.height + scrollOffset,
-        },
-      ]}
-    >
-      <ThemedView
-        style={[
-          styles.modalContent,
-          {
-            position: "absolute",
-            top: centerY,
-            left: centerX,
-            width: modalWidth,
-          },
-        ]}
-      >
-        <ThemedText type="title" style={styles.modalTitle}>
-          {title}
-        </ThemedText>
-        <ThemedText style={styles.modalMessage}>{message}</ThemedText>
-        <ThemedView style={styles.modalButtons}>
-          <TouchableOpacity style={[styles.modalButton, styles.cancelButton]} onPress={onCancel} activeOpacity={0.7}>
-            <ThemedText style={styles.modalButtonText}>Cancel</ThemedText>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.modalButton, styles.confirmButton]} onPress={onConfirm} activeOpacity={0.7}>
-            <ThemedText style={[styles.modalButtonText, { color: "#000000" }]}>Update</ThemedText>
-          </TouchableOpacity>
-        </ThemedView>
-      </ThemedView>
-    </ThemedView>
-  );
 }
 
 interface CalendarAllotmentsProps {
@@ -148,11 +71,6 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
   } = useAdminCalendarManagementStore();
 
   const [zoneName, setZoneName] = useState<string>("");
-  const [confirmDialog, setConfirmDialog] = useState<{
-    isVisible: boolean;
-    year: number;
-    value: number;
-  }>({ isVisible: false, year: 0, value: 0 });
 
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const tintColor = Colors[colorScheme].tint;
@@ -232,12 +150,13 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
     if (isZoneSpecific && (updateZoneId === undefined || updateZoneId === null)) {
       const msg = "Cannot update: Zone ID is missing for zone-specific allotment.";
       console.error(msg);
-      if (Platform.OS === "web") {
-        alert(msg);
-      } else {
-        Alert.alert("Error", msg);
-      }
-      setConfirmDialog({ isVisible: false, year: 0, value: 0 });
+      Toast.show({
+        type: "error",
+        text1: "Error",
+        text2: msg,
+        position: "bottom",
+        visibilityTime: 3000,
+      });
       return;
     }
 
@@ -250,34 +169,36 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
         await updateAllotment(division, year, numValue, user.id, updateZoneId);
       }
 
-      const successMsg = "Allotment updated successfully";
-      if (Platform.OS === "web") {
-        alert(successMsg);
-      } else {
-        Alert.alert("Success", successMsg);
-      }
+      Toast.show({
+        type: "success",
+        text1: "Success",
+        text2: "Allotment updated successfully",
+        position: "bottom",
+        visibilityTime: 2000,
+      });
     } catch (error) {
       console.error("[handleUpdateConfirmed] Error:", error);
       const errorMessage = error instanceof Error ? error.message : "Failed to update allotment";
-      if (Platform.OS === "web") {
-        alert(errorMessage);
-      } else {
-        Alert.alert("Error", errorMessage);
-      }
-    } finally {
-      setConfirmDialog({ isVisible: false, year: 0, value: 0 });
+      Toast.show({
+        type: "error",
+        text1: "Error",
+        text2: errorMessage,
+        position: "bottom",
+        visibilityTime: 3000,
+      });
     }
   };
 
   const handleUpdateAllotment = async (year: number, type: AllotmentType) => {
     setSelectedType(type);
     if (!division) {
-      const msg = "No division found. Please contact your administrator.";
-      if (Platform.OS === "web") {
-        alert(msg);
-      } else {
-        Alert.alert("Error", msg);
-      }
+      Toast.show({
+        type: "error",
+        text1: "Error",
+        text2: "No division found. Please contact your administrator.",
+        position: "bottom",
+        visibilityTime: 3000,
+      });
       return;
     }
 
@@ -288,12 +209,13 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
       "company_admin",
     ];
     if (!userRole || !allowedRoles.includes(userRole)) {
-      const msg = "You do not have permission to update allotments.";
-      if (Platform.OS === "web") {
-        alert(msg);
-      } else {
-        Alert.alert("Error", msg);
-      }
+      Toast.show({
+        type: "error",
+        text1: "Error",
+        text2: "You do not have permission to update allotments.",
+        position: "bottom",
+        visibilityTime: 3000,
+      });
       return;
     }
 
@@ -303,22 +225,50 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
         : parseInt(pldSdvTempAllotments[year] ?? "", 10);
 
     if (isNaN(value) || value < 0) {
-      const msg = "Please enter a valid number";
-      if (Platform.OS === "web") {
-        alert(msg);
-      } else {
-        Alert.alert("Error", msg);
-      }
+      Toast.show({
+        type: "error",
+        text1: "Error",
+        text2: "Please enter a valid number",
+        position: "bottom",
+        visibilityTime: 3000,
+      });
       return;
     }
 
-    setConfirmDialog({ isVisible: true, year, value });
+    Toast.show({
+      type: "info",
+      text1: `Update ${type === "vacation" ? "Vacation" : "Single Day"} Allotment`,
+      text2: `Are you sure you want to update the ${
+        type === "vacation" ? "vacation" : "single day"
+      } allotment for ${year} to ${value}?`,
+      position: "bottom",
+      visibilityTime: 4000,
+      autoHide: false,
+      onPress: () => {
+        Toast.hide();
+      },
+      props: {
+        onAction: async (action: string) => {
+          if (action === "confirm") {
+            Toast.hide();
+            await handleUpdateConfirmed(year, value);
+          }
+        },
+        actionType: "confirm",
+      },
+    });
   };
 
   const handleInputChange = (year: number, type: AllotmentType, value: string) => {
     const numValue = parseInt(value, 10);
     if (isNaN(numValue)) {
-      Alert.alert("Error", "Please enter a valid number");
+      Toast.show({
+        type: "error",
+        text1: "Error",
+        text2: "Please enter a valid number",
+        position: "bottom",
+        visibilityTime: 3000,
+      });
       if (type === "vacation") {
         setVacationTempAllotments((prev) => {
           const currentVal = getVacationAllotmentsForYear(year)?.[0]?.max_allotment ?? 0;
@@ -481,18 +431,6 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false }: CalendarA
         {renderYearInput(currentYear, "vacation")}
         {renderYearInput(nextYear, "vacation")}
       </ThemedView>
-
-      <ConfirmationDialog
-        isVisible={confirmDialog.isVisible}
-        title={`Update ${selectedType === "vacation" ? "Vacation" : "Single Day"} Allotment`}
-        message={`Are you sure you want to update the ${
-          selectedType === "vacation" ? "vacation" : "single day"
-        } allotment for ${confirmDialog.year} to ${confirmDialog.value}?`}
-        onConfirm={() => handleUpdateConfirmed(confirmDialog.year, confirmDialog.value)}
-        onCancel={() => setConfirmDialog({ isVisible: false, year: 0, value: 0 })}
-        scrollOffset={scrollOffset}
-        type={selectedType}
-      />
     </ScrollView>
   );
 }
@@ -580,51 +518,6 @@ const styles = StyleSheet.create({
   tooltipContent: {
     padding: 8,
     gap: 4,
-  },
-  modalOverlay: {
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
-    zIndex: 1000,
-  },
-  modalContent: {
-    backgroundColor: Colors.light.background,
-    borderRadius: 8,
-    padding: 20,
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
-  },
-  modalTitle: {
-    marginBottom: 12,
-    textAlign: "center",
-  },
-  modalMessage: {
-    marginBottom: 20,
-    textAlign: "center",
-  },
-  modalButtons: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-  },
-  modalButton: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 8,
-    minWidth: 100,
-    alignItems: "center",
-  },
-  cancelButton: {
-    backgroundColor: "rgba(0, 0, 0, 0.1)",
-  },
-  confirmButton: {
-    backgroundColor: Colors.light.tint,
-  },
-  modalButtonText: {
-    fontWeight: "600",
   },
   weeklyAllotmentsContainer: {
     marginTop: 12,

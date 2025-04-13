@@ -89,6 +89,7 @@ export function DivisionSelector({
           opacity: disabled ? 0.5 : 1,
         },
       ]}
+      itemStyle={styles.pickerItem}
     >
       {divisions.map((division) => (
         <Picker.Item key={division} label={division} value={division} />
@@ -108,7 +109,17 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
   picker: {
-    height: 40,
+    ...Platform.select({
+      android: {
+        height: 65, // Increased height for Android
+      },
+      default: {
+        height: 40,
+      },
+    }),
     minWidth: 150,
+  },
+  pickerItem: {
+    height: 65, // Matching height for picker items
   },
 });

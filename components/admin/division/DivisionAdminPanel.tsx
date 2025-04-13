@@ -19,8 +19,6 @@ import Animated, {
   withSpring,
   useAnimatedStyle,
   withTiming,
-  interpolateColor,
-  useSharedValue,
 } from "react-native-reanimated";
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
@@ -46,8 +44,8 @@ const sections: SectionButton[] = [
   { key: "calendar", title: "Calendar Allotments", icon: "calendar", outlineIcon: "calendar-outline" },
 ];
 
-const isWeb = Platform.OS === "web";
-const ButtonComponent = isWeb ? AnimatedPressable : AnimatedTouchableOpacity;
+// Mobile breakpoint for web
+const MOBILE_BREAKPOINT = 768;
 
 interface DivisionAdminPanelProps {
   division: string;
@@ -59,20 +57,18 @@ export const DivisionAdminPanel = forwardRef<View, DivisionAdminPanelProps>(({ d
   const tintColor = Colors[colorScheme].tint;
   const { width } = useWindowDimensions();
 
+  const isWeb = Platform.OS === "web";
+  const isMobileWeb = isWeb && width < MOBILE_BREAKPOINT;
+  const shouldUseMobileLayout = !isWeb || isMobileWeb;
+  const ButtonComponent = isWeb ? AnimatedPressable : AnimatedTouchableOpacity;
+
   const renderNavigationButton = (section: SectionButton) => {
     const isActive = activeSection === section.key;
-    const buttonAnimation = useSharedValue(isActive ? 1 : 0);
-
-    React.useEffect(() => {
-      buttonAnimation.value = withTiming(isActive ? 1 : 0, { duration: 200 });
-    }, [isActive]);
-
-    const animatedButtonStyle = useAnimatedStyle(() => {
+    const buttonAnimation = useAnimatedStyle(() => {
       const scale = withSpring(isActive ? 1.1 : 1, {
         damping: 15,
         stiffness: 150,
       });
-
       return {
         transform: [{ scale }],
       };
@@ -82,18 +78,18 @@ export const DivisionAdminPanel = forwardRef<View, DivisionAdminPanelProps>(({ d
       <ButtonComponent
         key={section.key}
         style={[
-          isWeb ? styles.webSectionButton : styles.mobileSectionButton,
-          isActive && (isWeb ? styles.webActiveSectionButton : styles.mobileActiveSectionButton),
-          animatedButtonStyle,
+          shouldUseMobileLayout ? styles.mobileSectionButton : styles.webSectionButton,
+          isActive && (shouldUseMobileLayout ? styles.mobileActiveSectionButton : styles.webActiveSectionButton),
+          buttonAnimation,
         ]}
         onPress={() => setActiveSection(section.key)}
       >
         <Ionicons
           name={isActive ? section.icon : section.outlineIcon}
-          size={isWeb ? 24 : 28}
-          color={isActive ? (isWeb ? "#000000" : tintColor) : Colors[colorScheme].text}
+          size={shouldUseMobileLayout ? 28 : 24}
+          color={isActive ? (shouldUseMobileLayout ? tintColor : "#000000") : Colors[colorScheme].text}
         />
-        {isWeb && (
+        {!shouldUseMobileLayout && (
           <ThemedText style={[styles.sectionButtonText, isActive && styles.activeSectionButtonText]}>
             {section.title}
           </ThemedText>
@@ -106,15 +102,15 @@ export const DivisionAdminPanel = forwardRef<View, DivisionAdminPanelProps>(({ d
     const Component = (() => {
       switch (activeSection) {
         case "members":
-          return () => <MemberManagement />;
+          return MemberManagement;
         case "officers":
           return () => <DivisionOfficers division={division} />;
         case "messages":
-          return () => <MessageCenter />;
+          return MessageCenter;
         case "adminMessages":
-          return () => <AdminMessages />;
+          return AdminMessages;
         case "calendar":
-          return () => <CalendarManager />;
+          return CalendarManager;
         default:
           return null;
       }
@@ -124,9 +120,9 @@ export const DivisionAdminPanel = forwardRef<View, DivisionAdminPanelProps>(({ d
 
     return (
       <AnimatedThemedView
-        entering={isWeb ? FadeIn : SlideInRight}
-        exiting={isWeb ? FadeOut : SlideOutLeft}
-        style={isWeb ? styles.webContent : styles.mobileContent}
+        entering={shouldUseMobileLayout ? SlideInRight : FadeIn}
+        exiting={shouldUseMobileLayout ? SlideOutLeft : FadeOut}
+        style={shouldUseMobileLayout ? styles.mobileContent : styles.webContent}
       >
         <Component />
       </AnimatedThemedView>
@@ -134,11 +130,10 @@ export const DivisionAdminPanel = forwardRef<View, DivisionAdminPanelProps>(({ d
   };
 
   return (
-    <ThemedView style={styles.container} ref={ref}>
-      <AnimatedThemedView style={isWeb ? styles.webNavigation : styles.mobileNavigation}>
+    <ThemedView style={[styles.container, { flexDirection: shouldUseMobileLayout ? "column" : "row" }]} ref={ref}>
+      <AnimatedThemedView style={shouldUseMobileLayout ? styles.mobileNavigation : styles.webNavigation}>
         {sections.map(renderNavigationButton)}
       </AnimatedThemedView>
-
       {renderSection()}
     </ThemedView>
   );
@@ -147,7 +142,6 @@ export const DivisionAdminPanel = forwardRef<View, DivisionAdminPanelProps>(({ d
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    flexDirection: isWeb ? "row" : "column",
     height: "100%",
     minHeight: 0,
   },
