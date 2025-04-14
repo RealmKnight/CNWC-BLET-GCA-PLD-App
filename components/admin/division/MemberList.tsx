@@ -23,6 +23,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/utils/supabase";
 import { Picker } from "@react-native-picker/picker";
 import Toast from "react-native-toast-message";
+import { useAdminMemberManagementStore } from "@/store/adminMemberManagementStore";
 
 interface Member {
   pin_number: string | number;
@@ -46,7 +47,6 @@ interface MemberWithCalendar extends Omit<Member, "calendar_name"> {
 
 interface MemberListProps {
   onEditMember: (member: Member) => void;
-  refreshTrigger: number;
 }
 
 const WebButton = ({ onPress, children }: { onPress: () => void; children: React.ReactNode }) => (
@@ -148,36 +148,31 @@ const MemberItem = React.memo(
         return (
           <View style={styles.sdvContainer}>
             <View style={styles.sdvSection}>
-              <ThemedText style={styles.sdvLabel}>Current SDV</ThemedText>
+              <ThemedText style={styles.sdvLabel}>SDV Entitlement</ThemedText>
               {isEditing ? (
                 <TextInput
                   style={[styles.sdvInput, { color: Colors[colorScheme].text }]}
                   value={entitlement}
                   onChangeText={(text) => handleTextInput(text, setEntitlement)}
-                  keyboardType="number-pad"
+                  keyboardType="numeric"
                   maxLength={2}
-                  placeholder="0"
-                  returnKeyType="done"
                 />
               ) : (
-                <ThemedText style={styles.sdvValue}>{item.sdv_entitlement ?? 0}</ThemedText>
+                <ThemedText style={styles.sdvValue}>{item.sdv_entitlement || 0}</ThemedText>
               )}
             </View>
-
             <View style={styles.sdvSection}>
-              <ThemedText style={styles.sdvLabel}>Next Year SDV</ThemedText>
+              <ThemedText style={styles.sdvLabel}>SDV Election</ThemedText>
               {isEditing ? (
                 <TextInput
                   style={[styles.sdvInput, { color: Colors[colorScheme].text }]}
                   value={election}
                   onChangeText={(text) => handleTextInput(text, setElection)}
-                  keyboardType="number-pad"
+                  keyboardType="numeric"
                   maxLength={2}
-                  placeholder="0"
-                  returnKeyType="done"
                 />
               ) : (
-                <ThemedText style={styles.sdvValue}>{item.sdv_election ?? 0}</ThemedText>
+                <ThemedText style={styles.sdvValue}>{item.sdv_election || 0}</ThemedText>
               )}
             </View>
 
@@ -216,43 +211,35 @@ const MemberItem = React.memo(
           {isExpanded && (
             <View style={styles.mobileSDVContent}>
               <View style={styles.mobileSDVRow}>
-                <View style={styles.mobileSDVField}>
-                  <ThemedText style={styles.mobileSDVLabel}>Current SDV</ThemedText>
-                  {isEditing ? (
-                    <TextInput
-                      style={[styles.mobileSDVInput, { color: Colors[colorScheme].text }]}
-                      value={entitlement}
-                      onChangeText={(text) => handleTextInput(text, setEntitlement)}
-                      keyboardType="number-pad"
-                      maxLength={2}
-                      placeholder="0"
-                      returnKeyType="done"
-                    />
-                  ) : (
-                    <ThemedText style={styles.mobileSDVValue}>{item.sdv_entitlement ?? 0}</ThemedText>
-                  )}
-                </View>
-
-                <View style={styles.mobileSDVField}>
-                  <ThemedText style={styles.mobileSDVLabel}>Next Year SDV</ThemedText>
-                  {isEditing ? (
-                    <TextInput
-                      style={[styles.mobileSDVInput, { color: Colors[colorScheme].text }]}
-                      value={election}
-                      onChangeText={(text) => handleTextInput(text, setElection)}
-                      keyboardType="number-pad"
-                      maxLength={2}
-                      placeholder="0"
-                      returnKeyType="done"
-                    />
-                  ) : (
-                    <ThemedText style={styles.mobileSDVValue}>{item.sdv_election ?? 0}</ThemedText>
-                  )}
-                </View>
+                <ThemedText style={styles.mobileSDVLabel}>SDV Entitlement:</ThemedText>
+                {isEditing ? (
+                  <TextInput
+                    style={[styles.mobileSDVInput, { color: Colors[colorScheme].text }]}
+                    value={entitlement}
+                    onChangeText={(text) => handleTextInput(text, setEntitlement)}
+                    keyboardType="numeric"
+                    maxLength={2}
+                  />
+                ) : (
+                  <ThemedText style={styles.mobileSDVValue}>{item.sdv_entitlement || 0}</ThemedText>
+                )}
               </View>
-
+              <View style={styles.mobileSDVRow}>
+                <ThemedText style={styles.mobileSDVLabel}>SDV Election:</ThemedText>
+                {isEditing ? (
+                  <TextInput
+                    style={[styles.mobileSDVInput, { color: Colors[colorScheme].text }]}
+                    value={election}
+                    onChangeText={(text) => handleTextInput(text, setElection)}
+                    keyboardType="numeric"
+                    maxLength={2}
+                  />
+                ) : (
+                  <ThemedText style={styles.mobileSDVValue}>{item.sdv_election || 0}</ThemedText>
+                )}
+              </View>
               <TouchableOpacityComponent
-                style={[styles.mobileEditButton, isEditing && hasChanges && styles.mobileEditButtonActive]}
+                style={styles.mobileEditButton}
                 onPress={() => {
                   if (isEditing && hasChanges) {
                     handleSave();
@@ -264,13 +251,8 @@ const MemberItem = React.memo(
                 <Ionicons
                   name={isEditing ? (hasChanges ? "save" : "close") : "create"}
                   size={20}
-                  color={isEditing && hasChanges ? "#fff" : Colors[colorScheme].text}
+                  color={Colors[colorScheme].text}
                 />
-                <ThemedText
-                  style={[styles.mobileEditButtonText, isEditing && hasChanges && styles.mobileEditButtonTextActive]}
-                >
-                  {isEditing ? (hasChanges ? "Save Changes" : "Cancel") : "Edit SDV Values"}
-                </ThemedText>
               </TouchableOpacityComponent>
             </View>
           )}
@@ -326,125 +308,14 @@ const MemberItem = React.memo(
   }
 );
 
-export function MemberList({ onEditMember, refreshTrigger }: MemberListProps) {
-  const [members, setMembers] = useState<Member[]>([]);
+export function MemberList({ onEditMember }: MemberListProps) {
   const [searchQuery, setSearchQuery] = useState("");
-  const [isLoading, setIsLoading] = useState(true);
-  const [availableCalendars, setAvailableCalendars] = useState<Calendar[]>([]);
   const [isEditingCalendar, setIsEditingCalendar] = useState<string | null>(null);
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const themeTintColor = useThemeColor({}, "tint");
-  const { user } = useAuth();
-  const isFetchInProgressRef = useRef(false);
-  const initialLoadCompleteRef = useRef(false);
-  const lastFetchTimeRef = useRef<number>(0);
-  const FETCH_COOLDOWN = 2000;
 
-  const fetchMembers = useCallback(async () => {
-    const currentUserId = user?.id;
-    if (!currentUserId) {
-      console.log("[MemberList] Skipping fetchMembers - no user ID at execution time.");
-      return;
-    }
-
-    if (isFetchInProgressRef.current) {
-      console.log("[MemberList] Skipping fetchMembers - already in progress.");
-      return;
-    }
-
-    console.log("[MemberList] Starting fetchMembers...");
-
-    try {
-      isFetchInProgressRef.current = true;
-      lastFetchTimeRef.current = Date.now();
-      setIsLoading(true);
-      const { data: adminData, error: adminError } = await supabase
-        .from("members")
-        .select("division_id")
-        .eq("id", currentUserId)
-        .single();
-
-      if (adminError) throw adminError;
-
-      const adminDivisionId = adminData?.division_id;
-      if (adminDivisionId === null || adminDivisionId === undefined) {
-        throw new Error("No division ID found for admin");
-      }
-
-      const { data: membersData, error: membersError } = await supabase
-        .from("members")
-        .select(
-          `
-          first_name,
-          last_name,
-          pin_number,
-          division_id,
-          sdv_entitlement,
-          sdv_election,
-          calendar_id
-        `
-        )
-        .eq("division_id", adminDivisionId)
-        .order("last_name", { ascending: true });
-
-      if (membersError) throw membersError;
-
-      // Get all calendars in a separate query
-      const { data: calendarsData, error: calendarsError } = await supabase
-        .from("calendars")
-        .select("id, name")
-        .order("name");
-
-      if (calendarsError) throw calendarsError;
-
-      setAvailableCalendars(calendarsData || []);
-
-      // Create a map of calendar IDs to names
-      const calendarMap = new Map(calendarsData?.map((cal) => [cal.id, cal.name]) || []);
-
-      const formattedMembers = (membersData || []).map((member) => ({
-        ...member,
-        calendar_name: member.calendar_id ? calendarMap.get(member.calendar_id) || null : null,
-        first_name: member.first_name || "",
-        last_name: member.last_name || "",
-      })) as Member[];
-
-      setMembers(formattedMembers);
-    } catch (error) {
-      console.error("[MemberList] Error in fetchMembers:", error);
-      setMembers([]);
-    } finally {
-      setIsLoading(false);
-      isFetchInProgressRef.current = false;
-    }
-  }, [user?.id]);
-
-  useEffect(() => {
-    if (user?.id && !initialLoadCompleteRef.current) {
-      console.log("[MemberList] Initial load trigger.");
-      initialLoadCompleteRef.current = true;
-      fetchMembers();
-    }
-    return () => {
-      console.log("[MemberList] Cleaning up component on unmount/user change.");
-      initialLoadCompleteRef.current = false;
-      isFetchInProgressRef.current = false;
-      setMembers([]);
-      setIsLoading(true);
-    };
-  }, [user?.id, fetchMembers]);
-
-  const isInitialMount = useRef(true);
-  useEffect(() => {
-    if (isInitialMount.current) {
-      isInitialMount.current = false;
-      return;
-    }
-    if (user?.id) {
-      console.log("[MemberList] Refresh trigger changed, fetching members.");
-      fetchMembers();
-    }
-  }, [refreshTrigger, user?.id, fetchMembers]);
+  // Use the store
+  const { members, isLoading, error, updateMember, availableCalendars } = useAdminMemberManagementStore();
 
   const filteredMembers = members.filter(
     (member) =>
@@ -459,8 +330,8 @@ export function MemberList({ onEditMember, refreshTrigger }: MemberListProps) {
 
   const handleMemberUpdate = useCallback(() => {
     // Force a re-render of the list
-    setMembers([...members]);
-  }, [members]);
+    updateMember();
+  }, [updateMember]);
 
   const handleCalendarChange = async (memberId: string | number, calendarId: string | null) => {
     try {
@@ -475,7 +346,7 @@ export function MemberList({ onEditMember, refreshTrigger }: MemberListProps) {
         text2: "Calendar updated successfully",
       });
 
-      fetchMembers(); // Refresh the list
+      updateMember(); // Refresh the list using the store's update function
     } catch (error) {
       console.error("Error updating calendar:", error);
       Toast.show({

@@ -31,6 +31,7 @@ import Toast from "react-native-toast-message";
 import { useThemeColor } from "@/hooks/useThemeColor";
 import { useAuth, AuthContext } from "@/hooks/useAuth";
 import { useAdminCalendarManagementStore } from "@/store/adminCalendarManagementStore";
+import { useAdminMemberManagementStore } from "@/store/adminMemberManagementStore";
 
 type MemberAction = "list" | "add" | "edit" | "bulk" | "transfer";
 
@@ -760,36 +761,64 @@ const selectSetDivision = (state: UserState) => state.setDivision;
 export function MemberManagement() {
   const [currentAction, setCurrentAction] = useState<MemberAction>("list");
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
-  const [refreshKey, setRefreshKey] = useState(0);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const tintColor = Colors[colorScheme].tint;
 
-  // Make all selectors use useCallback for extra stability
-  const memberSelector = useCallback(selectMember, []);
-  const userRoleSelector = useCallback(selectUserRole, []);
-  const divisionSelector = useCallback(selectDivision, []);
-  const setDivisionSelector = useCallback(selectSetDivision, []);
+  // Use the new store
+  const {
+    members,
+    isLoading,
+    isDivisionLoading,
+    isSwitchingDivision,
+    error,
+    lastLoadedDivision,
+    prepareDivisionSwitch,
+    ensureDivisionMembersLoaded,
+  } = useAdminMemberManagementStore();
 
-  // Use individual selectors with stable references
-  const member = useUserStore(memberSelector);
-  const userRole = useUserStore(userRoleSelector);
-  const division = useUserStore(divisionSelector);
-  const setDivision = useUserStore(setDivisionSelector);
+  // Get user info from userStore
+  const userRole = useUserStore(useCallback((state) => state.userRole, []));
+  const userDivision = useUserStore(useCallback((state) => state.division, []));
+  const setUserDivision = useUserStore(useCallback((state) => state.setDivision, []));
 
   const { width } = useWindowDimensions();
   const isMobile = Platform.OS !== "web" || width < 768;
   const isAdmin = useIsAdmin(userRole);
 
+  // Initialize with user's division
+  useEffect(() => {
+    if (userDivision) {
+      if (isAdmin) {
+        prepareDivisionSwitch("", userDivision);
+      } else {
+        ensureDivisionMembersLoaded(userDivision);
+      }
+    }
+  }, []);
+
+  const handleDivisionChange = async (newDivision: string) => {
+    if (!newDivision || (isLoading && newDivision === lastLoadedDivision)) return;
+
+    try {
+      if (isAdmin) {
+        await prepareDivisionSwitch(lastLoadedDivision || "", newDivision);
+      } else {
+        await ensureDivisionMembersLoaded(newDivision);
+      }
+      setUserDivision(newDivision);
+    } catch (error) {
+      console.error("[MemberManagement] Error changing division:", error);
+      Toast.show({
+        type: "error",
+        text1: "Error",
+        text2: error instanceof Error ? error.message : "Failed to change division",
+      });
+    }
+  };
+
   const handleEditMember = useCallback((member: Member) => {
     setSelectedMember(member);
     setCurrentAction("edit");
-  }, []);
-
-  const triggerRefresh = useCallback(() => {
-    setRefreshKey((prevKey) => prevKey + 1);
-    setCurrentAction("list");
   }, []);
 
   const ButtonComponent = Platform.OS === "web" ? Pressable : TouchableOpacity;
@@ -833,7 +862,7 @@ export function MemberManagement() {
   );
 
   const renderContent = useCallback(() => {
-    if (!division) {
+    if (!lastLoadedDivision) {
       return (
         <ThemedView style={styles.contentContainer}>
           <ThemedText>Please select a division to manage members.</ThemedText>
@@ -845,7 +874,7 @@ export function MemberManagement() {
       case "list":
         return (
           <ThemedView style={styles.contentContainer}>
-            <MemberList onEditMember={handleEditMember} refreshTrigger={refreshKey} />
+            <MemberList onEditMember={handleEditMember} />
           </ThemedView>
         );
       case "add":
@@ -868,7 +897,9 @@ export function MemberManagement() {
       case "bulk":
         return (
           <ThemedView style={styles.contentContainer}>
-            {division && <BulkActions division={division} onDivisionChange={setDivision} />}
+            {lastLoadedDivision && (
+              <BulkActions division={lastLoadedDivision} onDivisionChange={handleDivisionChange} />
+            )}
           </ThemedView>
         );
       case "transfer":
@@ -880,9 +911,9 @@ export function MemberManagement() {
       default:
         return null;
     }
-  }, [currentAction, division, handleEditMember, refreshKey, selectedMember, setDivision]);
+  }, [currentAction, lastLoadedDivision, handleEditMember, selectedMember]);
 
-  if (!division) {
+  if (!lastLoadedDivision) {
     return (
       <ThemedView style={styles.container}>
         <ThemedText>Please select a division to manage members.</ThemedText>
@@ -900,13 +931,13 @@ export function MemberManagement() {
           <ThemedText type="subtitle">Manage members of </ThemedText>
           {isAdmin ? (
             <DivisionSelector
-              currentDivision={division || ""}
-              onDivisionChange={setDivision}
+              currentDivision={lastLoadedDivision}
+              onDivisionChange={handleDivisionChange}
               isAdmin={isAdmin}
-              disabled={isLoading}
+              disabled={isLoading || isSwitchingDivision}
             />
           ) : (
-            <ThemedText type="subtitle">{division}</ThemedText>
+            <ThemedText type="subtitle">{lastLoadedDivision}</ThemedText>
           )}
         </ThemedView>
       </ThemedView>
@@ -916,7 +947,7 @@ export function MemberManagement() {
         </ThemedView>
       )}
       {renderActionButtons()}
-      {isLoading ? (
+      {isLoading || isDivisionLoading ? (
         <ThemedView style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={Colors[colorScheme].tint} />
           <ThemedText>Loading...</ThemedText>
