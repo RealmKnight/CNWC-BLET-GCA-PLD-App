@@ -288,7 +288,7 @@ const MemberItem = React.memo(
   }
 );
 
-export const MemberList = React.memo(({ onEditMember, refreshTrigger }: MemberListProps) => {
+export function MemberList({ onEditMember, refreshTrigger }: MemberListProps) {
   const [members, setMembers] = useState<Member[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -423,19 +423,25 @@ export const MemberList = React.memo(({ onEditMember, refreshTrigger }: MemberLi
 
   return (
     <ThemedView style={styles.container}>
-      <View style={styles.searchContainer}>
-        <TextInput
-          style={[styles.searchInput, { color: Colors[colorScheme].text }]}
-          placeholder="Search members..."
-          placeholderTextColor={Colors[colorScheme].text}
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-        />
-        {searchQuery !== "" && (
-          <TouchableOpacityComponent style={styles.clearButton} onPress={() => setSearchQuery("")} activeOpacity={0.7}>
-            <Ionicons name="close-circle" size={20} color={Colors[colorScheme].text} />
-          </TouchableOpacityComponent>
-        )}
+      <View style={styles.controls}>
+        <View style={styles.searchContainer}>
+          <TextInput
+            style={[styles.searchInput, { color: Colors[colorScheme].text }]}
+            placeholder="Search members..."
+            placeholderTextColor={Colors[colorScheme].text}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+          {searchQuery !== "" && (
+            <TouchableOpacityComponent
+              style={styles.clearButton}
+              onPress={() => setSearchQuery("")}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="close-circle" size={20} color={Colors[colorScheme].text} />
+            </TouchableOpacityComponent>
+          )}
+        </View>
       </View>
 
       {isLoading ? (
@@ -453,26 +459,34 @@ export const MemberList = React.memo(({ onEditMember, refreshTrigger }: MemberLi
           keyExtractor={keyExtractor}
           getItemCount={getItemCount}
           getItem={getItem}
-          style={styles.memberList}
+          style={styles.list}
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={true}
+          scrollEnabled={true}
+          removeClippedSubviews={Platform.OS !== "web"}
           initialNumToRender={10}
           maxToRenderPerBatch={10}
           windowSize={5}
-          removeClippedSubviews={Platform.OS !== "web"}
         />
       )}
     </ThemedView>
   );
-});
+}
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    minHeight: 0,
+    overflow: "hidden",
+  },
+  controls: {
     padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.light.border,
   },
   searchContainer: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 16,
   },
   searchInput: {
     flex: 1,
@@ -487,8 +501,17 @@ const styles = StyleSheet.create({
     right: 12,
     padding: 4,
   },
-  memberList: {
+  list: {
     flex: 1,
+    minHeight: 0,
+  },
+  listContent: {
+    padding: 16,
+  },
+  centerContent: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
   },
   memberItem: {
     flexDirection: "row",
@@ -518,11 +541,6 @@ const styles = StyleSheet.create({
   memberCalendar: {
     fontSize: 14,
     fontStyle: "italic",
-  },
-  centerContent: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
   },
   sdvContainer: {
     flexDirection: "row",

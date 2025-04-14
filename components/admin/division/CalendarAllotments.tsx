@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   StyleSheet,
+  View,
   TextInput,
   Alert,
   TouchableOpacity,
@@ -754,23 +755,23 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 12,
     alignItems: "center",
-    backgroundColor: Colors.light.background,
+    backgroundColor: Colors.dark.background,
   },
   activeTab: {
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.dark.tint,
   },
   tabText: {
     fontSize: 14,
     fontWeight: "500",
   },
   activeTabText: {
-    color: Colors.light.background,
+    color: Colors.dark.background,
   },
   section: {
     marginBottom: 24,
     padding: 16,
     borderRadius: 8,
-    backgroundColor: Colors.light.background,
+    backgroundColor: Colors.dark.background,
   },
   sectionTitle: {
     fontSize: 18,
@@ -779,7 +780,7 @@ const styles = StyleSheet.create({
   },
   sectionSubtitle: {
     fontSize: 14,
-    color: Colors.light.textDim,
+    color: Colors.dark.textDim,
     marginBottom: 16,
     fontStyle: "italic",
     lineHeight: 20,
@@ -794,24 +795,46 @@ const styles = StyleSheet.create({
     width: 60,
   },
   input: {
-    flex: 0.05,
-    height: 40,
+    ...Platform.select({
+      web: {
+        flex: 0.05,
+        marginRight: 8,
+      },
+      android: {
+        flex: 0.15,
+        minWidth: 30,
+        minHeight: 30,
+        fontSize: 16,
+        paddingVertical: 8,
+        marginRight: 8,
+      },
+      ios: {
+        flex: 0.15,
+        minWidth: 60,
+        marginRight: 8,
+      },
+      default: {
+        flex: 0.05,
+        marginRight: 8,
+      },
+    }),
+    height: Platform.OS === "android" ? 48 : 40,
     borderWidth: 1,
-    borderColor: Colors.light.border,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    marginHorizontal: 8,
-    backgroundColor: Colors.light.background,
-    color: Colors.light.text,
+    borderColor: Colors.dark.border,
+    borderRadius: 4,
+    paddingHorizontal: 8,
+    textAlign: "center",
+    color: Colors.dark.text,
+    backgroundColor: Colors.dark.background,
   },
   updateButton: {
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.dark.tint,
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 8,
   },
   updateButtonText: {
-    color: Colors.light.background,
+    color: Colors.dark.background,
     fontWeight: "500",
   },
   dateRangeContainer: {
@@ -831,9 +854,9 @@ const styles = StyleSheet.create({
   yearContainerInternal: {
     padding: 16,
     borderRadius: 8,
-    backgroundColor: Colors.light.card,
+    backgroundColor: Colors.dark.card,
     borderWidth: 1,
-    borderColor: Colors.light.border,
+    borderColor: Colors.dark.border,
     gap: 12,
   },
   yearHeader: {
@@ -841,7 +864,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.light.border,
+    borderBottomColor: Colors.dark.border,
     paddingBottom: 8,
     marginBottom: 8,
   },
@@ -865,7 +888,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
     padding: 12,
     borderRadius: 8,
-    backgroundColor: Colors.dark.background,
+    backgroundColor: Colors.dark.card,
     borderWidth: 1,
     borderColor: Colors.dark.border,
     gap: 8,
@@ -874,7 +897,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
     marginBottom: 8,
-    color: Colors.dark.textDim,
+    color: Colors.dark.text,
   },
   weeklyAllotmentRow: {
     flexDirection: "row",
@@ -939,7 +962,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
     padding: 8,
     borderRadius: 8,
-    backgroundColor: Colors.dark.background,
+    backgroundColor: Colors.dark.card,
     borderWidth: 1,
     borderColor: Colors.dark.border,
   },

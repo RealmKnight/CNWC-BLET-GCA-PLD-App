@@ -144,6 +144,7 @@ const styles = StyleSheet.create({
     flex: 1,
     height: "100%",
     minHeight: 0,
+    overflow: "hidden",
   },
   webNavigation: {
     width: 250,
@@ -170,12 +171,13 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 20,
     minHeight: 0,
-    overflow: Platform.OS === "web" ? "hidden" : undefined,
+    overflow: "hidden",
   },
   mobileContent: {
     flex: 1,
     padding: 16,
     minHeight: 0,
+    overflow: "hidden",
   },
   webSectionButton: {
     flexDirection: "row",

@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   Alert,
   ViewStyle,
+  Platform,
 } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -308,21 +309,30 @@ export function CalendarCrudAdmin({ selectedDivisionName, style }: CalendarCrudA
       {error && <ThemedText style={styles.errorText}>{error}</ThemedText>}
 
       {/* List of Calendars */}
-      <FlatList data={calendars} renderItem={renderCalendarItem} keyExtractor={(item) => item.id} style={styles.list} />
+      <FlatList
+        data={calendars}
+        renderItem={renderCalendarItem}
+        keyExtractor={(item) => item.id}
+        style={styles.list}
+        nestedScrollEnabled={true}
+        scrollEnabled={Platform.OS !== "web"}
+      />
     </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
-    padding: 16,
+    flex: Platform.OS === "web" ? 1 : undefined,
+    minHeight: 0,
   },
   sectionTitle: {
     marginBottom: 16,
   },
   list: {
-    marginTop: 16,
+    flex: Platform.OS === "web" ? 1 : undefined,
+    minHeight: 0,
+    marginBottom: 16,
   },
   itemContainer: {
     marginTop: 12,

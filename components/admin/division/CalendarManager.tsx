@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { StyleSheet, ScrollView, Platform, ViewStyle, Switch, TouchableOpacity, View } from "react-native";
+import { StyleSheet, Platform, ViewStyle, Switch, TouchableOpacity, View, VirtualizedList } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { Colors } from "@/constants/Colors";
@@ -206,6 +206,40 @@ export function CalendarManager() {
     setSelectedCalendarId(calendarId);
   };
 
+  // Add getItem and getItemCount functions for VirtualizedList
+  const getItem = (_data: any[], index: number) => ({
+    id: index,
+    content:
+      index === 0 ? (
+        <ThemedView style={styles.componentGroup}>
+          <CalendarCrudAdmin selectedDivisionName={selectedDivision} style={{ marginBottom: 0 }} />
+          {currentDivisionCalendars.length > 1 && (
+            <CalendarSelector
+              calendars={currentDivisionCalendars}
+              selectedCalendarId={selectedCalendarId}
+              onSelectCalendar={handleCalendarSelect}
+              disabled={isLoading || isSwitchingDivision}
+              style={{ borderTopWidth: 0, marginTop: -8 }}
+            />
+          )}
+        </ThemedView>
+      ) : selectedCalendarId ? (
+        <CalendarAllotments calendarId={selectedCalendarId} selectedDivision={isAdmin ? selectedDivision : undefined} />
+      ) : currentDivisionCalendars.length === 0 ? (
+        <ThemedView style={styles.noCalendarsContainer}>
+          <ThemedText style={styles.noCalendarsText}>
+            No calendars found for this division. Please create a calendar to begin.
+          </ThemedText>
+        </ThemedView>
+      ) : null,
+  });
+
+  const getItemCount = () => (selectedCalendarId || currentDivisionCalendars.length === 0 ? 2 : 1);
+
+  const renderItem = ({ item }: { item: { id: number; content: React.ReactNode } }) => (
+    <View key={item.id}>{item.content}</View>
+  );
+
   return (
     <ThemedView style={styles.container}>
       <ThemedView style={styles.header}>
@@ -238,40 +272,18 @@ export function CalendarManager() {
       {error ? (
         <ThemedText style={styles.errorText}>{error}</ThemedText>
       ) : (
-        <ScrollView style={styles.content}>
-          {/* Calendar CRUD Section */}
-          <ThemedView style={styles.componentGroup}>
-            <CalendarCrudAdmin selectedDivisionName={selectedDivision} style={{ marginBottom: 0 }} />
-
-            {/* Calendar Selection Section */}
-            {currentDivisionCalendars.length > 1 && (
-              <CalendarSelector
-                calendars={currentDivisionCalendars}
-                selectedCalendarId={selectedCalendarId}
-                onSelectCalendar={handleCalendarSelect}
-                disabled={isLoading || isSwitchingDivision}
-                style={{ borderTopWidth: 0, marginTop: -8 }}
-              />
-            )}
-          </ThemedView>
-
-          {/* Calendar Allotments Section */}
-          {selectedCalendarId && (
-            <CalendarAllotments
-              calendarId={selectedCalendarId}
-              selectedDivision={isAdmin ? selectedDivision : undefined}
-            />
-          )}
-
-          {/* Show prompt if no calendars exist */}
-          {currentDivisionCalendars.length === 0 && (
-            <ThemedView style={styles.noCalendarsContainer}>
-              <ThemedText style={styles.noCalendarsText}>
-                No calendars found for this division. Please create a calendar to begin.
-              </ThemedText>
-            </ThemedView>
-          )}
-        </ScrollView>
+        <VirtualizedList
+          data={[]}
+          renderItem={renderItem}
+          keyExtractor={(item) => item.id.toString()}
+          getItem={getItem}
+          getItemCount={getItemCount}
+          style={styles.content}
+          contentContainerStyle={styles.contentContainer}
+          showsVerticalScrollIndicator={true}
+          scrollEnabled={true}
+          removeClippedSubviews={Platform.OS !== "web"}
+        />
       )}
     </ThemedView>
   );
@@ -280,25 +292,31 @@ export function CalendarManager() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    minHeight: 0,
+    overflow: "hidden",
   },
   header: {
-    marginBottom: 16,
     padding: 16,
-    borderWidth: 2,
-    borderRadius: 10,
-    borderColor: Colors.dark.border,
-    gap: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.light.border,
   },
   title: {
     fontSize: 24,
     fontWeight: "bold",
+    marginBottom: 16,
   },
   content: {
     flex: 1,
+    minHeight: 0,
+    paddingBottom: 16,
+    marginBottom: 16,
+  },
+  contentContainer: {
+    padding: 16,
   },
   componentGroup: {
-    marginBottom: 16, // Space after the component group
-    overflow: "hidden", // Hide any overflowing content
+    flex: 1,
+    minHeight: 0,
   },
   errorText: {
     color: Colors.light.error,

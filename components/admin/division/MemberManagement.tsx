@@ -11,10 +11,14 @@ import { MemberList } from "./MemberList";
 type MemberAction = "list" | "add" | "edit";
 
 interface Member {
+  pin_number: string | number;
   first_name: string;
   last_name: string;
-  pin_number: string | number;
-  division: string;
+  division_id: number;
+  sdv_entitlement: number | null;
+  sdv_election: number | null;
+  calendar_id: string | null;
+  calendar_name: string | null;
 }
 
 export function MemberManagement() {
@@ -106,14 +110,18 @@ const styles = StyleSheet.create({
     display: "flex",
     flexDirection: "column",
     minHeight: 0,
+    overflow: "hidden",
   },
   header: {
-    marginBottom: 24,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    marginBottom: 16,
   },
   actionButtons: {
     flexDirection: "row",
     gap: 12,
-    marginBottom: 24,
+    marginBottom: 16,
+    paddingHorizontal: 16,
   },
   actionButton: {
     flexDirection: "row",
@@ -140,10 +148,9 @@ const styles = StyleSheet.create({
   },
   contentContainer: {
     flex: 1,
-    padding: 20,
     backgroundColor: Colors.light.background,
     borderRadius: 8,
     minHeight: 0,
-    overflow: Platform.OS === "web" ? "hidden" : undefined,
+    overflow: "hidden",
   },
 });
