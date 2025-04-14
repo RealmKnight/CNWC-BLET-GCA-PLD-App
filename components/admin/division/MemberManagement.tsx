@@ -138,6 +138,11 @@ function useIsAdmin(userRole: UserRole | null): boolean {
   return userRole === "application_admin" || userRole === "union_admin" || userRole === "division_admin";
 }
 
+// Add new helper function to check for high-level admin roles
+function isHighLevelAdmin(userRole: UserRole | null): boolean {
+  return userRole === "application_admin" || userRole === "union_admin";
+}
+
 function BulkActions({ division, onDivisionChange }: BulkActionsProps) {
   // Use useMemo for the Zustand selector to maintain referential equality
   const userRole = useUserStore(useCallback((state: UserState) => state.userRole, []));
@@ -711,7 +716,7 @@ function BulkActions({ division, onDivisionChange }: BulkActionsProps) {
     <ThemedView style={styles.bulkActionContainer}>
       {error && (
         <ThemedView style={styles.errorContainer}>
-          <ThemedText style={styles.errorText}>{error}</ThemedText>
+          <ThemedText style={styles.errorText}>{error.toString()}</ThemedText>
         </ThemedView>
       )}
       <ThemedView style={styles.tabs}>
@@ -929,7 +934,7 @@ export function MemberManagement() {
         </ThemedText>
         <ThemedView style={styles.divisionRow}>
           <ThemedText type="subtitle">Manage members of </ThemedText>
-          {isAdmin ? (
+          {isHighLevelAdmin(userRole) ? (
             <DivisionSelector
               currentDivision={lastLoadedDivision}
               onDivisionChange={handleDivisionChange}
@@ -943,7 +948,7 @@ export function MemberManagement() {
       </ThemedView>
       {error && (
         <ThemedView style={styles.errorContainer}>
-          <ThemedText style={styles.errorText}>{error}</ThemedText>
+          <ThemedText style={styles.errorText}>{error.toString()}</ThemedText>
         </ThemedView>
       )}
       {renderActionButtons()}
