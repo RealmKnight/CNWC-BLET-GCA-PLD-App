@@ -1,5 +1,5 @@
 // components/admin/division/CalendarCrudAdmin.tsx
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   StyleSheet,
@@ -19,6 +19,7 @@ import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { Ionicons } from "@expo/vector-icons";
 import { Calendar } from "@/types/calendar"; // Import Calendar type
+import { supabase } from "@/utils/supabase";
 
 interface CalendarCrudAdminProps {
   // Props needed? Perhaps the selected division ID/name if not easily accessible from stores?
@@ -35,8 +36,42 @@ export function CalendarCrudAdmin({ selectedDivisionName, style }: CalendarCrudA
     isLoading,
     error,
     setError,
+    setIsLoading,
   } = useAdminCalendarManagementStore();
   const { member } = useUserStore(); // For permission checks and division ID mapping
+
+  // Add state for selected division ID
+  const [selectedDivisionId, setSelectedDivisionId] = useState<number | null>(null);
+
+  // Add useEffect to fetch division ID when division name changes
+  useEffect(() => {
+    const fetchDivisionId = async () => {
+      if (!selectedDivisionName) return;
+
+      try {
+        const { data, error } = await supabase.from("divisions").select("id").eq("name", selectedDivisionName).single();
+
+        if (error) throw error;
+        if (data) {
+          console.log(`[CalendarCrudAdmin] Found division ID ${data.id} for division ${selectedDivisionName}`);
+          setSelectedDivisionId(data.id);
+        }
+      } catch (err) {
+        console.error("[CalendarCrudAdmin] Error fetching division ID:", err);
+        setError("Failed to fetch division information");
+      }
+    };
+
+    fetchDivisionId();
+  }, [selectedDivisionName]);
+
+  // Add useEffect to refresh calendar list when division changes
+  useEffect(() => {
+    if (selectedDivisionName) {
+      console.log("[CalendarCrudAdmin] Selected division changed, refreshing calendars:", selectedDivisionName);
+      fetchDivisionSettings(selectedDivisionName);
+    }
+  }, [selectedDivisionName]);
 
   const [isAdding, setIsAdding] = useState(false);
   const [newCalendarName, setNewCalendarName] = useState("");
@@ -51,26 +86,56 @@ export function CalendarCrudAdmin({ selectedDivisionName, style }: CalendarCrudA
   const greyColor = Colors[colorScheme].border || "#cccccc";
 
   const calendars = divisionCalendarsMap[selectedDivisionName] || [];
-  const divisionId = member?.division_id; // Assuming member has division_id after store update
+
+  // Use selectedDivisionId for admin operations, fallback to member's division_id for non-admin
+  const effectiveDivisionId =
+    member?.role === "application_admin" || member?.role === "union_admin" ? selectedDivisionId : member?.division_id;
 
   const canManage =
     member?.role === "application_admin" || member?.role === "union_admin" || member?.role === "division_admin";
 
   const handleAddCalendar = async () => {
-    if (!canManage || !divisionId || !newCalendarName.trim()) {
+    if (!canManage || !effectiveDivisionId || !newCalendarName.trim()) {
       Alert.alert("Error", "Missing division info or calendar name.");
       return;
     }
-    setError(null);
-    const newCal = await createCalendar(divisionId, newCalendarName.trim(), newCalendarDescription.trim() || undefined);
-    if (newCal) {
-      setIsAdding(false);
-      setNewCalendarName("");
-      setNewCalendarDescription("");
-      await fetchDivisionSettings(selectedDivisionName); // Refresh list
-    } else {
-      // Error handled in store? Or display specific error
-      Alert.alert("Error", "Failed to create calendar. " + (error || ""));
+
+    try {
+      setError(null);
+      setIsLoading(true);
+
+      console.log("[CalendarCrudAdmin] Creating new calendar:", {
+        divisionId: effectiveDivisionId,
+        name: newCalendarName.trim(),
+        description: newCalendarDescription.trim(),
+        selectedDivision: selectedDivisionName,
+      });
+
+      const newCal = await createCalendar(
+        effectiveDivisionId,
+        newCalendarName.trim(),
+        newCalendarDescription.trim() || undefined
+      );
+
+      if (newCal) {
+        setIsAdding(false);
+        setNewCalendarName("");
+        setNewCalendarDescription("");
+
+        // Force refresh the division settings
+        console.log("[CalendarCrudAdmin] Calendar created, refreshing division settings:", selectedDivisionName);
+        await fetchDivisionSettings(selectedDivisionName);
+
+        // Show success message
+        Alert.alert("Success", "Calendar created successfully.");
+      } else {
+        Alert.alert("Error", "Failed to create calendar. " + (error || ""));
+      }
+    } catch (err) {
+      console.error("[CalendarCrudAdmin] Error creating calendar:", err);
+      Alert.alert("Error", "Failed to create calendar. Please try again.");
+    } finally {
+      setIsLoading(false);
     }
   };
 

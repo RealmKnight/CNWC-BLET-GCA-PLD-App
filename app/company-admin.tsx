@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState, useMemo } from "react";
 import { View, FlatList, Alert, TextInput, StyleSheet, ScrollView, Platform, Pressable } from "react-native";
 import { Text, Button, Modal } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
@@ -24,8 +24,8 @@ interface PendingRequest {
   created_at: string;
   status: string;
   paid_in_lieu: boolean;
-  zone_id: number | null;
-  zone_name?: string;
+  calendar_id: string | null;
+  calendar_name: string | null;
   division: string;
 }
 
@@ -56,6 +56,25 @@ interface Zone {
   id: number;
   name: string;
   division_id: number;
+}
+
+interface RequestWithMember {
+  id: string;
+  member_id: string;
+  request_date: string;
+  leave_type: "PLD" | "SDV";
+  created_at: string;
+  status: string;
+  paid_in_lieu: boolean | null;
+  calendar_id: string | null;
+  members: {
+    pin_number: number;
+    first_name: string | null;
+    last_name: string | null;
+    division_id: number | null;
+    current_zone_id: number | null;
+    home_zone_id: number | null;
+  } | null;
 }
 
 // Helper function to sort zone names numerically
@@ -94,36 +113,6 @@ export default function CompanyAdminScreen() {
   const [zones, setZones] = useState<Zone[]>([]);
   const [selectedZone, setSelectedZone] = useState<number | null>(null);
 
-  // Set up real-time subscription
-  useEffect(() => {
-    if (user?.user_metadata?.role !== "company_admin") return;
-
-    const subscription = supabase
-      .channel("pld-sdv-requests-changes")
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "pld_sdv_requests",
-          filter: `status=in.(pending,cancellation_pending)`,
-        },
-        (payload) => {
-          console.log("Real-time update received:", payload);
-          // Refresh the pending requests when we receive an update
-          fetchPendingRequests();
-        }
-      )
-      .subscribe((status) => {
-        console.log("Subscription status:", status);
-      });
-
-    // Cleanup subscription on unmount
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, [user]);
-
   // Fetch zones
   const fetchZones = useCallback(async () => {
     try {
@@ -142,10 +131,13 @@ export default function CompanyAdminScreen() {
     }
   }, []);
 
-  // Fetch pending requests
+  // Memoize the fetchPendingRequests callback
   const fetchPendingRequests = useCallback(async () => {
+    console.log("Fetching pending requests...");
+    if (!user) return; // Early return if no user
+
     try {
-      // Get the requests with member details in a single query using a regular join
+      // Get the requests with member details and calendar info in a single query
       const query = supabase
         .from("pld_sdv_requests")
         .select(
@@ -157,10 +149,14 @@ export default function CompanyAdminScreen() {
           created_at,
           status,
           paid_in_lieu,
-          division,
-          zone_id,
-          zones:zone_id (
-            name
+          calendar_id,
+          members:member_id (
+            pin_number,
+            first_name,
+            last_name,
+            division_id,
+            current_zone_id,
+            home_zone_id
           )
         `
         )
@@ -168,82 +164,142 @@ export default function CompanyAdminScreen() {
         .not("status", "eq", "waitlisted")
         .order("request_date", { ascending: true });
 
-      // Add zone filter if selected
-      if (selectedZone !== null) {
-        query.eq("zone_id", selectedZone);
-      }
-
-      interface RequestWithZone {
-        id: string;
-        member_id: string;
-        request_date: string;
-        leave_type: "PLD" | "SDV";
-        created_at: string;
-        status: string;
-        paid_in_lieu: boolean;
-        division: string;
-        zone_id: number | null;
-        zones: { name: string } | null;
-      }
-
-      const { data: requestData, error: requestError } = await query.returns<RequestWithZone[]>();
+      const { data: requestData, error: requestError } = await query;
 
       if (requestError) {
         console.error("Error details:", requestError);
         throw requestError;
       }
 
-      console.log("Fetched requests:", requestData?.length ?? 0);
+      // Get division names for the division IDs
+      const divisionIds = [
+        ...new Set(requestData?.map((req) => req.members?.division_id).filter((id) => id !== null && id !== undefined)),
+      ] as number[];
 
-      // If we have requests, fetch the member details
-      if (requestData && requestData.length > 0) {
-        const memberIds = [...new Set(requestData.map((req) => req.member_id))];
+      // Fetch division names if we have division IDs
+      let divisionMap: Record<number, string> = {};
+      if (divisionIds.length > 0) {
+        const { data: divisionData, error: divisionError } = await supabase
+          .from("divisions")
+          .select("id, name")
+          .in("id", divisionIds);
 
-        // Fetch member details using the auth.users table since that's where member_id comes from
-        const { data: memberData, error: memberError } = await supabase
-          .from("members")
-          .select("id, pin_number, first_name, last_name")
-          .in("id", memberIds);
-
-        if (memberError) {
-          console.error("Error fetching member details:", memberError);
-          throw memberError;
+        if (!divisionError && divisionData) {
+          divisionMap = divisionData.reduce((acc, div) => {
+            acc[div.id] = div.name;
+            return acc;
+          }, {} as Record<number, string>);
         }
+      }
 
-        console.log("Fetched members:", memberData?.length ?? 0);
+      // Fetch calendar names for requests that have calendar_ids
+      const calendarIds = [
+        ...new Set(requestData?.map((req) => req.calendar_id).filter((id) => id !== null && id !== undefined)),
+      ];
 
-        // Create a map of member details
-        const memberMap = memberData?.reduce((acc, member) => {
-          acc[member.id] = member;
-          return acc;
-        }, {} as Record<string, any>);
+      console.log("Calendar IDs found:", calendarIds);
 
-        // Transform the data to match the expected format
-        setPendingRequests(
-          requestData.map((request) => ({
+      let calendarMap: Record<string, string> = {};
+      if (calendarIds.length > 0) {
+        console.log("Calendar IDs for query:", calendarIds);
+
+        const { data: calendarData, error: calendarError } = await supabase
+          .from("calendars")
+          .select("id, name")
+          .in("id", calendarIds);
+
+        console.log("Calendar query response:", { data: calendarData, error: calendarError });
+
+        if (calendarError) {
+          console.error("Error fetching calendars:", calendarError);
+        } else if (calendarData) {
+          calendarMap = calendarData.reduce((acc, cal) => {
+            acc[cal.id] = cal.name;
+            return acc;
+          }, {} as Record<string, string>);
+          console.log("Calendar map created:", calendarMap);
+        } else {
+          console.log("No calendar data returned for IDs:", calendarIds);
+        }
+      }
+
+      // Transform and filter the data
+      const transformRequests = (data: any[]): PendingRequest[] => {
+        if (!data?.length) return [];
+
+        // Transform to PendingRequest type
+        return data.map((request): PendingRequest => {
+          const transformed = {
             id: request.id,
             member_id: request.member_id,
-            pin_number: memberMap[request.member_id]?.pin_number?.toString() ?? "",
-            first_name: memberMap[request.member_id]?.first_name ?? "",
-            last_name: memberMap[request.member_id]?.last_name ?? "",
+            pin_number: request.members?.pin_number?.toString() ?? "",
+            first_name: request.members?.first_name ?? "",
+            last_name: request.members?.last_name ?? "",
             request_date: request.request_date,
             leave_type: request.leave_type,
             created_at: request.created_at,
             status: request.status,
             paid_in_lieu: request.paid_in_lieu ?? false,
-            zone_id: request.zone_id,
-            zone_name: request.zones?.name,
-            division: request.division,
-          }))
-        );
-      } else {
-        setPendingRequests([]);
-      }
+            calendar_id: request.calendar_id,
+            calendar_name: request.calendar_id ? calendarMap[request.calendar_id] : null,
+            division: (request.members?.division_id && divisionMap[request.members.division_id]) || "Unknown",
+          };
+          console.log("Calendar lookup for request:", {
+            calendar_id: request.calendar_id,
+            found_name: calendarMap[request.calendar_id],
+            calendar_map: calendarMap,
+          });
+          return transformed;
+        });
+      };
+
+      const transformedData = transformRequests(requestData);
+      setPendingRequests(transformedData);
     } catch (error) {
       console.error("Error fetching pending requests:", error);
       Alert.alert("Error", "Failed to load pending requests");
     }
-  }, [selectedZone]);
+  }, [user]); // Only depend on user since we removed selectedZone
+
+  // Debounce the real-time subscription handler
+  const debouncedFetch = useCallback(
+    (() => {
+      let timeoutId: NodeJS.Timeout;
+      return () => {
+        clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => {
+          fetchPendingRequests();
+        }, 300); // 300ms debounce
+      };
+    })(),
+    [fetchPendingRequests]
+  );
+
+  // Set up real-time subscription with debounced handler
+  useEffect(() => {
+    if (user?.user_metadata?.role !== "company_admin") return;
+
+    const subscription = supabase
+      .channel("pld-sdv-requests-changes")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "pld_sdv_requests",
+          filter: `status=in.(pending,cancellation_pending)`,
+        },
+        () => {
+          console.log("Real-time update received, debouncing...");
+          debouncedFetch();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [user, debouncedFetch]);
 
   // Fetch denial reasons
   const fetchDenialReasons = useCallback(async () => {
@@ -295,9 +351,10 @@ export default function CompanyAdminScreen() {
     });
   }, [navigation, handleLogout, colors.text]);
 
-  // Add zone fetch to initial load
+  // Initial data fetch
   useEffect(() => {
     if (!isLoading && user?.user_metadata?.role === "company_admin") {
+      console.log("Initial data fetch");
       fetchZones();
       fetchPendingRequests();
       fetchDenialReasons();
@@ -325,6 +382,8 @@ export default function CompanyAdminScreen() {
           status: "approved",
           actioned_by: user?.id,
           actioned_at: new Date().toISOString(),
+          responded_at: new Date().toISOString(),
+          responded_by: user?.id,
         })
         .eq("id", request.id);
 
@@ -389,6 +448,8 @@ export default function CompanyAdminScreen() {
           denial_comment: denialComment,
           actioned_by: user?.id,
           actioned_at: new Date().toISOString(),
+          responded_at: new Date().toISOString(),
+          responded_by: user?.id,
         })
         .eq("id", selectedRequest.id);
 
@@ -425,11 +486,17 @@ export default function CompanyAdminScreen() {
   const handleCancellationApproval = async (request: PendingRequest) => {
     setIsRequestLoading(true);
     try {
-      // Call the stored procedure to handle the cancellation
-      const { error } = await supabase.rpc("handle_cancellation_approval", {
-        p_request_id: request.id,
-        p_actioned_by: user?.id,
-      });
+      // Update the request status directly
+      const { error } = await supabase
+        .from("pld_sdv_requests")
+        .update({
+          status: "cancelled",
+          actioned_by: user?.id,
+          actioned_at: new Date().toISOString(),
+          responded_at: new Date().toISOString(),
+          responded_by: user?.id,
+        })
+        .eq("id", request.id);
 
       if (error) throw error;
 
@@ -466,80 +533,94 @@ export default function CompanyAdminScreen() {
     }
   };
 
-  const renderItem = ({ item }: { item: PendingRequest }) => (
-    <View
-      style={[
-        styles.requestItem,
-        { borderBottomColor: colors.border },
-        item.paid_in_lieu && styles.paidInLieuItem,
-        item.status === "cancellation_pending" && styles.cancellationPendingItem,
-      ]}
-    >
-      <View style={{ flex: 1 }}>
-        <Text style={styles.memberName}>
-          {item.pin_number} - {item.first_name} {item.last_name}
-        </Text>
-        <View style={styles.requestHeader}>
-          <Text style={styles.requestDate}>
-            {format(parseISO(item.request_date), "MMM d, yyyy")} - {item.leave_type}
-            {item.paid_in_lieu && <Text style={styles.paidInLieuText}> - To Be Paid In Lieu</Text>}
+  const renderItem = ({ item }: { item: PendingRequest }) => {
+    console.log("Rendering item:", JSON.stringify(item, null, 2));
+
+    return (
+      <View
+        style={[
+          styles.requestItem,
+          { borderBottomColor: colors.border },
+          item.paid_in_lieu && styles.paidInLieuItem,
+          item.status === "cancellation_pending" && styles.cancellationPendingItem,
+        ]}
+      >
+        <View style={{ flex: 1 }}>
+          <Text style={styles.memberName}>
+            <Text>{item.pin_number || ""}</Text>
+            {item.pin_number ? <Text> - </Text> : null}
+            <Text>{item.first_name || ""}</Text>
+            {item.first_name && item.last_name ? <Text> </Text> : null}
+            <Text>{item.last_name || ""}</Text>
           </Text>
-          {item.status === "cancellation_pending" && (
-            <View style={[styles.statusBadge, { backgroundColor: colors.error + "20" }]}>
-              <Text style={[styles.statusText, { color: colors.error }]}>Cancellation</Text>
-            </View>
-          )}
-        </View>
-        <View style={styles.requestInfo}>
-          <Text dim style={styles.requestTime}>
-            {item.status === "cancellation_pending" ? "Cancellation" : "Request"} Submitted:{" "}
-            {format(parseISO(item.created_at), "MMM d, yyyy h:mm a")}
-          </Text>
-          <View style={styles.locationInfo}>
-            <Text dim style={styles.divisionText}>
-              {item.division}
-            </Text>
-            {item.zone_name && (
-              <Text dim style={styles.zoneText}>
-                • {item.zone_name}
+          <View style={styles.requestHeader}>
+            <Text style={styles.requestDate}>
+              <Text>
+                {format(parseISO(item.request_date), "MMM d, yyyy")}
+                <Text> - </Text>
+                {item.leave_type}
               </Text>
-            )}
+              {item.paid_in_lieu ? <Text style={styles.paidInLieuText}> - To Be Paid In Lieu</Text> : null}
+            </Text>
+            {item.status === "cancellation_pending" ? (
+              <View style={[styles.statusBadge, { backgroundColor: colors.error + "20" }]}>
+                <Text style={[styles.statusText, { color: colors.error }]}>Cancellation</Text>
+              </View>
+            ) : null}
+          </View>
+          <View style={styles.requestInfo}>
+            <Text style={[styles.requestTime, { color: colors.textDim }]}>
+              <Text>
+                {item.status === "cancellation_pending" ? "Cancellation" : "Request"}
+                <Text> Submitted: </Text>
+                {format(parseISO(item.created_at), "MMM d, yyyy h:mm a")}
+              </Text>
+            </Text>
+            <View style={styles.locationInfo}>
+              {item.division ? <Text style={styles.divisionText}>Division {item.division}</Text> : null}
+              {item.calendar_name ? (
+                <>
+                  <Text style={styles.separator}>•</Text>
+                  <Text style={styles.calendarText}>Calendar: {item.calendar_name}</Text>
+                </>
+              ) : null}
+            </View>
           </View>
         </View>
-      </View>
-      <View style={styles.actions}>
-        {item.status === "cancellation_pending" ? (
-          <TouchableOpacityComponent
-            onPress={() => handleCancellationApproval(item)}
-            disabled={isRequestLoading}
-            style={[styles.actionButton, { backgroundColor: colors.success + "20" }]}
-          >
-            <Ionicons name="checkmark-circle" size={24} color={colors.success} />
-          </TouchableOpacityComponent>
-        ) : (
-          <>
+        <View style={styles.actions}>
+          {item.status === "cancellation_pending" ? (
             <TouchableOpacityComponent
-              onPress={() => handleApprove(item)}
+              onPress={() => handleCancellationApproval(item)}
               disabled={isRequestLoading}
               style={[styles.actionButton, { backgroundColor: colors.success + "20" }]}
             >
               <Ionicons name="checkmark-circle" size={24} color={colors.success} />
             </TouchableOpacityComponent>
-            <TouchableOpacityComponent
-              onPress={() => {
-                setSelectedRequest(item);
-                setIsDenialModalVisible(true);
-              }}
-              disabled={isRequestLoading}
-              style={[styles.actionButton, { backgroundColor: colors.error + "20" }]}
-            >
-              <Ionicons name="close-circle" size={24} color={colors.error} />
-            </TouchableOpacityComponent>
-          </>
-        )}
+          ) : (
+            <>
+              <TouchableOpacityComponent
+                onPress={() => handleApprove(item)}
+                disabled={isRequestLoading}
+                style={[styles.actionButton, { backgroundColor: colors.success + "20" }]}
+              >
+                <Ionicons name="checkmark-circle" size={24} color={colors.success} />
+              </TouchableOpacityComponent>
+              <TouchableOpacityComponent
+                onPress={() => {
+                  setSelectedRequest(item);
+                  setIsDenialModalVisible(true);
+                }}
+                disabled={isRequestLoading}
+                style={[styles.actionButton, { backgroundColor: colors.error + "20" }]}
+              >
+                <Ionicons name="close-circle" size={24} color={colors.error} />
+              </TouchableOpacityComponent>
+            </>
+          )}
+        </View>
       </View>
-    </View>
-  );
+    );
+  };
 
   return (
     <Container
@@ -799,9 +880,22 @@ const styles = StyleSheet.create({
   divisionText: {
     fontSize: 12,
     fontWeight: "500",
+    color: Colors.light.textDim,
   },
-  zoneText: {
+  calendarText: {
     fontSize: 12,
     fontWeight: "500",
+    color: Colors.light.textDim,
+  },
+  separator: {
+    fontSize: 12,
+    color: Colors.light.textDim,
+    marginHorizontal: 4,
+  },
+  calendarBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginLeft: 8,
   },
 });
