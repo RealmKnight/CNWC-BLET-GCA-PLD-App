@@ -20,6 +20,7 @@ interface Member {
   last_name: string;
   division: string;
   deleted?: boolean;
+  division_id: number;
 }
 
 interface MessageDraft {
@@ -69,30 +70,58 @@ export function MessageCenter() {
     async function fetchMembers() {
       try {
         console.log("Fetching members...");
-        const { data, error } = await supabase
+
+        // First fetch all divisions to create a lookup map
+        const { data: divisionsData, error: divisionsError } = await supabase.from("divisions").select("id, name");
+
+        if (divisionsError) {
+          console.error("Error fetching divisions:", divisionsError);
+          throw divisionsError;
+        }
+
+        const divisionMap = new Map(divisionsData.map((div) => [div.id, div.name]));
+
+        // Then fetch members
+        const { data: membersData, error: membersError } = await supabase
           .from("members")
-          .select(
-            `
-            pin_number,
-            first_name,
-            last_name,
-            division,
-            deleted
-          `
-          )
+          .select("pin_number, first_name, last_name, division_id, deleted")
           .eq("deleted", false)
           .order("last_name", { ascending: true });
 
-        if (error) {
-          console.error("Error fetching members:", error);
-          throw error;
+        if (membersError) {
+          console.error("Error fetching members:", membersError);
+          throw membersError;
         }
 
-        // Filter out any invalid members
-        const validMembers =
-          data?.filter(
-            (member) => member && typeof member.pin_number === "number" && member.first_name && member.last_name
-          ) || [];
+        // Transform and validate the data
+        const validMembers = (membersData || [])
+          .filter(
+            (
+              member
+            ): member is NonNullable<typeof member> & {
+              pin_number: number;
+              first_name: string;
+              last_name: string;
+              division_id: number;
+            } =>
+              !!member &&
+              typeof member.pin_number === "number" &&
+              typeof member.first_name === "string" &&
+              member.first_name !== null &&
+              typeof member.last_name === "string" &&
+              member.last_name !== null &&
+              typeof member.division_id === "number" &&
+              member.division_id !== null &&
+              divisionMap.has(member.division_id)
+          )
+          .map((member) => ({
+            pin_number: member.pin_number,
+            first_name: member.first_name,
+            last_name: member.last_name,
+            division: divisionMap.get(member.division_id) || "Unknown",
+            division_id: member.division_id,
+            deleted: !!member.deleted,
+          }));
 
         console.log(`Found ${validMembers.length} valid members`);
         setMembers(validMembers);
