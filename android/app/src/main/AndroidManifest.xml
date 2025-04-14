@@ -31,6 +31,7 @@
         <data android:scheme="myapp"/>
         <data android:scheme="com.cnwcgcablet.pldapp"/>
         <data android:scheme="exp+pld-app-cnwc-gca-blet"/>
+        <data android:scheme="pldapp"/>
       </intent-filter>
     </activity>
   </application>

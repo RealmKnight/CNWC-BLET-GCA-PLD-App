@@ -368,6 +368,7 @@ export default function CalendarScreen() {
   const [lastRefreshTime, setLastRefreshTime] = useState(0);
   const [appState, setAppState] = useState(AppState.currentState);
   const [currentDate, setCurrentDate] = useState<string>(format(new Date(), "yyyy-MM-dd"));
+  const [calendarName, setCalendarName] = useState<string | null>(null);
   const REFRESH_COOLDOWN = 2000;
 
   const isLoadingRef = useRef(false);
@@ -511,6 +512,27 @@ export default function CalendarScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    async function fetchCalendarName() {
+      if (!member?.calendar_id) {
+        setCalendarName(null);
+        return;
+      }
+
+      try {
+        const { data, error } = await supabase.from("calendars").select("name").eq("id", member.calendar_id).single();
+
+        if (error) throw error;
+        setCalendarName(data?.name || null);
+      } catch (err) {
+        console.error("[CalendarScreen] Error fetching calendar name:", err);
+        setCalendarName(null);
+      }
+    }
+
+    fetchCalendarName();
+  }, [member?.calendar_id]);
+
   const handleRequestSubmit = async (leaveType: "PLD" | "SDV") => {
     if (!selectedDate) {
       Toast.show({
@@ -611,6 +633,7 @@ export default function CalendarScreen() {
 
   return (
     <ThemedView style={styles.container}>
+      <ThemedText style={styles.calendarId}>PLD/SDV Calendar: {calendarName || "Loading..."}</ThemedText>
       <DateControls
         selectedDate={selectedDate}
         onDateChange={(date) => {
@@ -677,6 +700,12 @@ const styles = StyleSheet.create({
   errorText: {
     color: Colors.light.error,
     fontWeight: "600",
+    textAlign: "center",
+  } as TextStyle,
+  calendarId: {
+    marginTop: 16,
+    fontSize: 20,
+    fontWeight: "700",
     textAlign: "center",
   } as TextStyle,
 });
