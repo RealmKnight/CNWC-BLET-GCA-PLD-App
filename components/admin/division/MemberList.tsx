@@ -30,6 +30,16 @@ interface Member {
   sdv_entitlement: number | null;
   sdv_election: number | null;
   calendar_id: string | null;
+  calendar_name: string | null;
+}
+
+interface Calendar {
+  id: string;
+  name: string;
+}
+
+interface MemberWithCalendar extends Omit<Member, "calendar_name"> {
+  calendar: Calendar | null;
 }
 
 interface MemberListProps {
@@ -87,7 +97,7 @@ const MemberItem = React.memo(
             sdv_entitlement: entitlementNum,
             sdv_election: electionNum,
           })
-          .eq("pin_number", item.pin_number);
+          .eq("pin_number", typeof item.pin_number === "string" ? parseInt(item.pin_number) : item.pin_number);
 
         if (error) throw error;
 
@@ -268,7 +278,7 @@ const MemberItem = React.memo(
           <View style={styles.subInfoContainer}>
             <ThemedText style={styles.memberPin}>PIN: {item.pin_number}</ThemedText>
             <ThemedText style={styles.memberCalendar} numberOfLines={1} ellipsizeMode="tail">
-              Calendar: {item.calendar_id ?? "N/A"}
+              Calendar: {item.calendar_name ? item.calendar_name : "No Calendar Assigned"}
             </ThemedText>
           </View>
         </View>
@@ -323,13 +333,38 @@ export const MemberList = React.memo(({ onEditMember, refreshTrigger }: MemberLi
 
       const { data: membersData, error: membersError } = await supabase
         .from("members")
-        .select("first_name, last_name, pin_number, division_id, sdv_entitlement, sdv_election, calendar_id")
+        .select(
+          `
+          first_name,
+          last_name,
+          pin_number,
+          division_id,
+          sdv_entitlement,
+          sdv_election,
+          calendar_id
+        `
+        )
         .eq("division_id", adminDivisionId)
         .order("last_name", { ascending: true });
 
       if (membersError) throw membersError;
 
-      setMembers((membersData as Member[]) || []);
+      // Get all calendars in a separate query
+      const { data: calendarsData, error: calendarsError } = await supabase.from("calendars").select("id, name");
+
+      if (calendarsError) throw calendarsError;
+
+      // Create a map of calendar IDs to names
+      const calendarMap = new Map(calendarsData?.map((cal) => [cal.id, cal.name]) || []);
+
+      const formattedMembers = (membersData || []).map((member) => ({
+        ...member,
+        calendar_name: member.calendar_id ? calendarMap.get(member.calendar_id) || null : null,
+        first_name: member.first_name || "",
+        last_name: member.last_name || "",
+      })) as Member[];
+
+      setMembers(formattedMembers);
     } catch (error) {
       console.error("[MemberList] Error in fetchMembers:", error);
       setMembers([]);
