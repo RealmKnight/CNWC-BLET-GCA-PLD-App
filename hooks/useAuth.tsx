@@ -6,6 +6,7 @@ import { router } from "expo-router";
 import { Platform, AppState } from "react-native";
 import { UserRole, UserProfile } from "@/types/auth";
 import { useUserStore } from "@/store/userStore";
+import * as Linking from "expo-linking";
 
 type Member = Database["public"]["Tables"]["members"]["Row"];
 
@@ -20,6 +21,7 @@ interface AuthContextType {
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
+  exchangeCodeForSession: (code: string) => Promise<void>;
   updateProfile: (updates: Partial<UserProfile>) => Promise<void>;
   associateMemberWithPin: (pin: string) => Promise<void>;
 }
@@ -371,15 +373,33 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }, []);
 
-  const resetPassword = useCallback(async (email: string) => {
+  const resetPassword = async (email: string) => {
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email);
+      // Use web URL instead of expo deep link URL
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${process.env.EXPO_PUBLIC_WEBSITE_URL}/(auth)/change-password`,
+      });
       if (error) throw error;
     } catch (error) {
-      console.error("[Auth] Reset password error:", error);
-      throw error; // Re-throw
+      console.error("Error sending password reset email:", error);
+      throw error;
     }
-  }, []);
+  };
+
+  const exchangeCodeForSession = async (code: string) => {
+    try {
+      const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+      if (error) throw error;
+
+      // Use the session data if needed but don't return it
+      if (data.session) {
+        await updateAuthState(data.session, "exchangeCodeForSession");
+      }
+    } catch (error) {
+      console.error("Error exchanging code for session:", error);
+      throw error;
+    }
+  };
 
   const updateProfile = useCallback(
     async (updates: Partial<UserProfile>) => {
@@ -507,6 +527,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       signIn,
       signUp,
       resetPassword,
+      exchangeCodeForSession,
       updateProfile,
       associateMemberWithPin,
     }),
@@ -521,6 +542,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       signIn,
       signUp,
       resetPassword,
+      exchangeCodeForSession,
       updateProfile,
       associateMemberWithPin,
     ]
