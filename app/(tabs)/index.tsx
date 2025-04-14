@@ -3,10 +3,11 @@ import ParallaxScrollView from "@/components/ParallaxScrollView";
 import { ThemedView } from "@/components/ThemedView";
 import { NavigationCard } from "@/components/NavigationCard";
 import { useAuth } from "@/hooks/useAuth";
+import { useUserStore } from "@/store/userStore";
 
 export default function HomeScreen() {
   const { member } = useAuth();
-  const divisionId = member?.division ? parseInt(member.division, 10) : null;
+  const division = useUserStore((state) => state.division);
 
   return (
     <ParallaxScrollView
@@ -19,7 +20,7 @@ export default function HomeScreen() {
             title="My Division"
             description="View and manage your division information, officers, and members"
             icon="people"
-            href={member?.division ? `/(division)/${member.division}` : "/(division)"}
+            href={division ? `/(division)/${division}` : "/(division)"}
           />
           <NavigationCard
             title="Rosters"

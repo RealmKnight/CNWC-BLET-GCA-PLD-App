@@ -43,12 +43,22 @@ export function DatePicker({
     ...((style as TextStyle) || {}),
   };
 
+  // Handle text input changes (this will be called when user types in web input)
+  const handleTextChange = (text: string) => {
+    // For web, we'll let the native date input handle changes
+    if (Platform.OS === "web") {
+      return;
+    }
+    // For mobile, we don't want to allow direct text input
+    setShowPicker(true);
+  };
+
   if (Platform.OS === "web") {
     return (
       <ThemedTextInput
         style={inputStyle}
         value={formattedDate}
-        onChangeText={() => {}}
+        onChangeText={handleTextChange}
         placeholder={placeholder}
         type="date"
         onFocus={() => setShowPicker(true)}
@@ -61,9 +71,10 @@ export function DatePicker({
       <ThemedTextInput
         style={inputStyle}
         value={formattedDate}
-        onChangeText={() => {}}
+        onChangeText={handleTextChange}
         placeholder={placeholder}
         onFocus={() => setShowPicker(true)}
+        editable={false} // Make input read-only on mobile
       />
       {showPicker && <DateTimePicker value={date || new Date()} mode={mode} onChange={handleChange} />}
     </>

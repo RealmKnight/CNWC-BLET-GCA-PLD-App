@@ -1,6 +1,7 @@
 import { Stack } from "expo-router";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
+import { ThemedText } from "@/components/ThemedText";
 
 type ColorSchemeName = keyof typeof Colors;
 
@@ -27,9 +28,14 @@ export default function DivisionLayout() {
         }}
       />
       <Stack.Screen
-        name="[divisionID]"
+        name="[divisionName]"
         options={{
           title: "Division Details",
+          headerTitle: ({ children }) => {
+            // Remove "Division" prefix if it exists
+            const title = String(children).replace("Division ", "");
+            return <ThemedText style={{ fontSize: 17, fontWeight: "600" }}>Division {title}</ThemedText>;
+          },
         }}
       />
     </Stack>

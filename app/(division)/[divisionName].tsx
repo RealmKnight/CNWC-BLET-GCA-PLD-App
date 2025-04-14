@@ -6,6 +6,7 @@ import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedScrollView } from "@/components/ThemedScrollView";
 import { NavigationCard } from "@/components/NavigationCard";
+import { useAuth } from "@/hooks/useAuth";
 
 interface DivisionDetails {
   id: number;
@@ -17,45 +18,64 @@ interface DivisionDetails {
 }
 
 export default function DivisionDetailsScreen() {
-  const { divisionID } = useLocalSearchParams();
+  const { divisionName } = useLocalSearchParams();
   const router = useRouter();
+  const { session } = useAuth();
   const [division, setDivision] = useState<DivisionDetails | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Check if user is authenticated
+    if (!session) {
+      console.log("[DivisionDetails] No active session, redirecting to login");
+      router.replace("/(auth)/login");
+      return;
+    }
+
     async function fetchDivisionDetails() {
       try {
         setIsLoading(true);
         setError(null);
 
-        console.log("[DivisionDetails] Fetching details for division:", divisionID);
+        // Always treat divisionName as a string for lookup
+        const divisionNameString = String(divisionName).trim();
+        console.log("[DivisionDetails] Looking up division by name:", divisionNameString);
 
-        // Always treat divisionID as a string for lookup
-        const divisionIdString = String(divisionID).trim();
-        console.log("[DivisionDetails] Looking up by name:", divisionIdString);
-
-        const { data, error: supabaseError } = await supabase
+        // First get division details
+        const { data: divisionData, error: divisionError } = await supabase
           .from("divisions")
-          .select()
-          .eq("name", divisionIdString)
+          .select("*")
+          .eq("name", divisionNameString)
           .limit(1)
           .maybeSingle();
 
-        console.log("[DivisionDetails] Query result:", { data, error: supabaseError });
-
-        if (supabaseError) {
-          console.error("[DivisionDetails] Supabase error:", supabaseError);
-          throw new Error(supabaseError.message);
+        if (divisionError) {
+          console.error("[DivisionDetails] Supabase error:", divisionError);
+          throw new Error(divisionError.message);
         }
 
-        if (!data) {
-          console.error("[DivisionDetails] Division not found:", divisionIdString);
-          throw new Error(`Division ${divisionIdString} not found`);
+        if (!divisionData) {
+          console.error("[DivisionDetails] Division not found:", divisionNameString);
+          throw new Error(`Division ${divisionNameString} not found`);
         }
 
-        console.log("[DivisionDetails] Found division:", data);
-        setDivision(data as DivisionDetails);
+        // Then get member count
+        const { count: memberCount, error: countError } = await supabase
+          .from("members")
+          .select("*", { count: "exact", head: true })
+          .eq("division_id", divisionData.id);
+
+        if (countError) {
+          console.error("[DivisionDetails] Error counting members:", countError);
+          // Don't throw here, just set count to 0
+        }
+
+        console.log("[DivisionDetails] Found division:", { ...divisionData, memberCount });
+        setDivision({
+          ...divisionData,
+          member_count: memberCount || 0,
+        });
       } catch (err) {
         console.error("[DivisionDetails] Error fetching division details:", err);
         setError(err instanceof Error ? err.message : "Failed to load division details");
@@ -69,7 +89,7 @@ export default function DivisionDetailsScreen() {
     }
 
     fetchDivisionDetails();
-  }, [divisionID, router]);
+  }, [divisionName, router, session]);
 
   if (isLoading) {
     return (
@@ -110,31 +130,31 @@ export default function DivisionDetailsScreen() {
           title="Members"
           description={`View all ${division.member_count || 0} division members`}
           icon="people"
-          href={`/(division)/${division.name}/members`}
+          href={`/division/${division.name}/members`}
         />
         <NavigationCard
           title="Officers"
           description="View division officers and leadership"
           icon="person-circle"
-          href={`/(division)/${division.name}/officers`}
+          href={`/division/${division.name}/officers`}
         />
         <NavigationCard
           title="Meetings"
           description="Access meeting schedules and minutes"
           icon="calendar"
-          href={`/(division)/${division.name}/meetings`}
+          href={`/division/${division.name}/meetings`}
         />
         <NavigationCard
           title="Documents"
           description="View division documents and bylaws"
           icon="document-text"
-          href={`/(division)/${division.name}/documents`}
+          href={`/division/${division.name}/documents`}
         />
         <NavigationCard
           title="Announcements"
           description="View division announcements and updates"
           icon="megaphone"
-          href={`/(division)/${division.name}/announcements`}
+          href={`/division/${division.name}/announcements`}
         />
       </ThemedView>
     </ThemedScrollView>

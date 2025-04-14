@@ -14,6 +14,9 @@ import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import { testEmailFunction } from "@/utils/notificationService";
 import Constants from "expo-constants";
+import { DatePicker } from "@/components/DatePicker";
+import { parseISO, format, differenceInYears, isAfter } from "date-fns";
+import Toast from "react-native-toast-message";
 
 type Member = Database["public"]["Tables"]["members"]["Row"];
 type ContactPreference = "phone" | "text" | "email" | "push";
@@ -108,6 +111,160 @@ function formatPhoneNumber(value: string): string {
 
 function unformatPhoneNumber(value: string): string {
   return value.replace(/\D/g, "");
+}
+
+function DateOfBirthModal({
+  visible,
+  onClose,
+  onSuccess,
+  currentDateOfBirth,
+  targetUserId,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onSuccess: (dateOfBirth: string) => void;
+  currentDateOfBirth: string | null;
+  targetUserId: string;
+}) {
+  const [selectedDate, setSelectedDate] = useState<Date | null>(
+    currentDateOfBirth ? parseISO(currentDateOfBirth) : null
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const theme = (useColorScheme() ?? "light") as ColorScheme;
+  const { session } = useAuth();
+
+  const validateDate = (date: Date): boolean => {
+    // Check for future dates
+    if (isAfter(date, new Date())) {
+      Toast.show({
+        type: "error",
+        text1: "Invalid Date",
+        text2: "Date of birth cannot be in the future",
+      });
+      return false;
+    }
+
+    // Check for age > 105
+    const age = differenceInYears(new Date(), date);
+    if (age > 105) {
+      Toast.show({
+        type: "error",
+        text1: "Invalid Age",
+        text2: "Age cannot be greater than 105 years",
+      });
+      return false;
+    }
+
+    // Check for 10-year difference if there's an existing date
+    if (currentDateOfBirth) {
+      const currentDate = parseISO(currentDateOfBirth);
+      const yearDifference = Math.abs(differenceInYears(date, currentDate));
+      if (yearDifference > 10) {
+        Toast.show({
+          type: "error",
+          text1: "Significant Date Change",
+          text2: "Changes greater than 10 years require division admin approval",
+        });
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  const handleUpdateDateOfBirth = async () => {
+    try {
+      setError(null);
+      setIsLoading(true);
+
+      if (!session) {
+        throw new Error("No active session. Please try logging out and back in.");
+      }
+
+      if (!selectedDate) {
+        throw new Error("Please select a valid date.");
+      }
+
+      // Users can only update their own date of birth
+      if (session.user.id !== targetUserId) {
+        throw new Error("You can only update your own date of birth.");
+      }
+
+      // Validate the selected date
+      if (!validateDate(selectedDate)) {
+        setIsLoading(false);
+        return;
+      }
+
+      // Format date for database (YYYY-MM-DD)
+      const formattedDate = format(selectedDate, "yyyy-MM-dd");
+
+      // Update date_of_birth in members table
+      const { error: updateError } = await supabase
+        .from("members")
+        .update({ date_of_birth: formattedDate })
+        .eq("user_id", session.user.id);
+
+      if (updateError) throw updateError;
+
+      onSuccess(formattedDate);
+      onClose();
+    } catch (error: any) {
+      console.error("Error updating date of birth:", error);
+      setError(error.message || "Failed to update date of birth");
+      Toast.show({
+        type: "error",
+        text1: "Error",
+        text2: error.message || "Failed to update date of birth",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <ThemedView style={styles.modalOverlay}>
+        <ThemedView style={styles.modalContent}>
+          <ThemedView style={styles.modalHeader}>
+            <ThemedText type="title">Update Date of Birth</ThemedText>
+            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+              <Ionicons name="close" size={24} color={Colors[theme].text} />
+            </TouchableOpacity>
+          </ThemedView>
+
+          {error && (
+            <ThemedView style={styles.errorContainer}>
+              <ThemedText style={styles.errorText}>{error}</ThemedText>
+            </ThemedView>
+          )}
+
+          <ThemedView style={styles.inputContainer}>
+            <DatePicker
+              date={selectedDate}
+              onDateChange={setSelectedDate}
+              mode="date"
+              placeholder="Select date of birth"
+              style={styles.modalInput}
+            />
+          </ThemedView>
+
+          <TouchableOpacity
+            onPress={handleUpdateDateOfBirth}
+            style={[
+              styles.modalButton,
+              isLoading && styles.buttonDisabled,
+              { backgroundColor: Colors[theme].buttonBackground },
+            ]}
+            disabled={isLoading || !selectedDate}
+          >
+            <ThemedText style={styles.buttonText}>{isLoading ? "Updating..." : "Update Date of Birth"}</ThemedText>
+          </TouchableOpacity>
+        </ThemedView>
+      </ThemedView>
+    </Modal>
+  );
 }
 
 function PhoneUpdateModal({
@@ -260,9 +417,12 @@ export default function ProfileScreen() {
   const [phoneNumber, setPhoneNumber] = useState("");
   const [isPhoneModalVisible, setIsPhoneModalVisible] = useState(false);
   const [isDeviceMobile] = useState(Platform.OS !== "web");
+  const [isDateOfBirthModalVisible, setIsDateOfBirthModalVisible] = useState(false);
+  const [divisionName, setDivisionName] = useState<string | null>(null);
+  const [zoneName, setZoneName] = useState<string | null>(null);
 
   const isOwnProfile = user?.id === profileID;
-  // Users can only edit their own phone number
+  // Users can only edit their own phone number and date of birth
   const canEdit = isOwnProfile;
 
   // Fetch user data including phone number from metadata
@@ -311,6 +471,39 @@ export default function ProfileScreen() {
     }
   }, [member?.pin_number]);
 
+  // Add effect to fetch division and zone names
+  useEffect(() => {
+    async function fetchDivisionAndZone() {
+      if (!member?.division_id || !member?.current_zone_id) return;
+
+      try {
+        // Fetch division name
+        const { data: divisionData, error: divisionError } = await supabase
+          .from("divisions")
+          .select("name")
+          .eq("id", member.division_id)
+          .single();
+
+        if (divisionError) throw divisionError;
+        setDivisionName(divisionData?.name || null);
+
+        // Fetch zone name
+        const { data: zoneData, error: zoneError } = await supabase
+          .from("zones")
+          .select("name")
+          .eq("id", member.current_zone_id)
+          .single();
+
+        if (zoneError) throw zoneError;
+        setZoneName(zoneData?.name || null);
+      } catch (error) {
+        console.error("Error fetching division/zone names:", error);
+      }
+    }
+
+    fetchDivisionAndZone();
+  }, [member?.division_id, member?.current_zone_id]);
+
   const createDefaultPreferences = async () => {
     if (!member?.pin_number || !user?.id) return;
 
@@ -337,6 +530,7 @@ export default function ProfileScreen() {
   const handleUpdatePreference = async (preference: ContactPreference) => {
     try {
       if (!session || !member?.pin_number) throw new Error("No active session");
+      if (!user?.id) throw new Error("No user ID available");
 
       if (preference === "push") {
         if (!isDeviceMobile) {
@@ -354,7 +548,7 @@ export default function ProfileScreen() {
         const { data: existingPref, error: fetchError } = await supabase
           .from("user_preferences")
           .select()
-          .eq("user_id", user?.id)
+          .eq("user_id", user.id)
           .single();
 
         if (fetchError && fetchError.code !== "PGRST116") {
@@ -371,13 +565,13 @@ export default function ProfileScreen() {
               contact_preference: preference,
               updated_at: new Date().toISOString(),
             })
-            .eq("user_id", user?.id);
+            .eq("user_id", user.id);
 
           if (updateError) throw updateError;
         } else {
           // Insert new preference
           const { error: insertError } = await supabase.from("user_preferences").insert({
-            user_id: user?.id,
+            user_id: user.id,
             pin_number: member.pin_number,
             push_token: token,
             contact_preference: preference,
@@ -390,7 +584,7 @@ export default function ProfileScreen() {
         const { data: existingPref, error: fetchError } = await supabase
           .from("user_preferences")
           .select()
-          .eq("user_id", user?.id)
+          .eq("user_id", user.id)
           .single();
 
         if (fetchError && fetchError.code !== "PGRST116") {
@@ -406,13 +600,13 @@ export default function ProfileScreen() {
               contact_preference: preference,
               updated_at: new Date().toISOString(),
             })
-            .eq("user_id", user?.id);
+            .eq("user_id", user.id);
 
           if (updateError) throw updateError;
         } else {
           // Insert new preference
           const { error: insertError } = await supabase.from("user_preferences").insert({
-            user_id: user?.id,
+            user_id: user.id,
             pin_number: member.pin_number,
             push_token: null,
             contact_preference: preference,
@@ -426,7 +620,7 @@ export default function ProfileScreen() {
       const { data: updatedPrefs, error: refreshError } = await supabase
         .from("user_preferences")
         .select("*")
-        .eq("user_id", user?.id)
+        .eq("user_id", user.id)
         .single();
 
       if (refreshError) throw refreshError;
@@ -442,6 +636,15 @@ export default function ProfileScreen() {
   const handlePhoneUpdateSuccess = (newPhone: string) => {
     setPhoneNumber(newPhone);
     Alert.alert("Success", "Phone number updated successfully!");
+  };
+
+  const handleDateOfBirthUpdateSuccess = (newDateOfBirth: string) => {
+    // The member object will be updated on the next render via the useAuth hook
+    Toast.show({
+      type: "success",
+      text1: "Success",
+      text2: "Date of birth updated successfully!",
+    });
   };
 
   const handleUpdatePassword = async () => {
@@ -473,6 +676,14 @@ export default function ProfileScreen() {
         targetUserId={profileID as string}
       />
 
+      <DateOfBirthModal
+        visible={isDateOfBirthModalVisible}
+        onClose={() => setIsDateOfBirthModalVisible(false)}
+        onSuccess={handleDateOfBirthUpdateSuccess}
+        currentDateOfBirth={member?.date_of_birth || null}
+        targetUserId={profileID as string}
+      />
+
       <ThemedView style={styles.section}>
         <ThemedText type="title">Personal Information</ThemedText>
         <ThemedView style={styles.infoRow}>
@@ -489,6 +700,17 @@ export default function ProfileScreen() {
             <ThemedText>{phoneNumber ? formatPhoneNumber(phoneNumber) : "Not set"}</ThemedText>
             {canEdit && (
               <TouchableOpacity onPress={() => setIsPhoneModalVisible(true)} style={styles.iconButton}>
+                <Ionicons name="pencil" size={24} color={Colors[theme].tint} />
+              </TouchableOpacity>
+            )}
+          </ThemedView>
+        </ThemedView>
+        <ThemedView style={styles.infoRow}>
+          <ThemedText type="subtitle">Date of Birth:</ThemedText>
+          <ThemedView style={styles.editRow}>
+            <ThemedText>{member?.date_of_birth || "Not set"}</ThemedText>
+            {canEdit && (
+              <TouchableOpacity onPress={() => setIsDateOfBirthModalVisible(true)} style={styles.iconButton}>
                 <Ionicons name="pencil" size={24} color={Colors[theme].tint} />
               </TouchableOpacity>
             )}
@@ -587,17 +809,18 @@ export default function ProfileScreen() {
 
           <ThemedView style={styles.section}>
             <ThemedText type="title">Union Information</ThemedText>
+            <ThemedText type="subtitle">Contact your division admin to change any of this information</ThemedText>
             <ThemedView style={styles.infoRow}>
               <ThemedText type="subtitle">PIN:</ThemedText>
               <ThemedText>{member.pin_number}</ThemedText>
             </ThemedView>
             <ThemedView style={styles.infoRow}>
               <ThemedText type="subtitle">Division:</ThemedText>
-              <ThemedText>{member.division}</ThemedText>
+              <ThemedText>{divisionName || "Not assigned"}</ThemedText>
             </ThemedView>
             <ThemedView style={styles.infoRow}>
               <ThemedText type="subtitle">Zone:</ThemedText>
-              <ThemedText>{member.zone}</ThemedText>
+              <ThemedText>{zoneName || "Not assigned"}</ThemedText>
             </ThemedView>
             <ThemedView style={styles.infoRow}>
               <ThemedText type="subtitle">Engineer Date:</ThemedText>
