@@ -56,6 +56,7 @@ export interface TimeOffRequest {
   waitlist_position?: number;
   paid_in_lieu?: boolean;
   is_six_month_request?: boolean;
+  calendar_id?: string;
 }
 
 interface SixMonthRequest {
@@ -69,6 +70,7 @@ interface SixMonthRequest {
   final_status?: string;
   position?: number;
   division: string;
+  calendar_id?: string;
 }
 
 export function useMyTime() {
@@ -101,10 +103,12 @@ export function useMyTime() {
 
       const currentYear = new Date().getFullYear();
 
-      // Get member's data including division, SDV entitlement, and rolled over PLDs
+      // Get member's data including division_id, SDV entitlement, and rolled over PLDs
       const { data: memberData, error: memberError } = await supabase
         .from("members")
-        .select("division, sdv_entitlement, pld_rolled_over, company_hire_date")
+        .select(
+          "division_id, sdv_entitlement, pld_rolled_over, company_hire_date",
+        )
         .eq("id", member.id)
         .single();
 
@@ -267,14 +271,19 @@ export function useMyTime() {
         id: request.id,
         request_date: request.request_date,
         leave_type: request.leave_type as "PLD" | "SDV",
-        status: "pending",
-        requested_at: request.requested_at,
+        status: "pending" as TimeOffRequest["status"],
+        requested_at: request.requested_at ?? "",
         is_six_month_request: true,
       }));
 
       // Combine all requests
-      const allRequests = [
-        ...(currentRequests || []),
+      const allRequests: TimeOffRequest[] = [
+        ...(currentRequests || []).map((req) => ({
+          ...req,
+          status: req.status as TimeOffRequest["status"],
+          requested_at: req.requested_at ?? "",
+          is_six_month_request: false,
+        })),
         ...transformedSixMonthRequests,
       ];
 
@@ -295,19 +304,28 @@ export function useMyTime() {
         approved: { pld: 0, sdv: 0 },
         paidInLieu: { pld: 0, sdv: 0 },
       });
+      setRequests([]);
     }
   }, [member?.id]);
 
   const requestPaidInLieu = useCallback(
     async (type: "PLD" | "SDV") => {
-      if (!member?.id) {
-        throw new Error("No member ID found");
+      if (
+        !member?.id || member.division_id === null ||
+        member.division_id === undefined
+      ) {
+        throw new Error("No member ID or division ID found");
+      }
+      if (!member.calendar_id) {
+        throw new Error("No calendar ID assigned to the member");
       }
 
       try {
         console.log("[MyTime] Requesting paid in lieu for:", {
           type,
           memberId: member.id,
+          divisionId: member.division_id,
+          calendarId: member.calendar_id,
         });
         const { data, error } = await supabase
           .from("pld_sdv_requests")
@@ -316,8 +334,9 @@ export function useMyTime() {
             leave_type: type,
             paid_in_lieu: true,
             status: "pending",
-            request_date: new Date().toISOString().split("T")[0], // Format as YYYY-MM-DD
-            division: member.division,
+            request_date: new Date().toISOString().split("T")[0],
+            division_id: member.division_id,
+            calendar_id: member.calendar_id,
           })
           .select()
           .single();
@@ -334,7 +353,7 @@ export function useMyTime() {
         throw err;
       }
     },
-    [member?.id, member?.division],
+    [member?.id, member?.division_id, member?.calendar_id],
   );
 
   const fetchRequests = useCallback(async () => {
@@ -373,14 +392,19 @@ export function useMyTime() {
         id: request.id,
         request_date: request.request_date,
         leave_type: request.leave_type as "PLD" | "SDV",
-        status: "pending", // Assume pending for display
-        requested_at: request.requested_at,
+        status: "pending" as TimeOffRequest["status"],
+        requested_at: request.requested_at ?? "",
         is_six_month_request: true,
       }));
 
       // Combine all requests and update state
-      const allRequests = [
-        ...(regularRequests || []),
+      const allRequests: TimeOffRequest[] = [
+        ...(regularRequests || []).map((req) => ({
+          ...req,
+          status: req.status as TimeOffRequest["status"],
+          requested_at: req.requested_at ?? "",
+          is_six_month_request: false,
+        })),
         ...transformedSixMonthRequests,
       ];
       setRequests(allRequests);
@@ -391,6 +415,7 @@ export function useMyTime() {
           ? err.message
           : "Failed to fetch time off requests",
       );
+      setRequests([]);
     }
   }, [member?.id]);
 
@@ -399,7 +424,12 @@ export function useMyTime() {
       if (!member?.id) return false;
 
       try {
-        // Call the database function to handle cancellation
+        // Find the request in local state to get its date
+        const requestToCancel = requests.find((req) =>
+          req.id === requestId && !req.is_six_month_request
+        );
+
+        // Call the database function to handle cancellation logic
         const { data, error } = await supabase.rpc("cancel_leave_request", {
           p_request_id: requestId,
           p_member_id: member.id,
@@ -408,6 +438,8 @@ export function useMyTime() {
         if (error) throw error;
 
         // Send notification to user
+        // TODO: Verify column names (e.g., member_id vs user_id) and uncomment
+        /*
         try {
           await supabase.from("push_notification_deliveries").insert({
             member_id: member.id,
@@ -424,27 +456,40 @@ export function useMyTime() {
             },
           });
         } catch (notificationError) {
-          // Log but don't throw error for notification failures
           console.warn(
             "[MyTime] Failed to send notification:",
             notificationError,
           );
         }
+        */
 
-        // Find the request in our current state to get its date
-        const request = requests.find((req) => req.id === requestId);
-        if (request) {
-          // Update calendar store directly for the specific date
+        // Calendar Store Interaction Update
+        if (requestToCancel?.request_date) {
           const calendarStore = useCalendarStore.getState();
-          const currentRequests =
-            calendarStore.requests[request.request_date] || [];
-          const updatedRequests = currentRequests.filter((req) =>
-            req.id !== requestId
+          const requestsForDate =
+            calendarStore.requests[requestToCancel.request_date] || [];
+          const newStatus: TimeOffRequest["status"] = data
+            ? "cancelled"
+            : "cancellation_pending";
+
+          const updatedRequests = requestsForDate.map((req) =>
+            req.id === requestId ? { ...req, status: newStatus } : req
+          ).filter((req) => req.status !== "cancelled");
+
+          calendarStore.setRequests({
+            ...calendarStore.requests,
+            [requestToCancel.request_date]: updatedRequests,
+          });
+          console.log(
+            `[MyTime] Updated calendarStore for date: ${requestToCancel.request_date} with status: ${newStatus}`,
           );
-          calendarStore.setRequests(request.request_date, updatedRequests);
+        } else {
+          console.warn(
+            "[MyTime] Could not update calendar store - request date unknown locally.",
+          );
         }
 
-        // Let the realtime subscription handle the state update
+        // Local state update will be handled by realtime or next refreshData
         return true;
       } catch (err) {
         console.error("[MyTime] Error cancelling request:", err);

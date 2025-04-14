@@ -27,21 +27,47 @@ export function DivisionSelector({
   useEffect(() => {
     async function fetchDivisions() {
       try {
+        console.log("[DivisionSelector] Fetching divisions...");
         const { data, error } = await supabase.from("divisions").select("name").order("name");
 
-        if (error) throw error;
+        if (error) {
+          console.error("[DivisionSelector] Error fetching divisions:", error);
+          throw error;
+        }
+
+        if (!data || data.length === 0) {
+          console.warn("[DivisionSelector] No divisions found");
+          setDivisions([]);
+          return;
+        }
 
         const divisionNames = data.map((d) => d.name);
+        console.log("[DivisionSelector] Fetched divisions:", {
+          count: divisionNames.length,
+          names: divisionNames,
+          currentDivision,
+        });
         setDivisions(divisionNames);
       } catch (error) {
-        console.error("Error fetching divisions:", error);
+        console.error("[DivisionSelector] Error in fetchDivisions:", error);
+        setDivisions([]); // Reset to empty array on error
       } finally {
         setIsLoading(false);
       }
     }
 
     fetchDivisions();
-  }, []);
+  }, []); // Remove currentDivision from dependency array
+
+  useEffect(() => {
+    console.log("[DivisionSelector] State update:", {
+      currentDivision,
+      availableDivisions: divisions,
+      isLoading,
+      isAdmin,
+      disabled,
+    });
+  }, [currentDivision, divisions, isLoading, isAdmin, disabled]);
 
   if (!isAdmin) {
     return (

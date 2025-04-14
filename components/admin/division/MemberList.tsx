@@ -26,9 +26,10 @@ interface Member {
   pin_number: string | number;
   first_name: string;
   last_name: string;
-  division: string;
+  division_id: number;
   sdv_entitlement: number | null;
   sdv_election: number | null;
+  calendar_id: string | null;
 }
 
 interface MemberListProps {
@@ -264,7 +265,12 @@ const MemberItem = React.memo(
           <ThemedText style={styles.memberName}>
             {item.last_name}, {item.first_name}
           </ThemedText>
-          <ThemedText style={styles.memberPin}>PIN: {item.pin_number}</ThemedText>
+          <View style={styles.subInfoContainer}>
+            <ThemedText style={styles.memberPin}>PIN: {item.pin_number}</ThemedText>
+            <ThemedText style={styles.memberCalendar} numberOfLines={1} ellipsizeMode="tail">
+              Calendar: {item.calendar_id ?? "N/A"}
+            </ThemedText>
+          </View>
         </View>
         {renderSDVContent()}
       </TouchableOpacityComponent>
@@ -304,24 +310,26 @@ export const MemberList = React.memo(({ onEditMember, refreshTrigger }: MemberLi
       setIsLoading(true);
       const { data: adminData, error: adminError } = await supabase
         .from("members")
-        .select("division")
+        .select("division_id")
         .eq("id", currentUserId)
         .single();
 
       if (adminError) throw adminError;
 
-      const adminDivision = adminData?.division;
-      if (!adminDivision) throw new Error("No division found for admin");
+      const adminDivisionId = adminData?.division_id;
+      if (adminDivisionId === null || adminDivisionId === undefined) {
+        throw new Error("No division ID found for admin");
+      }
 
       const { data: membersData, error: membersError } = await supabase
         .from("members")
-        .select("first_name, last_name, pin_number, division, sdv_entitlement, sdv_election")
-        .eq("division", adminDivision)
+        .select("first_name, last_name, pin_number, division_id, sdv_entitlement, sdv_election, calendar_id")
+        .eq("division_id", adminDivisionId)
         .order("last_name", { ascending: true });
 
       if (membersError) throw membersError;
 
-      setMembers(membersData || []);
+      setMembers((membersData as Member[]) || []);
     } catch (error) {
       console.error("[MemberList] Error in fetchMembers:", error);
       setMembers([]);
@@ -459,15 +467,22 @@ const styles = StyleSheet.create({
   },
   memberInfo: {
     flex: 1,
+    marginRight: 8,
   },
   memberName: {
     fontSize: 16,
     fontWeight: "500",
   },
+  subInfoContainer: {
+    marginTop: 4,
+    opacity: 0.8,
+  },
   memberPin: {
     fontSize: 14,
-    opacity: 0.7,
-    marginTop: 4,
+  },
+  memberCalendar: {
+    fontSize: 14,
+    fontStyle: "italic",
   },
   centerContent: {
     flex: 1,

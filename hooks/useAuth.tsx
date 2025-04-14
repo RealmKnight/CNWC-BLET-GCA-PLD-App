@@ -49,7 +49,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
     try {
       const { data: memberData, error: memberError } = await supabase
         .from("members")
-        .select("*")
+        // Select new ID fields and remove old text fields
+        .select("*, division_id, current_zone_id, home_zone_id, calendar_id")
         .eq("id", userId)
         .maybeSingle();
 
@@ -59,6 +60,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
         console.log("[Auth] Member data loaded:", {
           id: memberData.id,
           role: memberData.role,
+          divisionId: memberData.division_id, // Log new ID
+          calendarId: memberData.calendar_id, // Log new ID
           name: `${memberData.first_name} ${memberData.last_name}`,
         });
       }
@@ -167,6 +170,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
                 console.log("[Auth] Setting member data and role:", {
                   id: memberData.id,
                   role: memberData.role,
+                  divisionId: memberData.division_id, // Log new ID
+                  calendarId: memberData.calendar_id, // Log new ID
                 });
                 setMember(memberData);
                 setUserRole(memberData.role as UserRole);
@@ -437,7 +442,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
           // If update succeeded but returned no data, fetch the member data directly
           const { data: fetchedMember, error: fetchError } = await supabase
             .from("members")
-            .select("*")
+            // Select new fields
+            .select("*, division_id, current_zone_id, home_zone_id, calendar_id")
             .eq("id", userId)
             .maybeSingle();
 
@@ -449,6 +455,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
             pin: numericPin,
             memberId: fetchedMember.id,
             role: fetchedMember.role,
+            divisionId: fetchedMember.division_id,
+            calendarId: fetchedMember.calendar_id,
           });
 
           // Update local state with fetched data

@@ -1,5 +1,14 @@
 import React, { useState, useEffect, useRef } from "react";
-import { StyleSheet, TextInput, Alert, TouchableOpacity, Platform, Dimensions, ScrollView } from "react-native";
+import {
+  StyleSheet,
+  TextInput,
+  Alert,
+  TouchableOpacity,
+  Platform,
+  Dimensions,
+  ScrollView,
+  ActivityIndicator,
+} from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { Ionicons } from "@expo/vector-icons";
@@ -13,6 +22,8 @@ import { format } from "date-fns";
 import { Tooltip } from "../../../components/Tooltip";
 import { useAdminCalendarManagementStore } from "@/store/adminCalendarManagementStore";
 import Toast from "react-native-toast-message";
+import { DatePicker } from "@/components/DatePicker";
+import { Accordion } from "@/components/Accordion";
 
 type AllotmentType = "pld_sdv" | "vacation";
 
@@ -35,23 +46,88 @@ interface YearlyAllotment {
 }
 
 interface WeeklyVacationAllotment {
-  id: string;
-  vac_year: number;
+  id: number;
+  calendar_id: string | null;
   week_start_date: string;
-  current_requests: number;
   max_allotment: number;
+  current_requests: number | null;
+  vac_year: number;
+  is_override: boolean;
+  override_by?: string | null;
+  override_at?: string | null;
+  override_reason?: string | null;
 }
 
 interface CalendarAllotmentsProps {
-  zoneId: number | undefined;
-  isZoneSpecific?: boolean;
+  calendarId: string | null;
   selectedDivision?: string;
 }
 
-export function CalendarAllotments({ zoneId, isZoneSpecific = false, selectedDivision }: CalendarAllotmentsProps) {
+// Component to display weekly vacation allotments
+const WeeklyAllotmentsDisplay = ({ allotments }: { allotments: WeeklyVacationAllotment[] }) => {
+  const sortedAllotments = [...allotments].sort(
+    (a, b) => new Date(a.week_start_date).getTime() - new Date(b.week_start_date).getTime()
+  );
+
+  return (
+    <ThemedView style={styles.allotmentsContainer}>
+      {sortedAllotments.length === 0 ? (
+        <ThemedText style={styles.noDataText}>No weekly allotments found for this year.</ThemedText>
+      ) : (
+        <>
+          <ThemedView style={styles.allotmentsHeader}>
+            <ThemedText style={styles.allotmentHeaderText}>Week Starting</ThemedText>
+            <ThemedText style={styles.allotmentHeaderText}>Allocation</ThemedText>
+            <ThemedText style={styles.allotmentHeaderText}>Used</ThemedText>
+          </ThemedView>
+          {sortedAllotments.map((allotment) => (
+            <ThemedView key={allotment.id.toString()} style={styles.allotmentRow}>
+              <ThemedText>{format(new Date(allotment.week_start_date), "MMM d, yyyy")}</ThemedText>
+              <ThemedText>{allotment.max_allotment}</ThemedText>
+              <ThemedText>{allotment.current_requests ?? "0"}</ThemedText>
+            </ThemedView>
+          ))}
+        </>
+      )}
+    </ThemedView>
+  );
+};
+
+// Component to display daily PLD/SDV allotments
+const DailyAllotmentsDisplay = ({ allotment }: { allotment?: YearlyAllotment }) => {
+  return (
+    <ThemedView style={styles.allotmentsContainer}>
+      {!allotment ? (
+        <ThemedText style={styles.noDataText}>No yearly allotment found.</ThemedText>
+      ) : (
+        <ThemedView style={styles.allotmentSummary}>
+          <ThemedText style={styles.allotmentSummaryText}>
+            Default allotment: <ThemedText style={styles.allotmentValue}>{allotment.max_allotment}</ThemedText>
+          </ThemedText>
+
+          {allotment.is_override && (
+            <ThemedView style={styles.overrideInfo}>
+              <ThemedText style={styles.overrideText}>
+                This value was overridden
+                {allotment.override_at && ` on ${format(new Date(allotment.override_at), "MMM d, yyyy")}`}
+              </ThemedText>
+              {allotment.override_reason && (
+                <ThemedText style={styles.overrideReasonText}>Reason: {allotment.override_reason}</ThemedText>
+              )}
+            </ThemedView>
+          )}
+        </ThemedView>
+      )}
+    </ThemedView>
+  );
+};
+
+export function CalendarAllotments({ calendarId, selectedDivision }: CalendarAllotmentsProps) {
   const scrollViewRef = useRef<ScrollView>(null);
   const [scrollOffset, setScrollOffset] = useState(0);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const adminCalendarStore = useAdminCalendarManagementStore();
   const {
     yearlyAllotments,
     weeklyVacationAllotments,
@@ -67,14 +143,7 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false, selectedDiv
     updateAllotment,
     updateVacationAllotment,
     resetAllotments,
-    selectedZoneId,
-  } = useAdminCalendarManagementStore();
-
-  // Select usesZoneCalendars reactively
-  const usesZoneCalendars = useAdminCalendarManagementStore((state) => state.usesZoneCalendars);
-  const isDivisionReadyMap = useAdminCalendarManagementStore((state) => state.isDivisionReadyMap);
-
-  const [zoneName, setZoneName] = useState<string>("");
+  } = adminCalendarStore;
 
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const tintColor = Colors[colorScheme].tint;
@@ -82,109 +151,66 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false, selectedDiv
   const userDivision = useUserStore((state) => state.division);
   const userRole = useUserStore((state) => state.userRole);
 
-  // Use selectedDivision if provided (admin mode), otherwise fall back to userDivision
   const effectiveDivision = selectedDivision || userDivision;
 
   const currentYear = new Date().getFullYear();
   const nextYear = currentYear + 1;
 
-  useEffect(() => {
-    async function fetchZoneName() {
-      if (!zoneId) {
-        setZoneName("");
-        return;
-      }
-
-      try {
-        const { data, error } = await supabase.from("zones").select("name").eq("id", zoneId).single();
-
-        if (error) throw error;
-        setZoneName(data?.name || "");
-      } catch (error) {
-        console.error("Error fetching zone name:", error);
-        setZoneName("");
-      }
-    }
-
-    fetchZoneName();
-  }, [zoneId]);
+  const [activeTab, setActiveTab] = useState<AllotmentType>("pld_sdv");
+  const [startDate, setStartDate] = useState<Date | null>(null);
+  const [endDate, setEndDate] = useState<Date | null>(null);
+  const [rangeAllotment, setRangeAllotment] = useState<string>("");
 
   useEffect(() => {
-    if (!user || !effectiveDivision) return;
-
-    // Check readiness using the reactive map from the store
-    const isReady = !!isDivisionReadyMap[effectiveDivision];
-
-    // Guard: Check if the division is ready first
-    if (!isReady) {
-      console.log(
-        "[CalendarAllotments] Division " + effectiveDivision + " is not ready yet (isReady flag). Skipping fetch."
-      );
-      return;
-    }
-
-    // Now that we know it's ready, get the definitive current state for this fetch
-    const currentState = useAdminCalendarManagementStore.getState();
-    const divisionUsesZonesNow = currentState.usesZoneCalendars;
-    const effectiveFetchZoneId = divisionUsesZonesNow ? zoneId : null;
-
-    // Guard: Don't fetch if zone-specific and the zoneId prop isn't ready
-    if (divisionUsesZonesNow && (zoneId === undefined || zoneId === null)) {
-      console.log("[CalendarAllotments] Zone specific view, but zoneId prop is not ready. Skipping fetch.", {
-        propZoneId: zoneId,
+    if (!user || !effectiveDivision || !calendarId) {
+      console.log("[CalendarAllotments] Missing user, division, or calendarId. Skipping fetch.", {
+        user: !!user,
+        effectiveDivision,
+        calendarId,
       });
       return;
     }
 
-    console.log("[CalendarAllotments] useEffect Triggered (Division Ready). Preparing to fetch...", {
+    console.log("[CalendarAllotments] useEffect Triggered. Preparing to fetch...", {
       division: effectiveDivision,
+      calendarId,
       currentYear,
       nextYear,
-      effectiveFetchZoneId,
-      divisionUsesZones: divisionUsesZonesNow, // Use the latest confirmed value
-      propZoneId: zoneId,
     });
 
     const abortController = new AbortController();
 
     const loadAllotments = async () => {
       try {
-        // Check if the signal is already aborted
         if (abortController.signal.aborted) {
           console.log("[CalendarAllotments] Aborted before fetching year", currentYear);
           return;
         }
+        console.log("[CalendarAllotments] Fetching year", currentYear, "for calendar", calendarId);
+        await fetchAllotments(calendarId, currentYear);
 
-        console.log("[CalendarAllotments] Fetching year", currentYear, "with zone", effectiveFetchZoneId);
-        await fetchAllotments(effectiveDivision, currentYear, effectiveFetchZoneId);
-
-        // Check again before fetching next year
         if (abortController.signal.aborted) {
           console.log("[CalendarAllotments] Aborted before fetching year", nextYear);
           return;
         }
+        console.log("[CalendarAllotments] Fetching year", nextYear, "for calendar", calendarId);
+        await fetchAllotments(calendarId, nextYear);
 
-        console.log("[CalendarAllotments] Fetching year", nextYear, "with zone", effectiveFetchZoneId);
-        await fetchAllotments(effectiveDivision, nextYear, effectiveFetchZoneId);
-        console.log("[CalendarAllotments] Fetches completed for zone", effectiveFetchZoneId);
-      } catch (error) {
+        console.log("[CalendarAllotments] Fetches completed for calendar", calendarId);
+      } catch (err) {
         if (!abortController.signal.aborted) {
-          console.error("[CalendarAllotments] Error loading allotments:", error);
+          console.error("[CalendarAllotments] Error loading allotments:", err);
         }
       }
     };
 
     loadAllotments();
 
-    // Cleanup function
     return () => {
-      console.log("[CalendarAllotments] Cleanup for effect with zone", effectiveFetchZoneId);
+      console.log("[CalendarAllotments] Cleanup for effect with calendar", calendarId);
       abortController.abort();
-      // Resetting allotments is handled by the store when zone/division actually changes
     };
-    // Dependencies: Fetch when user, division, the specific zoneId prop, OR the zone mode changes.
-    // fetchAllotments ref should be stable.
-  }, [user, effectiveDivision, zoneId, usesZoneCalendars, isDivisionReadyMap, fetchAllotments]);
+  }, [user, effectiveDivision, calendarId, fetchAllotments]);
 
   const getAllotmentForYear = (year: number): YearlyAllotment | undefined => {
     return yearlyAllotments.find((a) => a.year === year);
@@ -195,44 +221,36 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false, selectedDiv
   };
 
   const handleUpdateConfirmed = async (year: number, numValue: number) => {
-    if (!user || !effectiveDivision) return;
-
-    const updateZoneId = isZoneSpecific ? zoneId : null;
-
-    if (isZoneSpecific && (updateZoneId === undefined || updateZoneId === null)) {
-      const msg = "Cannot update: Zone ID is missing for zone-specific allotment.";
-      console.error(msg);
+    if (!user || !effectiveDivision || !calendarId) {
+      console.error("[handleUpdateConfirmed] Missing user, division, or calendarId.");
       Toast.show({
         type: "error",
         text1: "Error",
-        text2: msg,
+        text2: "Cannot update: Missing required information.",
         position: "bottom",
-        visibilityTime: 3000,
       });
       return;
     }
 
     try {
-      // Get the current type from state to ensure we're using the correct one
       const currentType = selectedType;
       console.log("[CalendarAllotments] Updating allotment:", {
         type: currentType,
         year,
         value: numValue,
-        zoneId: updateZoneId,
+        calendarId: calendarId,
       });
 
       if (currentType === "vacation") {
-        // For vacation type, we need a week start date
-        const weekStartDate = `${year}-01-01`; // Use the selected year
-        await updateVacationAllotment(effectiveDivision, weekStartDate, numValue, user.id, updateZoneId);
+        const weekStartDate = `${year}-01-01`;
+        await updateVacationAllotment(calendarId, weekStartDate, numValue, user.id);
       } else if (currentType === "pld_sdv") {
-        await updateAllotment(effectiveDivision, year, numValue, user.id, updateZoneId);
+        await updateAllotment(calendarId, year, numValue, user.id);
       } else {
         throw new Error(`Invalid allotment type: ${currentType}`);
       }
 
-      await fetchAllotments(effectiveDivision, year, updateZoneId);
+      await fetchAllotments(calendarId, year);
 
       Toast.show({
         type: "success",
@@ -249,23 +267,19 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false, selectedDiv
         text1: "Error",
         text2: errorMessage,
         position: "bottom",
-        visibilityTime: 3000,
       });
     }
   };
 
   const handleUpdateAllotment = async (year: number, type: AllotmentType) => {
-    // Set the type first before proceeding with the update
     setSelectedType(type);
 
     if (!effectiveDivision) {
-      Toast.show({
-        type: "error",
-        text1: "Error",
-        text2: "No division found. Please contact your administrator.",
-        position: "bottom",
-        visibilityTime: 3000,
-      });
+      Toast.show({ type: "error", text1: "Error", text2: "No division selected." });
+      return;
+    }
+    if (!calendarId) {
+      Toast.show({ type: "error", text1: "Error", text2: "No calendar selected." });
       return;
     }
 
@@ -276,13 +290,7 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false, selectedDiv
       "company_admin",
     ];
     if (!userRole || !allowedRoles.includes(userRole)) {
-      Toast.show({
-        type: "error",
-        text1: "Error",
-        text2: "You do not have permission to update allotments.",
-        position: "bottom",
-        visibilityTime: 3000,
-      });
+      Toast.show({ type: "error", text1: "Error", text2: "Permission denied." });
       return;
     }
 
@@ -292,28 +300,20 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false, selectedDiv
         : parseInt(pldSdvTempAllotments[year] ?? "", 10);
 
     if (isNaN(value) || value < 0) {
-      Toast.show({
-        type: "error",
-        text1: "Error",
-        text2: "Please enter a valid number",
-        position: "bottom",
-        visibilityTime: 3000,
-      });
+      Toast.show({ type: "error", text1: "Error", text2: "Invalid number." });
       return;
     }
 
     Toast.show({
       type: "info",
       text1: `Update ${type === "vacation" ? "Vacation" : "Single Day"} Allotment`,
-      text2: `Are you sure you want to update the ${
+      text2: `Update ${
         type === "vacation" ? "vacation" : "single day"
-      } allotment for ${year} to ${value}?`,
+      } allotment for ${year} to ${value} on calendar ${calendarId}?`,
       position: "bottom",
       visibilityTime: 4000,
       autoHide: false,
-      onPress: () => {
-        Toast.hide();
-      },
+      onPress: () => Toast.hide(),
       props: {
         onAction: async (action: string) => {
           if (action === "confirm") {
@@ -328,50 +328,51 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false, selectedDiv
 
   const handleInputChange = (year: number, type: AllotmentType, value: string) => {
     const numValue = parseInt(value, 10);
-    if (isNaN(numValue)) {
-      Toast.show({
-        type: "error",
-        text1: "Error",
-        text2: "Please enter a valid number",
-        position: "bottom",
-        visibilityTime: 3000,
-      });
+    if (isNaN(numValue) || value.trim() === "") {
+      if (value.trim() !== "") {
+        Toast.show({ type: "error", text1: "Error", text2: "Invalid number." });
+      }
       if (type === "vacation") {
         setVacationTempAllotments((prev) => {
           const currentVal = getVacationAllotmentsForYear(year)?.[0]?.max_allotment ?? 0;
-          return {
-            ...prev,
-            [year]: currentVal.toString(),
-          };
+          return { ...prev, [year]: currentVal.toString() };
         });
       } else {
         setPldSdvTempAllotments((prev) => {
           const currentVal = getAllotmentForYear(year)?.max_allotment ?? 0;
-          return {
-            ...prev,
-            [year]: currentVal.toString(),
-          };
+          return { ...prev, [year]: currentVal.toString() };
         });
       }
       return;
     }
 
     if (type === "vacation") {
-      setVacationTempAllotments((prev) => ({
-        ...prev,
-        [year]: value,
-      }));
+      setVacationTempAllotments((prev) => ({ ...prev, [year]: value }));
     } else {
-      setPldSdvTempAllotments((prev) => ({
-        ...prev,
-        [year]: value,
-      }));
+      setPldSdvTempAllotments((prev) => ({ ...prev, [year]: value }));
     }
   };
 
   useEffect(() => {
-    setSelectedType("pld_sdv");
-  }, []);
+    if (!selectedType) {
+      setSelectedType("pld_sdv");
+    }
+  }, [selectedType, setSelectedType]);
+
+  // Add a manual data fetch for both years
+  useEffect(() => {
+    if (!calendarId || !user) return;
+
+    console.log("[CalendarAllotments] Component mounted with calendar:", calendarId);
+
+    // Let's not automatically fetch all years to improve performance
+    // User can expand each accordion to load the data they want to see
+
+    // Cleanup
+    return () => {
+      console.log("[CalendarAllotments] Cleanup on unmount for calendar:", calendarId);
+    };
+  }, [calendarId, user]);
 
   const renderYearInput = (year: number, type: AllotmentType) => {
     const allotment = type === "pld_sdv" ? getAllotmentForYear(year) : undefined;
@@ -424,20 +425,14 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false, selectedDiv
             value={currentTempValue}
             onChangeText={(text) => handleInputChange(year, type, text)}
             keyboardType="numeric"
-            placeholder="Enter allotment"
-            placeholderTextColor={Colors[colorScheme].text}
-            editable={!isLoading}
+            placeholder="Spots"
+            placeholderTextColor={Colors[colorScheme].textDim}
+            editable={!isLoading && !!calendarId}
           />
           <TouchableOpacity
-            style={[
-              styles.updateButton,
-              {
-                backgroundColor: tintColor,
-                opacity: isLoading ? 0.5 : 1,
-              },
-            ]}
+            style={[styles.updateButton, { backgroundColor: tintColor, opacity: isLoading || !calendarId ? 0.5 : 1 }]}
             onPress={() => handleUpdateAllotment(year, type)}
-            disabled={isLoading}
+            disabled={isLoading || !calendarId}
           >
             <ThemedText style={styles.updateButtonText}>Update</ThemedText>
           </TouchableOpacity>
@@ -449,7 +444,7 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false, selectedDiv
               <ThemedView key={weekAllotment.id} style={styles.weeklyAllotmentRow}>
                 <ThemedText>Week of {format(new Date(weekAllotment.week_start_date), "MMM d, yyyy")}</ThemedText>
                 <ThemedText>
-                  {weekAllotment.current_requests} / {weekAllotment.max_allotment} spots taken
+                  {weekAllotment.current_requests ?? "N/A"} / {weekAllotment.max_allotment} spots
                 </ThemedText>
               </ThemedView>
             ))}
@@ -459,55 +454,288 @@ export function CalendarAllotments({ zoneId, isZoneSpecific = false, selectedDiv
     );
   };
 
+  const handleRangeUpdate = () => {
+    if (!startDate || !endDate || !rangeAllotment || !calendarId || !user) {
+      Toast.show({
+        type: "error",
+        text1: "Missing Information",
+        text2: "Please select both start and end dates, and enter an allotment value.",
+        position: "bottom",
+      });
+      return;
+    }
+
+    // Validate the allotment value
+    const numValue = parseInt(rangeAllotment, 10);
+    if (isNaN(numValue) || numValue < 0) {
+      Toast.show({
+        type: "error",
+        text1: "Invalid Value",
+        text2: "Please enter a valid positive number for the allotment.",
+        position: "bottom",
+      });
+      return;
+    }
+
+    // Format dates for display
+    const formattedStartDate = format(startDate, "MMM d, yyyy");
+    const formattedEndDate = format(endDate, "MMM d, yyyy");
+
+    // Ensure start date is before or equal to end date
+    if (startDate > endDate) {
+      Toast.show({
+        type: "error",
+        text1: "Invalid Date Range",
+        text2: "Start date must be before or equal to end date.",
+        position: "bottom",
+      });
+      return;
+    }
+
+    // Format dates for API consumption (YYYY-MM-DD)
+    const apiStartDate = format(startDate, "yyyy-MM-dd");
+    const apiEndDate = format(endDate, "yyyy-MM-dd");
+
+    // Show confirmation with the date range and value
+    Toast.show({
+      type: "info",
+      text1: "Confirm Range Update",
+      text2: `Set ${
+        activeTab === "vacation" ? "Vacation" : "Single Day"
+      } allotment to ${numValue} for ${formattedStartDate} to ${formattedEndDate}?`,
+      position: "bottom",
+      visibilityTime: 4000,
+      autoHide: false,
+      onPress: () => Toast.hide(),
+      props: {
+        onAction: async (action: string) => {
+          if (action === "confirm") {
+            Toast.hide();
+
+            try {
+              setIsSubmitting(true);
+
+              // Call the appropriate store function based on the active tab
+              let result;
+              if (activeTab === "pld_sdv") {
+                result = await adminCalendarStore.updatePldSdvRangeOverride(
+                  calendarId,
+                  apiStartDate,
+                  apiEndDate,
+                  numValue,
+                  user.id
+                );
+              } else {
+                result = await adminCalendarStore.updateVacationRangeOverride(
+                  calendarId,
+                  apiStartDate,
+                  apiEndDate,
+                  numValue,
+                  user.id
+                );
+              }
+
+              console.log("Range update result:", result);
+
+              // Success message
+              Toast.show({
+                type: "success",
+                text1: "Range Update",
+                text2: `Updated ${result?.affectedCount} ${activeTab === "vacation" ? "weeks" : "days"} successfully.`,
+                position: "bottom",
+              });
+
+              // Clear form
+              setStartDate(null);
+              setEndDate(null);
+              setRangeAllotment("");
+
+              // Refresh the current year's data
+              const currentYear = new Date().getFullYear();
+              adminCalendarStore.fetchAllotments(calendarId, currentYear);
+            } catch (error) {
+              console.error("Range update error:", error);
+              Toast.show({
+                type: "error",
+                text1: "Error",
+                text2: error instanceof Error ? error.message : "Failed to update date range.",
+                position: "bottom",
+              });
+            } finally {
+              setIsSubmitting(false);
+            }
+          }
+        },
+        actionType: "confirm",
+      },
+    });
+  };
+
   return (
-    <ScrollView
-      ref={scrollViewRef}
-      style={styles.container}
-      onScroll={(event) => {
-        setScrollOffset(event.nativeEvent.contentOffset.y);
-      }}
-      scrollEventThrottle={16}
-    >
-      {isZoneSpecific ? (
-        <ThemedView style={styles.zoneInfo}>
-          <ThemedText type="title">Zone Calendar</ThemedText>
-          <ThemedText style={styles.zoneDescription}>
-            {zoneName ? `Managing calendar allotments for zone: ${zoneName}` : "Loading zone information..."}
+    <ThemedView style={styles.container}>
+      {/* Tab Navigation */}
+      <ThemedView style={styles.tabContainer}>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === "pld_sdv" && styles.activeTab]}
+          onPress={() => setActiveTab("pld_sdv")}
+        >
+          <ThemedText style={[styles.tabText, activeTab === "pld_sdv" && styles.activeTabText]}>
+            PLD/SDV Allotment
           </ThemedText>
-        </ThemedView>
-      ) : (
-        <ThemedView style={styles.zoneInfo}>
-          <ThemedText type="title">Division Calendar</ThemedText>
-          <ThemedText style={styles.zoneDescription}>
-            {effectiveDivision
-              ? `Managing calendar allotments for the whole division: ${effectiveDivision}`
-              : "Loading division information..."}
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === "vacation" && styles.activeTab]}
+          onPress={() => setActiveTab("vacation")}
+        >
+          <ThemedText style={[styles.tabText, activeTab === "vacation" && styles.activeTabText]}>
+            Vacation Allotment
           </ThemedText>
-        </ThemedView>
-      )}
-
-      {error && (
-        <ThemedView style={styles.errorContainer}>
-          <ThemedText style={styles.errorText}>{error}</ThemedText>
-        </ThemedView>
-      )}
-
-      <ThemedText type="title" style={styles.titleStyle}>
-        Single Day Allotments
-      </ThemedText>
-      <ThemedView style={styles.yearSectionsContainer}>
-        {renderYearInput(currentYear, "pld_sdv")}
-        {renderYearInput(nextYear, "pld_sdv")}
+        </TouchableOpacity>
       </ThemedView>
 
-      <ThemedText type="title" style={styles.titleStyle}>
-        Vacation Allotments
-      </ThemedText>
-      <ThemedView style={styles.yearSectionsContainer}>
-        {renderYearInput(currentYear, "vacation")}
-        {renderYearInput(nextYear, "vacation")}
+      {/* Component content */}
+      <ThemedView style={{ flex: 1 }}>
+        {/* Yearly Allotment Section */}
+        <ThemedView style={styles.section}>
+          <ThemedText style={styles.sectionTitle}>
+            {activeTab === "vacation" ? "Yearly Vacation Allotment" : "Yearly Single Day Allotment"}
+          </ThemedText>
+          <ThemedText style={styles.sectionSubtitle}>
+            {activeTab === "vacation"
+              ? "Sets the lowest number of vacation spots available per week all year. Override this default below."
+              : "Sets the lowest number of PLD/SDV spots available per day all year. Override this default below."}
+          </ThemedText>
+          {[currentYear, nextYear].map((year) => (
+            <ThemedView key={year} style={styles.yearContainer}>
+              <ThemedText style={styles.yearText}>{year}</ThemedText>
+              <TextInput
+                style={styles.input}
+                value={
+                  activeTab === "vacation"
+                    ? vacationTempAllotments[year]?.toString() || ""
+                    : pldSdvTempAllotments[year]?.toString() || ""
+                }
+                onChangeText={(text) => {
+                  if (activeTab === "vacation") {
+                    setVacationTempAllotments({ ...vacationTempAllotments, [year]: text });
+                  } else {
+                    setPldSdvTempAllotments({ ...pldSdvTempAllotments, [year]: text });
+                  }
+                }}
+                keyboardType="numeric"
+                placeholder="Enter allotment"
+              />
+              <TouchableOpacity style={styles.updateButton} onPress={() => handleUpdateAllotment(year, activeTab)}>
+                <ThemedText style={styles.updateButtonText}>Update</ThemedText>
+              </TouchableOpacity>
+            </ThemedView>
+          ))}
+        </ThemedView>
+
+        {/* Date Range Allotment Section */}
+        <ThemedView style={styles.section}>
+          <ThemedText style={styles.sectionTitle}>
+            {activeTab === "vacation" ? "Weekly Vacation Override" : "Daily Override"}
+          </ThemedText>
+          <ThemedView style={styles.dateRangeContainer}>
+            <DatePicker
+              date={startDate}
+              onDateChange={setStartDate}
+              mode="date"
+              placeholder="Start Date"
+              style={styles.datePicker}
+            />
+            <DatePicker
+              date={endDate}
+              onDateChange={setEndDate}
+              mode="date"
+              placeholder="End Date"
+              style={styles.datePicker}
+            />
+            <TextInput
+              style={[styles.input, styles.rangeInput]}
+              value={rangeAllotment}
+              onChangeText={setRangeAllotment}
+              keyboardType="numeric"
+              placeholder="Enter allotment"
+            />
+            <TouchableOpacity
+              style={[
+                styles.updateButton,
+                {
+                  backgroundColor: tintColor,
+                  opacity:
+                    isLoading || isSubmitting || !startDate || !endDate || !rangeAllotment || !calendarId ? 0.5 : 1,
+                },
+              ]}
+              onPress={() => handleRangeUpdate()}
+              disabled={isLoading || isSubmitting || !startDate || !endDate || !rangeAllotment || !calendarId}
+            >
+              {isSubmitting ? (
+                <ActivityIndicator size="small" color="#ffffff" />
+              ) : (
+                <ThemedText style={styles.updateButtonText}>Update Range</ThemedText>
+              )}
+            </TouchableOpacity>
+          </ThemedView>
+        </ThemedView>
+
+        {/* Current Allotments Display */}
+        <ThemedView style={styles.section}>
+          <ThemedText style={styles.sectionTitle}>Current Allotments</ThemedText>
+
+          {activeTab === "vacation" ? (
+            <>
+              {/* Current Year Accordion */}
+              <Accordion
+                title={`Current Year (${currentYear})`}
+                onExpand={() => {
+                  console.log(`[CalendarAllotments] Fetching vacation data for ${currentYear}`);
+                  if (calendarId) fetchAllotments(calendarId, currentYear);
+                }}
+              >
+                <WeeklyAllotmentsDisplay allotments={getVacationAllotmentsForYear(currentYear)} />
+              </Accordion>
+
+              {/* Next Year Accordion */}
+              <Accordion
+                title={`Next Year (${nextYear})`}
+                onExpand={() => {
+                  console.log(`[CalendarAllotments] Fetching vacation data for ${nextYear}`);
+                  if (calendarId) fetchAllotments(calendarId, nextYear);
+                }}
+              >
+                <WeeklyAllotmentsDisplay allotments={getVacationAllotmentsForYear(nextYear)} />
+              </Accordion>
+            </>
+          ) : (
+            <>
+              {/* Current Year Accordion */}
+              <Accordion
+                title={`Current Year (${currentYear})`}
+                onExpand={() => {
+                  console.log(`[CalendarAllotments] Fetching PLD/SDV data for ${currentYear}`);
+                  if (calendarId) fetchAllotments(calendarId, currentYear);
+                }}
+              >
+                <DailyAllotmentsDisplay allotment={getAllotmentForYear(currentYear)} />
+              </Accordion>
+
+              {/* Next Year Accordion */}
+              <Accordion
+                title={`Next Year (${nextYear})`}
+                onExpand={() => {
+                  console.log(`[CalendarAllotments] Fetching PLD/SDV data for ${nextYear}`);
+                  if (calendarId) fetchAllotments(calendarId, nextYear);
+                }}
+              >
+                <DailyAllotmentsDisplay allotment={getAllotmentForYear(nextYear)} />
+              </Accordion>
+            </>
+          )}
+        </ThemedView>
       </ThemedView>
-    </ScrollView>
+    </ThemedView>
   );
 }
 
@@ -516,80 +744,118 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 16,
   },
-  titleStyle: {
+  tabContainer: {
+    flexDirection: "row",
     marginBottom: 16,
-    marginTop: 6,
+    borderRadius: 8,
+    overflow: "hidden",
   },
-  zoneInfo: {
-    marginBottom: 16,
+  tab: {
+    flex: 1,
     padding: 12,
+    alignItems: "center",
+    backgroundColor: Colors.light.background,
+  },
+  activeTab: {
+    backgroundColor: Colors.light.tint,
+  },
+  tabText: {
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  activeTabText: {
+    color: Colors.light.background,
+  },
+  section: {
+    marginBottom: 24,
+    padding: 16,
     borderRadius: 8,
     backgroundColor: Colors.light.background,
-    borderWidth: 1,
-    borderColor: Colors.light.border,
   },
-  zoneTitle: {
+  sectionTitle: {
     fontSize: 18,
     fontWeight: "600",
-    marginBottom: 4,
+    marginBottom: 16,
   },
-  zoneDescription: {
+  sectionSubtitle: {
     fontSize: 14,
+    color: Colors.light.textDim,
+    marginBottom: 16,
+    fontStyle: "italic",
+    lineHeight: 20,
+  },
+  yearContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  yearText: {
+    fontSize: 16,
+    width: 60,
+  },
+  input: {
+    flex: 0.05,
+    height: 40,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    marginHorizontal: 8,
+    backgroundColor: Colors.light.background,
     color: Colors.light.text,
   },
-  errorContainer: {
-    marginBottom: 16,
-    padding: 12,
+  updateButton: {
+    backgroundColor: Colors.light.tint,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
     borderRadius: 8,
-    backgroundColor: Colors.light.error,
   },
-  errorText: {
-    color: "#FFFFFF",
-    fontSize: 14,
+  updateButtonText: {
+    color: Colors.light.background,
+    fontWeight: "500",
   },
-  yearSectionsContainer: {
-    gap: 24,
-    marginBottom: 24,
+  dateRangeContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  datePicker: {
+    flex: 1,
+    minWidth: 120,
+  },
+  rangeInput: {
+    flex: 0.5,
+    minWidth: 100,
   },
   yearContainerInternal: {
-    gap: 8,
+    padding: 16,
+    borderRadius: 8,
+    backgroundColor: Colors.light.card,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    gap: 12,
   },
   yearHeader: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.light.border,
+    paddingBottom: 8,
+    marginBottom: 8,
   },
   yearTitle: {
     fontSize: 20,
     fontWeight: "600",
   },
   infoIcon: {
-    marginLeft: 4,
+    marginLeft: "auto",
   },
   inputContainer: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-  },
-  input: {
-    width: 60,
-    height: 40,
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    fontSize: 16,
-  },
-  updateButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  updateButtonText: {
-    color: "#FFFFFF",
-    fontSize: 16,
-    fontWeight: "600",
   },
   tooltipContent: {
     padding: 8,
@@ -599,19 +865,90 @@ const styles = StyleSheet.create({
     marginTop: 12,
     padding: 12,
     borderRadius: 8,
-    backgroundColor: Colors.light.background,
+    backgroundColor: Colors.dark.background,
     borderWidth: 1,
-    borderColor: Colors.light.border,
+    borderColor: Colors.dark.border,
+    gap: 8,
   },
   weeklyAllotmentsTitle: {
     fontSize: 14,
     fontWeight: "600",
     marginBottom: 8,
+    color: Colors.dark.textDim,
   },
   weeklyAllotmentRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    paddingVertical: 4,
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.dark.border,
+  },
+  textDim: {
+    color: Colors.dark.textDim,
+  },
+  allotmentsContainer: {
+    padding: 16,
+    borderRadius: 8,
+    backgroundColor: Colors.dark.card,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+  },
+  allotmentsHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.dark.border,
+    paddingBottom: 8,
+    marginBottom: 8,
+  },
+  allotmentHeaderText: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  allotmentRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.dark.border,
+  },
+  noDataText: {
+    color: Colors.dark.textDim,
+    textAlign: "center",
+  },
+  allotmentSummary: {
+    padding: 16,
+    borderRadius: 8,
+    backgroundColor: Colors.dark.card,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+  },
+  allotmentSummaryText: {
+    fontSize: 14,
+    fontWeight: "600",
+    marginBottom: 8,
+  },
+  allotmentValue: {
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  overrideInfo: {
+    marginTop: 8,
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: Colors.dark.background,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+  },
+  overrideText: {
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  overrideReasonText: {
+    fontSize: 12,
+    color: Colors.dark.textDim,
   },
 });

@@ -41,7 +41,7 @@ const sections: SectionButton[] = [
   { key: "officers", title: "Division Officers", icon: "ribbon", outlineIcon: "ribbon-outline" },
   { key: "messages", title: "Message Center", icon: "mail", outlineIcon: "mail-outline" },
   { key: "adminMessages", title: "Admin Messages", icon: "chatbox", outlineIcon: "chatbox-outline" },
-  { key: "calendar", title: "Calendar Allotments", icon: "calendar", outlineIcon: "calendar-outline" },
+  { key: "calendar", title: "Calendar(s)", icon: "calendar", outlineIcon: "calendar-outline" },
 ];
 
 // Mobile breakpoint for web

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useRef } from "react";
+import React, { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import {
   StyleSheet,
   Platform,
@@ -12,14 +12,13 @@ import {
   View,
   AppState,
   Animated,
+  Button,
 } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { Calendar } from "@/components/Calendar";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
-import { IconSymbol } from "@/components/ui/IconSymbol";
 import { useCalendarStore, DayRequest } from "@/store/calendarStore";
-import { setupCalendarSubscriptions } from "@/store/calendarStore";
 import { useAuth } from "@/hooks/useAuth";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
@@ -27,7 +26,6 @@ import { format } from "date-fns-tz";
 import { supabase } from "@/utils/supabase";
 import { useUserStore } from "@/store/userStore";
 import { useFocusEffect } from "@react-navigation/native";
-import { useAdminCalendarManagementStore } from "@/store/adminCalendarManagementStore";
 import { Member } from "@/types/member";
 import { useMyTime } from "@/hooks/useMyTime";
 
@@ -43,8 +41,6 @@ interface RequestDialogProps {
     current: number;
   };
   requests: DayRequest[];
-  zoneId?: number;
-  isZoneSpecific?: boolean;
 }
 
 function RequestDialog({
@@ -54,28 +50,19 @@ function RequestDialog({
   selectedDate,
   allotments,
   requests: allRequests,
-  zoneId,
-  isZoneSpecific = false,
 }: RequestDialogProps) {
   const theme = (useColorScheme() ?? "light") as ColorScheme;
   const { stats } = useMyTime();
   const { member } = useUserStore();
 
-  // Filter active requests directly from props instead of using store selector
   const activeRequests = useMemo(() => {
-    return allRequests.filter(
-      (r) =>
-        (r.status === "approved" || r.status === "pending" || r.status === "waitlisted") &&
-        (!zoneId || r.zone_id === zoneId)
-    );
-  }, [allRequests, zoneId]);
+    return allRequests.filter((r) => r.status === "approved" || r.status === "pending" || r.status === "waitlisted");
+  }, [allRequests]);
 
-  // Check if current user already has a request for this date
   const hasExistingRequest = useMemo(() => {
     return activeRequests.some((r) => r.member.id === member?.id);
   }, [activeRequests, member?.id]);
 
-  // Memoize derived values
   const currentAllotment = useMemo(
     () => ({
       max: allotments.max,
@@ -86,7 +73,6 @@ function RequestDialog({
 
   const isFull = currentAllotment.current >= currentAllotment.max;
 
-  // Memoize sorted requests to prevent unnecessary re-renders
   const sortedRequests = useMemo(() => {
     const statusPriority: Record<string, number> = {
       approved: 0,
@@ -118,6 +104,11 @@ function RequestDialog({
             <ThemedText style={dialogStyles.allotmentInfo}>
               {currentAllotment.current}/{currentAllotment.max} spots filled
             </ThemedText>
+            {isFull && activeRequests.length > currentAllotment.max && (
+              <ThemedText style={dialogStyles.waitlistInfo}>
+                Waitlist: {activeRequests.length - currentAllotment.max}
+              </ThemedText>
+            )}
           </View>
           {hasExistingRequest && (
             <View style={dialogStyles.messageContainer}>
@@ -159,7 +150,7 @@ function RequestDialog({
                 </View>
               </View>
             ))}
-            {Array.from({ length: currentAllotment.max - sortedRequests.length }).map((_, index) => (
+            {Array.from({ length: Math.max(0, currentAllotment.max - sortedRequests.length) }).map((_, index) => (
               <View key={`empty-${index}`} style={dialogStyles.requestSpot}>
                 <ThemedText style={dialogStyles.spotNumber}>#{sortedRequests.length + index + 1}</ThemedText>
                 <ThemedText style={dialogStyles.emptySpot}>Available</ThemedText>
@@ -177,9 +168,10 @@ function RequestDialog({
                 dialogStyles.submitButton,
                 isFull && dialogStyles.waitlistButton,
                 hasExistingRequest && dialogStyles.disabledButton,
+                (stats?.available.pld ?? 0) <= 0 && !isFull && dialogStyles.disabledButton,
               ]}
               onPress={() => onSubmit("PLD")}
-              disabled={hasExistingRequest}
+              disabled={hasExistingRequest || ((stats?.available.pld ?? 0) <= 0 && !isFull)}
             >
               <ThemedText style={dialogStyles.modalButtonText}>
                 {isFull ? "Join Waitlist (PLD)" : "Request PLD"}
@@ -191,9 +183,10 @@ function RequestDialog({
                 dialogStyles.submitButton,
                 isFull && dialogStyles.waitlistButton,
                 hasExistingRequest && dialogStyles.disabledButton,
+                (stats?.available.sdv ?? 0) <= 0 && !isFull && dialogStyles.disabledButton,
               ]}
               onPress={() => onSubmit("SDV")}
-              disabled={hasExistingRequest}
+              disabled={hasExistingRequest || ((stats?.available.sdv ?? 0) <= 0 && !isFull)}
             >
               <ThemedText style={dialogStyles.modalButtonText}>
                 {isFull ? "Join Waitlist (SDV)" : "Request SDV"}
@@ -204,10 +197,6 @@ function RequestDialog({
       </View>
     </Modal>
   );
-}
-
-interface SubscriptionHandle {
-  unsubscribe: () => void;
 }
 
 interface DateControlsProps {
@@ -228,24 +217,25 @@ function DateControls({ selectedDate, onDateChange, onCurrentDateChange }: DateC
       setShowPicker(false);
     }
 
-    // For iOS, we only want to update when the user taps "Done"
     if (Platform.OS === "ios" && event.type === "dismissed") {
-      setShowPicker(false);
       return;
     }
 
     if (date) {
       const formattedDate = format(date, "yyyy-MM-dd");
-      // Update both states in sequence to ensure proper updates
       onCurrentDateChange(formattedDate);
       onDateChange(formattedDate);
+      if (Platform.OS === "ios") {
+        setShowPicker(false);
+      }
+    } else if (Platform.OS === "ios") {
+      setShowPicker(false);
     }
   };
 
   const handleWebDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const date = e.target.value;
     if (date) {
-      // Update both states in sequence
       onCurrentDateChange(date);
       onDateChange(date);
     } else {
@@ -254,21 +244,11 @@ function DateControls({ selectedDate, onDateChange, onCurrentDateChange }: DateC
   };
 
   const handleTodayPress = () => {
-    // Animate the button
     Animated.sequence([
-      Animated.timing(fadeAnim, {
-        toValue: 0.5,
-        duration: 100,
-        useNativeDriver: true,
-      }),
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 100,
-        useNativeDriver: true,
-      }),
+      Animated.timing(fadeAnim, { toValue: 0.5, duration: 100, useNativeDriver: true }),
+      Animated.timing(fadeAnim, { toValue: 1, duration: 100, useNativeDriver: true }),
     ]).start();
 
-    // Update both states in sequence
     onCurrentDateChange(today);
     onDateChange(today);
   };
@@ -292,20 +272,25 @@ function DateControls({ selectedDate, onDateChange, onCurrentDateChange }: DateC
               border: `1px solid ${Colors.dark.border}`,
               color: Colors.dark.text,
               outline: "none",
+              fontFamily: "inherit",
+              fontSize: "inherit",
             }}
           />
         ) : (
           <>
             <TouchableOpacity style={controlStyles.dateButton} onPress={() => setShowPicker(true)}>
-              <ThemedText>{selectedDate || "Select Date"}</ThemedText>
+              <ThemedText>
+                {selectedDate ? format(new Date(selectedDate + "T00:00:00"), "MMM d, yyyy") : "Select Date"}
+              </ThemedText>
             </TouchableOpacity>
             {showPicker && (
               <DateTimePicker
-                value={selectedDate ? new Date(selectedDate) : new Date()}
+                value={selectedDate ? new Date(selectedDate + "T00:00:00") : new Date()}
                 mode="date"
                 display={Platform.OS === "ios" ? "spinner" : "default"}
                 onChange={handleDateChange}
                 minimumDate={minDate}
+                {...(Platform.OS === "ios" && { themeVariant: theme })}
               />
             )}
           </>
@@ -332,6 +317,8 @@ const controlStyles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
     backgroundColor: Colors.dark.background,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.dark.border,
     ...(Platform.OS === "web" && {
       position: "sticky",
       top: 0,
@@ -340,28 +327,25 @@ const controlStyles = StyleSheet.create({
   } as ViewStyle,
   datePickerContainer: Platform.select({
     web: {
-      width: 200,
-      marginRight: 16,
-      paddingHorizontal: 16,
-    },
-    default: {
-      flex: 1,
       marginRight: 16,
     },
+    default: {},
   }) as ViewStyle,
   dateButton: {
-    padding: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
     borderRadius: 8,
     backgroundColor: Colors.dark.card,
     borderWidth: 1,
     borderColor: Colors.dark.border,
+    alignItems: "center",
   } as ViewStyle,
   todayButton: {
     backgroundColor: Colors.light.tint,
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 8,
-    minWidth: 100,
+    minWidth: 80,
     alignItems: "center",
   } as ViewStyle,
   todayButtonDisabled: {
@@ -377,33 +361,21 @@ export default function CalendarScreen() {
   const theme = (useColorScheme() ?? "light") as ColorScheme;
   const { user, session } = useAuth();
   const { member, division } = useUserStore();
-  const { usesZoneCalendars, zones: adminZones } = useAdminCalendarManagementStore();
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [requestDialogVisible, setRequestDialogVisible] = useState(false);
-  const [dataChanged, setDataChanged] = useState(false);
   const [lastRefreshTime, setLastRefreshTime] = useState(0);
   const [appState, setAppState] = useState(AppState.currentState);
   const [currentDate, setCurrentDate] = useState<string>(format(new Date(), "yyyy-MM-dd"));
-  const REFRESH_COOLDOWN = 2000; // 2 seconds cooldown
+  const REFRESH_COOLDOWN = 2000;
 
-  // --- State for calculated zone ID ---
-  const [calculatedZoneId, setCalculatedZoneId] = useState<number | null | undefined>(undefined);
-  const [isZoneIdCalculationDone, setIsZoneIdCalculationDone] = useState(false);
-
-  // --- Refs ---
   const isLoadingRef = useRef(false);
-  const loadPromiseRef = useRef<Promise<void> | null>(null);
-  const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const subscriptionRef = useRef<{ unsubscribe: () => void } | null>(null);
   const mountTimeRef = useRef(Date.now());
   const lastRefreshTimeRef = useRef(Date.now());
-  const MAX_LOADING_TIME = 10000; // 10 seconds maximum loading time
 
   const {
     selectedDate,
     requests,
-    submitRequest,
     userSubmitRequest,
     setSelectedDate,
     allotments,
@@ -412,185 +384,72 @@ export default function CalendarScreen() {
     isInitialized,
   } = useCalendarStore();
 
-  // Calculate date range for fetching data
-  const dateRange = useMemo(() => {
-    const now = new Date();
-    const endDate = new Date(now.getFullYear(), now.getMonth() + 6, now.getDate());
-    return {
-      start: format(now, "yyyy-MM-dd"),
-      end: format(endDate, "yyyy-MM-dd"),
-    };
-  }, []);
+  console.log("[CalendarScreen Check] User:", user ? user.id : "null/undefined");
+  console.log("[CalendarScreen Check] Member:", member ? member.id : "null/undefined");
+  console.log("[CalendarScreen Check] Member Calendar ID:", member?.calendar_id);
 
-  // Update loadDataSafely function
-  const loadDataSafely = async () => {
-    if (isLoadingRef.current && loadPromiseRef.current) {
-      console.log("[CalendarScreen] Already loading, setting safety timeout");
-      // Set a safety timeout to clear stuck state
-      if (loadingTimeoutRef.current) {
-        clearTimeout(loadingTimeoutRef.current);
-      }
-      loadingTimeoutRef.current = setTimeout(() => {
-        console.log("[CalendarScreen] Loading timeout reached during existing load, forcing reset");
-        isLoadingRef.current = false;
-        loadPromiseRef.current = null;
-        setIsLoading(false);
-        if (calculatedZoneId === undefined) {
-          setIsZoneIdCalculationDone(true);
-        }
-      }, MAX_LOADING_TIME);
-      return loadPromiseRef.current;
-    }
-
-    if (!user || !division) {
-      console.log("[CalendarScreen] No user or division, skipping load");
-      setIsLoading(false);
+  const loadDataSafely = useCallback(async () => {
+    if (isLoadingRef.current) {
+      console.log("[CalendarScreen] Already loading data.");
       return;
     }
 
-    // Don't reset zone calculation if we already have it
-    const shouldResetZoneCalculation = calculatedZoneId === undefined;
-    console.log("[CalendarScreen] Starting data load:", {
-      hasExistingZoneId: calculatedZoneId !== undefined,
-      currentZoneId: calculatedZoneId,
-      shouldResetCalculation: shouldResetZoneCalculation,
-      isLoading: isLoadingRef.current,
-    });
-
-    if (loadingTimeoutRef.current) {
-      clearTimeout(loadingTimeoutRef.current);
+    if (!user || !member?.calendar_id) {
+      console.log("[CalendarScreen] No user or member calendar_id, skipping load.");
+      setIsLoading(false);
+      setError("User information or assigned calendar missing.");
+      return;
     }
 
+    console.log("[CalendarScreen] Starting data load for calendar:", member.calendar_id);
     isLoadingRef.current = true;
     setIsLoading(true);
     setError(null);
 
-    loadingTimeoutRef.current = setTimeout(() => {
-      console.log("[CalendarScreen] Loading timeout reached, forcing state clear");
-      isLoadingRef.current = false;
-      loadPromiseRef.current = null;
-      setIsLoading(false);
-      if (shouldResetZoneCalculation) {
-        setIsZoneIdCalculationDone(true);
-      }
-    }, MAX_LOADING_TIME);
-
     try {
-      if (shouldResetZoneCalculation) {
-        setIsZoneIdCalculationDone(false);
-        setCalculatedZoneId(undefined);
-      }
+      const now = new Date();
+      const endDate = new Date(now.getFullYear(), now.getMonth() + 6, now.getDate());
+      const dateRange = {
+        start: format(now, "yyyy-MM-dd"),
+        end: format(endDate, "yyyy-MM-dd"),
+      };
 
-      loadPromiseRef.current = loadInitialData(dateRange.start, dateRange.end);
-      await loadPromiseRef.current;
-      console.log("[CalendarScreen] Data loaded successfully");
-
-      // Only clear loading state if we haven't started another load
-      if (loadPromiseRef.current === loadInitialData(dateRange.start, dateRange.end)) {
-        setIsLoading(false);
-      }
-    } catch (error) {
-      console.error("[CalendarScreen] Error loading data:", error);
-      setError("Failed to load calendar data");
-      setIsLoading(false);
+      await loadInitialData(dateRange.start, dateRange.end);
+      console.log("[CalendarScreen] Data loaded successfully via store.");
+    } catch (err) {
+      console.error("[CalendarScreen] Error loading data via store:", err);
+      setError(err instanceof Error ? err.message : "Failed to load calendar data");
     } finally {
-      if (loadingTimeoutRef.current) {
-        clearTimeout(loadingTimeoutRef.current);
-      }
       isLoadingRef.current = false;
-      loadPromiseRef.current = null;
+      setIsLoading(false);
     }
-  };
+  }, [user, member?.calendar_id, loadInitialData]);
 
-  // Effect to calculate zone ID using adminZones
   useEffect(() => {
-    const currentDivisionZones = division ? adminZones[division] : [];
-
-    if (isInitialized && division && member && usesZoneCalendars !== undefined) {
-      console.log("[CalendarScreen useEffect] Calculating zone ID:", {
-        division,
-        memberZone: member.zone,
-        usesZoneCalendars,
-        zonesAvailable: currentDivisionZones && currentDivisionZones.length > 0,
-        zonesFromAdminStore: currentDivisionZones,
-        currentCalculatedId: calculatedZoneId,
-      });
-
-      // Only recalculate if we don't have a valid zone ID
-      if (calculatedZoneId === undefined) {
-        let finalZoneId: number | null = null;
-        if (usesZoneCalendars && member.zone && currentDivisionZones && currentDivisionZones.length > 0) {
-          const memberZoneClean = member.zone.trim().toLowerCase();
-          const matchedZone = currentDivisionZones.find((z) => z.name.trim().toLowerCase() === memberZoneClean);
-          if (matchedZone) {
-            finalZoneId = matchedZone.id;
-            console.log(`[CalendarScreen useEffect] Matched zone: ${member.zone} -> ID: ${finalZoneId}`);
-          } else {
-            console.warn(
-              `[CalendarScreen useEffect] Member zone "${member.zone}" not found in division zones from admin store.`
-            );
-          }
-        } else {
-          console.log("[CalendarScreen useEffect] Not using zones or required data missing for calculation.");
-        }
-
-        setCalculatedZoneId(finalZoneId);
-        setIsZoneIdCalculationDone(true);
-        console.log("[CalendarScreen useEffect] Zone ID calculation complete:", finalZoneId);
-      } else {
-        console.log("[CalendarScreen useEffect] Keeping existing zone ID:", calculatedZoneId);
-      }
-    } else {
-      if (!isInitialized) {
-        setIsZoneIdCalculationDone(false);
-        setCalculatedZoneId(undefined);
-        console.log("[CalendarScreen useEffect] Dependencies not ready for zone calculation:", {
-          isInitialized,
-          hasDivision: !!division,
-          hasMember: !!member,
-          usesZoneCalendars,
-          adminZonesAvailable: !!(currentDivisionZones && currentDivisionZones.length > 0),
-        });
-      }
-    }
-  }, [isInitialized, adminZones, usesZoneCalendars, member?.zone, division, calculatedZoneId]);
-
-  // Initial load effect
-  useEffect(() => {
-    if (!isInitialized && user && division) {
-      console.log("[CalendarScreen] Not initialized, loading initial data");
+    if (!isInitialized && user && member?.calendar_id) {
+      console.log("[CalendarScreen] Initializing calendar data...");
       loadDataSafely();
       mountTimeRef.current = Date.now();
+    } else if (!user || !member?.calendar_id) {
+      setIsLoading(false);
+      setError("User or Calendar information not available.");
+      console.log("[CalendarScreen] Resetting due to missing user/calendar ID.");
     }
-  }, [isInitialized, user, division]);
+  }, [isInitialized, user, member?.calendar_id, loadDataSafely]);
 
-  // Update focus effect
   useFocusEffect(
-    React.useCallback(() => {
+    useCallback(() => {
       const now = Date.now();
       if (now - mountTimeRef.current < REFRESH_COOLDOWN) {
-        console.log("[CalendarScreen] Screen focused, skipping refresh (recent mount)");
+        console.log("[CalendarScreen] Screen focused, skipping refresh (recent mount).");
         return;
       }
-
-      // Clear any existing timeout
-      if (loadingTimeoutRef.current) {
-        clearTimeout(loadingTimeoutRef.current);
-      }
-
-      // Check for stuck loading state
-      if (isLoadingRef.current && now - lastRefreshTimeRef.current > MAX_LOADING_TIME) {
-        console.log("[CalendarScreen] Detected stuck loading state, forcing reset");
-        isLoadingRef.current = false;
-        loadPromiseRef.current = null;
-        setIsLoading(false);
-        if (calculatedZoneId === undefined) {
-          setIsZoneIdCalculationDone(true);
-        }
-      }
-
       if (isInitialized && now - lastRefreshTimeRef.current > REFRESH_COOLDOWN) {
-        console.log("[CalendarScreen] Screen focused, refreshing data");
+        console.log("[CalendarScreen] Screen focused, refreshing data.");
+        loadDataSafely();
+        lastRefreshTimeRef.current = now;
+      } else if (!isInitialized && user && member?.calendar_id) {
+        console.log("[CalendarScreen] Screen focused, attempting initial load.");
         loadDataSafely();
         lastRefreshTimeRef.current = now;
       } else {
@@ -601,10 +460,9 @@ export default function CalendarScreen() {
           isLoading: isLoadingRef.current,
         });
       }
-    }, [isInitialized, loadDataSafely])
+    }, [isInitialized, loadDataSafely, user, member?.calendar_id])
   );
 
-  // Update app state effect
   useEffect(() => {
     const subscription = AppState.addEventListener("change", async (nextAppState) => {
       console.log("[CalendarScreen] App state changed:", { from: appState, to: nextAppState });
@@ -617,82 +475,58 @@ export default function CalendarScreen() {
             data: { session: currentSession },
           } = await supabase.auth.getSession();
 
-          if (currentSession && user) {
-            console.log("[CalendarScreen] Session valid, refreshing data");
+          if (currentSession && user && member?.calendar_id && isInitialized) {
+            console.log("[CalendarScreen] Session valid, refreshing data on foreground.");
             const now = Date.now();
-
-            // Clear any existing timeout
-            if (loadingTimeoutRef.current) {
-              clearTimeout(loadingTimeoutRef.current);
-            }
-
-            // Check for stuck loading state
-            if (isLoadingRef.current && now - lastRefreshTime > MAX_LOADING_TIME) {
-              console.log("[CalendarScreen] Detected stuck loading state during app state change, forcing reset");
-              isLoadingRef.current = false;
-              loadPromiseRef.current = null;
-              setIsLoading(false);
-              if (calculatedZoneId === undefined) {
-                setIsZoneIdCalculationDone(true);
-              }
-            }
-
             if (now - lastRefreshTime > REFRESH_COOLDOWN) {
               await loadDataSafely();
               setLastRefreshTime(now);
+            } else {
+              console.log("[CalendarScreen] Skipping refresh on foreground (cooldown).");
             }
+          } else if (!isInitialized && currentSession && user && member?.calendar_id) {
+            console.log("[CalendarScreen] Attempting initial load on foreground.");
+            await loadDataSafely();
+            setLastRefreshTime(Date.now());
           }
         } catch (error) {
-          console.error("[CalendarScreen] Error checking session:", error);
-          // Clear loading state on error
-          isLoadingRef.current = false;
+          console.error("[CalendarScreen] Error checking session/refreshing on foreground:", error);
+          setError("Failed to refresh data on resume.");
           setIsLoading(false);
+          isLoadingRef.current = false;
         }
       }
-
       setAppState(nextAppState);
     });
 
     return () => {
       subscription.remove();
-      // Clear any pending timeouts
-      if (loadingTimeoutRef.current) {
-        clearTimeout(loadingTimeoutRef.current);
-      }
     };
-  }, [appState, user, lastRefreshTime]);
+  }, [appState, user, member?.calendar_id, isInitialized, lastRefreshTime, loadDataSafely]);
 
-  // Clean up on unmount
   useEffect(() => {
     return () => {
-      // Clear all loading states and timeouts
-      if (loadingTimeoutRef.current) {
-        clearTimeout(loadingTimeoutRef.current);
-      }
       isLoadingRef.current = false;
-      setIsLoading(false);
-      loadPromiseRef.current = null;
     };
   }, []);
 
-  // Modify handleRequestSubmit to handle null zoneId
   const handleRequestSubmit = async (leaveType: "PLD" | "SDV") => {
-    if (!selectedDate) return;
-
-    // Use the calculated ID from state, map null to undefined for the store function
-    const zoneIdToSubmit = calculatedZoneId === null ? undefined : calculatedZoneId;
+    if (!selectedDate) {
+      Alert.alert("Error", "No date selected.");
+      return;
+    }
 
     try {
-      console.log("[CalendarScreen] Submitting request:", {
+      console.log("[CalendarScreen] Submitting request via store:", {
         date: selectedDate,
         type: leaveType,
-        zoneId: zoneIdToSubmit,
       });
-      await userSubmitRequest(selectedDate, leaveType, zoneIdToSubmit);
+      await userSubmitRequest(selectedDate, leaveType);
       setRequestDialogVisible(false);
+      Alert.alert("Success", "Request submitted successfully!");
     } catch (err) {
       console.error("[CalendarScreen] Error submitting request:", err);
-      Alert.alert("Error", "Failed to submit request");
+      Alert.alert("Error", `Failed to submit request: ${err instanceof Error ? err.message : "Unknown error"}`);
     }
   };
 
@@ -700,26 +534,21 @@ export default function CalendarScreen() {
     const today = format(new Date(), "yyyy-MM-dd");
     if (selectedDate !== today) {
       setSelectedDate(today);
+      setCurrentDate(today);
     }
   };
 
-  // Memoize the request dialog props, handling null zoneId
   const requestDialogProps = useMemo(() => {
-    if (!selectedDate || !isZoneIdCalculationDone) return null;
+    if (!selectedDate) return null;
 
-    const effectiveZoneId = calculatedZoneId;
-    // Map null to undefined for the dialog prop
-    const dialogZoneIdProp = effectiveZoneId === null ? undefined : effectiveZoneId;
-
-    const dateKey = effectiveZoneId ? `${selectedDate}_${effectiveZoneId}` : selectedDate;
-    const yearKey = effectiveZoneId
-      ? `${new Date(selectedDate).getFullYear()}_${effectiveZoneId}`
-      : new Date(selectedDate).getFullYear().toString();
+    const dateKey = selectedDate;
+    const yearKey = new Date(selectedDate).getFullYear();
 
     const maxAllotment = allotments[dateKey] ?? yearlyAllotments[yearKey] ?? 0;
     const dateRequests = requests[dateKey] || [];
+
     const currentAllotmentCount = dateRequests.filter(
-      (r: DayRequest) => r.status === "approved" || r.status === "pending"
+      (r: DayRequest) => r.status === "approved" || r.status === "pending" || r.status === "waitlisted"
     ).length;
 
     return {
@@ -731,25 +560,11 @@ export default function CalendarScreen() {
         max: maxAllotment,
         current: currentAllotmentCount,
       },
-      requests: dateRequests as DayRequest[],
-      zoneId: dialogZoneIdProp, // Pass undefined instead of null
-      isZoneSpecific: !!effectiveZoneId,
+      requests: dateRequests,
     };
-  }, [
-    requestDialogVisible,
-    selectedDate,
-    isZoneIdCalculationDone,
-    calculatedZoneId,
-    allotments,
-    yearlyAllotments,
-    requests,
-    handleRequestSubmit,
-  ]);
+  }, [requestDialogVisible, selectedDate, allotments, yearlyAllotments, requests, handleRequestSubmit]);
 
-  // --- RENDER LOGIC ---
-
-  // Modify the loading check in render
-  if (!isInitialized || (!isZoneIdCalculationDone && isLoading)) {
+  if (!isInitialized && isLoading) {
     return (
       <ThemedView style={[styles.container, styles.loadingContainer]}>
         <ActivityIndicator size="large" color={Colors[theme].tint} />
@@ -762,14 +577,15 @@ export default function CalendarScreen() {
     return (
       <ThemedView style={styles.errorContainer}>
         <ThemedText style={styles.errorText}>{error}</ThemedText>
+        <Button title="Retry" onPress={() => loadDataSafely()} color={Colors[theme].tint} />
       </ThemedView>
     );
   }
 
-  if (!division) {
+  if (isInitialized && !member?.calendar_id) {
     return (
       <ThemedView style={styles.errorContainer}>
-        <ThemedText style={styles.errorText}>No division context available.</ThemedText>
+        <ThemedText style={styles.errorText}>Calendar not assigned. Please contact support.</ThemedText>
       </ThemedView>
     );
   }
@@ -789,16 +605,15 @@ export default function CalendarScreen() {
         }}
       />
       <ScrollView style={styles.scrollView}>
-        <Calendar
-          key={`calendar-${currentDate}`}
-          current={currentDate}
-          zoneId={calculatedZoneId ?? undefined}
-          isZoneSpecific={!!calculatedZoneId}
-        />
+        <Calendar key={`calendar-${currentDate}-${member?.calendar_id}`} current={currentDate} />
       </ScrollView>
 
       {selectedDate && (
-        <TouchableOpacity style={styles.requestButton} onPress={() => setRequestDialogVisible(true)}>
+        <TouchableOpacity
+          style={styles.requestButton}
+          onPress={() => setRequestDialogVisible(true)}
+          disabled={!isInitialized}
+        >
           <ThemedText style={styles.requestButtonText}>Request Day Off</ThemedText>
         </TouchableOpacity>
       )}
@@ -811,7 +626,6 @@ export default function CalendarScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingTop: 16,
   } as ViewStyle,
   scrollView: {
     flex: 1,
@@ -832,15 +646,19 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
+    gap: 10,
   } as ViewStyle,
   errorContainer: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
+    padding: 20,
+    gap: 15,
   } as ViewStyle,
   errorText: {
     color: Colors.light.error,
     fontWeight: "600",
+    textAlign: "center",
   } as TextStyle,
 });
 
@@ -883,7 +701,8 @@ const dialogStyles = StyleSheet.create({
   modalButton: {
     flex: 1,
     minHeight: 44,
-    padding: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
     borderRadius: 8,
     alignItems: "center",
     justifyContent: "center",
@@ -908,18 +727,23 @@ const dialogStyles = StyleSheet.create({
     width: "100%",
     maxHeight: Platform.OS === "web" ? "50%" : 300,
     marginVertical: 16,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: Colors.dark.border,
   } as ViewStyle,
   requestSpot: {
     flexDirection: "row",
     alignItems: "center",
-    padding: 8,
-    marginVertical: 4,
+    padding: 10,
+    marginVertical: 2,
     borderRadius: 8,
     backgroundColor: Colors.dark.card,
   } as ViewStyle,
   spotNumber: {
-    marginRight: 8,
+    marginRight: 12,
     fontWeight: "bold",
+    minWidth: 25,
+    textAlign: "right",
   } as TextStyle,
   spotInfo: {
     flex: 1,
@@ -930,13 +754,28 @@ const dialogStyles = StyleSheet.create({
   requestStatus: {
     marginLeft: 8,
     fontWeight: "500",
+    fontSize: 13,
   } as TextStyle,
   emptySpot: {
     color: Colors.light.success,
     fontStyle: "italic",
   } as TextStyle,
+  allotmentContainer: {
+    width: "100%",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    marginBottom: 10,
+  } as ViewStyle,
   allotmentInfo: {
-    marginBottom: 16,
+    fontSize: 15,
+    fontWeight: "500",
+  } as TextStyle,
+  waitlistInfo: {
+    fontSize: 14,
+    fontStyle: "italic",
+    color: Colors.light.warning,
   } as TextStyle,
   approvedStatus: {
     color: Colors.light.success,
@@ -944,12 +783,6 @@ const dialogStyles = StyleSheet.create({
   waitlistedStatus: {
     color: Colors.light.error,
   } as TextStyle,
-  allotmentContainer: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 16,
-  } as ViewStyle,
   remainingDaysContainer: {
     width: "100%",
     marginBottom: 16,
@@ -965,10 +798,11 @@ const dialogStyles = StyleSheet.create({
   } as TextStyle,
   disabledButton: {
     opacity: 0.5,
+    backgroundColor: Colors.dark.border,
   } as ViewStyle,
   messageContainer: {
     width: "100%",
     alignItems: "center",
-    marginBottom: 16,
+    marginBottom: 10,
   } as ViewStyle,
 });
