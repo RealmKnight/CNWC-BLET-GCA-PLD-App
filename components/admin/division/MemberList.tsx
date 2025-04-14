@@ -21,6 +21,8 @@ import { useColorScheme } from "@/hooks/useColorScheme";
 import { useThemeColor } from "@/hooks/useThemeColor";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/utils/supabase";
+import { Picker } from "@react-native-picker/picker";
+import Toast from "react-native-toast-message";
 
 interface Member {
   pin_number: string | number;
@@ -65,13 +67,31 @@ const WebButton = ({ onPress, children }: { onPress: () => void; children: React
 );
 
 const MemberItem = React.memo(
-  ({ item, onPress, onUpdate }: { item: Member; onPress: () => void; onUpdate: () => void }) => {
+  ({
+    item,
+    onPress,
+    onUpdate,
+    onCalendarEdit,
+    isCalendarEditing,
+    availableCalendars,
+    onCalendarChange,
+  }: {
+    item: Member;
+    onPress: () => void;
+    onUpdate: () => void;
+    onCalendarEdit: (pin: string) => void;
+    isCalendarEditing: boolean;
+    availableCalendars: Calendar[];
+    onCalendarChange: (pin: string | number, calendarId: string | null) => void;
+  }) => {
     const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
-    const [isEditing, setIsEditing] = useState(false);
     const [isExpanded, setIsExpanded] = useState(false);
-    const [entitlement, setEntitlement] = useState<string>(item.sdv_entitlement?.toString() ?? "0");
-    const [election, setElection] = useState<string>(item.sdv_election?.toString() ?? "0");
+    const [isEditing, setIsEditing] = useState(false);
+    const [entitlement, setEntitlement] = useState(String(item.sdv_entitlement || ""));
+    const [election, setElection] = useState(String(item.sdv_election || ""));
     const [hasChanges, setHasChanges] = useState(false);
+    const { width } = useWindowDimensions();
+    const isMobileView = width < 768;
     const isWeb = Platform.OS === "web";
 
     const handleSave = async () => {
@@ -124,7 +144,7 @@ const MemberItem = React.memo(
     };
 
     const renderSDVContent = () => {
-      if (isWeb) {
+      if (isWeb && !isMobileView) {
         return (
           <View style={styles.sdvContainer}>
             <View style={styles.sdvSection}>
@@ -137,6 +157,7 @@ const MemberItem = React.memo(
                   keyboardType="number-pad"
                   maxLength={2}
                   placeholder="0"
+                  returnKeyType="done"
                 />
               ) : (
                 <ThemedText style={styles.sdvValue}>{item.sdv_entitlement ?? 0}</ThemedText>
@@ -153,6 +174,7 @@ const MemberItem = React.memo(
                   keyboardType="number-pad"
                   maxLength={2}
                   placeholder="0"
+                  returnKeyType="done"
                 />
               ) : (
                 <ThemedText style={styles.sdvValue}>{item.sdv_election ?? 0}</ThemedText>
@@ -179,7 +201,7 @@ const MemberItem = React.memo(
         );
       }
 
-      // Mobile accordion content
+      // Mobile and mobile web view accordion content
       return (
         <View style={styles.mobileSDVWrapper}>
           <TouchableOpacityComponent
@@ -230,31 +252,22 @@ const MemberItem = React.memo(
               </View>
 
               <TouchableOpacityComponent
-                style={[
-                  styles.mobileEditButton,
-                  isEditing && hasChanges && styles.mobileEditButtonActive,
-                  (!entitlement || !election) && styles.mobileEditButtonDisabled,
-                ]}
+                style={[styles.mobileEditButton, isEditing && hasChanges && styles.mobileEditButtonActive]}
                 onPress={() => {
-                  if (isEditing && hasChanges && entitlement && election) {
+                  if (isEditing && hasChanges) {
                     handleSave();
-                  } else if (!isEditing) {
-                    setIsEditing(true);
+                  } else {
+                    setIsEditing(!isEditing);
                   }
                 }}
-                disabled={isEditing && (!entitlement || !election)}
               >
                 <Ionicons
                   name={isEditing ? (hasChanges ? "save" : "close") : "create"}
                   size={20}
-                  color={isEditing && hasChanges ? "#fff" : Colors[colorScheme].tint}
+                  color={isEditing && hasChanges ? "#fff" : Colors[colorScheme].text}
                 />
                 <ThemedText
-                  style={[
-                    styles.mobileEditButtonText,
-                    isEditing && hasChanges && styles.mobileEditButtonTextActive,
-                    (!entitlement || !election) && styles.mobileEditButtonTextDisabled,
-                  ]}
+                  style={[styles.mobileEditButtonText, isEditing && hasChanges && styles.mobileEditButtonTextActive]}
                 >
                   {isEditing ? (hasChanges ? "Save Changes" : "Cancel") : "Edit SDV Values"}
                 </ThemedText>
@@ -267,8 +280,12 @@ const MemberItem = React.memo(
 
     return (
       <TouchableOpacityComponent
-        style={[styles.memberItem, !isWeb && isExpanded && styles.memberItemExpanded]}
-        onPress={isWeb ? onPress : undefined}
+        style={[
+          styles.memberItem,
+          (!isWeb || isMobileView) && isExpanded && styles.memberItemExpanded,
+          isMobileView && styles.mobileWebMemberItem,
+        ]}
+        onPress={isWeb && !isMobileView && !isCalendarEditing ? onPress : undefined}
         activeOpacity={0.7}
       >
         <View style={styles.memberInfo}>
@@ -277,9 +294,30 @@ const MemberItem = React.memo(
           </ThemedText>
           <View style={styles.subInfoContainer}>
             <ThemedText style={styles.memberPin}>PIN: {item.pin_number}</ThemedText>
-            <ThemedText style={styles.memberCalendar} numberOfLines={1} ellipsizeMode="tail">
-              Calendar: {item.calendar_name ? item.calendar_name : "No Calendar Assigned"}
-            </ThemedText>
+            <TouchableOpacityComponent
+              onPress={(e) => {
+                e.stopPropagation();
+                onCalendarEdit(String(item.pin_number));
+              }}
+              style={styles.calendarContainer}
+            >
+              {isCalendarEditing ? (
+                <Picker
+                  selectedValue={item.calendar_id || ""}
+                  onValueChange={(value) => onCalendarChange(item.pin_number, value)}
+                  style={styles.calendarPicker}
+                >
+                  <Picker.Item label="No Calendar Assigned" value="" />
+                  {availableCalendars.map((calendar) => (
+                    <Picker.Item key={calendar.id} label={calendar.name} value={calendar.id} />
+                  ))}
+                </Picker>
+              ) : (
+                <ThemedText style={styles.memberCalendar} numberOfLines={1} ellipsizeMode="tail">
+                  Calendar: {item.calendar_name || "No Calendar Assigned"}
+                </ThemedText>
+              )}
+            </TouchableOpacityComponent>
           </View>
         </View>
         {renderSDVContent()}
@@ -292,6 +330,8 @@ export function MemberList({ onEditMember, refreshTrigger }: MemberListProps) {
   const [members, setMembers] = useState<Member[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const [availableCalendars, setAvailableCalendars] = useState<Calendar[]>([]);
+  const [isEditingCalendar, setIsEditingCalendar] = useState<string | null>(null);
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const themeTintColor = useThemeColor({}, "tint");
   const { user } = useAuth();
@@ -350,9 +390,14 @@ export function MemberList({ onEditMember, refreshTrigger }: MemberListProps) {
       if (membersError) throw membersError;
 
       // Get all calendars in a separate query
-      const { data: calendarsData, error: calendarsError } = await supabase.from("calendars").select("id, name");
+      const { data: calendarsData, error: calendarsError } = await supabase
+        .from("calendars")
+        .select("id, name")
+        .order("name");
 
       if (calendarsError) throw calendarsError;
+
+      setAvailableCalendars(calendarsData || []);
 
       // Create a map of calendar IDs to names
       const calendarMap = new Map(calendarsData?.map((cal) => [cal.id, cal.name]) || []);
@@ -417,8 +462,42 @@ export function MemberList({ onEditMember, refreshTrigger }: MemberListProps) {
     setMembers([...members]);
   }, [members]);
 
+  const handleCalendarChange = async (memberId: string | number, calendarId: string | null) => {
+    try {
+      const pinNumber = typeof memberId === "string" ? parseInt(memberId, 10) : memberId;
+      const { error } = await supabase.from("members").update({ calendar_id: calendarId }).eq("pin_number", pinNumber);
+
+      if (error) throw error;
+
+      Toast.show({
+        type: "success",
+        text1: "Success",
+        text2: "Calendar updated successfully",
+      });
+
+      fetchMembers(); // Refresh the list
+    } catch (error) {
+      console.error("Error updating calendar:", error);
+      Toast.show({
+        type: "error",
+        text1: "Error",
+        text2: error instanceof Error ? error.message : "Failed to update calendar",
+      });
+    } finally {
+      setIsEditingCalendar(null);
+    }
+  };
+
   const renderItem = ({ item }: { item: Member }) => (
-    <MemberItem item={item} onPress={() => onEditMember(item)} onUpdate={handleMemberUpdate} />
+    <MemberItem
+      item={item}
+      onPress={() => onEditMember(item)}
+      onUpdate={handleMemberUpdate}
+      onCalendarEdit={setIsEditingCalendar}
+      isCalendarEditing={isEditingCalendar === String(item.pin_number)}
+      availableCalendars={availableCalendars}
+      onCalendarChange={handleCalendarChange}
+    />
   );
 
   return (
@@ -495,11 +574,23 @@ const styles = StyleSheet.create({
     borderColor: "#ccc",
     borderRadius: 8,
     paddingHorizontal: 12,
+    ...(Platform.OS === "web" && {
+      outlineColor: Colors.light.tint,
+      outlineWidth: 0,
+    }),
   },
   clearButton: {
     position: "absolute",
     right: 12,
     padding: 4,
+    ...(Platform.OS === "web" && {
+      cursor: "pointer",
+      minWidth: 30,
+      minHeight: 30,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+    }),
   },
   list: {
     flex: 1,
@@ -542,6 +633,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontStyle: "italic",
   },
+  calendarContainer: {
+    flex: 1,
+    marginLeft: 8,
+  },
+  calendarPicker: {
+    minWidth: 200,
+    height: Platform.OS === "web" ? 32 : undefined,
+  },
   sdvContainer: {
     flexDirection: "row",
     alignItems: "center",
@@ -580,8 +679,9 @@ const styles = StyleSheet.create({
     maxWidth: "100%",
   },
   mobileSDVButton: {
-    paddingVertical: 4,
-    paddingHorizontal: 8,
+    minHeight: 44,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     backgroundColor: Colors.light.background,
     borderRadius: 4,
   },
@@ -606,6 +706,9 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.light.background,
     borderBottomLeftRadius: 4,
     borderBottomRightRadius: 4,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    borderTopWidth: 0,
   },
   mobileSDVRow: {
     flexDirection: "row",
@@ -636,11 +739,16 @@ const styles = StyleSheet.create({
     textAlign: "center",
     fontSize: 16,
     paddingVertical: 8,
+    ...(Platform.OS === "web" && {
+      outlineColor: Colors.light.tint,
+      outlineWidth: 0,
+    }),
   },
   mobileEditButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    minHeight: 44,
     paddingVertical: 12,
     paddingHorizontal: 16,
     backgroundColor: Colors.light.background,
@@ -665,8 +773,13 @@ const styles = StyleSheet.create({
     opacity: 0.5,
     backgroundColor: Colors.light.background,
   },
-  mobileEditButtonTextDisabled: {
-    color: Colors.light.text,
-    opacity: 0.5,
+  mobileWebMemberItem: {
+    marginHorizontal: 16,
+    marginBottom: 12,
+    padding: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    backgroundColor: Colors.light.background,
   },
 });

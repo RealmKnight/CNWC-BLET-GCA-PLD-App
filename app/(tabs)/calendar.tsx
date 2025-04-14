@@ -28,6 +28,7 @@ import { useUserStore } from "@/store/userStore";
 import { useFocusEffect } from "@react-navigation/native";
 import { Member } from "@/types/member";
 import { useMyTime } from "@/hooks/useMyTime";
+import Toast from "react-native-toast-message";
 
 type ColorScheme = keyof typeof Colors;
 
@@ -512,7 +513,13 @@ export default function CalendarScreen() {
 
   const handleRequestSubmit = async (leaveType: "PLD" | "SDV") => {
     if (!selectedDate) {
-      Alert.alert("Error", "No date selected.");
+      Toast.show({
+        type: "error",
+        text1: "Error",
+        text2: "No date selected.",
+        position: "bottom",
+        visibilityTime: 3000,
+      });
       return;
     }
 
@@ -523,10 +530,22 @@ export default function CalendarScreen() {
       });
       await userSubmitRequest(selectedDate, leaveType);
       setRequestDialogVisible(false);
-      Alert.alert("Success", "Request submitted successfully!");
+      Toast.show({
+        type: "success",
+        text1: "Success",
+        text2: "Request submitted successfully!",
+        position: "bottom",
+        visibilityTime: 3000,
+      });
     } catch (err) {
       console.error("[CalendarScreen] Error submitting request:", err);
-      Alert.alert("Error", `Failed to submit request: ${err instanceof Error ? err.message : "Unknown error"}`);
+      Toast.show({
+        type: "error",
+        text1: "Error",
+        text2: err instanceof Error ? err.message : "Failed to submit request",
+        position: "bottom",
+        visibilityTime: 3000,
+      });
     }
   };
 

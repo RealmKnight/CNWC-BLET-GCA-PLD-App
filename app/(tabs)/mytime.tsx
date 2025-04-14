@@ -23,6 +23,7 @@ import { parseISO, isWithinInterval } from "date-fns";
 import { useFocusEffect } from "@react-navigation/native";
 import { useUserStore } from "@/store/userStore";
 import { useAuth } from "@/hooks/useAuth";
+import Toast from "react-native-toast-message";
 
 interface LeaveRowProps {
   label: string;
@@ -363,12 +364,30 @@ export default function MyTimeScreen() {
       const success = await requestPaidInLieu(selectedType);
 
       if (success) {
-        Alert.alert("Request Submitted", `Your request to receive payment for ${selectedType} has been submitted.`);
+        Toast.show({
+          type: "success",
+          text1: "Request Submitted",
+          text2: `Your request to receive payment for ${selectedType} has been submitted.`,
+          position: "bottom",
+          visibilityTime: 3000,
+        });
       } else {
-        Alert.alert("Request Failed", "Unable to process your request. Please try again later.");
+        Toast.show({
+          type: "error",
+          text1: "Request Failed",
+          text2: "Unable to process your request. Please try again later.",
+          position: "bottom",
+          visibilityTime: 3000,
+        });
       }
     } catch (error) {
-      Alert.alert("Error", "An error occurred while processing your request.");
+      Toast.show({
+        type: "error",
+        text1: "Error",
+        text2: "An error occurred while processing your request.",
+        position: "bottom",
+        visibilityTime: 3000,
+      });
     } finally {
       setShowPaidInLieuModal(false);
       setSelectedType(null);
@@ -403,16 +422,40 @@ export default function MyTimeScreen() {
       if (selectedRequest.is_six_month_request) {
         const success = await cancelSixMonthRequest(selectedRequest.id);
         if (success) {
-          Alert.alert("Success", "Six-month request cancelled successfully");
+          Toast.show({
+            type: "success",
+            text1: "Success",
+            text2: "Six-month request cancelled successfully",
+            position: "bottom",
+            visibilityTime: 3000,
+          });
         } else {
-          Alert.alert("Error", "Failed to cancel six-month request");
+          Toast.show({
+            type: "error",
+            text1: "Error",
+            text2: "Failed to cancel six-month request",
+            position: "bottom",
+            visibilityTime: 3000,
+          });
         }
       } else {
         const success = await cancelRequest(selectedRequest.id);
         if (success) {
-          Alert.alert("Success", "Request cancelled successfully");
+          Toast.show({
+            type: "success",
+            text1: "Success",
+            text2: "Request cancelled successfully",
+            position: "bottom",
+            visibilityTime: 3000,
+          });
         } else {
-          Alert.alert("Error", "Failed to cancel request");
+          Toast.show({
+            type: "error",
+            text1: "Error",
+            text2: "Failed to cancel request",
+            position: "bottom",
+            visibilityTime: 3000,
+          });
         }
       }
 
@@ -420,7 +463,13 @@ export default function MyTimeScreen() {
       setSelectedRequest(null);
     } catch (error) {
       console.error("[MyTime] Error in handleConfirmCancel:", error);
-      Alert.alert("Error", error instanceof Error ? error.message : "Failed to cancel request");
+      Toast.show({
+        type: "error",
+        text1: "Error",
+        text2: error instanceof Error ? error.message : "Failed to cancel request",
+        position: "bottom",
+        visibilityTime: 3000,
+      });
     } finally {
       setIsCancelling(false);
     }
