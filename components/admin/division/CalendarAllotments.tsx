@@ -235,6 +235,12 @@ export function CalendarAllotments({ calendarId, selectedDivision }: CalendarAll
 
     try {
       const currentType = selectedType;
+      // Get the calendar name from the store
+      const calendarName =
+        Object.values(adminCalendarStore.calendars)
+          .flat()
+          .find((cal) => cal.id === calendarId)?.name || calendarId;
+
       console.log("[CalendarAllotments] Updating allotment:", {
         type: currentType,
         year,
@@ -256,7 +262,7 @@ export function CalendarAllotments({ calendarId, selectedDivision }: CalendarAll
       Toast.show({
         type: "success",
         text1: "Success",
-        text2: "Allotment updated successfully",
+        text2: `Allotment updated successfully for calendar "${calendarName}"`,
         position: "bottom",
         visibilityTime: 2000,
       });
@@ -305,12 +311,18 @@ export function CalendarAllotments({ calendarId, selectedDivision }: CalendarAll
       return;
     }
 
+    // Get the calendar name from the store
+    const calendarName =
+      Object.values(adminCalendarStore.calendars)
+        .flat()
+        .find((cal) => cal.id === calendarId)?.name || calendarId;
+
     Toast.show({
       type: "info",
       text1: `Update ${type === "vacation" ? "Vacation" : "Single Day"} Allotment`,
       text2: `Update ${
         type === "vacation" ? "vacation" : "single day"
-      } allotment for ${year} to ${value} on calendar ${calendarId}?`,
+      } allotment for ${year} to ${value} on calendar "${calendarName}"?`,
       position: "bottom",
       visibilityTime: 4000,
       autoHide: false,
@@ -466,6 +478,12 @@ export function CalendarAllotments({ calendarId, selectedDivision }: CalendarAll
       return;
     }
 
+    // Get the calendar name from the store
+    const calendarName =
+      Object.values(adminCalendarStore.calendars)
+        .flat()
+        .find((cal) => cal.id === calendarId)?.name || calendarId;
+
     // Validate the allotment value
     const numValue = parseInt(rangeAllotment, 10);
     if (isNaN(numValue) || numValue < 0) {
@@ -503,7 +521,7 @@ export function CalendarAllotments({ calendarId, selectedDivision }: CalendarAll
       text1: "Confirm Range Update",
       text2: `Set ${
         activeTab === "vacation" ? "Vacation" : "Single Day"
-      } allotment to ${numValue} for ${formattedStartDate} to ${formattedEndDate}?`,
+      } allotment to ${numValue} for ${formattedStartDate} to ${formattedEndDate} on calendar "${calendarName}"?`,
       position: "bottom",
       visibilityTime: 4000,
       autoHide: false,
@@ -542,7 +560,9 @@ export function CalendarAllotments({ calendarId, selectedDivision }: CalendarAll
               Toast.show({
                 type: "success",
                 text1: "Range Update",
-                text2: `Updated ${result?.affectedCount} ${activeTab === "vacation" ? "weeks" : "days"} successfully.`,
+                text2: `Updated ${result?.affectedCount} ${
+                  activeTab === "vacation" ? "weeks" : "days"
+                } successfully for calendar "${calendarName}".`,
                 position: "bottom",
               });
 
