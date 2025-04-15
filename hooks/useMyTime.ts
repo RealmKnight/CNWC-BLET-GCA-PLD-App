@@ -9,6 +9,7 @@ import { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import { useFocusEffect } from "@react-navigation/native";
 import React from "react";
 import { AppState } from "react-native";
+import { Database } from "@/types/supabase";
 
 export interface TimeStats {
   total: {
@@ -59,6 +60,14 @@ export interface TimeOffRequest {
   calendar_id?: string;
 }
 
+export interface UserVacationRequest {
+  id: string;
+  start_date: string;
+  end_date: string;
+  status: Database["public"]["Tables"]["vacation_requests"]["Row"]["status"];
+  requested_at: string | null;
+}
+
 interface SixMonthRequest {
   id: string;
   request_date: string;
@@ -76,6 +85,9 @@ interface SixMonthRequest {
 export function useMyTime() {
   const [stats, setStats] = useState<TimeStats | null>(null);
   const [requests, setRequests] = useState<TimeOffRequest[]>([]);
+  const [vacationRequests, setVacationRequests] = useState<
+    UserVacationRequest[]
+  >([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
@@ -419,6 +431,55 @@ export function useMyTime() {
     }
   }, [member?.id]);
 
+  const fetchVacationRequests = useCallback(async () => {
+    if (!member?.id || member.pin_number === null) {
+      console.log(
+        "[MyTime] Skipping fetchVacationRequests - no member ID or PIN",
+      );
+      setVacationRequests([]);
+      return;
+    }
+
+    try {
+      console.log(
+        "[MyTime] Fetching vacation requests for member PIN:",
+        member.pin_number,
+      );
+      setError(null);
+
+      const currentYear = new Date().getFullYear();
+
+      const { data, error } = await supabase
+        .from("vacation_requests")
+        .select("id, start_date, end_date, status, requested_at")
+        .eq("pin_number", member.pin_number)
+        .gte("start_date", `${currentYear}-01-01`)
+        .lte("start_date", `${currentYear}-12-31`)
+        .order("start_date", { ascending: true });
+
+      if (error) {
+        console.error("[MyTime] Error fetching vacation requests:", error);
+        throw error;
+      }
+
+      console.log("[MyTime] Fetched vacation requests:", data);
+      setVacationRequests(
+        (data || []).map((req) => ({
+          ...req,
+          requested_at: req.requested_at ?? new Date(0).toISOString(),
+        })) as UserVacationRequest[],
+      );
+    } catch (err) {
+      console.error("[MyTime] Error in fetchVacationRequests:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to fetch vacation requests",
+      );
+      setVacationRequests([]);
+    }
+  }, [member?.id, member?.pin_number]);
+
   const cancelRequest = useCallback(
     async (requestId: string) => {
       if (!member?.id) return false;
@@ -584,7 +645,11 @@ export function useMyTime() {
       setIsRefreshing(true);
       setError(null);
 
-      await Promise.all([fetchStats(), fetchRequests()]);
+      await Promise.all([
+        fetchStats(),
+        fetchRequests(),
+        fetchVacationRequests(),
+      ]);
 
       setIsInitialized(true);
       lastRefreshTimeRef.current = now;
@@ -602,11 +667,19 @@ export function useMyTime() {
       setIsRefreshing(false);
       isFetchInProgressRef.current = false;
     }
-  }, [member?.id, fetchStats, fetchRequests, isInitialized]);
+  }, [
+    member?.id,
+    fetchStats,
+    fetchRequests,
+    fetchVacationRequests,
+    isInitialized,
+  ]);
 
   useIsomorphicLayoutEffect(() => {
-    if (!member?.id /* || !session */) {
-      console.log("[MyTime] Skipping realtime setup - no member ID");
+    if (!member?.id || !member.pin_number /* || !session */) {
+      console.log(
+        "[MyTime] Skipping realtime setup - no member ID or PIN",
+      );
       return;
     }
     console.log("[MyTime] Setting up realtime subscriptions");
@@ -648,12 +721,32 @@ export function useMyTime() {
       )
       .subscribe();
 
+    const vacationRequestsChannel = supabase
+      .channel(`mytime-vacation-requests-${member.pin_number}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "vacation_requests",
+          filter: `pin_number=eq.${member.pin_number}`,
+        },
+        async () => {
+          console.log(
+            "[MyTime] Realtime vacation request change detected, triggering refreshData.",
+          );
+          await refreshData();
+        },
+      )
+      .subscribe();
+
     return () => {
       console.log("[MyTime] Cleaning up realtime subscriptions");
       regularRequestsChannel.unsubscribe();
       sixMonthRequestsChannel.unsubscribe();
+      vacationRequestsChannel.unsubscribe();
     };
-  }, [member?.id, refreshData]);
+  }, [member?.id, member?.pin_number, refreshData]);
 
   useEffect(() => {
     if (member?.id && session && !initialAuthLoadCompleteRef.current) {
@@ -678,6 +771,7 @@ export function useMyTime() {
       setIsInitialized(false);
       setStats(null);
       setRequests([]);
+      setVacationRequests([]);
       setIsLoading(true);
       setIsRefreshing(false);
       console.log(
@@ -713,6 +807,7 @@ export function useMyTime() {
       setError(null);
       setStats(null);
       setRequests([]);
+      setVacationRequests([]);
       lastRefreshTimeRef.current = null;
       initialAuthLoadCompleteRef.current = false;
     };
@@ -721,6 +816,7 @@ export function useMyTime() {
   return {
     stats,
     requests,
+    vacationRequests,
     isLoading,
     isRefreshing,
     error,

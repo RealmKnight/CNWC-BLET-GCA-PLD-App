@@ -17,13 +17,14 @@ import { ThemedTouchableOpacity } from "@/components/ThemedTouchableOpacity";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Colors } from "@/constants/Colors";
 import { Feather } from "@expo/vector-icons";
-import { useMyTime } from "@/hooks/useMyTime";
+import { useMyTime, UserVacationRequest } from "@/hooks/useMyTime";
 import { format } from "date-fns-tz";
 import { parseISO, isWithinInterval } from "date-fns";
 import { useFocusEffect } from "@react-navigation/native";
 import { useUserStore } from "@/store/userStore";
 import { useAuth } from "@/hooks/useAuth";
 import Toast from "react-native-toast-message";
+import { Database } from "@/types/supabase";
 
 interface LeaveRowProps {
   label: string;
@@ -67,6 +68,7 @@ function LeaveRow({ label, pldValue, sdvValue = undefined, showIcon, onIconPress
   );
 }
 
+// Interface for PLD/SDV/6mo requests (used by RequestRow)
 interface TimeOffRequest {
   id: string;
   request_date: string;
@@ -224,6 +226,7 @@ function CancelRequestModal({ isVisible, request, onConfirm, onCancel, isLoading
   );
 }
 
+// Original sorting function for TimeOffRequest (PLD/SDV/6mo)
 function sortRequestsByDate(requests: TimeOffRequest[]): {
   future: TimeOffRequest[];
   past: TimeOffRequest[];
@@ -244,6 +247,31 @@ function sortRequestsByDate(requests: TimeOffRequest[]): {
       return acc;
     },
     { future: [] as TimeOffRequest[], past: [] as TimeOffRequest[] }
+  );
+}
+
+// New sorting function specifically for UserVacationRequest
+function sortVacationRequestsByDate(requests: UserVacationRequest[]): {
+  future: UserVacationRequest[];
+  past: UserVacationRequest[];
+} {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0); // Reset time to start of day
+
+  return requests.reduce(
+    (acc, request) => {
+      // Use start_date for comparison
+      const requestDate = parseISO(request.start_date);
+      requestDate.setHours(0, 0, 0, 0);
+
+      if (requestDate >= now) {
+        acc.future.push(request);
+      } else {
+        acc.past.push(request);
+      }
+      return acc;
+    },
+    { future: [] as UserVacationRequest[], past: [] as UserVacationRequest[] }
   );
 }
 
@@ -276,6 +304,62 @@ function RolloverWarningBanner({ unusedPlds }: { unusedPlds: number }) {
   );
 }
 
+// New component for Vacation Requests
+interface VacationRequestRowProps {
+  request: UserVacationRequest;
+}
+
+function VacationRequestRow({ request }: VacationRequestRowProps) {
+  const colorScheme = useColorScheme();
+
+  const getVacationStatusColor = () => {
+    // Status type is already correctly inferred from UserVacationRequest prop
+    // No need to cast here if UserVacationRequest uses the DB type
+    switch (request.status) {
+      case "approved":
+        return Colors[colorScheme ?? "light"].success;
+      case "pending":
+        return Colors[colorScheme ?? "light"].warning;
+      case "cancelled":
+      case "denied":
+        return Colors[colorScheme ?? "light"].error;
+      // If 'transferred' is a valid status in the DB enum, it's covered.
+      // If it's NOT in the DB enum, handle it explicitly if needed,
+      // otherwise, the default case handles unknown statuses.
+      // Assuming 'transferred' might appear even if not strictly typed:
+      case "transferred" as any: // Use 'as any' if 'transferred' isn't in the enum but might occur
+        return Colors[colorScheme ?? "light"].textDim;
+      default:
+        // This block handles any status not explicitly listed above.
+        // This includes statuses potentially defined in the DB enum but missed in the cases,
+        // or unexpected values.
+        console.warn(`[VacationRequestRow] Unexpected or unhandled status: ${request.status}`);
+        return Colors[colorScheme ?? "light"].textDim;
+    }
+  };
+
+  const getVacationStatusText = () => {
+    // Ensure all DB statuses are handled if needed
+    return request.status.charAt(0).toUpperCase() + request.status.slice(1);
+  };
+
+  return (
+    <ThemedView style={styles.row}>
+      <ThemedView style={styles.dateContainer}>
+        <ThemedText style={styles.date}>
+          Week of {format(parseISO(request.start_date), "MMM d, yyyy")} -{" "}
+          {format(parseISO(request.end_date), "MMM d, yyyy")}
+        </ThemedText>
+        <ThemedText style={[styles.statusText, { color: getVacationStatusColor() }]}>
+          {getVacationStatusText()}
+        </ThemedText>
+      </ThemedView>
+      {/* Placeholder for any potential future actions/details */}
+      <ThemedView style={styles.typeContainer}></ThemedView>
+    </ThemedView>
+  );
+}
+
 export default function MyTimeScreen() {
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
@@ -295,6 +379,7 @@ export default function MyTimeScreen() {
   const {
     stats,
     requests,
+    vacationRequests,
     isLoading,
     error,
     isInitialized,
@@ -326,32 +411,33 @@ export default function MyTimeScreen() {
     }, [member?.id])
   );
 
-  // Memoize the filtered and sorted requests
-  const { pendingAndApproved, waitlisted } = useMemo(() => {
-    // Filter and sort requests by status and date
+  // Memoize the filtered and sorted requests (including vacation requests)
+  const { pendingAndApproved, waitlisted, sortedVacationRequests } = useMemo(() => {
+    // Sort PLD/SDV/6mo requests
     const pendingAndApproved = sortRequestsByDate(
       requests.filter(
         (request) =>
           request.status === "pending" || request.status === "approved" || request.status === "cancellation_pending"
       )
     );
-
-    // Sort future dates ascending (closest first)
     pendingAndApproved.future.sort((a, b) => parseISO(a.request_date).getTime() - parseISO(b.request_date).getTime());
-
-    // Sort past dates descending (most recent first)
     pendingAndApproved.past.sort((a, b) => parseISO(b.request_date).getTime() - parseISO(a.request_date).getTime());
 
     const waitlisted = sortRequestsByDate(requests.filter((request) => request.status === "waitlisted"));
-
-    // Sort future dates ascending (closest first)
     waitlisted.future.sort((a, b) => parseISO(a.request_date).getTime() - parseISO(b.request_date).getTime());
-
-    // Sort past dates descending (most recent first)
     waitlisted.past.sort((a, b) => parseISO(b.request_date).getTime() - parseISO(a.request_date).getTime());
 
-    return { pendingAndApproved, waitlisted };
-  }, [requests]); // Only recalculate when requests change
+    // Sort vacation requests using the new function
+    const sortedVacationRequests = sortVacationRequestsByDate(vacationRequests);
+
+    // Sort future dates ascending (closest first)
+    sortedVacationRequests.future.sort((a, b) => parseISO(a.start_date).getTime() - parseISO(b.start_date).getTime());
+
+    // Sort past dates descending (most recent first)
+    sortedVacationRequests.past.sort((a, b) => parseISO(b.start_date).getTime() - parseISO(a.start_date).getTime());
+
+    return { pendingAndApproved, waitlisted, sortedVacationRequests };
+  }, [requests, vacationRequests]);
 
   const handlePaidInLieuPress = () => {
     setShowPaidInLieuModal(true);
@@ -619,6 +705,34 @@ export default function MyTimeScreen() {
                 />
               ))}
             </>
+          )}
+        </ThemedView>
+        <ThemedView style={[styles.card, { width: cardWidth }]}>
+          {/* Full-Week Vacation Requests - NEW SECTION */}
+          <ThemedText style={styles.subsectionTitle}>Full-Week Vacation Requests</ThemedText>
+          {sortedVacationRequests.future.length > 0 || sortedVacationRequests.past.length > 0 ? (
+            <>
+              {/* Future Vacation Requests */}
+              {sortedVacationRequests.future.map((request) => (
+                <VacationRequestRow key={request.id} request={request} />
+              ))}
+
+              {/* Separator for Past Vacation Requests */}
+              {sortedVacationRequests.past.length > 0 && sortedVacationRequests.future.length > 0 && (
+                <ThemedView style={styles.dateSeparator}>
+                  <ThemedText style={styles.dateSeparatorText}>Past Requests</ThemedText>
+                </ThemedView>
+              )}
+
+              {/* Past Vacation Requests */}
+              {sortedVacationRequests.past.map((request) => (
+                <VacationRequestRow key={request.id} request={request} />
+              ))}
+            </>
+          ) : (
+            <ThemedView style={styles.emptyState}>
+              <ThemedText style={styles.emptyStateText}>No full-week vacation requests</ThemedText>
+            </ThemedView>
           )}
         </ThemedView>
       </ThemedScrollView>
@@ -902,6 +1016,9 @@ const styles = StyleSheet.create({
     borderBottomColor: Colors.dark.border,
   },
   waitlistTitle: {
+    marginTop: 16,
+  },
+  vacationTitle: {
     marginTop: 16,
   },
   emptyState: {
