@@ -16,9 +16,11 @@ import {
 } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { Calendar } from "@/components/Calendar";
+import { VacationCalendar } from "@/components/VacationCalendar";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
 import { useCalendarStore, DayRequest } from "@/store/calendarStore";
+import { useVacationCalendarStore } from "@/store/vacationCalendarStore";
 import { useAuth } from "@/hooks/useAuth";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
@@ -29,8 +31,10 @@ import { useFocusEffect } from "@react-navigation/native";
 import { Member } from "@/types/member";
 import { useMyTime } from "@/hooks/useMyTime";
 import Toast from "react-native-toast-message";
+import { TouchableOpacityComponent } from "@/components/TouchableOpacityComponent";
 
 type ColorScheme = keyof typeof Colors;
+type CalendarType = "PLD/SDV" | "Vacation";
 
 interface RequestDialogProps {
   isVisible: boolean;
@@ -360,6 +364,8 @@ const controlStyles = StyleSheet.create({
 
 export default function CalendarScreen() {
   const theme = (useColorScheme() ?? "light") as ColorScheme;
+  const [activeCalendar, setActiveCalendar] = useState<CalendarType>("PLD/SDV");
+  const [currentDate, setCurrentDate] = useState<string>(format(new Date(), "yyyy-MM-dd"));
   const { user, session } = useAuth();
   const { member, division } = useUserStore();
   const [isLoading, setIsLoading] = useState(true);
@@ -367,7 +373,6 @@ export default function CalendarScreen() {
   const [requestDialogVisible, setRequestDialogVisible] = useState(false);
   const [lastRefreshTime, setLastRefreshTime] = useState(0);
   const [appState, setAppState] = useState(AppState.currentState);
-  const [currentDate, setCurrentDate] = useState<string>(format(new Date(), "yyyy-MM-dd"));
   const [calendarName, setCalendarName] = useState<string | null>(null);
   const REFRESH_COOLDOWN = 2000;
 
@@ -375,16 +380,27 @@ export default function CalendarScreen() {
   const mountTimeRef = useRef(Date.now());
   const lastRefreshTimeRef = useRef(Date.now());
 
+  // PLD/SDV Calendar State
   const {
     selectedDate,
-    requests,
+    requests: pldRequests,
     userSubmitRequest,
     setSelectedDate,
-    allotments,
+    allotments: pldAllotments,
     yearlyAllotments,
-    loadInitialData,
-    isInitialized,
+    loadInitialData: loadPldData,
+    isInitialized: isPldInitialized,
   } = useCalendarStore();
+
+  // Vacation Calendar State
+  const {
+    selectedWeek,
+    requests: vacationRequests,
+    allotments: vacationAllotments,
+    loadInitialData: loadVacationData,
+    isInitialized: isVacationInitialized,
+    setSelectedWeek,
+  } = useVacationCalendarStore();
 
   console.log("[CalendarScreen Check] User:", user ? user.id : "null/undefined");
   console.log("[CalendarScreen Check] Member:", member ? member.id : "null/undefined");
@@ -416,19 +432,22 @@ export default function CalendarScreen() {
         end: format(endDate, "yyyy-MM-dd"),
       };
 
-      await loadInitialData(dateRange.start, dateRange.end);
-      console.log("[CalendarScreen] Data loaded successfully via store.");
+      await Promise.all([
+        loadPldData(dateRange.start, dateRange.end),
+        loadVacationData(dateRange.start, dateRange.end),
+      ]);
+      console.log("[CalendarScreen] Data loaded successfully for both calendars");
     } catch (err) {
-      console.error("[CalendarScreen] Error loading data via store:", err);
+      console.error("[CalendarScreen] Error loading data:", err);
       setError(err instanceof Error ? err.message : "Failed to load calendar data");
     } finally {
       isLoadingRef.current = false;
       setIsLoading(false);
     }
-  }, [user, member?.calendar_id, loadInitialData]);
+  }, [user, member?.calendar_id, loadPldData, loadVacationData]);
 
   useEffect(() => {
-    if (!isInitialized && user && member?.calendar_id) {
+    if (!isPldInitialized && !isVacationInitialized && user && member?.calendar_id) {
       console.log("[CalendarScreen] Initializing calendar data...");
       loadDataSafely();
       mountTimeRef.current = Date.now();
@@ -437,7 +456,7 @@ export default function CalendarScreen() {
       setError("User or Calendar information not available.");
       console.log("[CalendarScreen] Resetting due to missing user/calendar ID.");
     }
-  }, [isInitialized, user, member?.calendar_id, loadDataSafely]);
+  }, [isPldInitialized, isVacationInitialized, user, member?.calendar_id, loadDataSafely]);
 
   useFocusEffect(
     useCallback(() => {
@@ -446,23 +465,24 @@ export default function CalendarScreen() {
         console.log("[CalendarScreen] Screen focused, skipping refresh (recent mount).");
         return;
       }
-      if (isInitialized && now - lastRefreshTimeRef.current > REFRESH_COOLDOWN) {
+      if (isPldInitialized && now - lastRefreshTimeRef.current > REFRESH_COOLDOWN) {
         console.log("[CalendarScreen] Screen focused, refreshing data.");
         loadDataSafely();
         lastRefreshTimeRef.current = now;
-      } else if (!isInitialized && user && member?.calendar_id) {
+      } else if (!isPldInitialized && !isVacationInitialized && user && member?.calendar_id) {
         console.log("[CalendarScreen] Screen focused, attempting initial load.");
         loadDataSafely();
         lastRefreshTimeRef.current = now;
       } else {
         console.log("[CalendarScreen] Screen focused, skipping refresh:", {
-          isInitialized,
+          isPldInitialized,
+          isVacationInitialized,
           timeSinceLastRefresh: now - lastRefreshTimeRef.current,
           cooldown: REFRESH_COOLDOWN,
           isLoading: isLoadingRef.current,
         });
       }
-    }, [isInitialized, loadDataSafely, user, member?.calendar_id])
+    }, [isPldInitialized, isVacationInitialized, loadDataSafely, user, member?.calendar_id])
   );
 
   useEffect(() => {
@@ -477,7 +497,7 @@ export default function CalendarScreen() {
             data: { session: currentSession },
           } = await supabase.auth.getSession();
 
-          if (currentSession && user && member?.calendar_id && isInitialized) {
+          if (currentSession && user && member?.calendar_id && isPldInitialized && isVacationInitialized) {
             console.log("[CalendarScreen] Session valid, refreshing data on foreground.");
             const now = Date.now();
             if (now - lastRefreshTime > REFRESH_COOLDOWN) {
@@ -486,7 +506,7 @@ export default function CalendarScreen() {
             } else {
               console.log("[CalendarScreen] Skipping refresh on foreground (cooldown).");
             }
-          } else if (!isInitialized && currentSession && user && member?.calendar_id) {
+          } else if (!isPldInitialized && !isVacationInitialized && currentSession && user && member?.calendar_id) {
             console.log("[CalendarScreen] Attempting initial load on foreground.");
             await loadDataSafely();
             setLastRefreshTime(Date.now());
@@ -504,7 +524,7 @@ export default function CalendarScreen() {
     return () => {
       subscription.remove();
     };
-  }, [appState, user, member?.calendar_id, isInitialized, lastRefreshTime, loadDataSafely]);
+  }, [appState, user, member?.calendar_id, isPldInitialized, isVacationInitialized, lastRefreshTime, loadDataSafely]);
 
   useEffect(() => {
     return () => {
@@ -585,8 +605,8 @@ export default function CalendarScreen() {
     const dateKey = selectedDate;
     const yearKey = new Date(selectedDate).getFullYear();
 
-    const maxAllotment = allotments[dateKey] ?? yearlyAllotments[yearKey] ?? 0;
-    const dateRequests = requests[dateKey] || [];
+    const maxAllotment = pldAllotments[dateKey] ?? yearlyAllotments[yearKey] ?? 0;
+    const dateRequests = pldRequests[dateKey] || [];
 
     const currentAllotmentCount = dateRequests.filter(
       (r: DayRequest) => r.status === "approved" || r.status === "pending" || r.status === "waitlisted"
@@ -603,13 +623,13 @@ export default function CalendarScreen() {
       },
       requests: dateRequests,
     };
-  }, [requestDialogVisible, selectedDate, allotments, yearlyAllotments, requests, handleRequestSubmit]);
+  }, [requestDialogVisible, selectedDate, pldAllotments, yearlyAllotments, pldRequests, handleRequestSubmit]);
 
-  if (!isInitialized && isLoading) {
+  if (!isPldInitialized && !isVacationInitialized && isLoading) {
     return (
       <ThemedView style={[styles.container, styles.loadingContainer]}>
         <ActivityIndicator size="large" color={Colors[theme].tint} />
-        <ThemedText>Initializing calendar...</ThemedText>
+        <ThemedText>Loading calendar data...</ThemedText>
       </ThemedView>
     );
   }
@@ -623,43 +643,102 @@ export default function CalendarScreen() {
     );
   }
 
-  if (isInitialized && !member?.calendar_id) {
+  if (isPldInitialized && !member?.calendar_id) {
     return (
       <ThemedView style={styles.errorContainer}>
-        <ThemedText style={styles.errorText}>Calendar not assigned. Please contact support.</ThemedText>
+        <ThemedText style={styles.errorText}>PLD/SDV Calendar not assigned. Please contact support.</ThemedText>
+      </ThemedView>
+    );
+  }
+
+  if (isVacationInitialized && !member?.calendar_id) {
+    return (
+      <ThemedView style={styles.errorContainer}>
+        <ThemedText style={styles.errorText}>Vacation Calendar not assigned. Please contact support.</ThemedText>
       </ThemedView>
     );
   }
 
   return (
     <ThemedView style={styles.container}>
-      <ThemedText style={styles.calendarId}>PLD/SDV Calendar: {calendarName || "Loading..."}</ThemedText>
+      <ThemedText style={styles.calendarId}>
+        {activeCalendar === "PLD/SDV" ? "PLD/SDV Calendar" : "Vacation Calendar"}: {calendarName || "Loading..."}
+      </ThemedText>
+
+      {/* Calendar Type Tabs */}
+      <ThemedView style={styles.tabContainer}>
+        <TouchableOpacityComponent
+          style={[styles.tab, activeCalendar === "PLD/SDV" && styles.activeTab, { borderColor: Colors[theme].border }]}
+          onPress={() => {
+            setActiveCalendar("PLD/SDV");
+            setSelectedWeek(null); // Clear vacation selection
+          }}
+        >
+          <ThemedText
+            style={[
+              styles.tabText,
+              activeCalendar === "PLD/SDV" && styles.activeTabText,
+              { color: activeCalendar === "PLD/SDV" ? "white" : Colors[theme].text },
+            ]}
+          >
+            PLD/SDV Calendar
+          </ThemedText>
+        </TouchableOpacityComponent>
+
+        <TouchableOpacityComponent
+          style={[styles.tab, activeCalendar === "Vacation" && styles.activeTab, { borderColor: Colors[theme].border }]}
+          onPress={() => {
+            setActiveCalendar("Vacation");
+            setSelectedDate(null); // Clear PLD/SDV selection
+          }}
+        >
+          <ThemedText
+            style={[
+              styles.tabText,
+              activeCalendar === "Vacation" && styles.activeTabText,
+              { color: activeCalendar === "Vacation" ? "white" : Colors[theme].text },
+            ]}
+          >
+            Vacation Calendar
+          </ThemedText>
+        </TouchableOpacityComponent>
+      </ThemedView>
+
+      {/* Date Controls */}
       <DateControls
-        selectedDate={selectedDate}
+        selectedDate={activeCalendar === "PLD/SDV" ? selectedDate : selectedWeek}
         onDateChange={(date) => {
-          setSelectedDate(date);
-          if (!date) {
-            setRequestDialogVisible(false);
+          if (activeCalendar === "PLD/SDV") {
+            setSelectedDate(date);
+            if (!date) setRequestDialogVisible(false);
+          } else {
+            setSelectedWeek(date);
           }
         }}
-        onCurrentDateChange={(date) => {
-          setCurrentDate(date);
-        }}
+        onCurrentDateChange={setCurrentDate}
       />
+
+      {/* Calendar Content */}
       <ScrollView style={styles.scrollView}>
-        <Calendar key={`calendar-${currentDate}-${member?.calendar_id}`} current={currentDate} />
+        {activeCalendar === "PLD/SDV" ? (
+          <Calendar key={`pld-calendar-${currentDate}-${member?.calendar_id}`} current={currentDate} />
+        ) : (
+          <VacationCalendar key={`vacation-calendar-${currentDate}-${member?.calendar_id}`} current={currentDate} />
+        )}
       </ScrollView>
 
-      {selectedDate && (
+      {/* Request Button - Only show for PLD/SDV calendar */}
+      {activeCalendar === "PLD/SDV" && selectedDate && (
         <TouchableOpacity
           style={styles.requestButton}
           onPress={() => setRequestDialogVisible(true)}
-          disabled={!isInitialized}
+          disabled={!isPldInitialized}
         >
           <ThemedText style={styles.requestButtonText}>Request Day Off</ThemedText>
         </TouchableOpacity>
       )}
 
+      {/* Request Dialog - Only for PLD/SDV calendar */}
       {requestDialogProps && <RequestDialog {...requestDialogProps} />}
     </ThemedView>
   );
@@ -707,6 +786,36 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: "700",
     textAlign: "center",
+  } as TextStyle,
+  tabContainer: {
+    flexDirection: "row",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    gap: 8,
+    backgroundColor: Colors.dark.background,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.dark.border,
+  } as ViewStyle,
+  tab: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  } as ViewStyle,
+  activeTab: {
+    backgroundColor: Colors.light.tint,
+    borderColor: Colors.light.tint,
+  } as ViewStyle,
+  tabText: {
+    fontSize: 14,
+    fontWeight: "500",
+  } as TextStyle,
+  activeTabText: {
+    color: "white",
+    fontWeight: "600",
   } as TextStyle,
 });
 
