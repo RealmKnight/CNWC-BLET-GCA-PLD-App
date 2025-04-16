@@ -47,9 +47,28 @@ const VacationWeekDialog = memo(function VacationWeekDialog({
     }
   }, [isVisible, weekStartDate, allotment, requests]);
 
-  // Format date range for display - simple format without timezone handling
-  const weekEndDate = format(addDays(new Date(weekStartDate), 6), "MMM d, yyyy");
-  const formattedStartDate = format(new Date(weekStartDate), "MMM d, yyyy");
+  // Use consistent date parsing to avoid timezone issues
+  const formatDateDisplay = (dateString: string) => {
+    // Create date with explicit time part to avoid date shift due to timezone
+    const date = new Date(`${dateString}T12:00:00`);
+    return format(date, "MMM d, yyyy");
+  };
+
+  // Calculate start and end date displays consistently
+  const weekStartDisplay = formatDateDisplay(weekStartDate);
+  const weekEnd = addDays(new Date(`${weekStartDate}T12:00:00`), 6);
+  const weekEndDisplay = format(weekEnd, "MMM d, yyyy");
+
+  // Log the date calculations for debugging
+  useEffect(() => {
+    if (isVisible) {
+      console.log("[VacationWeekDialog] Date calculations:", {
+        originalWeekStart: weekStartDate,
+        formattedStart: weekStartDisplay,
+        formattedEnd: weekEndDisplay,
+      });
+    }
+  }, [isVisible, weekStartDate, weekStartDisplay, weekEndDisplay]);
 
   // Use the actual request count from our requests array for display
   const actualRequestCount = requests.length;
@@ -67,7 +86,7 @@ const VacationWeekDialog = memo(function VacationWeekDialog({
       <ThemedView style={styles.modalOverlay}>
         <ThemedView style={[styles.modalContent, { backgroundColor: Colors[theme].background }]}>
           <ThemedText style={styles.modalTitle}>
-            Vacation Week: {formattedStartDate} - {weekEndDate}
+            Vacation Week: {weekStartDisplay} - {weekEndDisplay}
           </ThemedText>
 
           <ThemedView style={styles.allotmentContainer}>
