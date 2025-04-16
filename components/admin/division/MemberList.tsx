@@ -11,6 +11,7 @@ import {
   TextStyle,
   AppState,
   Alert,
+  Switch,
 } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -34,6 +35,7 @@ interface Member {
   sdv_election: number | null;
   calendar_id: string | null;
   calendar_name: string | null;
+  status: string;
 }
 
 interface Calendar {
@@ -266,6 +268,7 @@ const MemberItem = React.memo(
           styles.memberItem,
           (!isWeb || isMobileView) && isExpanded && styles.memberItemExpanded,
           isMobileView && styles.mobileWebMemberItem,
+          item.status !== "ACTIVE" && styles.inactiveMemberItem,
         ]}
         onPress={isWeb && !isMobileView && !isCalendarEditing ? onPress : undefined}
         activeOpacity={0.7}
@@ -273,6 +276,7 @@ const MemberItem = React.memo(
         <View style={styles.memberInfo}>
           <ThemedText style={styles.memberName}>
             {item.last_name}, {item.first_name}
+            {item.status !== "ACTIVE" && <ThemedText style={styles.inactiveText}> (Inactive)</ThemedText>}
           </ThemedText>
           <View style={styles.subInfoContainer}>
             <ThemedText style={styles.memberPin}>PIN: {item.pin_number}</ThemedText>
@@ -310,6 +314,7 @@ const MemberItem = React.memo(
 
 export function MemberList({ onEditMember }: MemberListProps) {
   const [searchQuery, setSearchQuery] = useState("");
+  const [showInactive, setShowInactive] = useState(false);
   const [isEditingCalendar, setIsEditingCalendar] = useState<string | null>(null);
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const themeTintColor = useThemeColor({}, "tint");
@@ -317,19 +322,20 @@ export function MemberList({ onEditMember }: MemberListProps) {
   // Use the store
   const { members, isLoading, error, updateMember, availableCalendars } = useAdminMemberManagementStore();
 
-  const filteredMembers = members.filter(
-    (member) =>
-      searchQuery === "" ||
-      `${member.first_name} ${member.last_name}`.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      member.pin_number.toString().includes(searchQuery)
-  );
+  const filteredMembers = members
+    .filter((member) => showInactive || member.status === "ACTIVE")
+    .filter(
+      (member) =>
+        searchQuery === "" ||
+        `${member.first_name} ${member.last_name}`.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        member.pin_number.toString().includes(searchQuery)
+    );
 
   const getItem = (data: Member[], index: number) => data[index];
   const getItemCount = (data: Member[]) => data.length;
   const keyExtractor = (item: Member) => item.pin_number.toString();
 
   const handleMemberUpdate = useCallback(() => {
-    // Force a re-render of the list
     updateMember();
   }, [updateMember]);
 
@@ -374,7 +380,7 @@ export function MemberList({ onEditMember }: MemberListProps) {
   return (
     <ThemedView style={styles.container}>
       <View style={styles.controls}>
-        <View style={styles.searchContainer}>
+        <View style={styles.searchInputWrapper}>
           <TextInput
             style={[styles.searchInput, { color: Colors[colorScheme].text }]}
             placeholder="Search members..."
@@ -391,6 +397,16 @@ export function MemberList({ onEditMember }: MemberListProps) {
               <Ionicons name="close-circle" size={20} color={Colors[colorScheme].text} />
             </TouchableOpacityComponent>
           )}
+        </View>
+        <View style={styles.toggleWrapper}>
+          <ThemedText style={styles.toggleLabel}>Show In-Active</ThemedText>
+          <Switch
+            trackColor={{ false: Colors[colorScheme].border, true: themeTintColor }}
+            thumbColor={showInactive ? Colors[colorScheme].background : Colors[colorScheme].icon}
+            ios_backgroundColor={Colors[colorScheme].border}
+            onValueChange={setShowInactive}
+            value={showInactive}
+          />
         </View>
       </View>
 
@@ -431,12 +447,19 @@ const styles = StyleSheet.create({
   },
   controls: {
     padding: 16,
+    paddingBottom: 16,
     borderBottomWidth: 1,
     borderBottomColor: Colors.light.border,
-  },
-  searchContainer: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
+    gap: 16,
+  },
+  searchInputWrapper: {
+    flex: 2,
+    flexDirection: "row",
+    alignItems: "center",
+    position: "relative",
   },
   searchInput: {
     flex: 1,
@@ -445,6 +468,7 @@ const styles = StyleSheet.create({
     borderColor: "#ccc",
     borderRadius: 8,
     paddingHorizontal: 12,
+    paddingRight: 40,
     ...(Platform.OS === "web" && {
       outlineColor: Colors.light.tint,
       outlineWidth: 0,
@@ -452,8 +476,10 @@ const styles = StyleSheet.create({
   },
   clearButton: {
     position: "absolute",
-    right: 12,
+    right: 8,
+    top: 10,
     padding: 4,
+    zIndex: 1,
     ...(Platform.OS === "web" && {
       cursor: "pointer",
       minWidth: 30,
@@ -463,12 +489,24 @@ const styles = StyleSheet.create({
       justifyContent: "center",
     }),
   },
+  toggleWrapper: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    paddingRight: 8,
+  },
+  toggleLabel: {
+    marginRight: 10,
+    fontSize: 14,
+  },
   list: {
     flex: 1,
     minHeight: 0,
   },
   listContent: {
     padding: 16,
+    paddingTop: 8,
   },
   centerContent: {
     flex: 1,
@@ -484,6 +522,17 @@ const styles = StyleSheet.create({
     borderColor: "#ccc",
     borderRadius: 8,
     marginBottom: 8,
+    backgroundColor: Colors.light.background,
+  },
+  inactiveMemberItem: {
+    opacity: 0.6,
+    backgroundColor: Colors.light.border,
+  },
+  inactiveText: {
+    fontSize: 12,
+    fontStyle: "italic",
+    marginLeft: 4,
+    opacity: 0.8,
   },
   memberInfo: {
     flex: 1,
@@ -496,20 +545,24 @@ const styles = StyleSheet.create({
   subInfoContainer: {
     marginTop: 4,
     opacity: 0.8,
+    flexDirection: "column",
+    alignItems: "flex-start",
   },
   memberPin: {
     fontSize: 14,
+    marginBottom: 2,
   },
   memberCalendar: {
     fontSize: 14,
     fontStyle: "italic",
   },
   calendarContainer: {
-    flex: 1,
-    marginLeft: 8,
+    marginTop: 4,
+    maxWidth: "100%",
   },
   calendarPicker: {
     minWidth: 200,
+    maxWidth: "100%",
     height: Platform.OS === "web" ? 32 : undefined,
   },
   sdvContainer: {
@@ -542,12 +595,11 @@ const styles = StyleSheet.create({
   editButton: {
     padding: 8,
   },
-  memberItemExpanded: {
-    marginBottom: 8,
-  },
+  memberItemExpanded: {},
   mobileSDVWrapper: {
-    flex: 1,
+    width: "100%",
     maxWidth: "100%",
+    marginTop: 8,
   },
   mobileSDVButton: {
     minHeight: 44,
@@ -555,6 +607,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     backgroundColor: Colors.light.background,
     borderRadius: 4,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
   },
   mobileSDVButtonExpanded: {
     borderBottomWidth: 1,
@@ -574,7 +628,7 @@ const styles = StyleSheet.create({
   mobileSDVContent: {
     padding: 16,
     paddingBottom: 20,
-    backgroundColor: Colors.light.background,
+    backgroundColor: Colors.light.background + "f0",
     borderBottomLeftRadius: 4,
     borderBottomRightRadius: 4,
     borderWidth: 1,
@@ -584,6 +638,7 @@ const styles = StyleSheet.create({
   mobileSDVRow: {
     flexDirection: "row",
     justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: 16,
     paddingHorizontal: 8,
   },
@@ -595,7 +650,7 @@ const styles = StyleSheet.create({
   mobileSDVLabel: {
     fontSize: 12,
     opacity: 0.7,
-    marginBottom: 4,
+    marginRight: 8,
   },
   mobileSDVValue: {
     fontSize: 16,
@@ -627,7 +682,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.light.tint,
     gap: 8,
-    marginTop: 4,
+    marginTop: 12,
   },
   mobileEditButtonActive: {
     backgroundColor: Colors.light.tint,
@@ -645,12 +700,13 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.light.background,
   },
   mobileWebMemberItem: {
-    marginHorizontal: 16,
     marginBottom: 12,
     padding: 16,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: Colors.light.border,
     backgroundColor: Colors.light.background,
+    flexDirection: "column",
+    alignItems: "stretch",
   },
 });

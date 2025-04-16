@@ -105,6 +105,13 @@ interface AdminCalendarManagementState {
     vacationYearlyDefaults: Record<string, Record<number, VacationAllotment>>;
     vacationWeeklyOverrides: Record<string, Record<string, VacationAllotment>>;
 
+    // State for vacation allotment weeks (for request entry form)
+    vacationAllotmentWeeks: Record<
+        string,
+        Record<number, { week_start_date: string }[]>
+    >; // Map: calendarId -> year -> [{week_start_date}]
+    isLoadingVacationAllotmentWeeks: boolean;
+
     // Date range editing fields
     isEditingRange: boolean;
     rangeStartDate: string | undefined;
@@ -165,6 +172,12 @@ interface AdminCalendarManagementState {
         calendarId: string,
         updates: Partial<Pick<Calendar, "name" | "description" | "is_active">>,
     ) => Promise<boolean>;
+
+    // New action for fetching vacation weeks
+    fetchVacationAllotmentWeeks: (
+        calendarId: string,
+        year: number,
+    ) => Promise<void>;
 
     cleanupDivisionState: (divisionId: string, divisionName: string) => void;
     prepareDivisionSwitch: (
@@ -279,6 +292,10 @@ export const useAdminCalendarManagementStore = create<
     pldSdvDailyOverrides: {},
     vacationYearlyDefaults: {},
     vacationWeeklyOverrides: {},
+
+    // State for vacation allotment weeks (for request entry form)
+    vacationAllotmentWeeks: {},
+    isLoadingVacationAllotmentWeeks: false,
 
     // Date range editing fields
     isEditingRange: false,
@@ -1477,4 +1494,68 @@ export const useAdminCalendarManagementStore = create<
             set({ isLoading: false });
         }
     },
+
+    // New action for fetching vacation weeks
+    fetchVacationAllotmentWeeks: async (calendarId: string, year: number) => {
+        if (!calendarId || !year) {
+            console.warn(
+                "[AdminCalendarStore] Missing calendarId or year for fetching vacation weeks.",
+            );
+            return;
+        }
+
+        set({ isLoadingVacationAllotmentWeeks: true, error: null });
+
+        try {
+            const { data, error } = await supabase
+                .from("vacation_allotments")
+                .select("week_start_date")
+                .eq("calendar_id", calendarId)
+                .eq("vac_year", year)
+                .order("week_start_date", { ascending: true });
+
+            if (error) throw error;
+
+            // Ensure data is an array of objects with week_start_date
+            const weeks = (data || [])
+                .filter((item) =>
+                    item && typeof item.week_start_date === "string"
+                )
+                .map((item) => ({ week_start_date: item.week_start_date }));
+
+            set((state) => ({
+                vacationAllotmentWeeks: {
+                    ...state.vacationAllotmentWeeks,
+                    [calendarId]: {
+                        ...state.vacationAllotmentWeeks[calendarId],
+                        [year]: weeks,
+                    },
+                },
+                isLoadingVacationAllotmentWeeks: false,
+            }));
+        } catch (error) {
+            console.error(
+                "[AdminCalendarStore] Error fetching vacation allotment weeks:",
+                error,
+            );
+            set({
+                isLoadingVacationAllotmentWeeks: false,
+                error: error instanceof Error
+                    ? error.message
+                    : "Failed to fetch vacation weeks",
+            });
+        }
+    },
 }));
+
+// Ensure existing exports remain
+export type {
+    AdminCalendarManagementState,
+    AllotmentType,
+    BulkUpdateResult,
+    Calendar,
+    PldSdvAllotment,
+    VacationAllotment,
+    WeeklyVacationAllotment,
+    YearlyAllotment,
+};

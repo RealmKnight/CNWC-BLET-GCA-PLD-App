@@ -6,6 +6,14 @@ interface Calendar {
     name: string;
 }
 
+// Simple summary for request entry form
+interface MemberSummary {
+    id: string;
+    pin_number: number;
+    first_name: string;
+    last_name: string;
+}
+
 interface Member {
     first_name: string;
     last_name: string;
@@ -15,6 +23,20 @@ interface Member {
     sdv_election: number | null;
     calendar_id: string | null;
     calendar_name: string | null;
+    status: string;
+    lastLoadedDivision: string | null;
+    prepareDivisionSwitch: (
+        currentDivision: string,
+        newDivision: string,
+    ) => Promise<void>;
+    ensureDivisionMembersLoaded: (division: string) => Promise<void>;
+    updateMember: () => void;
+    setError: (error: Error | null) => void;
+
+    // New state and actions for fetching members by calendar
+    membersByCalendar: Record<string, MemberSummary[]>; // Map: calendarId -> members
+    isLoadingMembersByCalendar: boolean;
+    fetchMembersByCalendarId: (calendarId: string) => Promise<void>;
 }
 
 interface SupabaseMember {
@@ -25,6 +47,7 @@ interface SupabaseMember {
     sdv_entitlement: number | null;
     sdv_election: number | null;
     calendar_id: string | null;
+    status: string | null;
 }
 
 interface AdminMemberManagementState {
@@ -43,6 +66,11 @@ interface AdminMemberManagementState {
     ensureDivisionMembersLoaded: (division: string) => Promise<void>;
     updateMember: () => void;
     setError: (error: Error | null) => void;
+
+    // New state and actions for fetching members by calendar
+    membersByCalendar: Record<string, MemberSummary[]>; // Map: calendarId -> members
+    isLoadingMembersByCalendar: boolean;
+    fetchMembersByCalendarId: (calendarId: string) => Promise<void>;
 }
 
 export const useAdminMemberManagementStore = create<AdminMemberManagementState>(
@@ -55,6 +83,10 @@ export const useAdminMemberManagementStore = create<AdminMemberManagementState>(
         availableCalendars: [],
         currentDivisionId: null,
         lastLoadedDivision: null,
+
+        // Initialize new state
+        membersByCalendar: {},
+        isLoadingMembersByCalendar: false,
 
         prepareDivisionSwitch: async (
             currentDivision: string,
@@ -103,7 +135,8 @@ export const useAdminMemberManagementStore = create<AdminMemberManagementState>(
                             division_id,
                             sdv_entitlement,
                             sdv_election,
-                            calendar_id
+                            calendar_id,
+                            status
                         `)
                         .eq("division_id", divisionId)
                         .order("last_name", { ascending: true });
@@ -118,14 +151,39 @@ export const useAdminMemberManagementStore = create<AdminMemberManagementState>(
 
                 const formattedMembers = (membersData || []).map((
                     member: SupabaseMember,
-                ) => ({
-                    ...member,
+                ): Member => ({
+                    first_name: member.first_name || "",
+                    last_name: member.last_name || "",
+                    pin_number: member.pin_number,
+                    division_id: member.division_id || divisionId,
+                    sdv_entitlement: member.sdv_entitlement,
+                    sdv_election: member.sdv_election,
+                    calendar_id: member.calendar_id,
                     calendar_name: member.calendar_id
                         ? calendarMap.get(member.calendar_id) || null
                         : null,
-                    first_name: member.first_name || "",
-                    last_name: member.last_name || "",
-                    division_id: member.division_id || divisionId,
+                    status: member.status || "IN-ACTIVE",
+                    lastLoadedDivision: null,
+                    prepareDivisionSwitch: async () => {
+                        await get().prepareDivisionSwitch(
+                            get().lastLoadedDivision || "",
+                            newDivision,
+                        );
+                    },
+                    ensureDivisionMembersLoaded: async () => {
+                        await get().ensureDivisionMembersLoaded(newDivision);
+                    },
+                    updateMember: () => {
+                        get().updateMember();
+                    },
+                    setError: (error: Error | null) => {
+                        get().setError(error);
+                    },
+                    membersByCalendar: {},
+                    isLoadingMembersByCalendar: false,
+                    fetchMembersByCalendarId: async (calendarId: string) => {
+                        await get().fetchMembersByCalendarId(calendarId);
+                    },
                 }));
 
                 set({
@@ -165,7 +223,61 @@ export const useAdminMemberManagementStore = create<AdminMemberManagementState>(
         },
 
         setError: (error: Error | null) => set({ error }),
+
+        // Implementation for new action
+        fetchMembersByCalendarId: async (calendarId: string) => {
+            if (!calendarId) {
+                set((state) => ({
+                    membersByCalendar: {
+                        ...state.membersByCalendar,
+                        [calendarId]: [],
+                    },
+                }));
+                return;
+            }
+
+            set((state) => ({
+                isLoadingMembersByCalendar: true,
+                error: null,
+            }));
+            try {
+                const { data, error } = await supabase
+                    .from("members")
+                    .select("id, pin_number, first_name, last_name")
+                    .eq("calendar_id", calendarId)
+                    .eq("status", "ACTIVE") // Only fetch active members for requests
+                    .order("last_name", { ascending: true });
+
+                if (error) throw error;
+
+                const summaries: MemberSummary[] = (data || []).map((
+                    member,
+                ) => ({
+                    id: member.id || "", // Handle potential null ID, though unlikely
+                    pin_number: member.pin_number,
+                    first_name: member.first_name || "",
+                    last_name: member.last_name || "",
+                }));
+
+                set((state) => ({
+                    membersByCalendar: {
+                        ...state.membersByCalendar,
+                        [calendarId]: summaries,
+                    },
+                    isLoadingMembersByCalendar: false,
+                }));
+            } catch (error) {
+                console.error(
+                    "[AdminMemberStore] Error fetching members by calendar:",
+                    error,
+                );
+                set({
+                    error: error as Error,
+                    isLoadingMembersByCalendar: false,
+                });
+            }
+        },
     }),
 );
 
-export type { AdminMemberManagementState, Calendar, Member };
+export type { AdminMemberManagementState, Calendar, Member, MemberSummary };

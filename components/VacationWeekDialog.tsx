@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useCallback, memo } from "react";
 import { StyleSheet, Modal, ViewStyle, TextStyle, ScrollView } from "react-native";
 import { format, addDays } from "date-fns";
 import { ThemedView } from "./ThemedView";
@@ -18,7 +18,8 @@ interface VacationWeekDialogProps {
   requests: WeekRequest[];
 }
 
-export function VacationWeekDialog({
+// Use React.memo to prevent unnecessary re-renders
+const VacationWeekDialog = memo(function VacationWeekDialog({
   isVisible,
   onClose,
   weekStartDate,
@@ -27,12 +28,42 @@ export function VacationWeekDialog({
 }: VacationWeekDialogProps) {
   const theme = (useColorScheme() ?? "light") as ColorScheme;
 
-  // Format date range for display
+  // Make onClose callback stable to prevent unnecessary re-renders
+  const handleClose = useCallback(() => {
+    onClose();
+  }, [onClose]);
+
+  // Log dialog data for debugging
+  useEffect(() => {
+    if (isVisible) {
+      console.log("[VacationWeekDialog] Dialog data:", {
+        weekStartDate,
+        allotment: {
+          max: allotment.max_allotment,
+          current: allotment.current_requests,
+        },
+        actualRequests: requests.length,
+      });
+    }
+  }, [isVisible, weekStartDate, allotment, requests]);
+
+  // Format date range for display - simple format without timezone handling
   const weekEndDate = format(addDays(new Date(weekStartDate), 6), "MMM d, yyyy");
   const formattedStartDate = format(new Date(weekStartDate), "MMM d, yyyy");
 
+  // Use the actual request count from our requests array for display
+  const actualRequestCount = requests.length;
+  const remainingSpots = Math.max(0, allotment.max_allotment - actualRequestCount);
+
   return (
-    <Modal visible={isVisible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal
+      visible={isVisible}
+      transparent
+      animationType="fade"
+      onRequestClose={handleClose}
+      // Ensure dialog doesn't cause parent component to re-render
+      hardwareAccelerated
+    >
       <ThemedView style={styles.modalOverlay}>
         <ThemedView style={[styles.modalContent, { backgroundColor: Colors[theme].background }]}>
           <ThemedText style={styles.modalTitle}>
@@ -41,11 +72,12 @@ export function VacationWeekDialog({
 
           <ThemedView style={styles.allotmentContainer}>
             <ThemedText style={styles.allotmentInfo}>
-              {requests.length}/{allotment.max_allotment} spots filled
+              {actualRequestCount}/{allotment.max_allotment} spots filled
             </ThemedText>
           </ThemedView>
 
           <ScrollView style={styles.requestList}>
+            {/* Show filled spots first */}
             {requests.map((request) => (
               <ThemedView key={request.id} style={[styles.requestSpot, { backgroundColor: Colors[theme].card }]}>
                 <ThemedText style={styles.spotNumber}>#{request.member.spot_number}</ThemedText>
@@ -59,18 +91,24 @@ export function VacationWeekDialog({
                 </ThemedView>
               </ThemedView>
             ))}
-            {Array.from({ length: Math.max(0, allotment.max_allotment - requests.length) }).map((_, index) => (
-              <ThemedView key={`empty-${index}`} style={[styles.requestSpot, { backgroundColor: Colors[theme].card }]}>
-                <ThemedText style={styles.spotNumber}>#{requests.length + index + 1}</ThemedText>
-                <ThemedText style={[styles.emptySpot, { color: Colors[theme].success }]}>Available</ThemedText>
-              </ThemedView>
-            ))}
+
+            {/* Then show remaining available spots */}
+            {remainingSpots > 0 &&
+              Array.from({ length: remainingSpots }).map((_, index) => (
+                <ThemedView
+                  key={`empty-${index}`}
+                  style={[styles.requestSpot, { backgroundColor: Colors[theme].card }]}
+                >
+                  <ThemedText style={styles.spotNumber}>#{actualRequestCount + index + 1}</ThemedText>
+                  <ThemedText style={[styles.emptySpot, { color: Colors[theme].success }]}>Available</ThemedText>
+                </ThemedView>
+              ))}
           </ScrollView>
 
           <ThemedView style={styles.modalButtons}>
             <TouchableOpacityComponent
               style={[styles.modalButton, { backgroundColor: Colors[theme].border }]}
-              onPress={onClose}
+              onPress={handleClose}
             >
               <ThemedText style={styles.modalButtonText}>Close</ThemedText>
             </TouchableOpacityComponent>
@@ -79,7 +117,9 @@ export function VacationWeekDialog({
       </ThemedView>
     </Modal>
   );
-}
+});
+
+export { VacationWeekDialog };
 
 const styles = StyleSheet.create({
   modalOverlay: {

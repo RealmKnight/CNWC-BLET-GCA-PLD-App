@@ -52,6 +52,21 @@ interface VacationCalendarProps {
   current?: string;
 }
 
+// Add a stable calendar data hook to avoid resets
+function useStableCalendarData(initialCurrent: string | undefined) {
+  // Keep track of the calendar date to prevent resets
+  const [stableCurrentDate, setStableCurrentDate] = useState(initialCurrent || format(new Date(), "yyyy-MM-dd"));
+
+  // Only update if it's a valid value
+  useEffect(() => {
+    if (initialCurrent) {
+      setStableCurrentDate(initialCurrent);
+    }
+  }, [initialCurrent]);
+
+  return stableCurrentDate;
+}
+
 export function VacationCalendar({ current }: VacationCalendarProps) {
   const theme = (useColorScheme() ?? "light") as ColorScheme;
   const {
@@ -75,6 +90,9 @@ export function VacationCalendar({ current }: VacationCalendarProps) {
     requests: WeekRequest[];
   } | null>(null);
 
+  // Use our custom hook to maintain stable date
+  const stableCalendarDate = useStableCalendarData(current);
+
   // Add logging for component state
   useEffect(() => {
     console.log("[VacationCalendar] Component State:", {
@@ -84,11 +102,37 @@ export function VacationCalendar({ current }: VacationCalendarProps) {
       allotmentKeys: Object.keys(allotments),
       hasRequests: Object.keys(requests).length,
       hasNextYearAllotments,
+      selectedWeek,
+      dialogVisible: isDialogVisible,
     });
-  }, [isInitialized, isLoading, allotments, requests, hasNextYearAllotments]);
 
-  // Use the current prop directly for the calendar view
-  const calendarDate = current || format(new Date(), "yyyy-MM-dd");
+    // Log the specific weeks we're having issues with
+    const checkWeeks = ["2024-05-12", "2024-05-19"];
+    checkWeeks.forEach((weekKey) => {
+      if (allotments[weekKey]) {
+        const availability = getWeekAvailability(weekKey);
+        console.log(`[VacationCalendar] Week ${weekKey} availability:`, {
+          availability,
+          allotment: allotments[weekKey],
+          requests: requests[weekKey] || [],
+        });
+      }
+    });
+  }, [
+    isInitialized,
+    isLoading,
+    allotments,
+    requests,
+    hasNextYearAllotments,
+    getWeekAvailability,
+    selectedWeek,
+    isDialogVisible,
+  ]);
+
+  // Generate a very stable key that doesn't change with dialog visibility
+  const calendarKey = useMemo(() => {
+    return `vacation-calendar-${stableCalendarDate}-${isInitialized}`;
+  }, [stableCalendarDate, isInitialized]);
 
   // Generate marked dates for the calendar
   const markedDates = useMemo(() => {
@@ -192,8 +236,14 @@ export function VacationCalendar({ current }: VacationCalendarProps) {
   }, [isInitialized, allotments, requests, selectedWeek, theme, hasNextYearAllotments, getWeekAvailability]); // Added getWeekAvailability back as it's used inside
 
   const handleDayPress = (day: DateData) => {
+    // Calculate week start using standard date handling
     const weekStart = startOfWeek(parseISO(day.dateString), { weekStartsOn: 1 });
     const weekStartStr = format(weekStart, "yyyy-MM-dd");
+
+    console.log("[VacationCalendar] Day pressed:", {
+      date: day.dateString,
+      weekStart: weekStartStr,
+    });
 
     const allotmentForWeek = allotments[weekStartStr];
 
@@ -203,6 +253,16 @@ export function VacationCalendar({ current }: VacationCalendarProps) {
 
       // Prepare data for the dialog
       const requestsForWeek = getActiveRequests(weekStartStr);
+
+      console.log("[VacationCalendar] Opening dialog:", {
+        weekStartStr,
+        allotment: {
+          max: allotmentForWeek.max_allotment,
+          current: allotmentForWeek.current_requests,
+        },
+        requestsCount: requestsForWeek.length,
+      });
+
       setDialogWeekData({
         weekStartDate: weekStartStr,
         allotment: allotmentForWeek,
@@ -212,15 +272,13 @@ export function VacationCalendar({ current }: VacationCalendarProps) {
     } else {
       // Optionally clear selection if clicking an unallocated week
       setSelectedWeek(null);
-      console.log("Clicked week without allotment:", weekStartStr);
+      console.log("[VacationCalendar] No allotment for week:", weekStartStr);
     }
   };
 
+  // Keep dialog handling simple, don't modify other state
   const handleCloseDialog = () => {
     setIsDialogVisible(false);
-    setDialogWeekData(null);
-    // Optionally clear the visual selection when closing the dialog
-    // setSelectedWeek(null);
   };
 
   if (!isInitialized && isLoading) {
@@ -243,16 +301,14 @@ export function VacationCalendar({ current }: VacationCalendarProps) {
   return (
     <ThemedView style={styles.container}>
       <RNCalendar
-        key={`vacation-calendar-${calendarDate}-${isInitialized}-${Object.keys(allotments).length}-${
-          Object.keys(requests).length
-        }-${selectedWeek}`}
+        key={calendarKey}
         theme={CALENDAR_THEME[theme]}
         markingType="period"
         markedDates={markedDates}
         onDayPress={handleDayPress}
         enableSwipeMonths
         style={styles.calendar}
-        current={calendarDate}
+        current={stableCalendarDate}
         firstDay={1}
       />
 

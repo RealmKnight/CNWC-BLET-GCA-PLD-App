@@ -216,6 +216,13 @@ function DateControls({ selectedDate, onDateChange, onCurrentDateChange }: DateC
   const fadeAnim = useRef(new Animated.Value(1)).current;
   const today = format(new Date(), "yyyy-MM-dd");
   const isToday = selectedDate === today;
+  const lastValidDateRef = useRef(selectedDate || today);
+
+  useEffect(() => {
+    if (selectedDate) {
+      lastValidDateRef.current = selectedDate;
+    }
+  }, [selectedDate]);
 
   const handleDateChange = (event: any, date?: Date) => {
     if (Platform.OS === "android") {
@@ -230,6 +237,7 @@ function DateControls({ selectedDate, onDateChange, onCurrentDateChange }: DateC
       const formattedDate = format(date, "yyyy-MM-dd");
       onCurrentDateChange(formattedDate);
       onDateChange(formattedDate);
+      lastValidDateRef.current = formattedDate;
       if (Platform.OS === "ios") {
         setShowPicker(false);
       }
@@ -243,8 +251,9 @@ function DateControls({ selectedDate, onDateChange, onCurrentDateChange }: DateC
     if (date) {
       onCurrentDateChange(date);
       onDateChange(date);
+      lastValidDateRef.current = date;
     } else {
-      onDateChange(null);
+      onDateChange(lastValidDateRef.current);
     }
   };
 
@@ -256,6 +265,7 @@ function DateControls({ selectedDate, onDateChange, onCurrentDateChange }: DateC
 
     onCurrentDateChange(today);
     onDateChange(today);
+    lastValidDateRef.current = today;
   };
 
   const minDate = new Date();
@@ -375,6 +385,7 @@ export default function CalendarScreen() {
   const [appState, setAppState] = useState(AppState.currentState);
   const [calendarName, setCalendarName] = useState<string | null>(null);
   const REFRESH_COOLDOWN = 2000;
+  const [calendarKey, setCalendarKey] = useState(Date.now());
 
   const isLoadingRef = useRef(false);
   const mountTimeRef = useRef(Date.now());
@@ -671,7 +682,7 @@ export default function CalendarScreen() {
           style={[styles.tab, activeCalendar === "PLD/SDV" && styles.activeTab, { borderColor: Colors[theme].border }]}
           onPress={() => {
             setActiveCalendar("PLD/SDV");
-            setSelectedWeek(null); // Clear vacation selection
+            setCalendarKey(Date.now()); // Force re-render
           }}
         >
           <ThemedText
@@ -689,7 +700,19 @@ export default function CalendarScreen() {
           style={[styles.tab, activeCalendar === "Vacation" && styles.activeTab, { borderColor: Colors[theme].border }]}
           onPress={() => {
             setActiveCalendar("Vacation");
-            setSelectedDate(null); // Clear PLD/SDV selection
+            setCalendarKey(Date.now()); // Force re-render
+
+            // Refresh vacation calendar data when switching to it
+            if (member?.calendar_id) {
+              const now = new Date();
+              const six_months_from_now = new Date(now);
+              six_months_from_now.setMonth(now.getMonth() + 6);
+
+              console.log("[CalendarScreen] Refreshing vacation calendar data");
+              loadVacationData(format(now, "yyyy-MM-dd"), format(six_months_from_now, "yyyy-MM-dd")).catch((error) => {
+                console.error("[CalendarScreen] Error refreshing vacation data:", error);
+              });
+            }
           }}
         >
           <ThemedText
@@ -721,9 +744,9 @@ export default function CalendarScreen() {
       {/* Calendar Content */}
       <ScrollView style={styles.scrollView}>
         {activeCalendar === "PLD/SDV" ? (
-          <Calendar key={`pld-calendar-${currentDate}-${member?.calendar_id}`} current={currentDate} />
+          <Calendar key={`pld-calendar-${currentDate}-${member?.calendar_id}-${calendarKey}`} current={currentDate} />
         ) : (
-          <VacationCalendar key={`vacation-calendar-${currentDate}-${member?.calendar_id}`} current={currentDate} />
+          <VacationCalendar key={`vacation-calendar-base-${member?.calendar_id}`} current={currentDate} />
         )}
       </ScrollView>
 

@@ -54,14 +54,22 @@ export function DatePicker({
   };
 
   if (Platform.OS === "web") {
+    // For web, we'll use a direct HTML input element with the appropriate props
     return (
-      <ThemedTextInput
-        style={inputStyle}
-        value={formattedDate}
-        onChangeText={handleTextChange}
-        placeholder={placeholder}
+      <input
         type="date"
-        onFocus={() => setShowPicker(true)}
+        style={inputStyle as any}
+        value={formattedDate}
+        onChange={(e) => {
+          const dateValue = e.target.value;
+          if (dateValue) {
+            const selectedDate = new Date(dateValue);
+            onDateChange(selectedDate);
+          } else {
+            onDateChange(null);
+          }
+        }}
+        placeholder={placeholder}
       />
     );
   }

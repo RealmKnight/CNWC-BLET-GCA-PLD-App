@@ -1,5 +1,16 @@
-import React, { useState, useEffect } from "react";
-import { StyleSheet, Platform, ViewStyle, Switch, TouchableOpacity, View, VirtualizedList } from "react-native";
+import React, { useState, useEffect, useCallback } from "react";
+import {
+  StyleSheet,
+  Platform,
+  ViewStyle,
+  Switch,
+  TouchableOpacity,
+  View,
+  VirtualizedList,
+  Pressable,
+  useWindowDimensions,
+  ScrollView,
+} from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { Colors } from "@/constants/Colors";
@@ -11,6 +22,11 @@ import { useColorScheme } from "@/hooks/useColorScheme";
 import { useAdminCalendarManagementStore } from "@/store/adminCalendarManagementStore";
 import { DivisionSelector } from "./DivisionSelector";
 import { Calendar } from "@/types/calendar";
+import { RequestEntry } from "./RequestEntry";
+import { Ionicons } from "@expo/vector-icons";
+
+// Define view types
+type CalendarView = "calendarManagement" | "enterRequests";
 
 export function CalendarManager() {
   const {
@@ -31,7 +47,13 @@ export function CalendarManager() {
 
   const { member, division: userDivision } = useUserStore();
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
+  const tintColor = Colors[colorScheme].tint;
   const [selectedDivision, setSelectedDivision] = useState(userDivision || "");
+  const { width } = useWindowDimensions();
+  const isMobile = Platform.OS !== "web" || width < 768;
+
+  // State for the current view/tab
+  const [currentView, setCurrentView] = useState<CalendarView>("calendarManagement");
 
   const isAdmin = member?.role === "application_admin" || member?.role === "union_admin";
   const currentDivisionCalendars = calendars[selectedDivision] || [];
@@ -206,44 +228,103 @@ export function CalendarManager() {
     setSelectedCalendarId(calendarId);
   };
 
-  // Add getItem and getItemCount functions for VirtualizedList
-  const getItem = (_data: any[], index: number) => ({
-    id: index,
-    content:
-      index === 0 ? (
-        <ThemedView style={styles.componentGroup}>
-          <CalendarCrudAdmin selectedDivisionName={selectedDivision} style={{ marginBottom: 0 }} />
-          {currentDivisionCalendars.length > 1 && (
-            <CalendarSelector
-              calendars={currentDivisionCalendars}
-              selectedCalendarId={selectedCalendarId}
-              onSelectCalendar={handleCalendarSelect}
-              disabled={isLoading || isSwitchingDivision}
-              style={{ borderTopWidth: 0, marginTop: -8 }}
-            />
-          )}
-        </ThemedView>
-      ) : selectedCalendarId ? (
-        <CalendarAllotments calendarId={selectedCalendarId} selectedDivision={isAdmin ? selectedDivision : undefined} />
-      ) : currentDivisionCalendars.length === 0 ? (
-        <ThemedView style={styles.noCalendarsContainer}>
-          <ThemedText style={styles.noCalendarsText}>
-            No calendars found for this division. Please create a calendar to begin.
-          </ThemedText>
-        </ThemedView>
-      ) : null,
-  });
+  // Action Button Rendering
+  const renderActionButton = useCallback(
+    (view: CalendarView, icon: string, label: string) => {
+      const isActive = currentView === view;
+      const iconColor = isActive ? Colors[colorScheme].background : tintColor;
+      const buttonSize = isMobile ? 40 : "auto";
+      const iconSize = isMobile ? 20 : 24;
+      const ButtonComponent = Platform.OS === "web" ? Pressable : TouchableOpacity;
 
-  const getItemCount = () => (selectedCalendarId || currentDivisionCalendars.length === 0 ? 2 : 1);
-
-  const renderItem = ({ item }: { item: { id: number; content: React.ReactNode } }) => (
-    <View key={item.id}>{item.content}</View>
+      return (
+        <ButtonComponent
+          key={view}
+          style={[
+            styles.actionButton,
+            isActive && styles.activeButton,
+            isMobile && styles.mobileActionButton,
+            { minWidth: buttonSize, height: buttonSize },
+          ]}
+          onPress={() => setCurrentView(view)}
+        >
+          <Ionicons name={icon as any} size={iconSize} color={iconColor} />
+          {!isMobile && <ThemedText style={[styles.buttonText, isActive && styles.activeText]}>{label}</ThemedText>}
+        </ButtonComponent>
+      );
+    },
+    [currentView, isMobile, tintColor, colorScheme]
   );
+
+  // Content Rendering
+  const renderContent = useCallback(() => {
+    switch (currentView) {
+      case "calendarManagement":
+        return (
+          <ScrollView style={styles.contentScroll} contentContainerStyle={styles.contentContainer}>
+            <ThemedView style={styles.componentGroup}>
+              <CalendarCrudAdmin selectedDivisionName={selectedDivision} style={{ marginBottom: 16 }} />
+              {currentDivisionCalendars.length > 1 && (
+                <CalendarSelector
+                  calendars={currentDivisionCalendars}
+                  selectedCalendarId={selectedCalendarId}
+                  onSelectCalendar={handleCalendarSelect}
+                  disabled={isLoading || isSwitchingDivision}
+                  style={{ borderTopWidth: 1, borderColor: Colors[colorScheme].border, paddingTop: 16 }}
+                />
+              )}
+            </ThemedView>
+            {selectedCalendarId ? (
+              <CalendarAllotments
+                calendarId={selectedCalendarId}
+                selectedDivision={isAdmin ? selectedDivision : undefined}
+              />
+            ) : currentDivisionCalendars.length === 0 ? (
+              <ThemedView style={styles.noCalendarsContainer}>
+                <ThemedText style={styles.noCalendarsText}>
+                  No calendars found for this division. Please create a calendar to begin.
+                </ThemedText>
+              </ThemedView>
+            ) : currentDivisionCalendars.length > 1 ? (
+              // Add a placeholder if multiple calendars exist but none selected yet
+              <ThemedView style={styles.noCalendarsContainer}>
+                <ThemedText style={styles.noCalendarsText}>
+                  Please select a calendar above to view/edit allotments.
+                </ThemedText>
+              </ThemedView>
+            ) : null}
+          </ScrollView>
+        );
+      case "enterRequests":
+        return (
+          <ScrollView style={styles.contentScroll} contentContainerStyle={styles.contentContainer}>
+            <RequestEntry selectedDivision={selectedDivision} selectedCalendarId={selectedCalendarId} />
+          </ScrollView>
+        );
+      default:
+        return null;
+    }
+  }, [
+    currentView,
+    selectedDivision,
+    selectedCalendarId,
+    currentDivisionCalendars,
+    handleCalendarSelect,
+    isLoading,
+    isSwitchingDivision,
+    isAdmin,
+    colorScheme,
+  ]);
 
   return (
     <ThemedView style={styles.container}>
       <ThemedView style={styles.header}>
-        <ThemedText style={styles.title}>Calendar Management</ThemedText>
+        <View style={styles.titleRow}>
+          <View style={styles.actionButtons}>
+            {renderActionButton("calendarManagement", "settings-outline", "Manage Calendars")}
+            {renderActionButton("enterRequests", "add-circle-outline", "Enter Requests")}
+          </View>
+        </View>
         <View style={styles.divisionContainer}>
           <View style={styles.divisionRow}>
             <ThemedText style={styles.divisionLabel}>Division: </ThemedText>
@@ -272,18 +353,7 @@ export function CalendarManager() {
       {error ? (
         <ThemedText style={styles.errorText}>{error}</ThemedText>
       ) : (
-        <VirtualizedList
-          data={[]}
-          renderItem={renderItem}
-          keyExtractor={(item) => item.id.toString()}
-          getItem={getItem}
-          getItemCount={getItemCount}
-          style={styles.content}
-          contentContainerStyle={styles.contentContainer}
-          showsVerticalScrollIndicator={true}
-          scrollEnabled={true}
-          removeClippedSubviews={Platform.OS !== "web"}
-        />
+        <View style={styles.contentArea}>{renderContent()}</View>
       )}
     </ThemedView>
   );
@@ -300,10 +370,38 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.light.border,
   },
-  title: {
-    fontSize: 24,
-    fontWeight: "bold",
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: 16,
+  },
+  actionButtons: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  actionButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    marginRight: 4,
+  },
+  activeButton: {
+    backgroundColor: Colors.light.tint,
+    borderColor: Colors.light.tint,
+  },
+  mobileActionButton: {
+    padding: 8,
+  },
+  buttonText: {
+    fontSize: 14,
+    fontWeight: "500",
+    marginLeft: 4,
+  },
+  activeText: {
+    color: Colors.light.background,
   },
   content: {
     flex: 1,
@@ -363,5 +461,11 @@ const styles = StyleSheet.create({
     fontSize: 16,
     textAlign: "center",
     color: Colors.light.textDim,
+  },
+  contentScroll: {
+    flex: 1,
+  },
+  contentArea: {
+    flex: 1,
   },
 });

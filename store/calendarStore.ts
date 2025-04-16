@@ -489,6 +489,10 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       throw new Error("Member or assigned calendar not found");
     }
 
+    if (!member.id) {
+      throw new Error("Member ID is missing");
+    }
+
     try {
       console.log("[CalendarStore] User submitting request:", {
         date,

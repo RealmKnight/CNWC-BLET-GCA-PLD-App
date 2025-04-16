@@ -92,8 +92,14 @@ export const useVacationCalendarStore = create<VacationCalendarState>((
     hasNextYearAllotments: false,
 
     setSelectedWeek: (date) => set({ selectedWeek: date }),
-    setAllotments: (allotments) => set({ allotments }),
-    setRequests: (requests) => set({ requests }),
+    setAllotments: (allotments) => {
+        const { selectedWeek } = get();
+        set({ allotments, selectedWeek });
+    },
+    setRequests: (requests) => {
+        const { selectedWeek } = get();
+        set({ requests, selectedWeek });
+    },
     setError: (error) => set({ error }),
     setIsLoading: (isLoading) => set({ isLoading }),
     setIsInitialized: (isInitialized) => set({ isInitialized }),
@@ -138,6 +144,14 @@ export const useVacationCalendarStore = create<VacationCalendarState>((
                     weekKey.match(/^\d{4}-\d{2}-\d{2}$/)
                 ) {
                     allotmentsByWeek[weekKey] = allotment as WeekAllotment;
+
+                    // Log specific allotment data for the weeks we're having issues with
+                    if (weekKey === "2024-05-12" || weekKey === "2024-05-19") {
+                        console.log(
+                            `[VacationCalendarStore] Allotment data for ${weekKey}:`,
+                            allotment,
+                        );
+                    }
                 } else {
                     console.warn(
                         `[VacationCalendarStore] Invalid week_start_date found: ${weekKey}`,
@@ -160,7 +174,11 @@ export const useVacationCalendarStore = create<VacationCalendarState>((
         }
     },
 
-    fetchRequests: async (startDate, endDate, calendarId) => {
+    fetchRequests: async (
+        startDate: string,
+        endDate: string,
+        calendarId: string,
+    ) => {
         if (!calendarId) {
             console.warn(
                 "[VacationCalendarStore] fetchRequests: No calendarId provided.",
@@ -169,6 +187,13 @@ export const useVacationCalendarStore = create<VacationCalendarState>((
         }
 
         try {
+            console.log("[VacationCalendarStore] Fetching requests:", {
+                startDate,
+                endDate,
+            });
+
+            // Get all approved requests for this calendar regardless of date range first
+            // This ensures we don't miss any requests due to date range issues
             const { data: requestsData, error } = await supabase
                 .from("vacation_requests")
                 .select(`
@@ -178,23 +203,52 @@ export const useVacationCalendarStore = create<VacationCalendarState>((
           )
         `)
                 .eq("calendar_id", calendarId)
-                .eq("status", "approved")
-                .gte("start_date", startDate)
-                .lte("start_date", endDate)
-                .order("created_at", { ascending: true });
+                .eq("status", "approved");
 
             if (error) throw error;
 
             const requestsByWeek: Record<string, WeekRequest[]> = {};
 
+            console.log("[VacationCalendarStore] Fetched requests:", {
+                count: requestsData?.length || 0,
+            });
+
             if (requestsData) {
-                requestsData.forEach((rawRequest, index) => {
-                    const weekStartDate = format(
-                        startOfWeek(new Date(rawRequest.start_date), {
-                            weekStartsOn: 1,
-                        }),
-                        "yyyy-MM-dd",
-                    );
+                // First filter requests to only include those within our date range
+                const startDateObj = new Date(startDate);
+                const endDateObj = new Date(endDate);
+                const filteredRequests = requestsData.filter((req) => {
+                    const reqDate = new Date(req.start_date);
+                    return reqDate >= startDateObj && reqDate <= endDateObj;
+                });
+
+                console.log("[VacationCalendarStore] Filtered requests:", {
+                    total: requestsData.length,
+                    inRange: filteredRequests.length,
+                });
+
+                // Process the filtered requests
+                filteredRequests.forEach((rawRequest, index) => {
+                    // Calculate week start date from request date
+                    const requestDate = parseISO(rawRequest.start_date);
+                    const weekStart = startOfWeek(requestDate, {
+                        weekStartsOn: 1,
+                    });
+                    const weekStartDate = format(weekStart, "yyyy-MM-dd");
+
+                    // For debugging problematic weeks
+                    if (
+                        weekStartDate === "2024-05-12" ||
+                        weekStartDate === "2024-05-19"
+                    ) {
+                        console.log(
+                            `[VacationCalendarStore] Request mapping for ${rawRequest.start_date}:`,
+                            {
+                                weekStartDate,
+                                requestId: rawRequest.id,
+                            },
+                        );
+                    }
 
                     if (!requestsByWeek[weekStartDate]) {
                         requestsByWeek[weekStartDate] = [];
@@ -216,6 +270,15 @@ export const useVacationCalendarStore = create<VacationCalendarState>((
                     requestsByWeek[weekStartDate].push(weekRequest);
                 });
             }
+
+            // Count by week for debugging
+            Object.keys(requestsByWeek).forEach((week) => {
+                console.log(
+                    `[VacationCalendarStore] Week ${week} has ${
+                        requestsByWeek[week].length
+                    } requests`,
+                );
+            });
 
             return requestsByWeek;
         } catch (error) {
@@ -311,6 +374,15 @@ export const useVacationCalendarStore = create<VacationCalendarState>((
             console.log(
                 "[VacationCalendarStore] Data load complete and state updated.",
             );
+
+            // After loading all data, sync all allotments with their actual request counts
+            Object.keys(requestsResult).forEach((weekStartDate) => {
+                syncAllotmentWithRequestCount(weekStartDate, calendarId);
+            });
+
+            console.log(
+                "[VacationCalendarStore] Synced all allotment request counts",
+            );
         } catch (error) {
             console.error("[VacationCalendarStore] Error loading data:", error);
             set({
@@ -347,10 +419,32 @@ export const useVacationCalendarStore = create<VacationCalendarState>((
     getWeekAvailability: (weekStartDate) => {
         const state = get();
         const allotment = state.allotments[weekStartDate];
-        if (!allotment) return "full";
 
+        if (!allotment) {
+            console.log(
+                `[VacationCalendarStore] No allotment found for week ${weekStartDate}`,
+            );
+            return "full";
+        }
+
+        // Get the actual requests for this week
         const requests = state.requests[weekStartDate] || [];
-        return requests.length < allotment.max_allotment ? "available" : "full";
+        const actualRequestCount = requests.length;
+
+        // Log comparison data for debugging
+        console.log(
+            `[VacationCalendarStore] Availability for ${weekStartDate}:`,
+            {
+                max: allotment.max_allotment,
+                current_in_allotment: allotment.current_requests,
+                actual_requests: actualRequestCount,
+            },
+        );
+
+        // Use the actual request count instead of allotment.current_requests
+        return actualRequestCount < allotment.max_allotment
+            ? "available"
+            : "full";
     },
 
     isWeekSelectable: (weekStartDate) => {
@@ -359,7 +453,18 @@ export const useVacationCalendarStore = create<VacationCalendarState>((
     },
 
     getActiveRequests: (weekStartDate) => {
-        return get().requests[weekStartDate] || [];
+        const requests = get().requests[weekStartDate] || [];
+        // Log request details for the problematic weeks
+        if (weekStartDate === "2024-05-12" || weekStartDate === "2024-05-19") {
+            console.log(
+                `[VacationCalendarStore] Active requests for ${weekStartDate}:`,
+                {
+                    count: requests.length,
+                    requestIds: requests.map((r) => r.id),
+                },
+            );
+        }
+        return requests;
     },
 
     cleanupCalendarState: () => {
@@ -488,13 +593,15 @@ export function setupVacationCalendarSubscriptions() {
                     const oldRecord = payload.old as any;
                     const eventType = payload.eventType;
 
-                    // Only process approved requests
-                    if (
-                        (newRecord && newRecord.status !== "approved") &&
-                        (oldRecord && oldRecord.status !== "approved")
-                    ) {
-                        return;
-                    }
+                    console.log(
+                        `[VacationCalendarStore] Received ${eventType} event for vacation_requests:`,
+                        {
+                            id: newRecord?.id || oldRecord?.id,
+                            eventType,
+                            newStatus: newRecord?.status,
+                            oldStatus: oldRecord?.status,
+                        },
+                    );
 
                     const weekStartDate = newRecord?.start_date ||
                         oldRecord?.start_date;
@@ -508,54 +615,125 @@ export function setupVacationCalendarSubscriptions() {
                         const currentRequests = store.requests[weekKey] || [];
 
                         if (
-                            eventType === "INSERT" &&
-                            newRecord.status === "approved"
+                            eventType === "INSERT"
                         ) {
-                            try {
-                                const { data: memberData } = await supabase
-                                    .from("members")
-                                    .select(
-                                        "id, first_name, last_name, pin_number",
-                                    )
-                                    .eq("pin_number", newRecord.pin_number)
-                                    .single();
+                            // Only add approved requests to the calendar view
+                            if (newRecord.status === "approved") {
+                                try {
+                                    const { data: memberData } = await supabase
+                                        .from("members")
+                                        .select(
+                                            "id, first_name, last_name, pin_number",
+                                        )
+                                        .eq("pin_number", newRecord.pin_number)
+                                        .single();
 
-                                if (memberData) {
-                                    const weekRequest: WeekRequest = {
+                                    if (memberData) {
+                                        const weekRequest: WeekRequest = {
+                                            ...newRecord,
+                                            member: {
+                                                ...memberData,
+                                                spot_number:
+                                                    currentRequests.length + 1,
+                                            },
+                                        };
+                                        store.setRequests({
+                                            ...store.requests,
+                                            [weekKey]: [
+                                                ...currentRequests,
+                                                weekRequest,
+                                            ],
+                                        });
+
+                                        // Sync allotment with actual request count
+                                        syncAllotmentWithRequestCount(
+                                            weekKey,
+                                            calendarId,
+                                        );
+                                    }
+                                } catch (error) {
+                                    console.error(
+                                        "[VacationCalendarStore] Error processing INSERT:",
+                                        error,
+                                    );
+                                }
+                            }
+                        } else if (eventType === "UPDATE") {
+                            // Handle status transitions - most importantly from pending/other to approved
+                            if (newRecord.status === "approved") {
+                                // Check if this is a newly approved request
+                                const existingRequestIndex = currentRequests
+                                    .findIndex(
+                                        (req) => req.id === newRecord.id,
+                                    );
+
+                                if (existingRequestIndex >= 0) {
+                                    // Update existing request
+                                    const updatedRequests = [
+                                        ...currentRequests,
+                                    ];
+                                    updatedRequests[existingRequestIndex] = {
+                                        ...updatedRequests[
+                                            existingRequestIndex
+                                        ],
                                         ...newRecord,
-                                        member: {
-                                            ...memberData,
-                                            spot_number:
-                                                currentRequests.length + 1,
-                                        },
                                     };
                                     store.setRequests({
                                         ...store.requests,
-                                        [weekKey]: [
-                                            ...currentRequests,
-                                            weekRequest,
-                                        ],
+                                        [weekKey]: updatedRequests,
                                     });
+
+                                    // Sync allotment with actual request count
+                                    syncAllotmentWithRequestCount(
+                                        weekKey,
+                                        calendarId,
+                                    );
+                                } else {
+                                    // This is a newly approved request that wasn't in the list
+                                    try {
+                                        const { data: memberData } =
+                                            await supabase
+                                                .from("members")
+                                                .select(
+                                                    "id, first_name, last_name, pin_number",
+                                                )
+                                                .eq(
+                                                    "pin_number",
+                                                    newRecord.pin_number,
+                                                )
+                                                .single();
+
+                                        if (memberData) {
+                                            const weekRequest: WeekRequest = {
+                                                ...newRecord,
+                                                member: {
+                                                    ...memberData,
+                                                    spot_number:
+                                                        currentRequests.length +
+                                                        1,
+                                                },
+                                            };
+                                            store.setRequests({
+                                                ...store.requests,
+                                                [weekKey]: [
+                                                    ...currentRequests,
+                                                    weekRequest,
+                                                ],
+                                            });
+
+                                            // Sync allotment with actual request count
+                                            syncAllotmentWithRequestCount(
+                                                weekKey,
+                                                calendarId,
+                                            );
+                                        }
+                                    } catch (error) {
+                                        console.error(
+                                            "[VacationCalendarStore] Error processing UPDATE to approved:",
+                                            error,
+                                        );
+                                    }
                                 }
-                            } catch (error) {
-                                console.error(
-                                    "[VacationCalendarStore] Error processing INSERT:",
-                                    error,
-                                );
-                            }
-                        } else if (eventType === "UPDATE") {
-                            if (newRecord.status === "approved") {
-                                // Handle newly approved request
-                                const updatedRequests = currentRequests.map(
-                                    (req) =>
-                                        req.id === newRecord.id
-                                            ? { ...req, ...newRecord }
-                                            : req,
-                                );
-                                store.setRequests({
-                                    ...store.requests,
-                                    [weekKey]: updatedRequests,
-                                });
                             } else if (oldRecord.status === "approved") {
                                 // Remove request that's no longer approved
                                 const filteredRequests = currentRequests
@@ -571,6 +749,12 @@ export function setupVacationCalendarSubscriptions() {
                                     ...store.requests,
                                     [weekKey]: filteredRequests,
                                 });
+
+                                // Sync allotment with actual request count
+                                syncAllotmentWithRequestCount(
+                                    weekKey,
+                                    calendarId,
+                                );
                             }
                         } else if (
                             eventType === "DELETE" &&
@@ -589,6 +773,9 @@ export function setupVacationCalendarSubscriptions() {
                                 ...store.requests,
                                 [weekKey]: filteredRequests,
                             });
+
+                            // Sync allotment with actual request count
+                            syncAllotmentWithRequestCount(weekKey, calendarId);
                         }
                     }
                 } catch (error) {
@@ -611,4 +798,48 @@ export function setupVacationCalendarSubscriptions() {
             requestsChannel.unsubscribe();
         },
     };
+}
+
+// Add a helper function to sync allotment with actual request counts
+function syncAllotmentWithRequestCount(
+    weekStartDate: string,
+    calendarId: string,
+): void {
+    const store = useVacationCalendarStore.getState();
+    const requests = store.requests[weekStartDate] || [];
+    const actualRequestCount = requests.length;
+    const allotment = store.allotments[weekStartDate];
+
+    if (allotment && allotment.current_requests !== actualRequestCount) {
+        console.log(
+            `[VacationCalendarStore] Syncing allotment for ${weekStartDate}:`,
+            {
+                old: allotment.current_requests,
+                new: actualRequestCount,
+            },
+        );
+
+        // Update the allotment object in state
+        store.setAllotments({
+            ...store.allotments,
+            [weekStartDate]: {
+                ...allotment,
+                current_requests: actualRequestCount,
+            },
+        });
+
+        // Optionally update in the database too
+        supabase
+            .from("vacation_allotments")
+            .update({ current_requests: actualRequestCount })
+            .eq("id", allotment.id)
+            .then(({ error }) => {
+                if (error) {
+                    console.error(
+                        `[VacationCalendarStore] Error syncing allotment in DB:`,
+                        error,
+                    );
+                }
+            });
+    }
 }
