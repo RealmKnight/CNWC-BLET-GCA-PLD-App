@@ -78,6 +78,20 @@ function RootLayoutContent() {
       const inTabsGroup = segments[0] === "(tabs)";
       const isCompanyAdmin = session?.user?.user_metadata?.role === "company_admin";
       const inMemberAssociation = segments[0] === "(auth)" && segments[1] === "member-association";
+      // Add special case for password reset
+      const isPasswordReset = segments[0] === "(auth)" && segments[1] === "change-password";
+
+      // Check if password reset is in progress (set by change-password.tsx)
+      const isProcessingReset =
+        // Check for our component flag
+        (typeof window !== "undefined" &&
+          (window as any).__isProcessingPasswordReset &&
+          (window as any).__isProcessingPasswordReset()) ||
+        // Also check for the flag set in useAuth
+        (typeof window !== "undefined" && window.__passwordResetInProgress);
+
+      // Track whether we're currently on the change-password page
+      const comingFromReset = isPasswordReset || isProcessingReset;
 
       console.log("[Router] Processing route:", {
         segments,
@@ -86,24 +100,43 @@ function RootLayoutContent() {
         inTabsGroup,
         isCompanyAdmin,
         hasSession: !!session,
+        isPasswordReset,
+        isProcessingReset,
+        hasResetFlag: typeof window !== "undefined" && !!window.__passwordResetInProgress,
+        comingFromReset,
       });
 
-      // Enhanced auth check
-      if ((!session || !session.user) && !inAuthGroup) {
+      // Skip routing logic completely if actively processing a password reset
+      if (isProcessingReset) {
+        console.log("[Router] Password reset in progress, skipping navigation logic");
+        return;
+      }
+
+      // Enhanced auth check - exempt password reset from auth check
+      if ((!session || !session.user) && !inAuthGroup && !isPasswordReset) {
         console.log("[Router] No valid session found, redirecting to sign-in");
         router.replace("/(auth)/sign-in");
         return;
       }
 
+      // Special handling for password reset - give time for member data to load
+      if (session && isPasswordReset && !member) {
+        console.log("[Router] On password reset page with session but no member data yet, delaying routing decision");
+        // Wait to see if member data loads
+        return;
+      }
+
       // Rest of the routing logic
-      if (session && !member && !inMemberAssociation && !isCompanyAdmin) {
+      if (session && !member && !inMemberAssociation && !isCompanyAdmin && !comingFromReset) {
+        console.log("[Router] User has session but no member data, redirecting to member association");
         router.replace("/(auth)/member-association");
       } else if (session && isCompanyAdmin && segments[0] !== "company-admin") {
         router.replace("/company-admin");
       } else if (session && !isCompanyAdmin && segments[0] === "company-admin") {
         router.replace("/(tabs)");
       } else if (session && !isCompanyAdmin && member) {
-        if (inAuthGroup && !inMemberAssociation) {
+        if (inAuthGroup && !inMemberAssociation && !comingFromReset) {
+          console.log("[Router] User has session and member data, in auth group, redirecting to tabs");
           router.replace("/(tabs)");
         } else if (!segments.length || segments[0] === undefined) {
           router.replace("/(tabs)");

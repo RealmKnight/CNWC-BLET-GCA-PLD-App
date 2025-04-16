@@ -649,12 +649,95 @@ export default function ProfileScreen() {
 
   const handleUpdatePassword = async () => {
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(user?.email || "");
-      if (error) throw error;
-      Alert.alert("Success", "Password reset email sent!");
+      if (!user?.email) {
+        Alert.alert("Error", "No email address found for your account");
+        return;
+      }
+
+      // Use our custom email function instead of direct Supabase auth
+      const success = await sendPasswordResetEmail(user.email);
+
+      if (success) {
+        Alert.alert("Success", "Password reset email sent!");
+      } else {
+        throw new Error("Failed to send password reset email");
+      }
     } catch (error) {
       console.error("Error sending reset password email:", error);
       Alert.alert("Error", "Failed to send reset password email. Please try again.");
+    }
+  };
+
+  // New function to use our edge function for password resets
+  const sendPasswordResetEmail = async (email: string): Promise<boolean> => {
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        console.error("No access token available");
+        return false;
+      }
+
+      // Generate a password reset token through Supabase Auth
+      const { data, error: resetError } = await supabase.auth.admin.generateLink({
+        type: "recovery",
+        email: email,
+        options: {
+          redirectTo: `${process.env.EXPO_PUBLIC_WEBSITE_URL}/(auth)/change-password`,
+        },
+      });
+
+      if (resetError || !data?.properties?.action_link) {
+        console.error("Error generating reset token:", resetError);
+        return false;
+      }
+
+      // Send our custom formatted email using the edge function
+      const functionUrl = "https://ymkihdiegkqbeegfebse.supabase.co/functions/v1/send-email";
+
+      const response = await fetch(functionUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          to: email,
+          subject: "Reset Your Password - BLET CN/WC GCA PLD App",
+          content: `
+            <div style="text-align: center; padding: 20px;">
+              <img src="https://ymkihdiegkqbeegfebse.supabase.co/storage/v1/object/public/public_assets/logo/BLETblackgold.png" 
+                   alt="BLET Logo" 
+                   style="max-width: 200px; height: auto;">
+              <h1 style="color: #003366;">Reset Your Password</h1>
+              <p style="font-size: 16px; line-height: 1.5;">
+                We received a request to reset your password for the BLET CN/WC GCA PLD App.
+              </p>
+              <p style="font-size: 16px; line-height: 1.5;">
+                <a href="${data.properties.action_link}" style="background-color: #003366; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; display: inline-block; font-weight: bold;">
+                  Reset Password
+                </a>
+              </p>
+              <p style="font-style: italic; color: #666; margin-top: 20px;">
+                If you did not request a password reset, you can ignore this email.
+              </p>
+              <p style="font-style: italic; color: #666;">
+                This is an automated message from the BLET CN/WC GCA PLD App.
+              </p>
+            </div>
+          `,
+        }),
+      });
+
+      if (!response.ok) {
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      console.error("Error sending password reset email:", error);
+      return false;
     }
   };
 

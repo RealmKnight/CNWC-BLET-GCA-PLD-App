@@ -8,6 +8,12 @@ import { UserRole, UserProfile } from "@/types/auth";
 import { useUserStore } from "@/store/userStore";
 import * as Linking from "expo-linking";
 
+declare global {
+  interface Window {
+    __passwordResetInProgress?: boolean;
+  }
+}
+
 type Member = Database["public"]["Tables"]["members"]["Row"];
 
 interface AuthContextType {
@@ -94,6 +100,35 @@ export function AuthProvider({ children }: AuthProviderProps) {
         // Get current user from state directly for comparison
         const currentUserId = user?.id; // Get ID from state
         const currentAccessToken = session?.access_token; // Get token from state
+
+        // Special handling for password reset flow
+        // Check if we're currently on the change-password route
+        const isInPasswordResetFlow =
+          // For web platforms
+          (typeof window !== "undefined" &&
+            (window.location.pathname.includes("/change-password") || source === "exchangeCodeForSession")) ||
+          // For mobile platforms, check the source
+          (Platform.OS !== "web" && (source === "exchangeCodeForSession" || source.includes("recovery")));
+
+        if (isInPasswordResetFlow) {
+          console.log("[Auth] In password reset flow, setting minimal auth state", {
+            source,
+            hasSession: !!newSession,
+            platform: Platform.OS,
+          });
+          // Just update the basic auth state without redirecting
+          setSession(newSession);
+          setUser(newUser);
+
+          // If we were in loading state, exit it
+          if (isLoading) {
+            setIsLoading(false);
+          }
+
+          // Don't proceed with the rest of the auth flow that might trigger redirects
+          isUpdatingAuth.current = false;
+          return;
+        }
 
         // Skip update if user ID and access token are the same AND it's a background/refresh event
         if (
@@ -375,28 +410,152 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const resetPassword = async (email: string) => {
     try {
-      // Use web URL instead of expo deep link URL
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${process.env.EXPO_PUBLIC_WEBSITE_URL}/(auth)/change-password`,
+      console.log("[Auth] Sending password reset email to:", email);
+
+      // Get current session for auth token
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      // Generate a password reset token through Supabase Auth
+      const { data, error: resetError } = await supabase.auth.admin.generateLink({
+        type: "recovery",
+        email: email,
+        options: {
+          redirectTo: `${process.env.EXPO_PUBLIC_WEBSITE_URL}/(auth)/change-password`,
+        },
       });
-      if (error) throw error;
+
+      if (resetError || !data?.properties?.action_link) {
+        console.error("[Auth] Error generating reset token:", resetError);
+        throw resetError || new Error("No reset link generated");
+      }
+
+      // Send our custom formatted email using the edge function
+      const functionUrl = "https://ymkihdiegkqbeegfebse.supabase.co/functions/v1/send-email";
+
+      const response = await fetch(functionUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({
+          to: email,
+          subject: "Reset Your Password - BLET CN/WC GCA PLD App",
+          content: `
+            <div style="text-align: center; padding: 20px;">
+              <img src="https://ymkihdiegkqbeegfebse.supabase.co/storage/v1/object/public/public_assets/logo/BLETblackgold.png" 
+                   alt="BLET Logo" 
+                   style="max-width: 200px; height: auto;">
+              <h1 style="color: #003366;">Reset Your Password</h1>
+              <p style="font-size: 16px; line-height: 1.5;">
+                We received a request to reset your password for the BLET CN/WC GCA PLD App.
+              </p>
+              <p style="font-size: 16px; line-height: 1.5;">
+                <a href="${data.properties.action_link}" style="background-color: #003366; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; display: inline-block; font-weight: bold;">
+                  Reset Password
+                </a>
+              </p>
+              <p style="font-style: italic; color: #666; margin-top: 20px;">
+                If you did not request a password reset, you can ignore this email.
+              </p>
+              <p style="font-style: italic; color: #666;">
+                This is an automated message from the BLET CN/WC GCA PLD App.
+              </p>
+            </div>
+          `,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to send custom email");
+      }
+
+      console.log("[Auth] Password reset email sent successfully");
     } catch (error) {
-      console.error("Error sending password reset email:", error);
+      console.error("[Auth] Error sending password reset email:", error);
       throw error;
     }
   };
 
   const exchangeCodeForSession = async (code: string) => {
     try {
+      console.log("[Auth] Exchanging code for session");
+
+      // Special flag to prevent redirects during password reset
+      const isPasswordReset =
+        // For web platforms
+        (typeof window !== "undefined" && window.location.pathname.includes("/change-password")) ||
+        // For mobile platforms, we'll assume code exchange is for password reset
+        // unless we can determine otherwise
+        Platform.OS !== "web";
+
+      if (isPasswordReset) {
+        console.log("[Auth] Detected password reset flow during code exchange", {
+          platform: Platform.OS,
+        });
+      }
+
       const { data, error } = await supabase.auth.exchangeCodeForSession(code);
-      if (error) throw error;
+
+      if (error) {
+        console.error("[Auth] Error exchanging code for session:", error);
+        throw error;
+      }
+
+      console.log("[Auth] Successfully exchanged code for session:", {
+        hasSession: !!data.session,
+        hasUser: !!data.session?.user,
+        userEmail: data.session?.user?.email,
+        isPasswordReset,
+      });
 
       // Use the session data if needed but don't return it
       if (data.session) {
+        // Set a flag to prevent redirects before calling updateAuthState
+        if (isPasswordReset && typeof window !== "undefined") {
+          window.__passwordResetInProgress = true;
+        }
+
         await updateAuthState(data.session, "exchangeCodeForSession");
+
+        // For password reset flow, explicitly fetch member data to prevent redirect to member-association
+        if (isPasswordReset && data.session.user) {
+          try {
+            console.log("[Auth] Explicitly fetching member data during password reset flow");
+            const memberData = await fetchMemberData(data.session.user.id);
+
+            if (memberData) {
+              console.log("[Auth] Found member data during password reset flow:", {
+                id: memberData.id,
+                role: memberData.role,
+              });
+              // Update our local state directly
+              setMember(memberData);
+              setUserRole(memberData.role as UserRole);
+            } else {
+              console.log("[Auth] No member data found during password reset flow");
+            }
+          } catch (error) {
+            console.error("[Auth] Error fetching member data during password reset:", error);
+          }
+        }
+
+        // For password reset flow, we want to stay on the change-password page
+        if (isPasswordReset && typeof window !== "undefined") {
+          // Add a small delay to ensure state is updated
+          setTimeout(() => {
+            // Don't automatically clear the flag - let the component handle this
+            // when the user explicitly chooses to navigate away
+            // window.__passwordResetInProgress = false;
+          }, 1000);
+        }
+      } else {
+        console.warn("[Auth] No session data returned from code exchange");
       }
     } catch (error) {
-      console.error("Error exchanging code for session:", error);
+      console.error("[Auth] Error exchanging code for session:", error);
       throw error;
     }
   };
