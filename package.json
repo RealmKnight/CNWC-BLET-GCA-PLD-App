@@ -62,7 +62,8 @@
     "react-native-toast-message": "^2.2.1",
     "react-native-url-polyfill": "^2.0.0",
     "react-native-web": "~0.19.13",
-    "react-native-webview": "13.12.5"
+    "react-native-webview": "13.12.5",
+    "zod": "^3.24.2"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
@@ -71,6 +72,7 @@
     "@testing-library/react": "^16.3.0",
     "@testing-library/react-native": "^13.2.0",
     "@types/jest": "^29.5.14",
+    "@types/lodash": "^4.17.16",
     "@types/react": "~18.3.12",
     "@types/react-test-renderer": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.4",

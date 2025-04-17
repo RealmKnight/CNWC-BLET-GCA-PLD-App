@@ -70,7 +70,7 @@ export default function SignInScreen() {
             </TouchableOpacity>
           </Link>
 
-          <Link href="/(auth)/reset-password" asChild>
+          <Link href="/(auth)/forgot-password" asChild>
             <TouchableOpacity>
               <ThemedText style={styles.link}>Forgot Password?</ThemedText>
             </TouchableOpacity>

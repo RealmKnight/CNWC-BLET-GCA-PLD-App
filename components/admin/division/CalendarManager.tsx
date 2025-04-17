@@ -24,9 +24,9 @@ import { DivisionSelector } from "./DivisionSelector";
 import { Calendar } from "@/types/calendar";
 import { RequestEntry } from "./RequestEntry";
 import { Ionicons } from "@expo/vector-icons";
-
+import { PldSdvManager } from "./PldSdvManager";
 // Define view types
-type CalendarView = "calendarManagement" | "enterRequests";
+type CalendarView = "calendarManagement" | "enterRequests" | "managePldSdv";
 
 export function CalendarManager() {
   const {
@@ -301,6 +301,12 @@ export function CalendarManager() {
             <RequestEntry selectedDivision={selectedDivision} selectedCalendarId={selectedCalendarId} />
           </ScrollView>
         );
+      case "managePldSdv":
+        return (
+          <ScrollView style={styles.contentScroll} contentContainerStyle={styles.contentContainer}>
+            <PldSdvManager selectedDivision={selectedDivision} selectedCalendarId={selectedCalendarId || undefined} />
+          </ScrollView>
+        );
       default:
         return null;
     }
@@ -322,7 +328,8 @@ export function CalendarManager() {
         <View style={styles.titleRow}>
           <View style={styles.actionButtons}>
             {renderActionButton("calendarManagement", "settings-outline", "Manage Calendars")}
-            {renderActionButton("enterRequests", "add-circle-outline", "Enter Requests")}
+            {renderActionButton("enterRequests", "calendar-outline", "Enter Vacation")}
+            {renderActionButton("managePldSdv", "today-outline", "Mange PLD/SDV")}
           </View>
         </View>
         <View style={styles.divisionContainer}>

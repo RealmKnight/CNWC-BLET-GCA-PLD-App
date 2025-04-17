@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { StyleSheet, TextInput, TouchableOpacity, Image } from "react-native";
 import { useAuth } from "@/hooks/useAuth";
 import { ThemedView } from "@/components/ThemedView";
@@ -6,27 +6,51 @@ import { ThemedText } from "@/components/ThemedText";
 import { Colors } from "@/constants/Colors";
 import { AdminMessageModal } from "@/components/AdminMessageModal";
 import Toast from "react-native-toast-message";
+import { router } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 
 export default function MemberAssociationScreen() {
   const [pinNumber, setPinNumber] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [showAdminModal, setShowAdminModal] = useState(false);
-  const { associateMemberWithPin, user } = useAuth();
+  const [associationSuccess, setAssociationSuccess] = useState(false);
+  const { associateMemberWithPin, user, member } = useAuth();
+
+  // Monitor member data and redirect when it's available after successful association
+  useEffect(() => {
+    // Only redirect if we've had a successful association and member data is present
+    if (associationSuccess && member) {
+      console.log("[MemberAssociation] Member data loaded after association, redirecting to tabs:", {
+        memberId: member.id,
+        role: member.role,
+      });
+
+      // Short delay to allow Toast to be visible
+      const redirectTimer = setTimeout(() => {
+        router.replace("/(tabs)");
+      }, 1500);
+
+      return () => clearTimeout(redirectTimer);
+    }
+  }, [associationSuccess, member]);
 
   const handleAssociate = async () => {
     try {
       setError(null);
       setIsLoading(true);
       await associateMemberWithPin(pinNumber);
+
+      setAssociationSuccess(true);
       Toast.show({
         type: "success",
         text1: "Success",
-        text2: "Successfully associated with member record",
+        text2: "Successfully associated with member record. Redirecting...",
       });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "An error occurred";
       setError(errorMessage);
+      setAssociationSuccess(false);
 
       // Show admin modal for specific error cases
       if (
@@ -43,13 +67,29 @@ export default function MemberAssociationScreen() {
     }
   };
 
+  const goToSignIn = () => {
+    router.replace("/(auth)/sign-in");
+  };
+
   return (
     <ThemedView style={styles.container}>
+      <TouchableOpacity style={styles.backButton} onPress={goToSignIn}>
+        <Ionicons name="arrow-back" size={24} color={Colors.dark.icon} />
+        <ThemedText style={styles.backButtonText}>Back to Sign In</ThemedText>
+      </TouchableOpacity>
+
       <Image source={require("@/assets/images/BLETblackgold.png")} style={styles.logo} />
       <ThemedView style={styles.header}>
         <ThemedText type="title">Associate Member</ThemedText>
         <ThemedText type="subtitle">
           Please enter your member PIN number to associate your account with your member profile
+        </ThemedText>
+      </ThemedView>
+
+      <ThemedView style={styles.infoBox}>
+        <ThemedText style={styles.infoText}>
+          Don't have a PIN number? Contact your Division Administrative Secretary or Division Secretary Treasurer to
+          obtain your PIN.
         </ThemedText>
       </ThemedView>
 
@@ -62,17 +102,19 @@ export default function MemberAssociationScreen() {
           onChangeText={setPinNumber}
           keyboardType="numeric"
           maxLength={6}
-          editable={!isLoading}
+          editable={!isLoading && !associationSuccess}
         />
 
         {error && <ThemedText style={styles.error}>{error}</ThemedText>}
 
         <TouchableOpacity
-          style={[styles.button, isLoading && styles.buttonDisabled]}
+          style={[styles.button, (isLoading || associationSuccess) && styles.buttonDisabled]}
           onPress={handleAssociate}
-          disabled={isLoading}
+          disabled={isLoading || associationSuccess}
         >
-          <ThemedText style={styles.buttonText}>{isLoading ? "Associating..." : "Associate Member"}</ThemedText>
+          <ThemedText style={styles.buttonText}>
+            {isLoading ? "Associating..." : associationSuccess ? "Association Successful!" : "Associate Member"}
+          </ThemedText>
         </TouchableOpacity>
       </ThemedView>
 
@@ -92,9 +134,33 @@ const styles = StyleSheet.create({
     padding: 20,
     justifyContent: "center",
   },
-  header: {
-    marginBottom: 40,
+  backButton: {
+    position: "absolute",
+    top: 40,
+    left: 20,
+    flexDirection: "row",
     alignItems: "center",
+  },
+  backButtonText: {
+    marginLeft: 5,
+    fontSize: 16,
+    color: Colors.dark.icon,
+  },
+  header: {
+    marginBottom: 20,
+    alignItems: "center",
+  },
+  infoBox: {
+    backgroundColor: Colors.dark.card,
+    borderRadius: 8,
+    padding: 15,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+  },
+  infoText: {
+    fontSize: 14,
+    textAlign: "center",
   },
   form: {
     width: "100%",

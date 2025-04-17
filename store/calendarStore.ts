@@ -113,6 +113,13 @@ interface CalendarState {
   cleanupCalendarState: () => void;
 }
 
+// Add helper function at the top of the file, after imports
+const isLastDayOfMonth = (date: Date): boolean => {
+  const tomorrow = new Date(date);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  return tomorrow.getDate() === 1;
+};
+
 export const useCalendarStore = create<CalendarState>((set, get) => ({
   selectedDate: null,
   allotments: {},
@@ -141,24 +148,70 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       now.getDate(),
     );
 
-    if (
-      isBefore(dateObj, fortyEightHoursFromNow) ||
-      isAfter(dateObj, sixMonthsFromNow)
-    ) {
+    // First check basic time constraints
+    if (isBefore(dateObj, fortyEightHoursFromNow)) {
+      console.log("[CalendarStore] Date not selectable - before 48h:", date);
       return false;
     }
 
+    // Check if date is beyond six months
+    if (isAfter(dateObj, sixMonthsFromNow)) {
+      console.log(
+        "[CalendarStore] Date not selectable - beyond six months:",
+        date,
+      );
+      return false;
+    }
+
+    // Check allotments and existing requests
     const year = dateObj.getFullYear();
     const dateAllotment = state.allotments[date];
     const yearlyAllotment = state.yearlyAllotments[year];
     const maxAllotment = dateAllotment ?? yearlyAllotment ?? 0;
+
+    if (maxAllotment === 0) {
+      console.log("[CalendarStore] Date not selectable - no allotment:", date);
+      return false;
+    }
 
     const dateRequests = state.requests[date] || [];
     const activeRequests = dateRequests.filter((r) =>
       r.status === "approved" || r.status === "pending" ||
       r.status === "waitlisted"
     );
-    return activeRequests.length < maxAllotment;
+
+    if (activeRequests.length >= maxAllotment) {
+      console.log("[CalendarStore] Date not selectable - full:", date);
+      return false;
+    }
+
+    // Check if today is end of month for six month request handling
+    const isEndOfMonth = isLastDayOfMonth(now);
+    const isSixMonthDate = dateObj.getTime() === sixMonthsFromNow.getTime();
+
+    // Handle six month requests
+    if (
+      isSixMonthDate || (isEndOfMonth &&
+        dateObj.getMonth() === sixMonthsFromNow.getMonth() &&
+        dateObj.getFullYear() === sixMonthsFromNow.getFullYear() &&
+        !isBefore(dateObj, sixMonthsFromNow))
+    ) {
+      // This is either exactly six months out or part of end-of-month six month requests
+      console.log("[CalendarStore] Date selectable - six month request:", date);
+      return true;
+    }
+
+    // Regular requests - anything between 48 hours and six months
+    if (
+      !isBefore(dateObj, fortyEightHoursFromNow) &&
+      !isAfter(dateObj, sixMonthsFromNow)
+    ) {
+      console.log("[CalendarStore] Date selectable - regular request:", date);
+      return true;
+    }
+
+    console.log("[CalendarStore] Date not selectable - general case:", date);
+    return false;
   },
 
   getDateAvailability: (date: string) => {
@@ -166,31 +219,34 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
     const now = new Date();
     const dateObj = parseISO(date);
     const fortyEightHoursFromNow = addDays(now, 2);
-    const sixMonthsFromNow = new Date(
-      now.getFullYear(),
-      now.getMonth() + 6,
-      now.getDate(),
-    );
 
-    if (
-      isBefore(dateObj, fortyEightHoursFromNow) ||
-      isAfter(dateObj, sixMonthsFromNow)
-    ) {
+    // Basic time constraint check
+    if (isBefore(dateObj, fortyEightHoursFromNow)) {
       return "unavailable";
     }
 
+    // Get allotment info
     const year = dateObj.getFullYear();
     const dateAllotment = state.allotments[date];
     const yearlyAllotment = state.yearlyAllotments[year];
     const maxAllotment = dateAllotment ?? yearlyAllotment ?? 0;
 
+    if (maxAllotment === 0) {
+      return "unavailable";
+    }
+
+    // Check if date is selectable using our six-month logic
+    if (!state.isDateSelectable(date)) {
+      return "unavailable";
+    }
+
+    // If we get here, the date is selectable, check capacity
     const dateRequests = state.requests[date] || [];
     const activeRequests = dateRequests.filter((r) =>
       r.status === "approved" || r.status === "pending" ||
       r.status === "waitlisted"
     );
 
-    if (maxAllotment === 0) return "unavailable";
     if (activeRequests.length >= maxAllotment) return "full";
     if (activeRequests.length >= maxAllotment * 0.7) return "limited";
     return "available";
@@ -463,10 +519,94 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
     date: string,
     type: "PLD" | "SDV",
   ): Promise<DayRequest | null> => {
-    console.warn(
-      "submitSixMonthRequest needs DB schema update for calendar_id and review.",
-    );
-    return null;
+    const member = useUserStore.getState().member;
+
+    if (!member) {
+      throw new Error("Member information not found");
+    }
+
+    if (!member.id) {
+      throw new Error("Member ID is missing");
+    }
+
+    if (!member.calendar_id) {
+      throw new Error("No calendar assigned to member");
+    }
+
+    try {
+      console.log("[CalendarStore] Submitting six-month request:", {
+        date,
+        type,
+        memberId: member.id,
+        calendarId: member.calendar_id,
+      });
+
+      // Create the six-month request
+      const insertPayload = {
+        member_id: member.id,
+        calendar_id: member.calendar_id,
+        request_date: date,
+        leave_type: type,
+        processed: false,
+        requested_at: new Date().toISOString(),
+      };
+
+      const { data, error } = await supabase
+        .from("six_month_requests")
+        .insert(insertPayload)
+        .select()
+        .single();
+
+      if (error) throw error;
+      if (!data) throw new Error("Failed to create six-month request");
+
+      // Create a request object for the UI state
+      const request: DayRequest = {
+        id: data.id,
+        member_id: member.id,
+        calendar_id: member.calendar_id,
+        request_date: date,
+        leave_type: type,
+        status: "pending",
+        requested_at: data.requested_at || new Date().toISOString(),
+        created_at: data.requested_at || new Date().toISOString(),
+        updated_at: data.requested_at || new Date().toISOString(),
+        responded_at: null,
+        responded_by: null,
+        paid_in_lieu: false,
+        denial_reason_id: null,
+        denial_comment: null,
+        actioned_by: null,
+        actioned_at: null,
+        metadata: null,
+        waitlist_position: null,
+        is_rollover_pld: false,
+        override_by: null,
+        member: {
+          id: member.id,
+          first_name: member.first_name || null,
+          last_name: member.last_name || null,
+          pin_number: member.pin_number || 0,
+        },
+      };
+
+      // Add the request to the local state
+      const currentRequests = get().requests[date] || [];
+      set((state) => ({
+        requests: {
+          ...state.requests,
+          [date]: [...currentRequests, request],
+        },
+      }));
+
+      return request;
+    } catch (error) {
+      console.error(
+        "[CalendarStore] Error submitting six-month request:",
+        error,
+      );
+      throw error;
+    }
   },
 
   getActiveRequests: (date: string) => {

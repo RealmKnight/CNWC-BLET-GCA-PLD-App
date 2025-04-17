@@ -4,6 +4,8 @@ import { ThemedView } from "@/components/ThemedView";
 import { NavigationCard } from "@/components/NavigationCard";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserStore } from "@/store/userStore";
+import { ThemedText } from "@/components/ThemedText";
+import { HelloWave } from "@/components/HelloWave";
 
 export default function HomeScreen() {
   const { member } = useAuth();
@@ -16,15 +18,19 @@ export default function HomeScreen() {
     >
       <ThemedView style={styles.container}>
         <ThemedView style={styles.cardContainer}>
+          <ThemedView style={styles.welcomeContainer}>
+            <HelloWave />
+            <ThemedText style={styles.welcomeText}>Welcome, {member?.first_name}</ThemedText>
+          </ThemedView>
           <NavigationCard
             title="My Division"
-            description="View and manage your division information, officers, and members"
+            description="View your division information, officers, and members"
             icon="people"
             href={division ? `/(division)/${division}` : "/(division)"}
           />
           <NavigationCard
             title="Rosters"
-            description="Access and manage division rosters and schedules"
+            description="Access division rosters and schedules"
             icon="calendar"
             href="/(rosters)"
           />
@@ -89,5 +95,17 @@ const styles = StyleSheet.create({
     top: 10,
     left: "50%",
     transform: [{ translateX: -90 }],
+  },
+  welcomeContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 8,
+    width: "100%",
+  },
+  welcomeText: {
+    fontSize: 24,
+    fontWeight: "bold",
+    marginLeft: 8,
   },
 });

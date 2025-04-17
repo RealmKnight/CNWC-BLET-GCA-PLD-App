@@ -759,53 +759,10 @@ export type Database = {
         ];
       };
       six_month_requests: {
-        Row: {
-          division: string;
-          final_status: string | null;
-          id: string;
-          leave_type: string;
-          member_id: string;
-          position: number | null;
-          processed: boolean | null;
-          processed_at: string | null;
-          request_date: string;
-          requested_at: string | null;
-          zone_id: number | null;
-        };
-        Insert: {
-          division: string;
-          final_status?: string | null;
-          id?: string;
-          leave_type: string;
-          member_id: string;
-          position?: number | null;
-          processed?: boolean | null;
-          processed_at?: string | null;
-          request_date: string;
-          requested_at?: string | null;
-          zone_id?: number | null;
-        };
-        Update: {
-          division?: string;
-          final_status?: string | null;
-          id?: string;
-          leave_type?: string;
-          member_id?: string;
-          position?: number | null;
-          processed?: boolean | null;
-          processed_at?: string | null;
-          request_date?: string;
-          requested_at?: string | null;
-          zone_id?: number | null;
-        };
+        Row: SixMonthRequest;
+        Insert: Omit<SixMonthRequest, "id">;
+        Update: Partial<SixMonthRequest>;
         Relationships: [
-          {
-            foreignKeyName: "six_month_requests_member_id_fkey";
-            columns: ["member_id"];
-            isOneToOne: false;
-            referencedRelation: "member_profiles";
-            referencedColumns: ["id"];
-          },
           {
             foreignKeyName: "six_month_requests_member_id_fkey";
             columns: ["member_id"];
@@ -814,10 +771,10 @@ export type Database = {
             referencedColumns: ["id"];
           },
           {
-            foreignKeyName: "six_month_requests_zone_id_fkey";
-            columns: ["zone_id"];
+            foreignKeyName: "six_month_requests_calendar_id_fkey";
+            columns: ["calendar_id"];
             isOneToOne: false;
-            referencedRelation: "zones";
+            referencedRelation: "calendars";
             referencedColumns: ["id"];
           },
         ];
@@ -1619,3 +1576,16 @@ export const Constants = {
     },
   },
 } as const;
+
+interface SixMonthRequest {
+  id: string;
+  member_id: string;
+  calendar_id: string;
+  request_date: string;
+  leave_type: "PLD" | "SDV";
+  requested_at?: string;
+  processed: boolean;
+  processed_at?: string;
+  final_status?: string;
+  position?: number;
+}

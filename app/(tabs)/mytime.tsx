@@ -78,6 +78,7 @@ interface TimeOffRequest {
   waitlist_position?: number;
   paid_in_lieu?: boolean;
   is_six_month_request?: boolean;
+  calendar_id?: string;
 }
 
 interface RequestRowProps {

@@ -1,116 +1,166 @@
-# Plan for "Enter Requests" Feature
+# Six Month Request End-of-Month Edge Case Implementation Plan
 
-## Goal
+## Current System Analysis
 
-Add a new section to the Admin Calendar area (`CalendarManager.tsx`) allowing administrators to submit `vacation_requests` on behalf of members for a selected calendar.
+1. Date Validation:
 
-## 1. Refactor `CalendarManager.tsx` for Tab Navigation
+   - Currently handled in app via calendarStore date validation
+   - Calendar UI uses this logic for date selection
+   - Requests validated before submission
 
-- **Task:** Implement primary tab navigation below the main header section, mimicking the visual style and interaction pattern of the main action buttons in `MemberManagement.tsx`.
-- **Implementation:**
-  - Use a `useState` hook within `CalendarManager` to manage the active tab state (e.g., `useState<'calendarManagement' | 'enterRequests'>('calendarManagement')`).
-- Use a `useState` hook within `CalendarManager` to manage the active view state (e.g., `const [currentView, setCurrentView] = useState<'calendarManagement' | 'enterRequests'>('calendarManagement')`).
-  - Render `TouchableOpacity` components for the "Calendar Management" and "Enter Requests" tabs.
-  - Apply conditional styling to the `TouchableOpacity` components (similar to `styles.tab` and `styles.activeTab` in `MemberManagement.tsx`) based on the active tab state.
-  - Create styled `TouchableOpacity` (or `Pressable` for web) components for "Calendar Management" and "Enter Requests".
-  - These buttons should resemble the main action buttons in `MemberManagement`: horizontally arranged in a `ThemedView`, potentially using similar icons and styling (adapting `styles.actionButton`, `styles.activeButton`, etc.). Consider adapting for mobile width if necessary (like icon-only buttons).
-  - Update the `currentView` state when a button is pressed.
-  - Conditionally render the main content area based on the active tab state:
-- Conditionally render the main content area below these buttons based on the `currentView` state:
-  - If 'calendarManagement', render the existing management components (`CalendarCrudAdmin`, `CalendarSelector`, `CalendarAllotments`, etc.).
-- If `'calendarManagement'`, render the existing management components (`CalendarCrudAdmin`, `CalendarSelector`, `CalendarAllotments`).
-  - If 'enterRequests', render the new `<RequestEntry />` component.
-- If `'enterRequests'`, render the new `<RequestEntry />` component.
-- **Header & Context:** The existing header (Title, `DivisionSelector`) remains above the tabs. Pass `selectedDivision` and `selectedCalendarId` as props down to the conditionally rendered content area (specifically needed by `<RequestEntry />`).
-- **Header & Context:** The existing header (Title, `DivisionSelector`) remains above these action/tab buttons. Pass necessary props like `selectedDivision` and `selectedCalendarId` down to the conditionally rendered content component (`<RequestEntry />` will need them).
+2. Processing:
 
-## 2. Create New Component: `RequestEntry.tsx`
+   - Cron job processes requests daily via `schedule_six_month_processing`
+   - Each request is processed based on calendar_id and seniority
 
-- **Task:** Create a new functional component responsible for the "Enter Requests" tab UI and logic.
-- **Props:**
-  - `selectedDivision: string`
-  - `selectedCalendarId: string | null`
-- **Responsibilities:** Display the request entry form, manage local form state, trigger data fetching from existing stores, handle submission logic.
+3. Edge Case Handling:
+   a. Current Month End -> Target Month End (Implementing):
+   - When current day is last day of month, allow requests through end of target month
+   - Example: On Feb 28, allow requests for Aug 28-31
+     b. Target Month Shorter (No Action Required):
+   - When current month has more days than target month, no special handling needed
+   - Example: On Jan 31, six-month requests would have been submitted on Jan 30 for Jul 30
+   - This maintains consistency as requests for Jul 31 aren't possible since the date doesn't exist
 
-## 3. Integrate State Management with Existing Stores
+## Required Changes
 
-- **Goal:** Avoid creating a new store. Leverage existing stores and local component state.
-- **`useAdminMemberManagementStore` Modifications:**
-  - **New State:**
-    - `membersByCalendar: Record<string, MemberSummary[]>` (Map: `calendarId` -> Array of `{ id, pin_number, first_name, last_name }`)
-    - `isLoadingMembersByCalendar: boolean`
-  - **New Action:**
-    - `fetchMembersByCalendarId(calendarId: string)`: Fetches members assigned to the `calendarId`, updates state.
-- **`useAdminCalendarManagementStore` Modifications:**
-  - **New State:**
-    - `vacationAllotmentWeeks: Record<string, Record<number, { week_start_date: string }[]>>` (Map: `calendarId` -> Map: `year` -> Array of unique week start dates).
-    - `isLoadingVacationAllotmentWeeks: boolean`
-  - **New Action:**
-    - `fetchVacationAllotmentWeeks(calendarId: string, year: number)`: Fetches unique `week_start_date` from `vacation_allotments` for the calendar/year, updates state. (Start with current year).
-- **Local State in `RequestEntry.tsx` (using `useState`):**
-  - `selectedMemberPin: string | null`
-  - `selectedWeekStartDate: string | null`
-  - `selectedYear: number` (Initialize to current year)
-  - `submissionState: 'idle' | 'submitting' | 'success' | 'error'`
-  - `formError: string | null`
+### 1. App-Side Changes
 
-## 4. Implement `RequestEntry.tsx` UI
+a. Update calendarStore.ts (State Management):
 
-- **Task:** Build the form interface using themed components (`ThemedView`, `ThemedText`, `Picker`/`<select>`, `Button`).
-- **Data Fetching:**
-  - Use `useEffect` dependent on `selectedCalendarId` prop.
-  - When `selectedCalendarId` is valid, call `fetchMembersByCalendarId` and `fetchVacationAllotmentWeeks`.
-  - Use `useEffect` dependent on `selectedCalendarId` and `selectedYear` props/state.
-  - When `selectedCalendarId` is valid, call `fetchMembersByCalendarId(selectedCalendarId)` and `fetchVacationAllotmentWeeks(selectedCalendarId, selectedYear)`.
-  - Clear local form state when `selectedCalendarId` becomes null.
-- **Elements:**
-  - **Year Selector:** Dropdown/Picker to select the year. Controls the `selectedYear` state. Triggers refetching of allotment weeks.
-  - **Member Selector:** Dropdown populated from `store.membersByCalendar[selectedCalendarId]`. Controlled by local `selectedMemberPin` state. Displays "LastName, FirstName (PIN)". Disabled when loading or no calendar selected.
-  - **Start Date (Week) Selector:** Dropdown populated from `store.vacationAllotmentWeeks[selectedCalendarId][selectedYear]`. Controlled by local `selectedWeekStartDate` state. Disabled when loading or no calendar/year selected.
-  - **Submit Button:** Triggers submission handler. Disabled based on local form validity and `submissionState`.
-  - **Loading Indicators:** Use `ActivityIndicator` based on `isLoadingMembersByCalendar` and `isLoadingVacationAllotmentWeeks`.
-  - **Feedback:** Display errors/success messages based on local `formError` and `submissionState`. Use `Toast` for success.
+```typescript
+// Add helper function for end-of-month detection
+const isLastDayOfMonth = (date: Date): boolean => {
+  const tomorrow = new Date(date);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  return tomorrow.getDate() === 1;
+};
 
-## 5. Submission Logic (within `RequestEntry.tsx`)
+// Update date validation logic
+isDateSelectable: (date: string) => {
+  const now = new Date();
+  const dateObj = parseISO(date);
+  const fortyEightHoursFromNow = addDays(now, 2);
+  const sixMonthsFromNow = new Date(now.getFullYear(), now.getMonth() + 6, now.getDate());
 
-- **Task:** Implement the core request submission logic in an `async` handler function within `RequestEntry`.
-- **Steps:**
-  - Read `selectedCalendarId` (prop), `selectedMemberPin`, `selectedWeekStartDate`, `selectedYear` (local state).
-  - Get admin user ID (`useUserStore`).
-  - Set local `submissionState` to `'submitting'`.
-  - Calculate `end_date` based on `selectedWeekStartDate` (**Clarification Needed: Week End Logic**).
-  - Set `status` to `'approved'` (**Clarification Needed: Default Status**).
-  - Construct payload for `vacation_requests` table (pin_number, start_date, end_date, status, calendar_id, requested_at, responded_at, responded_by, actioned_at, actioned_by).
-  - Validate payload using Zod.
-  - Call `supabase.from("vacation_requests").insert(...)`.
-  - Update local `submissionState` and `formError` based on outcome.
-  - On success, show Toast and potentially reset local form state.
+  // Check if today is end of month
+  const isEndOfMonth = isLastDayOfMonth(now);
 
-## 6. Connect Components
+  // If end of month, allow all dates in target month after six months point
+  if (isEndOfMonth) {
+    const targetMonth = sixMonthsFromNow.getMonth();
+    const targetYear = sixMonthsFromNow.getFullYear();
+    const isTargetMonth = dateObj.getMonth() === targetMonth && dateObj.getFullYear() === targetYear;
+    if (isTargetMonth && dateObj >= sixMonthsFromNow) {
+      return true;
+    }
+  }
 
-- **Task:** Integrate the new pieces.
-- **Steps:**
-  - In `CalendarManager.tsx`: Render the tab navigation. Render `<RequestEntry selectedDivision={...} selectedCalendarId={...} />` in the "Enter Requests" tab view when active.
-  - In `RequestEntry.tsx`: Use hooks for `useAdminMemberManagementStore`, `useAdminCalendarManagementStore`, `useUserStore`, and local `useState`.
+  // Regular case - exact 6 month match
+  return dateObj.getTime() === sixMonthsFromNow.getTime();
+};
 
-## Clarifications Needed
+// Update date availability check
+getDateAvailability: (date: string) => {
+  const now = new Date();
+  const dateObj = parseISO(date);
+  const fortyEightHoursFromNow = addDays(now, 2);
+  const sixMonthsFromNow = new Date(now.getFullYear(), now.getMonth() + 6, now.getDate());
 
-- **End Date Logic:** How exactly is `end_date` determined from the `week_start_date` selection (e.g., fixed duration: +6 days? specific day of the week)?
-- **Default Status:** Confirm if admin-submitted requests should default to `'approved'`.
-- **Year Selection:** Should the year for allotments/requests be fixed (e.g., current year) or selectable by the admin? (Assuming current year for now).
-- _Resolved:_ End Date = `week_start_date` + 6 days.
-- _Resolved:_ Default Status = `'approved'`.
-- _Resolved:_ Year must be selectable by the admin.
+  // Check if date is selectable (reuse existing logic)
+  if (!isDateSelectable(date)) {
+    return "unavailable";
+  }
 
-## Database Schema Notes
+  // Rest of the existing availability logic remains unchanged
+  // This ensures the calendar shows proper colors based on allotments
+  // and existing requests
+};
+```
 
-- `members` table has `calendar_id`.
-- `vacation_requests` table uses `pin_number` (FK to `members`) and requires `start_date`, `end_date`, `status`. Has `calendar_id`.
-- `vacation_allotments` table has `calendar_id`, `week_start_date`, `vac_year`.
+b. Update Calendar.tsx (Display Component):
 
-## Codebase Notes
+```typescript
+// No changes needed to the Calendar component
+// It will automatically use the updated logic from calendarStore
+// to show proper colors and handle date selection
+```
 
-- Reuse `DivisionSelector`, `CalendarSelector`.
-- **Modify** `useAdminMemberManagementStore` to add fetching members by calendar ID.
-- **Modify** `useAdminCalendarManagementStore` to add fetching unique vacation allotment weeks.
-- Use local `useState` in `RequestEntry.tsx` for form state.
+### 2. Database Changes (use MCP tool)
+
+a. Update `schedule_six_month_processing`:
+
+```sql
+CREATE OR REPLACE FUNCTION schedule_six_month_processing()
+RETURNS void AS $$
+DECLARE
+    v_target_date DATE;
+    v_process_until DATE;
+BEGIN
+    -- Get the date that was 6 months ago from yesterday
+    v_target_date := (CURRENT_DATE - INTERVAL '1 day' + INTERVAL '6 months')::DATE;
+
+    -- If processing end of month requests, get last day of target month
+    IF (CURRENT_DATE - INTERVAL '1 day') =
+       (DATE_TRUNC('MONTH', CURRENT_DATE - INTERVAL '1 day') + INTERVAL '1 MONTH - 1 day')::date
+    THEN
+        v_process_until := (DATE_TRUNC('MONTH', v_target_date) + INTERVAL '1 MONTH - 1 day')::date;
+
+        -- Process each day separately to maintain seniority order per day
+        WHILE v_target_date <= v_process_until LOOP
+            PERFORM process_six_month_requests(v_target_date);
+            v_target_date := v_target_date + INTERVAL '1 day';
+        END LOOP;
+    ELSE
+        -- Regular case - process single day
+        PERFORM process_six_month_requests(v_target_date);
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+```
+
+### 3. Testing Plan
+
+1. End of Month Scenarios:
+
+   - Test date selection in calendarStore
+   - Verify calendar display shows correct dates as available
+   - Test submission flow for multiple dates
+   - Verify processing order and seniority handling
+
+2. Regular Day Scenarios:
+
+   - Verify normal behavior is unchanged
+   - Test submission on non-end-of-month days
+
+3. Edge Cases:
+   - Test February (28/29 days)
+   - Test months with 30 vs 31 days
+   - Test year boundaries
+   - Test when current day is last day of month but target month has fewer days
+
+### 4. Validation Checks
+
+1. App-Side:
+
+   - Verify calendarStore correctly identifies end-of-month cases
+   - Confirm Calendar component shows correct availability colors
+   - Validate request submission flow handles multiple dates correctly
+
+2. Database:
+
+   - Verify each day's requests are processed independently
+   - Confirm seniority-based allocation works correctly for each day
+   - Check that calendar_id is properly maintained
+
+3. Request Flow:
+   - Verify submission process remains unchanged
+   - Confirm success messages are consistent
+   - Validate that requests are properly tagged as six-month requests
+
+Note: The implementation maintains clear separation of concerns:
+
+- calendarStore.ts handles state management and business logic
+- Calendar.tsx handles display and user interaction
+- Database handles only request processing
+  This ensures each component has a single responsibility and makes the code easier to maintain and test.

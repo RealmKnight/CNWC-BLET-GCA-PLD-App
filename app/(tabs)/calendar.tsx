@@ -577,19 +577,42 @@ export default function CalendarScreen() {
     }
 
     try {
-      console.log("[CalendarScreen] Submitting request via store:", {
+      // Check if the date is exactly 6 months from today
+      const today = new Date();
+      const sixMonthsFromToday = new Date(today);
+      sixMonthsFromToday.setMonth(today.getMonth() + 6);
+
+      const isSixMonthDate = format(sixMonthsFromToday, "yyyy-MM-dd") === selectedDate;
+
+      console.log("[CalendarScreen] Submitting request:", {
         date: selectedDate,
         type: leaveType,
+        isSixMonthDate,
       });
-      await userSubmitRequest(selectedDate, leaveType);
+
+      if (isSixMonthDate) {
+        // Use six month request function for dates exactly 6 months away
+        await useCalendarStore.getState().submitSixMonthRequest(selectedDate, leaveType);
+        Toast.show({
+          type: "success",
+          text1: "Success",
+          text2: "Six-month request submitted. It will be processed based on seniority.",
+          position: "bottom",
+          visibilityTime: 4000,
+        });
+      } else {
+        // Use regular request function for all other dates
+        await userSubmitRequest(selectedDate, leaveType);
+        Toast.show({
+          type: "success",
+          text1: "Success",
+          text2: "Request submitted successfully!",
+          position: "bottom",
+          visibilityTime: 3000,
+        });
+      }
+
       setRequestDialogVisible(false);
-      Toast.show({
-        type: "success",
-        text1: "Success",
-        text2: "Request submitted successfully!",
-        position: "bottom",
-        visibilityTime: 3000,
-      });
     } catch (err) {
       console.error("[CalendarScreen] Error submitting request:", err);
       Toast.show({

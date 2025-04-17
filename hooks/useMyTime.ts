@@ -78,8 +78,7 @@ interface SixMonthRequest {
   processed_at?: string;
   final_status?: string;
   position?: number;
-  division: string;
-  calendar_id?: string;
+  calendar_id: string;
 }
 
 export function useMyTime() {

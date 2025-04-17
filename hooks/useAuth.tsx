@@ -105,8 +105,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
         // Check if we're currently on the change-password route
         const isInPasswordResetFlow =
           // For web platforms
-          (typeof window !== "undefined" &&
-            (window.location.pathname.includes("/change-password") || source === "exchangeCodeForSession")) ||
+          (Platform.OS === "web" &&
+            typeof window !== "undefined" &&
+            window.location &&
+            window.location.pathname &&
+            window.location.pathname.includes("/change-password")) ||
+          source === "exchangeCodeForSession" ||
           // For mobile platforms, check the source
           (Platform.OS !== "web" && (source === "exchangeCodeForSession" || source.includes("recovery")));
 
@@ -486,7 +490,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
       // Special flag to prevent redirects during password reset
       const isPasswordReset =
         // For web platforms
-        (typeof window !== "undefined" && window.location.pathname.includes("/change-password")) ||
+        (Platform.OS === "web" &&
+          typeof window !== "undefined" &&
+          window.location &&
+          window.location.pathname &&
+          window.location.pathname.includes("/change-password")) ||
         // For mobile platforms, we'll assume code exchange is for password reset
         // unless we can determine otherwise
         Platform.OS !== "web";
@@ -514,7 +522,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       // Use the session data if needed but don't return it
       if (data.session) {
         // Set a flag to prevent redirects before calling updateAuthState
-        if (isPasswordReset && typeof window !== "undefined") {
+        if (isPasswordReset && Platform.OS === "web" && typeof window !== "undefined") {
           window.__passwordResetInProgress = true;
         }
 
@@ -543,7 +551,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         }
 
         // For password reset flow, we want to stay on the change-password page
-        if (isPasswordReset && typeof window !== "undefined") {
+        if (isPasswordReset && Platform.OS === "web" && typeof window !== "undefined") {
           // Add a small delay to ensure state is updated
           setTimeout(() => {
             // Don't automatically clear the flag - let the component handle this
