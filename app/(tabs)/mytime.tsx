@@ -19,7 +19,7 @@ import { Colors } from "@/constants/Colors";
 import { Feather } from "@expo/vector-icons";
 import { useMyTime, UserVacationRequest } from "@/hooks/useMyTime";
 import { format } from "date-fns-tz";
-import { parseISO, isWithinInterval } from "date-fns";
+import { parseISO, isWithinInterval, isBefore, addDays } from "date-fns";
 import { useFocusEffect } from "@react-navigation/native";
 import { useUserStore } from "@/store/userStore";
 import { useAuth } from "@/hooks/useAuth";
@@ -92,6 +92,14 @@ function RequestRow({ request, onCancel, onCancelSixMonth }: RequestRowProps) {
   const positionAnim = useRef(new Animated.Value(1)).current;
   const prevPosition = useRef(request.waitlist_position);
 
+  // Add check for 48-hour window
+  const isWithin48Hours = useMemo(() => {
+    const now = new Date();
+    const requestDate = parseISO(request.request_date);
+    const fortyEightHoursFromNow = addDays(now, 2);
+    return isBefore(requestDate, fortyEightHoursFromNow);
+  }, [request.request_date]);
+
   useEffect(() => {
     if (request.waitlist_position !== prevPosition.current) {
       positionAnim.setValue(0);
@@ -159,7 +167,8 @@ function RequestRow({ request, onCancel, onCancelSixMonth }: RequestRowProps) {
         <ThemedText style={styles.type}>{request.leave_type}</ThemedText>
       </ThemedView>
       {(request.status === "pending" || request.status === "approved" || request.is_six_month_request) &&
-        parseISO(request.request_date) > new Date() && (
+        parseISO(request.request_date) > new Date() &&
+        !isWithin48Hours && (
           <ThemedTouchableOpacity
             style={styles.cancelButton}
             onPress={() => (request.is_six_month_request ? onCancelSixMonth(request) : onCancel(request))}
@@ -167,6 +176,11 @@ function RequestRow({ request, onCancel, onCancelSixMonth }: RequestRowProps) {
             <Feather name="x-circle" size={24} color={Colors[colorScheme ?? "light"].error} />
           </ThemedTouchableOpacity>
         )}
+      {isWithin48Hours && (request.status === "pending" || request.status === "approved") && (
+        <ThemedView style={styles.infoContainer}>
+          <ThemedText style={styles.infoText}>Cannot cancel within 48 hours</ThemedText>
+        </ThemedView>
+      )}
     </ThemedView>
   );
 }
@@ -388,6 +402,7 @@ export default function MyTimeScreen() {
     requestPaidInLieu,
     cancelRequest,
     cancelSixMonthRequest,
+    syncStatus,
   } = useMyTime();
 
   // Calculate responsive card width
@@ -412,7 +427,7 @@ export default function MyTimeScreen() {
     }, [member?.id])
   );
 
-  // Memoize the filtered and sorted requests (including vacation requests)
+  // Memoize the filtered and sorted requests
   const { pendingAndApproved, waitlisted, sortedVacationRequests } = useMemo(() => {
     // Sort PLD/SDV/6mo requests
     const pendingAndApproved = sortRequestsByDate(
@@ -428,13 +443,8 @@ export default function MyTimeScreen() {
     waitlisted.future.sort((a, b) => parseISO(a.request_date).getTime() - parseISO(b.request_date).getTime());
     waitlisted.past.sort((a, b) => parseISO(b.request_date).getTime() - parseISO(a.request_date).getTime());
 
-    // Sort vacation requests using the new function
     const sortedVacationRequests = sortVacationRequestsByDate(vacationRequests);
-
-    // Sort future dates ascending (closest first)
     sortedVacationRequests.future.sort((a, b) => parseISO(a.start_date).getTime() - parseISO(b.start_date).getTime());
-
-    // Sort past dates descending (most recent first)
     sortedVacationRequests.past.sort((a, b) => parseISO(b.start_date).getTime() - parseISO(a.start_date).getTime());
 
     return { pendingAndApproved, waitlisted, sortedVacationRequests };
@@ -614,6 +624,21 @@ export default function MyTimeScreen() {
         ]}
         contentContainerStyle={styles.contentContainer}
       >
+        {/* Add sync status indicator */}
+        {syncStatus.isSyncing && (
+          <ThemedView style={styles.syncIndicator}>
+            <ActivityIndicator size="small" color={Colors[colorScheme ?? "light"].tint} />
+            <ThemedText style={styles.syncText}>Syncing...</ThemedText>
+          </ThemedView>
+        )}
+
+        {syncStatus.error && (
+          <ThemedView style={styles.errorIndicator}>
+            <Feather name="alert-circle" size={16} color={Colors[colorScheme ?? "light"].error} />
+            <ThemedText style={styles.errorText}>{syncStatus.error}</ThemedText>
+          </ThemedView>
+        )}
+
         {stats && <RolloverWarningBanner unusedPlds={stats.rolledOver.unusedPlds} />}
         <ThemedView style={[styles.card, { width: cardWidth }]}>
           <ThemedView style={styles.sectionHeader}>
@@ -1077,5 +1102,46 @@ const styles = StyleSheet.create({
     flex: 1,
     marginLeft: 12,
     fontSize: 16,
+  },
+  syncIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 8,
+    backgroundColor: Colors.dark.card,
+    borderRadius: 8,
+    marginBottom: 8,
+    width: "100%",
+  },
+  syncText: {
+    marginLeft: 8,
+    fontSize: 14,
+  },
+  errorIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    backgroundColor: Colors.dark.error + "20",
+    borderRadius: 8,
+    marginBottom: 8,
+    width: "100%",
+  },
+  errorText: {
+    marginLeft: 8,
+    fontSize: 14,
+    color: Colors.dark.error,
+  },
+  infoContainer: {
+    flex: 1,
+    alignItems: "flex-end",
+    justifyContent: "center",
+    paddingRight: 16,
+  },
+  infoText: {
+    fontSize: 12,
+    fontStyle: "italic",
+    opacity: 0.7,
   },
 });

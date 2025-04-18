@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/utils/supabase";
 import { useAuth } from "./useAuth";
 import { RealtimeChannel } from "@supabase/supabase-js";
@@ -81,6 +81,17 @@ interface SixMonthRequest {
   calendar_id: string;
 }
 
+interface SyncStatus {
+  isSyncing: boolean;
+  lastSyncAttempt: Date | null;
+  lastSuccessfulSync: Date | null;
+  failedAttempts: number;
+  error: string | null;
+}
+
+const MAX_RETRY_ATTEMPTS = 5;
+const RETRY_DELAY = 1000; // 1 second
+
 export function useMyTime() {
   const [stats, setStats] = useState<TimeStats | null>(null);
   const [requests, setRequests] = useState<TimeOffRequest[]>([]);
@@ -101,6 +112,13 @@ export function useMyTime() {
   const isFetchInProgressRef = useRef(false);
   const REFRESH_COOLDOWN = 1000; // 1 second cooldown
   const initialAuthLoadCompleteRef = useRef(false);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>({
+    isSyncing: false,
+    lastSyncAttempt: null,
+    lastSuccessfulSync: null,
+    failedAttempts: 0,
+    error: null,
+  });
 
   const fetchStats = useCallback(async () => {
     if (!member?.id) {
@@ -489,39 +507,39 @@ export function useMyTime() {
           req.id === requestId && !req.is_six_month_request
         );
 
+        if (!requestToCancel) {
+          throw new Error("Request not found");
+        }
+
+        // Optimistically update the UI state
+        setRequests((prevRequests) =>
+          prevRequests.map((req) =>
+            req.id === requestId
+              ? { ...req, status: "cancellation_pending" as const }
+              : req
+          )
+        );
+
         // Call the database function to handle cancellation logic
         const { data, error } = await supabase.rpc("cancel_leave_request", {
           p_request_id: requestId,
           p_member_id: member.id,
         });
 
-        if (error) throw error;
-
-        // Send notification to user
-        // TODO: Verify column names (e.g., member_id vs user_id) and uncomment
-        /*
-        try {
-          await supabase.from("push_notification_deliveries").insert({
-            member_id: member.id,
-            title: data
-              ? "Request Cancelled"
-              : "Cancellation Request Submitted",
-            body: data
-              ? "Your request has been cancelled."
-              : "Your cancellation request has been submitted for approval.",
-            data: {
-              type: "leave_request",
-              request_id: requestId,
-              status: data ? "cancelled" : "cancellation_pending",
-            },
-          });
-        } catch (notificationError) {
-          console.warn(
-            "[MyTime] Failed to send notification:",
-            notificationError,
+        if (error) {
+          // Revert optimistic update on error
+          setRequests((prevRequests) =>
+            prevRequests.map((req) =>
+              req.id === requestId ? requestToCancel : req
+            )
           );
+          throw error;
         }
-        */
+
+        // If immediate cancellation (data is true), update stats
+        if (data) {
+          await fetchStats();
+        }
 
         // Calendar Store Interaction Update
         if (requestToCancel?.request_date) {
@@ -538,25 +556,20 @@ export function useMyTime() {
 
           calendarStore.setRequests({
             ...calendarStore.requests,
-            [requestToCancel.request_date]: updatedRequests,
+            [requestToCancel.request_date]: updatedRequests as any, // Type assertion needed due to complex types
           });
           console.log(
             `[MyTime] Updated calendarStore for date: ${requestToCancel.request_date} with status: ${newStatus}`,
           );
-        } else {
-          console.warn(
-            "[MyTime] Could not update calendar store - request date unknown locally.",
-          );
         }
 
-        // Local state update will be handled by realtime or next refreshData
         return true;
       } catch (err) {
         console.error("[MyTime] Error cancelling request:", err);
         throw err;
       }
     },
-    [member?.id, requests],
+    [member?.id, requests, fetchStats],
   );
 
   const cancelSixMonthRequest = useCallback(
@@ -567,20 +580,21 @@ export function useMyTime() {
       }
 
       try {
-        console.log("[useMyTime] Cancelling six-month request:", requestId);
+        // Find the request in local state
+        const requestToCancel = requests.find(
+          (req) => req.id === requestId && req.is_six_month_request,
+        );
 
-        // First verify the request exists and belongs to the member
-        const { data: existingRequest, error: fetchError } = await supabase
-          .from("six_month_requests")
-          .select("*")
-          .eq("id", requestId)
-          .eq("member_id", member.id)
-          .single();
-
-        if (fetchError || !existingRequest) {
-          console.error("[useMyTime] Failed to fetch request:", fetchError);
-          return false;
+        if (!requestToCancel) {
+          throw new Error("Six-month request not found");
         }
+
+        // Optimistically remove from UI
+        setRequests((prevRequests) =>
+          prevRequests.filter((req) =>
+            !(req.id === requestId && req.is_six_month_request)
+          )
+        );
 
         // Delete the request
         const { error: deleteError } = await supabase
@@ -590,21 +604,12 @@ export function useMyTime() {
           .eq("member_id", member.id);
 
         if (deleteError) {
-          console.error("[useMyTime] Failed to delete request:", deleteError);
-          return false;
+          // Revert optimistic update on error
+          setRequests((prevRequests) => [...prevRequests, requestToCancel]);
+          throw deleteError;
         }
 
-        console.log(
-          "[useMyTime] Successfully deleted six-month request:",
-          requestId,
-        );
-
-        // Update local state immediately
-        setRequests((prev) =>
-          prev.filter((r) => !(r.id === requestId && r.is_six_month_request))
-        );
-
-        // Refresh stats to ensure they're in sync
+        // Update stats since a request was removed
         await fetchStats();
 
         return true;
@@ -613,7 +618,7 @@ export function useMyTime() {
         return false;
       }
     },
-    [member?.id, fetchStats],
+    [member?.id, requests, fetchStats],
   );
 
   const refreshData = useCallback(async (force = false) => {
@@ -674,13 +679,89 @@ export function useMyTime() {
     isInitialized,
   ]);
 
+  const handleRealtimeChange = useCallback(
+    async (payload: RealtimePostgresChangesPayload<any>) => {
+      const { eventType, new: newRecord, old: oldRecord, table } = payload;
+
+      switch (table) {
+        case "pld_sdv_requests":
+          if (eventType === "INSERT") {
+            setRequests(
+              (prev) => [...prev, transformToTimeOffRequest(newRecord)],
+            );
+          } else if (eventType === "UPDATE") {
+            setRequests((prev) =>
+              prev.map((req) =>
+                req.id === newRecord.id
+                  ? transformToTimeOffRequest(newRecord)
+                  : req
+              )
+            );
+          } else if (eventType === "DELETE") {
+            setRequests((prev) =>
+              prev.filter((req) => req.id !== oldRecord.id)
+            );
+          }
+          // Refresh stats since they need recalculation
+          await retryableOperation(fetchStats);
+          break;
+
+        case "six_month_requests":
+          if (eventType === "INSERT") {
+            setRequests((prev) => [...prev, {
+              ...transformToTimeOffRequest(newRecord),
+              is_six_month_request: true,
+            }]);
+          } else if (eventType === "DELETE") {
+            setRequests((prev) =>
+              prev.filter((req) =>
+                !(req.id === oldRecord.id && req.is_six_month_request)
+              )
+            );
+          }
+          await retryableOperation(fetchStats);
+          break;
+
+        case "vacation_requests":
+          if (eventType === "INSERT") {
+            setVacationRequests((prev) => [...prev, {
+              id: newRecord.id,
+              start_date: newRecord.start_date,
+              end_date: newRecord.end_date,
+              status: newRecord.status,
+              requested_at: newRecord.requested_at ?? new Date(0).toISOString(),
+            }]);
+          } else if (eventType === "UPDATE") {
+            setVacationRequests((prev) =>
+              prev.map((req) =>
+                req.id === newRecord.id
+                  ? {
+                    ...req,
+                    start_date: newRecord.start_date,
+                    end_date: newRecord.end_date,
+                    status: newRecord.status,
+                    requested_at: newRecord.requested_at ?? req.requested_at,
+                  }
+                  : req
+              )
+            );
+          } else if (eventType === "DELETE") {
+            setVacationRequests((prev) =>
+              prev.filter((req) => req.id !== oldRecord.id)
+            );
+          }
+          break;
+      }
+    },
+    [fetchStats],
+  );
+
   useIsomorphicLayoutEffect(() => {
-    if (!member?.id || !member.pin_number /* || !session */) {
-      console.log(
-        "[MyTime] Skipping realtime setup - no member ID or PIN",
-      );
+    if (!member?.id || !member.pin_number) {
+      console.log("[MyTime] Skipping realtime setup - no member ID or PIN");
       return;
     }
+
     console.log("[MyTime] Setting up realtime subscriptions");
     const regularRequestsChannel = supabase
       .channel("mytime-regular")
@@ -692,12 +773,7 @@ export function useMyTime() {
           table: "pld_sdv_requests",
           filter: `member_id=eq.${member.id}`,
         },
-        async (payload: RealtimePostgresChangesPayload<TimeOffRequest>) => {
-          console.log(
-            "[MyTime] Realtime regular request change detected, triggering refreshData.",
-          );
-          await refreshData();
-        },
+        handleRealtimeChange,
       )
       .subscribe();
 
@@ -711,12 +787,7 @@ export function useMyTime() {
           table: "six_month_requests",
           filter: `member_id=eq.${member.id}`,
         },
-        async () => {
-          console.log(
-            "[MyTime] Realtime six-month request change detected, triggering refreshData.",
-          );
-          await refreshData();
-        },
+        handleRealtimeChange,
       )
       .subscribe();
 
@@ -730,12 +801,7 @@ export function useMyTime() {
           table: "vacation_requests",
           filter: `pin_number=eq.${member.pin_number}`,
         },
-        async () => {
-          console.log(
-            "[MyTime] Realtime vacation request change detected, triggering refreshData.",
-          );
-          await refreshData();
-        },
+        handleRealtimeChange,
       )
       .subscribe();
 
@@ -745,7 +811,7 @@ export function useMyTime() {
       sixMonthRequestsChannel.unsubscribe();
       vacationRequestsChannel.unsubscribe();
     };
-  }, [member?.id, member?.pin_number, refreshData]);
+  }, [member?.id, member?.pin_number, handleRealtimeChange]);
 
   useEffect(() => {
     if (member?.id && session && !initialAuthLoadCompleteRef.current) {
@@ -812,6 +878,61 @@ export function useMyTime() {
     };
   }, []);
 
+  // Add transform helper function
+  const transformToTimeOffRequest = (record: any): TimeOffRequest => ({
+    id: record.id,
+    request_date: record.request_date,
+    leave_type: record.leave_type,
+    status: record.status,
+    requested_at: record.requested_at ?? "",
+    waitlist_position: record.waitlist_position,
+    paid_in_lieu: record.paid_in_lieu,
+    is_six_month_request: false,
+    calendar_id: record.calendar_id,
+  });
+
+  // Add retryable operation helper
+  const retryableOperation = async (operation: () => Promise<void>) => {
+    setSyncStatus((prev) => ({
+      ...prev,
+      isSyncing: true,
+      lastSyncAttempt: new Date(),
+    }));
+
+    try {
+      await operation();
+      setSyncStatus((prev) => ({
+        ...prev,
+        isSyncing: false,
+        lastSuccessfulSync: new Date(),
+        failedAttempts: 0,
+        error: null,
+      }));
+    } catch (error) {
+      const newFailedAttempts = syncStatus.failedAttempts + 1;
+
+      if (newFailedAttempts < MAX_RETRY_ATTEMPTS) {
+        setSyncStatus((prev) => ({
+          ...prev,
+          failedAttempts: newFailedAttempts,
+          error: `Retry attempt ${newFailedAttempts} of ${MAX_RETRY_ATTEMPTS}`,
+        }));
+
+        await new Promise((resolve) =>
+          setTimeout(resolve, RETRY_DELAY * Math.pow(2, newFailedAttempts - 1))
+        );
+        await retryableOperation(operation);
+      } else {
+        setSyncStatus((prev) => ({
+          ...prev,
+          isSyncing: false,
+          failedAttempts: newFailedAttempts,
+          error: "Max retry attempts reached. Please try again later.",
+        }));
+      }
+    }
+  };
+
   return {
     stats,
     requests,
@@ -824,5 +945,6 @@ export function useMyTime() {
     requestPaidInLieu,
     cancelRequest,
     cancelSixMonthRequest,
+    syncStatus,
   };
 }

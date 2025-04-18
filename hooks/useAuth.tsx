@@ -45,6 +45,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [userRole, setUserRole] = useState<UserRole | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [appState, setAppState] = useState(AppState.currentState);
+  const [isCompanyAdmin, setIsCompanyAdmin] = useState(false);
 
   // Add refs to track auth state
   const isUpdatingAuth = useRef(false);
@@ -402,13 +403,64 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const signOut = useCallback(async () => {
     try {
-      // updateAuthState will be triggered by onAuthStateChange
-      const { error } = await supabase.auth.signOut();
-      if (error) throw error;
-      console.log("[Auth] Sign out successful trigger");
+      console.log("[Auth] Attempting to sign out");
+
+      // Reset application state first
+      setSession(null);
+      setUser(null);
+      setMember(null);
+      setUserRole(null);
+      setIsCompanyAdmin(false);
+
+      // If on Web, clear ALL Supabase-related localStorage items
+      if (Platform.OS === "web" && typeof window !== "undefined") {
+        try {
+          // Create a list of all keys that might contain Supabase auth data
+          const supabaseKeys = [];
+
+          // Scan for all supabase-related keys in localStorage
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (
+              key &&
+              (key.includes("supabase") ||
+                key.includes("sb-") ||
+                key.includes("auth") ||
+                key.startsWith("ymkihdiegkqbeegfebse"))
+            ) {
+              supabaseKeys.push(key);
+            }
+          }
+
+          // Remove all found keys
+          supabaseKeys.forEach((key) => {
+            localStorage.removeItem(key);
+            console.log(`[Auth] Cleared localStorage item: ${key}`);
+          });
+
+          console.log(`[Auth] Cleared ${supabaseKeys.length} localStorage items related to auth`);
+        } catch (storageError) {
+          console.warn("[Auth] Error clearing local storage:", storageError);
+        }
+      }
+
+      // Try to sign out with Supabase (after clearing state)
+      try {
+        const { error } = await supabase.auth.signOut();
+        if (error) {
+          console.warn("[Auth] Sign out API call error, but continuing:", error);
+        } else {
+          console.log("[Auth] Sign out successful trigger");
+        }
+      } catch (error: any) {
+        // Log but continue - don't break the signout flow
+        console.warn("[Auth] Sign out API call exception, but continuing:", error?.message || error);
+      }
+
+      console.log("[Auth] Application state reset after signout");
     } catch (error) {
-      console.error("[Auth] Sign out error:", error);
-      throw error; // Re-throw
+      // Log but don't throw - we want the UI to continue to the login page
+      console.error("[Auth] Error in signOut function:", error);
     }
   }, []);
 
