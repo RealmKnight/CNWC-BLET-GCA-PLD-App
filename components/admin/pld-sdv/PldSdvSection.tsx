@@ -65,6 +65,8 @@ export function PldSdvSection() {
   const [selectedDenialReason, setSelectedDenialReason] = useState<number | null>(null);
   const [denialComment, setDenialComment] = useState("");
   const [isRequestLoading, setIsRequestLoading] = useState(false);
+  const [isConfirmationModalVisible, setIsConfirmationModalVisible] = useState(false);
+  const [confirmationType, setConfirmationType] = useState<"approve" | "cancellation">("approve");
 
   // Memoize the fetchPendingRequests callback
   const fetchPendingRequests = useCallback(async () => {
@@ -348,15 +350,25 @@ export function PldSdvSection() {
 
   // Handle request approval
   const handleApprove = async (request: PendingRequest) => {
+    setSelectedRequest(request);
+    setConfirmationType("approve");
+    setIsConfirmationModalVisible(true);
+  };
+
+  // Create a new function to handle the actual approval after confirmation
+  const confirmApprove = async () => {
+    if (!selectedRequest) return;
+
+    setIsConfirmationModalVisible(false);
     setIsRequestLoading(true);
     try {
       // Log the request data for debugging
       console.log("Processing approval request:", {
-        id: request.id,
-        pin: request.pin_number,
-        date: request.request_date,
-        type: request.leave_type,
-        paid_in_lieu: request.paid_in_lieu,
+        id: selectedRequest.id,
+        pin: selectedRequest.pin_number,
+        date: selectedRequest.request_date,
+        type: selectedRequest.leave_type,
+        paid_in_lieu: selectedRequest.paid_in_lieu,
       });
 
       const { error } = await supabase
@@ -368,7 +380,7 @@ export function PldSdvSection() {
           responded_at: new Date().toISOString(),
           responded_by: user?.id,
         })
-        .eq("id", request.id);
+        .eq("id", selectedRequest.id);
 
       if (error) throw error;
 
@@ -377,20 +389,20 @@ export function PldSdvSection() {
 
       // Get and validate the recipient's PIN number from the request
       try {
-        const recipientPin = getRecipientPinNumber(request.pin_number);
+        const recipientPin = getRecipientPinNumber(selectedRequest.pin_number);
 
         // Determine notification title and message based on request type and paid_in_lieu status
-        const notificationTitle = request.paid_in_lieu
-          ? `${request.leave_type} Paid in Lieu Approved`
-          : `${request.leave_type} Day Off Approved`;
+        const notificationTitle = selectedRequest.paid_in_lieu
+          ? `${selectedRequest.leave_type} Paid in Lieu Approved`
+          : `${selectedRequest.leave_type} Day Off Approved`;
 
-        const notificationMessage = request.paid_in_lieu
-          ? `Your ${request.leave_type} payment request for ${format(
-              parseISO(request.request_date),
+        const notificationMessage = selectedRequest.paid_in_lieu
+          ? `Your ${selectedRequest.leave_type} payment request for ${format(
+              parseISO(selectedRequest.request_date),
               "MMM d, yyyy"
             )} has been approved. Please verify in CATS.`
-          : `Your ${request.leave_type} day off request for ${format(
-              parseISO(request.request_date),
+          : `Your ${selectedRequest.leave_type} day off request for ${format(
+              parseISO(selectedRequest.request_date),
               "MMM d, yyyy"
             )} has been approved. Please verify in CATS.`;
 
@@ -430,6 +442,7 @@ export function PldSdvSection() {
       }
     } finally {
       setIsRequestLoading(false);
+      setSelectedRequest(null);
     }
   };
 
@@ -523,14 +536,24 @@ export function PldSdvSection() {
 
   // Handle cancellation approval
   const handleCancellationApproval = async (request: PendingRequest) => {
+    setSelectedRequest(request);
+    setConfirmationType("cancellation");
+    setIsConfirmationModalVisible(true);
+  };
+
+  // Create a new function to handle the actual cancellation approval after confirmation
+  const confirmCancellationApproval = async () => {
+    if (!selectedRequest) return;
+
+    setIsConfirmationModalVisible(false);
     setIsRequestLoading(true);
     try {
       // Log the request data for debugging
       console.log("Processing cancellation request:", {
-        id: request.id,
-        pin: request.pin_number,
-        date: request.request_date,
-        type: request.leave_type,
+        id: selectedRequest.id,
+        pin: selectedRequest.pin_number,
+        date: selectedRequest.request_date,
+        type: selectedRequest.leave_type,
       });
 
       const { error } = await supabase
@@ -542,7 +565,7 @@ export function PldSdvSection() {
           responded_at: new Date().toISOString(),
           responded_by: user?.id,
         })
-        .eq("id", request.id);
+        .eq("id", selectedRequest.id);
 
       if (error) throw error;
 
@@ -551,15 +574,15 @@ export function PldSdvSection() {
 
       // Get and validate the recipient's PIN number from the request
       try {
-        const recipientPin = getRecipientPinNumber(request.pin_number);
+        const recipientPin = getRecipientPinNumber(selectedRequest.pin_number);
 
         // Send notification
         await sendMessageWithNotification(
           senderPin,
           [recipientPin],
           "Leave Request Cancellation Approved",
-          `Your cancellation request for ${request.leave_type} on ${format(
-            parseISO(request.request_date),
+          `Your cancellation request for ${selectedRequest.leave_type} on ${format(
+            parseISO(selectedRequest.request_date),
             "MMM d, yyyy"
           )} has been approved. Please verify in CATS.`,
           false,
@@ -591,7 +614,7 @@ export function PldSdvSection() {
               responded_at: new Date().toISOString(),
               responded_by: user?.id,
             })
-            .eq("id", request.id);
+            .eq("id", selectedRequest.id);
 
           Alert.alert(
             "Partial Success",
@@ -607,6 +630,7 @@ export function PldSdvSection() {
       }
     } finally {
       setIsRequestLoading(false);
+      setSelectedRequest(null);
     }
   };
 
@@ -773,6 +797,77 @@ export function PldSdvSection() {
           </Button>
         </View>
       </Modal>
+
+      <Modal
+        visible={isConfirmationModalVisible}
+        onClose={() => {
+          setIsConfirmationModalVisible(false);
+          setSelectedRequest(null);
+        }}
+        title={confirmationType === "approve" ? "Confirm Approval" : "Confirm Cancellation"}
+      >
+        <View style={styles.modalContent}>
+          {selectedRequest && (
+            <>
+              <View style={styles.requestDetail}>
+                <Text style={styles.detailLabel}>Member:</Text>
+                <Text style={styles.detailValue}>
+                  {selectedRequest.pin_number} - {selectedRequest.first_name} {selectedRequest.last_name}
+                </Text>
+              </View>
+
+              <View style={styles.requestDetail}>
+                <Text style={styles.detailLabel}>Date:</Text>
+                <Text style={styles.detailValue}>{format(parseISO(selectedRequest.request_date), "MMM d, yyyy")}</Text>
+              </View>
+
+              <View style={styles.requestDetail}>
+                <Text style={styles.detailLabel}>Type:</Text>
+                <Text style={styles.detailValue}>
+                  {selectedRequest.leave_type}
+                  {selectedRequest.paid_in_lieu && " - To Be Paid In Lieu"}
+                </Text>
+              </View>
+
+              {selectedRequest.division && (
+                <View style={styles.requestDetail}>
+                  <Text style={styles.detailLabel}>Division:</Text>
+                  <Text style={styles.detailValue}>{selectedRequest.division}</Text>
+                </View>
+              )}
+
+              {selectedRequest.calendar_name && (
+                <View style={styles.requestDetail}>
+                  <Text style={styles.detailLabel}>Calendar:</Text>
+                  <Text style={styles.detailValue}>{selectedRequest.calendar_name}</Text>
+                </View>
+              )}
+
+              <Text style={styles.confirmationWarning}>
+                {confirmationType === "approve"
+                  ? "Are you sure you want to approve this request?"
+                  : "Are you sure you want to approve this cancellation request?"}
+              </Text>
+
+              <View style={styles.confirmButtons}>
+                <Button
+                  variant="secondary"
+                  onPress={() => setIsConfirmationModalVisible(false)}
+                  style={styles.cancelButton}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onPress={confirmationType === "approve" ? confirmApprove : confirmCancellationApproval}
+                  style={styles.confirmButton}
+                >
+                  Confirm
+                </Button>
+              </View>
+            </>
+          )}
+        </View>
+      </Modal>
     </Container>
   );
 }
@@ -890,5 +985,30 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.light.textDim,
     marginHorizontal: 4,
+  },
+  requestDetail: {
+    marginBottom: 8,
+    flexDirection: "row",
+  },
+  detailLabel: {
+    fontWeight: "bold",
+    width: 80,
+  },
+  detailValue: {
+    flex: 1,
+  },
+  confirmationWarning: {
+    marginTop: 16,
+    fontWeight: "500",
+    textAlign: "center",
+  },
+  confirmButtons: {
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 12,
+    marginTop: 16,
+  },
+  cancelButton: {
+    flex: 1,
   },
 });

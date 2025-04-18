@@ -150,7 +150,7 @@ const MemberItem = React.memo(
         return (
           <View style={styles.sdvContainer}>
             <View style={styles.sdvSection}>
-              <ThemedText style={styles.sdvLabel}>SDV Entitlement</ThemedText>
+              <ThemedText style={styles.sdvLabel}>SDV Allotment</ThemedText>
               {isEditing ? (
                 <TextInput
                   style={[styles.sdvInput, { color: Colors[colorScheme].text }]}
@@ -177,23 +177,6 @@ const MemberItem = React.memo(
                 <ThemedText style={styles.sdvValue}>{item.sdv_election || 0}</ThemedText>
               )}
             </View>
-
-            <TouchableOpacityComponent
-              style={styles.editButton}
-              onPress={() => {
-                if (isEditing && hasChanges) {
-                  handleSave();
-                } else {
-                  setIsEditing(!isEditing);
-                }
-              }}
-            >
-              <Ionicons
-                name={isEditing ? (hasChanges ? "save" : "close") : "create"}
-                size={20}
-                color={Colors[colorScheme].text}
-              />
-            </TouchableOpacityComponent>
           </View>
         );
       }
@@ -204,60 +187,7 @@ const MemberItem = React.memo(
           <TouchableOpacityComponent
             style={[styles.mobileSDVButton, isExpanded && styles.mobileSDVButtonExpanded]}
             onPress={() => setIsExpanded(!isExpanded)}
-          >
-            <View style={styles.mobileSDVButtonContent}>
-              <ThemedText style={styles.mobileSDVButtonText}>SDV Values {isExpanded ? "▼" : "▶"}</ThemedText>
-            </View>
-          </TouchableOpacityComponent>
-
-          {isExpanded && (
-            <View style={styles.mobileSDVContent}>
-              <View style={styles.mobileSDVRow}>
-                <ThemedText style={styles.mobileSDVLabel}>SDV Entitlement:</ThemedText>
-                {isEditing ? (
-                  <TextInput
-                    style={[styles.mobileSDVInput, { color: Colors[colorScheme].text }]}
-                    value={entitlement}
-                    onChangeText={(text) => handleTextInput(text, setEntitlement)}
-                    keyboardType="numeric"
-                    maxLength={2}
-                  />
-                ) : (
-                  <ThemedText style={styles.mobileSDVValue}>{item.sdv_entitlement || 0}</ThemedText>
-                )}
-              </View>
-              <View style={styles.mobileSDVRow}>
-                <ThemedText style={styles.mobileSDVLabel}>SDV Election:</ThemedText>
-                {isEditing ? (
-                  <TextInput
-                    style={[styles.mobileSDVInput, { color: Colors[colorScheme].text }]}
-                    value={election}
-                    onChangeText={(text) => handleTextInput(text, setElection)}
-                    keyboardType="numeric"
-                    maxLength={2}
-                  />
-                ) : (
-                  <ThemedText style={styles.mobileSDVValue}>{item.sdv_election || 0}</ThemedText>
-                )}
-              </View>
-              <TouchableOpacityComponent
-                style={styles.mobileEditButton}
-                onPress={() => {
-                  if (isEditing && hasChanges) {
-                    handleSave();
-                  } else {
-                    setIsEditing(!isEditing);
-                  }
-                }}
-              >
-                <Ionicons
-                  name={isEditing ? (hasChanges ? "save" : "close") : "create"}
-                  size={20}
-                  color={Colors[colorScheme].text}
-                />
-              </TouchableOpacityComponent>
-            </View>
-          )}
+          ></TouchableOpacityComponent>
         </View>
       );
     };
