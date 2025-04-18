@@ -177,65 +177,89 @@ export function AuthProvider({ children }: AuthProviderProps) {
         setUser(newUser);
 
         if (newUser) {
-          const isCompanyAdmin = newUser.user_metadata?.role === "company_admin";
-          if (isCompanyAdmin) {
-            console.log("[Auth] User is a company admin, skipping member data fetch");
+          // Explicitly fetch the user again to ensure metadata is loaded
+          const {
+            data: { user: refreshedUser },
+            error: refreshError,
+          } = await supabase.auth.getUser();
+
+          if (refreshError) {
+            console.error("[Auth] Error refreshing user data:", refreshError);
+            // Handle error appropriately, maybe clear state?
             setMember(null);
             setUserRole(null);
             useUserStore.getState().reset();
-            setTimeout(() => {
-              try {
-                router.replace("/company-admin");
-              } catch (error) {
-                console.warn("[Auth] Navigation failed during admin redirect:", error);
-              }
-            }, 100);
-            // Return early AFTER setting state but BEFORE resetting loading potentially
-            // The finally block will handle isLoading
-            return;
-          }
+            // Potentially throw or return
+          } else if (refreshedUser) {
+            console.log(
+              "[Auth] Refreshed user data obtained, checking role:",
+              refreshedUser.email,
+              refreshedUser.user_metadata
+            );
+            // *** Use refreshedUser for role check ***
+            const isCompanyAdmin = refreshedUser.user_metadata?.role === "company_admin";
+            setIsCompanyAdmin(isCompanyAdmin); // Set the derived state
 
-          console.log("[Auth] User is not a company admin, proceeding with member data fetch");
-          try {
-            const currentMemberId = member?.id; // Get from state
-            const shouldSkipMemberFetch =
-              source.includes("USER_UPDATED") ||
-              source.includes("APP_STATE") ||
-              (source.includes("state_change_SIGNED_IN") && currentMemberId === newUser.id) ||
-              (source === "initial" && currentMemberId === newUser.id) ||
-              (initialAuthCompleteRef.current && currentMemberId === newUser.id);
-
-            if (!shouldSkipMemberFetch) {
-              console.log("[Auth] Fetching member data for non-admin user:", newUser.id);
-              const memberData = await fetchMemberData(newUser.id); // Use memoized version
-              if (memberData) {
-                console.log("[Auth] Setting member data and role:", {
-                  id: memberData.id,
-                  role: memberData.role,
-                  divisionId: memberData.division_id, // Log new ID
-                  calendarId: memberData.calendar_id, // Log new ID
-                });
-                setMember(memberData);
-                setUserRole(memberData.role as UserRole);
-                useUserStore.getState().setMember(memberData);
-                useUserStore.getState().setUserRole(memberData.role as UserRole);
-              } else {
-                console.warn("[Auth] No member data found for user:", newUser.id);
-                setMember(null);
-                setUserRole(null);
-                useUserStore.getState().reset();
-              }
-            } else {
-              console.log("[Auth] Skipping member fetch for:", source);
+            if (isCompanyAdmin) {
+              console.log("[Auth] User is a company admin, skipping member data fetch");
+              setMember(null);
+              setUserRole(null);
+              useUserStore.getState().reset();
+              // Return early AFTER setting state but BEFORE resetting loading potentially
+              // The finally block will handle isLoading
+              return;
             }
-          } catch (error) {
-            console.error("[Auth] Error during member data fetch:", error);
+
+            console.log("[Auth] User is not a company admin, proceeding with member data fetch");
+            try {
+              const currentMemberId = member?.id; // Get from state
+              // Use refreshedUser.id for checks
+              const shouldSkipMemberFetch =
+                source.includes("USER_UPDATED") ||
+                source.includes("APP_STATE") ||
+                (source.includes("state_change_SIGNED_IN") && currentMemberId === refreshedUser.id) ||
+                (source === "initial" && currentMemberId === refreshedUser.id) ||
+                (initialAuthCompleteRef.current && currentMemberId === refreshedUser.id);
+
+              if (!shouldSkipMemberFetch) {
+                console.log("[Auth] Fetching member data for non-admin user:", refreshedUser.id);
+                const memberData = await fetchMemberData(refreshedUser.id); // Use memoized version
+                if (memberData) {
+                  console.log("[Auth] Setting member data and role:", {
+                    id: memberData.id,
+                    role: memberData.role,
+                    divisionId: memberData.division_id, // Log new ID
+                    calendarId: memberData.calendar_id, // Log new ID
+                  });
+                  setMember(memberData);
+                  setUserRole(memberData.role as UserRole);
+                  useUserStore.getState().setMember(memberData);
+                  useUserStore.getState().setUserRole(memberData.role as UserRole);
+                } else {
+                  console.warn("[Auth] No member data found for user:", refreshedUser.id);
+                  setMember(null);
+                  setUserRole(null);
+                  useUserStore.getState().reset();
+                }
+              } else {
+                console.log("[Auth] Skipping member fetch for:", source);
+              }
+            } catch (error) {
+              console.error("[Auth] Error during member data fetch:", error);
+              setMember(null);
+              setUserRole(null);
+              useUserStore.getState().reset();
+            }
+          } else {
+            // Handle case where refreshedUser is unexpectedly null
+            console.warn("[Auth] Refreshed user data was null, clearing state.");
             setMember(null);
             setUserRole(null);
             useUserStore.getState().reset();
           }
         } else {
           console.log("[Auth] No user, clearing member data and role");
+          setIsCompanyAdmin(false); // Ensure derived state is false
           setMember(null);
           setUserRole(null);
           useUserStore.getState().reset();
@@ -458,9 +482,22 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
 
       console.log("[Auth] Application state reset after signout");
+
+      // *** Navigate to sign-in AFTER all state clearing and Supabase calls ***
+      try {
+        router.replace("/(auth)/sign-in");
+        console.log("[Auth] Navigated to sign-in page after sign out.");
+      } catch (navError) {
+        console.error("[Auth] Navigation error during sign out redirect:", navError);
+      }
     } catch (error) {
-      // Log but don't throw - we want the UI to continue to the login page
       console.error("[Auth] Error in signOut function:", error);
+      // Fallback navigation attempt in case of error
+      try {
+        router.replace("/(auth)/sign-in");
+      } catch (navError) {
+        console.error("[Auth] Navigation error during sign out (in catch block):", navError);
+      }
     }
   }, []);
 

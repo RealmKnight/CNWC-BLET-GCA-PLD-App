@@ -2,9 +2,10 @@ import { Stack, Slot } from "expo-router";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { StyleSheet, Image } from "react-native";
+import { StyleSheet, Image, TouchableOpacity } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useSegments } from "expo-router";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { configureNotifications, setupNotificationListeners } from "@/utils/notificationConfig";
@@ -37,10 +38,11 @@ const toastConfig = {
 };
 
 function RootLayoutContent() {
-  const { isLoading, session, userRole, member, signOut } = useAuth();
+  const { isLoading, session, userRole, member, signOut, user } = useAuth();
   const segments = useSegments();
   const router = useRouter();
   const { fetchMessages, subscribeToMessages } = useNotificationStore();
+  const [initialRouteHandled, setInitialRouteHandled] = useState(false);
 
   useEffect(() => {
     // Configure notifications when the app starts
@@ -72,80 +74,101 @@ function RootLayoutContent() {
   }, [session, member?.pin_number, fetchMessages, subscribeToMessages]);
 
   useEffect(() => {
-    if (!isLoading) {
-      const inAuthGroup = segments[0] === "(auth)";
-      const inAdminGroup = segments[0] === "(admin)";
-      const inTabsGroup = segments[0] === "(tabs)";
-      const isCompanyAdmin = session?.user?.user_metadata?.role === "company_admin";
-      const inMemberAssociation = segments[0] === "(auth)" && segments[1] === "member-association";
-      // Add special case for password reset
-      const isPasswordReset = segments[0] === "(auth)" && segments[1] === "change-password";
+    console.log("[Router Check] Start", { isLoading, initialRouteHandled, session: !!session, segments });
 
-      // Check if password reset is in progress (set by change-password.tsx)
-      const isProcessingReset =
-        // Check for our component flag
-        (typeof window !== "undefined" &&
-          (window as any).__isProcessingPasswordReset &&
-          (window as any).__isProcessingPasswordReset()) ||
-        // Also check for the flag set in useAuth
-        (typeof window !== "undefined" && window.__passwordResetInProgress);
+    // If loading, reset the handled flag and wait
+    if (isLoading) {
+      setInitialRouteHandled(false);
+      console.log("[Router Check] Waiting: isLoading is true");
+      return;
+    }
 
-      // Track whether we're currently on the change-password page
-      const comingFromReset = isPasswordReset || isProcessingReset;
+    // If already handled initial route after loading, do nothing
+    if (initialRouteHandled) {
+      console.log("[Router Check] Skipping: initialRouteHandled is true");
+      return;
+    }
 
-      console.log("[Router] Processing route:", {
-        segments,
-        inAuthGroup,
-        inAdminGroup,
-        inTabsGroup,
-        isCompanyAdmin,
-        hasSession: !!session,
-        isPasswordReset,
-        isProcessingReset,
-        hasResetFlag: typeof window !== "undefined" && !!window.__passwordResetInProgress,
-        comingFromReset,
-      });
+    // ---- Core Routing Logic ----
+    // This block now only runs once after isLoading becomes false
 
-      // Skip routing logic completely if actively processing a password reset
-      if (isProcessingReset) {
-        console.log("[Router] Password reset in progress, skipping navigation logic");
-        return;
-      }
+    const inAuthGroup = segments[0] === "(auth)";
+    const isCompanyAdmin = session?.user?.user_metadata?.role === "company_admin";
+    const inMemberAssociation = segments[0] === "(auth)" && segments[1] === "member-association";
+    const isPasswordReset = segments[0] === "(auth)" && segments[1] === "change-password";
+    const isProcessingReset = typeof window !== "undefined" && window.__passwordResetInProgress;
+    const comingFromReset = isPasswordReset || isProcessingReset;
 
-      // Enhanced auth check - exempt password reset from auth check
-      if ((!session || !session.user) && !inAuthGroup && !isPasswordReset) {
-        console.log("[Router] No valid session found, redirecting to sign-in");
-        router.replace("/(auth)/sign-in");
-        return;
-      }
+    console.log("[Router Logic] Executing", {
+      segments,
+      isCompanyAdmin,
+      hasSession: !!session,
+      hasMember: !!member,
+      comingFromReset,
+    });
 
-      // Special handling for password reset - give time for member data to load
-      if (session && isPasswordReset && !member) {
-        console.log("[Router] On password reset page with session but no member data yet, delaying routing decision");
-        // Wait to see if member data loads
-        return;
-      }
+    // 1. No Session Check (Password reset exempt)
+    if (!session && !inAuthGroup && !comingFromReset) {
+      console.log("[Router Logic] No session, redirecting to sign-in");
+      router.replace("/(auth)/sign-in");
+      setInitialRouteHandled(true); // Mark as handled
+      return;
+    }
 
-      // Rest of the routing logic
-      if (session && !member && !inMemberAssociation && !isCompanyAdmin && !comingFromReset) {
-        console.log("[Router] User has session but no member data, redirecting to member association");
-        router.replace("/(auth)/member-association");
-      } else if (session && isCompanyAdmin && segments[0] !== "company-admin") {
+    // 2. Company Admin Check
+    if (session && isCompanyAdmin) {
+      if (segments[0] !== "company-admin") {
+        console.log("[Router Logic] Company admin not on admin page, redirecting");
         router.replace("/company-admin");
-      } else if (session && !isCompanyAdmin && segments[0] === "company-admin") {
-        router.replace("/(tabs)");
-      } else if (session && !isCompanyAdmin && member) {
+      } else {
+        console.log("[Router Logic] Company admin already on correct page");
+      }
+      setInitialRouteHandled(true); // Mark as handled
+      return;
+    }
+
+    // 3. Handle non-admin users (Password reset needs special check)
+    if (session && !isCompanyAdmin) {
+      // Special case: If on password reset page, allow it, unless member data exists
+      if (comingFromReset && !member) {
+        console.log("[Router Logic] On password reset without member data, staying");
+        setInitialRouteHandled(true); // Consider handled for now
+        return;
+      }
+
+      // Member Association Check
+      if (!member && !inMemberAssociation && !comingFromReset) {
+        console.log("[Router Logic] Non-admin, no member data, redirecting to association");
+        router.replace("/(auth)/member-association");
+        setInitialRouteHandled(true); // Mark as handled
+        return;
+      }
+
+      // Normal Logged-in Member
+      if (member) {
         if (inAuthGroup && !inMemberAssociation && !comingFromReset) {
-          console.log("[Router] User has session and member data, in auth group, redirecting to tabs");
+          console.log("[Router Logic] Member in auth group (not assoc/reset), redirecting to tabs");
           router.replace("/(tabs)");
-        } else if (!segments.length || segments[0] === undefined) {
+        } else if (segments[0] !== "(tabs)" && !inAuthGroup) {
+          // Redirect to tabs if not already there and not in auth
+          console.log("[Router Logic] Member not in tabs or auth, redirecting to tabs");
           router.replace("/(tabs)");
+        } else {
+          console.log("[Router Logic] Member already in tabs or auth group (assoc/reset)");
         }
+        setInitialRouteHandled(true); // Mark as handled
+        return;
       }
     }
-  }, [isLoading, session, segments, userRole, member, router]);
 
-  if (isLoading) {
+    // If none of the above conditions met (should be rare), mark as handled anyway
+    console.log("[Router Logic] No specific route action taken, marking handled");
+    setInitialRouteHandled(true);
+
+    // Ensure 'user' is included in the dependencies for role check
+  }, [isLoading, session, user, segments, member, router, initialRouteHandled]);
+
+  if (isLoading && !initialRouteHandled) {
     return (
       <ThemedView style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
         <ThemedText>Initializing app...</ThemedText>
@@ -183,11 +206,12 @@ function RootLayoutContent() {
         name="company-admin"
         options={{
           headerShown: true,
-          title: "CN/WC BLET PLD/SDV App - Company Admin",
+          title: "CN/WC BLET PLD/SDV App - CN Admin",
           headerBackVisible: false,
           headerTitleStyle: {
             fontFamily: "Inter",
             fontSize: 16,
+            color: Colors.light.text,
           },
           headerStyle: {
             backgroundColor: Colors.light.background,
@@ -198,25 +222,14 @@ function RootLayoutContent() {
             <Image
               source={require("../assets/images/BLETblackgold.png")}
               style={{
-                width: 40,
-                height: 40,
+                width: 50,
+                height: 50,
                 marginLeft: 16,
                 resizeMode: "contain",
               }}
             />
           ),
-          headerRight: () => (
-            <ThemedText
-              onPress={signOut}
-              style={{
-                marginRight: 16,
-                color: Colors.light.tint,
-                fontSize: 16,
-              }}
-            >
-              Sign Out
-            </ThemedText>
-          ),
+          headerRight: undefined,
         }}
       />
     </Stack>
@@ -228,7 +241,7 @@ export default function RootLayout() {
     <GestureHandlerRootView style={styles.container}>
       <ThemeProvider>
         <AuthProvider>
-          <RootLayoutContent />
+          <RootLayoutContent key="stableRootLayoutContent" />
           <ThemedToast />
         </AuthProvider>
       </ThemeProvider>

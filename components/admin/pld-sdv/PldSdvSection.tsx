@@ -252,7 +252,7 @@ export function PldSdvSection() {
       console.error("Error fetching pending requests:", error);
       Alert.alert("Error", "Failed to load pending requests");
     }
-  }, [user]);
+  }, [user?.id]);
 
   // Fetch denial reasons
   const fetchDenialReasons = useCallback(async () => {
@@ -272,8 +272,14 @@ export function PldSdvSection() {
 
   // Set up real-time subscription
   useEffect(() => {
-    if (user?.user_metadata?.role !== "company_admin") return;
+    // Perform admin check inside the effect
+    const isAdmin = user?.user_metadata?.role === "company_admin";
+    if (!isAdmin) {
+      console.log("[PldSdvSection] Skipping real-time subscription: User is not company admin.");
+      return; // Don't subscribe if not admin
+    }
 
+    console.log("[PldSdvSection] Setting up real-time subscription.");
     const subscription = supabase
       .channel("pld-sdv-requests-changes")
       .on(
@@ -292,17 +298,29 @@ export function PldSdvSection() {
       .subscribe();
 
     return () => {
+      console.log("[PldSdvSection] Unsubscribing from real-time changes.");
       subscription.unsubscribe();
     };
-  }, [user, fetchPendingRequests]);
+    // Stabilize dependencies: Depend on user ID and the memoized fetch function
+  }, [user?.id, fetchPendingRequests]);
 
   // Initial data fetch
   useEffect(() => {
-    if (user?.user_metadata?.role !== "company_admin") return;
-    console.log("Initial data fetch");
+    // Check if the user object exists and has the correct role.
+    // This check is more stable than depending on the user object reference directly.
+    const isAdmin = user?.user_metadata?.role === "company_admin";
+    if (!isAdmin) {
+      console.log("[PldSdvSection] Skipping initial fetch: User is not company admin.");
+      return; // Don't fetch if not admin
+    }
+
+    console.log("[PldSdvSection] Initial data fetch triggered.");
+    // Call fetch functions directly. Since they are memoized with useCallback,
+    // their references should be stable unless their own dependencies change.
     fetchPendingRequests();
     fetchDenialReasons();
-  }, [user, fetchPendingRequests, fetchDenialReasons]);
+    // Depend only on the memoized fetch functions. The isAdmin check handles the user state.
+  }, [fetchPendingRequests, fetchDenialReasons]);
 
   // Get the user's PIN number safely - for company admins, returns 0 as default
   const getSenderPinNumber = (): number => {

@@ -186,7 +186,7 @@ export function VacationSection() {
       console.error("Error fetching pending requests:", error);
       Alert.alert("Error", "Failed to load pending requests");
     }
-  }, [user, sortConfig, filters]);
+  }, [user?.id, sortConfig, filters]);
 
   // Apply sorting to the data
   const applySorting = (data: PendingVacationRequest[]) => {
@@ -255,8 +255,14 @@ export function VacationSection() {
 
   // Set up real-time subscription
   useEffect(() => {
-    if (user?.user_metadata?.role !== "company_admin") return;
+    // Perform admin check inside the effect
+    const isAdmin = user?.user_metadata?.role === "company_admin";
+    if (!isAdmin) {
+      console.log("[VacationSection] Skipping real-time subscription: User is not company admin.");
+      return; // Don't subscribe if not admin
+    }
 
+    console.log("[VacationSection] Setting up real-time subscription.");
     const subscription = supabase
       .channel("vacation-requests-changes")
       .on(
@@ -275,16 +281,26 @@ export function VacationSection() {
       .subscribe();
 
     return () => {
+      console.log("[VacationSection] Unsubscribing from real-time changes.");
       subscription.unsubscribe();
     };
-  }, [user, fetchPendingRequests]);
+    // Stabilize dependencies: Depend on user ID and the memoized fetch function
+  }, [user?.id, fetchPendingRequests]);
 
   // Initial data fetch
   useEffect(() => {
-    if (user?.user_metadata?.role !== "company_admin") return;
+    // Check if the user object exists and has the correct role.
+    const isAdmin = user?.user_metadata?.role === "company_admin";
+    if (!isAdmin) {
+      console.log("[VacationSection] Skipping initial fetch: User is not company admin.");
+      return; // Don't fetch if not admin
+    }
+
+    console.log("[VacationSection] Initial data fetch triggered.");
     fetchPendingRequests();
     fetchDenialReasons();
-  }, [user, fetchPendingRequests, fetchDenialReasons]);
+    // Depend only on the memoized fetch functions.
+  }, [fetchPendingRequests, fetchDenialReasons]);
 
   // Handle request approval
   const handleApprove = async (request: PendingVacationRequest) => {

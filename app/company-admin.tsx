@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from "react";
-import { View, StyleSheet, Platform, useWindowDimensions, ScrollView, ViewStyle } from "react-native";
+import React, { useEffect, useState, useMemo } from "react";
+import { View, StyleSheet, Platform, useWindowDimensions, ScrollView, ViewStyle, TouchableOpacity } from "react-native";
 import { useAuth } from "../hooks/useAuth";
 import { Colors } from "../constants/Colors";
 import { useColorScheme } from "../hooks/useColorScheme";
@@ -11,13 +11,15 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { ThemedText } from "../components/ThemedText";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
-import { supabase } from "../utils/supabase";
 
 // Import all section components
 import { PldSdvSection } from "../components/admin/pld-sdv/PldSdvSection";
 import { VacationSection } from "../components/admin/vacation/VacationSection";
 import { AdminMessageSection } from "../components/admin/message/AdminMessageSection";
 import { AdminReviewSection } from "../components/admin/review/AdminReviewSection";
+
+// Re-add supabase import as it's needed by handleLogout
+import { supabase } from "../utils/supabase";
 
 // Define tabs
 const TABS: Tab[] = [
@@ -133,50 +135,12 @@ export default function CompanyAdminScreen() {
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const platformStyles = getPlatformStyles();
-  const [isValidatingSession, setIsValidatingSession] = useState(true);
 
   // Determine if we're on a mobile device (either native or mobile web)
   const isMobile = Platform.OS !== "web" || width < 768;
 
   // State for active tab
   const [activeTab, setActiveTab] = useState<string>("pld_sdv");
-
-  // Validate session on mount
-  useEffect(() => {
-    const validateSession = async () => {
-      try {
-        setIsValidatingSession(true);
-        // Try to get the current session from Supabase
-        const { data, error } = await supabase.auth.getSession();
-
-        if (error || !data.session) {
-          console.log("Session validation failed:", error || "No session");
-          // If validation fails, redirect to sign-in
-          await handleLogout();
-          return;
-        }
-
-        // Verify session is valid by making a simple authenticated request
-        const { error: authError } = await supabase.from("members").select("count").limit(1);
-        if (authError) {
-          console.log("Auth validation failed:", authError);
-          // If validation fails, redirect to sign-in
-          await handleLogout();
-          return;
-        }
-
-        console.log("Session validated successfully");
-      } catch (error) {
-        console.error("Error validating session:", error);
-        // If there's an error, redirect to sign-in
-        await handleLogout();
-      } finally {
-        setIsValidatingSession(false);
-      }
-    };
-
-    validateSession();
-  }, []);
 
   // Load saved tab from storage on mount
   useEffect(() => {
@@ -271,38 +235,19 @@ export default function CompanyAdminScreen() {
       // After a brief timeout (to let the signOut start), proceed to sign-in page
       await new Promise((resolve) => setTimeout(resolve, 500));
 
-      // Always navigate to sign-in
-      router.replace("/(auth)/sign-in");
-
       // We don't need to wait for this to resolve
       signOutPromise.catch((error) => {
         console.warn("Background signOut attempt failed (this is generally ok):", error);
       });
     } catch (error) {
       console.error("Error during logout process:", error);
-
-      // Always navigate to sign-in, even if there was an error
-      router.replace("/(auth)/sign-in");
     }
   };
 
-  // Set up header right button for logout
-  useEffect(() => {
-    navigation.setOptions({
-      headerRight: () => (
-        <TouchableOpacityComponent
-          onPress={handleLogout}
-          style={{ marginRight: 16 }}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        >
-          <Ionicons name="log-out-outline" size={24} color={colors.text} />
-        </TouchableOpacityComponent>
-      ),
-    });
-  }, [navigation, handleLogout, colors.text]);
-
-  // If still loading or validating session or no user/not admin, show loading state
-  if (isLoading || isValidatingSession || !user || user.user_metadata?.role !== "company_admin") {
+  // Adjust the loading check: Primarily rely on isLoading.
+  // If not loading but user becomes null (e.g., during logout transition before navigation),
+  // render a minimal view instead of returning early to avoid hook errors.
+  if (isLoading) {
     return (
       <Container style={[styles.container, platformStyles.container, { backgroundColor: colors.background }]}>
         <View style={styles.loadingContainer}>
@@ -312,8 +257,9 @@ export default function CompanyAdminScreen() {
     );
   }
 
-  // Render active tab content
-  const renderTabContent = () => {
+  // Memoize the rendered tab content based on the activeTab
+  const memoizedTabContent = useMemo(() => {
+    console.log(`[CompanyAdmin] Memoizing/Rendering content for tab: ${activeTab}`);
     switch (activeTab) {
       case "pld_sdv":
         return <PldSdvSection />;
@@ -326,7 +272,7 @@ export default function CompanyAdminScreen() {
       default:
         return <PldSdvSection />;
     }
-  };
+  }, [activeTab]); // Only re-run when activeTab changes
 
   // Calculate dynamic padding based on platform and insets
   const contentPadding = {
@@ -348,13 +294,24 @@ export default function CompanyAdminScreen() {
       <View style={[styles.contentContainer, platformStyles.contentContainer]}>
         {currentTabUsesFlatlist ? (
           // Don't wrap FlatList tabs in ScrollView to avoid nesting VirtualizedList error
-          <View style={[styles.tabContentContainer, contentPadding]}>{renderTabContent()}</View>
+          <View style={[styles.tabContentContainer, contentPadding]}>{memoizedTabContent}</View>
         ) : (
           // Use ScrollView for tabs without FlatList
           <AdaptiveScrollView>
-            <View style={[styles.tabContentContainer, contentPadding]}>{renderTabContent()}</View>
+            <View style={[styles.tabContentContainer, contentPadding]}>{memoizedTabContent}</View>
           </AdaptiveScrollView>
         )}
+      </View>
+
+      {/* Sticky Logout Button */}
+      <View style={[styles.stickyButtonContainer, { bottom: insets.bottom + 16, right: 16 }]}>
+        <TouchableOpacity
+          onPress={handleLogout}
+          style={[styles.logoutButton, { backgroundColor: colors.tint }]}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Ionicons name="log-out-outline" size={28} color={colors.background} />
+        </TouchableOpacity>
       </View>
     </Container>
   );
@@ -379,5 +336,26 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
     paddingBottom: 24,
+  },
+  // Styles for the sticky logout button
+  stickyButtonContainer: {
+    position: "absolute",
+    zIndex: 10, // Ensure it's above other content
+  },
+  logoutButton: {
+    width: 56,
+    height: 56,
+    borderRadius: 28, // Make it circular
+    justifyContent: "center",
+    alignItems: "center",
+    // Add shadow for elevation effect (optional)
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
   },
 });
