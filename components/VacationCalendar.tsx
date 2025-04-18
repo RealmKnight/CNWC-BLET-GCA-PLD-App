@@ -1,5 +1,5 @@
 import React, { useMemo, useEffect, useState } from "react";
-import { StyleSheet, ActivityIndicator, ViewStyle, TextStyle, Modal } from "react-native";
+import { StyleSheet, ActivityIndicator, ViewStyle, TextStyle, Modal, Platform } from "react-native";
 import { Calendar as RNCalendar, DateData } from "react-native-calendars";
 import { format, startOfWeek, endOfWeek, parseISO } from "date-fns";
 import { useVacationCalendarStore, WeekAllotment, WeekRequest } from "@/store/vacationCalendarStore";
@@ -25,13 +25,16 @@ const CALENDAR_THEME = {
     textMonthFontWeight: "bold",
     arrowColor: Colors.light.tint,
     disabledArrowColor: Colors.light.textDim,
+    textDayFontSize: 18,
+    textDayFontWeight: "700",
+    textDayFontFamily: Platform.OS === "ios" ? "System" : "Roboto",
   },
   dark: {
     backgroundColor: Colors.dark.background,
     calendarBackground: Colors.dark.background,
     textSectionTitleColor: Colors.dark.textDim,
     selectedDayBackgroundColor: Colors.dark.tint,
-    selectedDayTextColor: "#ffffff",
+    selectedDayTextColor: "#000000",
     todayTextColor: Colors.dark.tint,
     dayTextColor: Colors.dark.text,
     textDisabledColor: Colors.dark.textDim,
@@ -39,12 +42,15 @@ const CALENDAR_THEME = {
     textMonthFontWeight: "bold",
     arrowColor: Colors.dark.tint,
     disabledArrowColor: Colors.dark.textDim,
+    textDayFontSize: 18,
+    textDayFontWeight: "700",
+    textDayFontFamily: Platform.OS === "ios" ? "System" : "Roboto",
   },
 };
 
 const AVAILABILITY_COLORS = {
-  available: { color: Colors.light.success, text: "white" }, // Green - Available week
-  full: { color: Colors.light.error, text: "white" }, // Red - Full week
+  available: { color: Colors.light.success, text: "black" }, // Green - Available week
+  full: { color: Colors.light.error, text: "black" }, // Red - Full week
   unallocated: { color: Colors.dark.border, text: Colors.dark.textDim }, // Grey - No allocation set
 };
 
@@ -175,6 +181,12 @@ export function VacationCalendar({ current }: VacationCalendarProps) {
           startingDay: true,
           color: colors.color,
           textColor: colors.text,
+          customStyles: {
+            text: {
+              fontWeight: "700",
+              fontSize: 18,
+            },
+          },
         };
 
         // Mark days in between
@@ -185,6 +197,12 @@ export function VacationCalendar({ current }: VacationCalendarProps) {
           dates[dayStr] = {
             color: colors.color,
             textColor: colors.text,
+            customStyles: {
+              text: {
+                fontWeight: "700",
+                fontSize: 18,
+              },
+            },
           };
           dayInWeek.setDate(dayInWeek.getDate() + 1);
         }
@@ -195,6 +213,12 @@ export function VacationCalendar({ current }: VacationCalendarProps) {
           endingDay: true,
           color: colors.color,
           textColor: colors.text,
+          customStyles: {
+            text: {
+              fontWeight: "700",
+              fontSize: 18,
+            },
+          },
         };
       }
 
@@ -310,6 +334,7 @@ export function VacationCalendar({ current }: VacationCalendarProps) {
         style={styles.calendar}
         current={stableCalendarDate}
         firstDay={1}
+        dayComponentHeight={50}
       />
 
       <ThemedView style={styles.legend}>

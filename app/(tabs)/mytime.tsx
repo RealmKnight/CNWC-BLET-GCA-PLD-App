@@ -229,9 +229,7 @@ function CancelRequestModal({ isVisible, request, onConfirm, onCancel, isLoading
               {isLoading ? (
                 <ActivityIndicator color={Colors[colorScheme ?? "light"].background} />
               ) : (
-                <ThemedText style={styles.confirmButtonText}>
-                  Yes, Cancel {isApproved ? "Approved" : ""} {isPaidInLieu ? "Payment" : ""} Request
-                </ThemedText>
+                <ThemedText style={styles.confirmButtonText}>Yes, Cancel</ThemedText>
               )}
             </ThemedTouchableOpacity>
           </ThemedView>

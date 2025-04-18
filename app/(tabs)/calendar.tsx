@@ -61,7 +61,13 @@ function RequestDialog({
   const { member } = useUserStore();
 
   const activeRequests = useMemo(() => {
-    return allRequests.filter((r) => r.status === "approved" || r.status === "pending" || r.status === "waitlisted");
+    return allRequests.filter(
+      (r) =>
+        r.status === "approved" ||
+        r.status === "pending" ||
+        r.status === "waitlisted" ||
+        r.status === "cancellation_pending"
+    );
   }, [allRequests]);
 
   const hasExistingRequest = useMemo(() => {
@@ -145,9 +151,12 @@ function RequestDialog({
                       dialogStyles.requestStatus,
                       request.status === "approved" && dialogStyles.approvedStatus,
                       request.status === "waitlisted" && dialogStyles.waitlistedStatus,
+                      request.status === "cancellation_pending" && dialogStyles.cancellationPendingStatus,
                     ]}
                   >
-                    {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
+                    {request.status === "cancellation_pending"
+                      ? "Cancellation Pending"
+                      : request.status.charAt(0).toUpperCase() + request.status.slice(1)}
                     {request.status === "waitlisted" && request.waitlist_position
                       ? ` #${request.waitlist_position}`
                       : ""}
@@ -367,7 +376,7 @@ const controlStyles = StyleSheet.create({
     opacity: 0.5,
   } as ViewStyle,
   todayButtonText: {
-    color: "white",
+    color: "black",
     fontWeight: "600",
   } as TextStyle,
 });
@@ -643,7 +652,11 @@ export default function CalendarScreen() {
     const dateRequests = pldRequests[dateKey] || [];
 
     const currentAllotmentCount = dateRequests.filter(
-      (r: DayRequest) => r.status === "approved" || r.status === "pending" || r.status === "waitlisted"
+      (r: DayRequest) =>
+        r.status === "approved" ||
+        r.status === "pending" ||
+        r.status === "waitlisted" ||
+        r.status === "cancellation_pending"
     ).length;
 
     return {
@@ -712,7 +725,7 @@ export default function CalendarScreen() {
             style={[
               styles.tabText,
               activeCalendar === "PLD/SDV" && styles.activeTabText,
-              { color: activeCalendar === "PLD/SDV" ? "white" : Colors[theme].text },
+              { color: activeCalendar === "PLD/SDV" ? "black" : Colors[theme].text },
             ]}
           >
             PLD/SDV Calendar
@@ -742,7 +755,7 @@ export default function CalendarScreen() {
             style={[
               styles.tabText,
               activeCalendar === "Vacation" && styles.activeTabText,
-              { color: activeCalendar === "Vacation" ? "white" : Colors[theme].text },
+              { color: activeCalendar === "Vacation" ? "black" : Colors[theme].text },
             ]}
           >
             Vacation Calendar
@@ -805,7 +818,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   } as ViewStyle,
   requestButtonText: {
-    color: "white",
+    color: "black",
     fontSize: 16,
     fontWeight: "600",
   } as TextStyle,
@@ -860,7 +873,7 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   } as TextStyle,
   activeTabText: {
-    color: "white",
+    color: "black",
     fontWeight: "600",
   } as TextStyle,
 });
@@ -913,7 +926,7 @@ const dialogStyles = StyleSheet.create({
   modalButtonText: {
     fontSize: 14,
     fontWeight: "600",
-    color: "white",
+    color: "black",
     textAlign: "center",
     lineHeight: 16,
   } as TextStyle,
@@ -1008,4 +1021,7 @@ const dialogStyles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 10,
   } as ViewStyle,
+  cancellationPendingStatus: {
+    color: Colors.light.warning,
+  } as TextStyle,
 });

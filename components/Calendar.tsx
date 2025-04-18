@@ -14,42 +14,42 @@ type ColorScheme = keyof typeof Colors;
 
 const CALENDAR_THEME = {
   light: {
-    backgroundColor: "#ffffff",
-    calendarBackground: "#ffffff",
-    textSectionTitleColor: "#b6c1cd",
+    backgroundColor: Colors.light.background,
+    calendarBackground: Colors.light.background,
+    textSectionTitleColor: Colors.light.textDim,
     selectedDayBackgroundColor: Colors.light.tint,
-    selectedDayTextColor: "#ffffff",
+    selectedDayTextColor: "#000000",
     todayTextColor: Colors.light.tint,
-    dayTextColor: "#2d4150",
-    textDisabledColor: "#d9e1e8",
+    dayTextColor: Colors.light.text,
+    textDisabledColor: Colors.light.textDim,
     dotColor: Colors.light.tint,
-    monthTextColor: "#2d4150",
+    monthTextColor: Colors.light.text,
     textMonthFontWeight: "bold",
     arrowColor: Colors.light.tint,
-    disabledArrowColor: "#d9e1e8",
+    disabledArrowColor: Colors.light.disabled,
   },
   dark: {
     backgroundColor: Colors.dark.background,
     calendarBackground: Colors.dark.background,
-    textSectionTitleColor: "#7a7a7a",
+    textSectionTitleColor: Colors.dark.textDim,
     selectedDayBackgroundColor: Colors.dark.tint,
-    selectedDayTextColor: "#ffffff",
+    selectedDayTextColor: "#000000",
     todayTextColor: Colors.dark.tint,
     dayTextColor: Colors.dark.text,
-    textDisabledColor: "#4a4a4a",
+    textDisabledColor: Colors.dark.textDim,
     dotColor: Colors.dark.tint,
     monthTextColor: Colors.dark.text,
     textMonthFontWeight: "bold",
     arrowColor: Colors.dark.tint,
-    disabledArrowColor: "#4a4a4a",
+    disabledArrowColor: Colors.dark.disabled,
   },
 };
 
 const AVAILABILITY_COLORS = {
-  available: { color: "#4CAF50", text: "white" }, // Green - Slots available
+  available: { color: "#4CAF50", text: "black" }, // Green - Slots available
   limited: { color: "#FFC107", text: "black" }, // Yellow - Less than 30% slots left
-  full: { color: "#F44336", text: "white" }, // Red - No slots available
-  unavailable: { color: "#9E9E9E", text: "white" }, // Grey - Cannot be requested (past/too far)
+  full: { color: "#F44336", text: "black" }, // Red - No slots available
+  unavailable: { color: "#9E9E9E", text: "#666633" }, // Grey - Cannot be requested (past/too far)
 };
 
 interface CalendarProps {
@@ -70,7 +70,6 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
     isLoading,
     isInitialized,
     error,
-    validateMemberZone,
     allotments,
     yearlyAllotments,
     requests,
@@ -131,7 +130,7 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
     // Add marks for all dates in range
     allDates.forEach((date) => {
       const dateStr = format(date, "yyyy-MM-dd");
-      const availability = getDateAvailability(dateStr, zoneId);
+      const availability = getDateAvailability(dateStr);
       const colors = AVAILABILITY_COLORS[availability];
 
       if (!colors) {
@@ -224,7 +223,7 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
     // We don't need to check zone access here since we've already validated it during zone ID calculation
     // and the calendar only shows the correct zone's data if the user has access
 
-    if (isDateSelectable(day.dateString, zoneId)) {
+    if (isDateSelectable(day.dateString)) {
       setSelectedDate(day.dateString);
     } else {
       // This case handles when the date is within range but not available (e.g., full)

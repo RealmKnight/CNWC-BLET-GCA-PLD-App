@@ -28,7 +28,7 @@ interface RequestData {
   status: string;
   paid_in_lieu: boolean;
   calendar_id: string;
-  members: Member[];
+  members: Member;
 }
 
 interface PendingRequest {
@@ -72,6 +72,7 @@ export function PldSdvSection() {
     if (!user) return;
 
     try {
+      // First, try getting the requests with member information
       const query = supabase
         .from("pld_sdv_requests")
         .select(
@@ -84,7 +85,7 @@ export function PldSdvSection() {
           status,
           paid_in_lieu,
           calendar_id,
-          members:member_id (
+          members!inner (
             pin_number,
             first_name,
             last_name,
@@ -96,21 +97,49 @@ export function PldSdvSection() {
         .not("status", "eq", "waitlisted")
         .order("request_date", { ascending: true });
 
-      const { data: requestData, error: requestError } = await query;
+      // Explicitly type the data returned from the query
+      const { data: requestData, error: requestError } = (await query) as {
+        data: RequestData[] | null;
+        error: any;
+      };
 
       if (requestError) {
         console.error("Error details:", requestError);
         throw requestError;
       }
 
+      // Ensure requestData is not null before proceeding
+      if (!requestData) {
+        console.log("No request data found.");
+        setPendingRequests([]);
+        return;
+      }
+
+      // Debug: Log the raw request data to check member information
+      console.log(
+        "Raw request data (first few items):",
+        requestData.slice(0, 2).map((req) => ({
+          id: req.id,
+          member_id: req.member_id,
+          members: req.members, // This should now be correctly typed as Member object
+          pin: req.members?.pin_number,
+          firstName: req.members?.first_name,
+          lastName: req.members?.last_name,
+          divisionId: req.members?.division_id,
+        }))
+      );
+
       // Get division names for the division IDs
       const divisionIds = [
         ...new Set(
-          (requestData as unknown as RequestData[])
-            ?.map((req) => req.members?.[0]?.division_id)
-            .filter((id) => id !== null && id !== undefined)
+          requestData
+            .map((req) => req.members?.division_id) // Access directly now
+            .filter((id): id is number => id !== null && id !== undefined) // Type guard
         ),
-      ] as number[];
+      ];
+
+      // Debug: Log division IDs being queried
+      console.log("Division IDs found:", divisionIds);
 
       // Fetch division names if we have division IDs
       let divisionMap: Record<number, string> = {};
@@ -120,11 +149,21 @@ export function PldSdvSection() {
           .select("id, name")
           .in("id", divisionIds);
 
-        if (!divisionError && divisionData) {
+        if (divisionError) {
+          console.error("Error fetching divisions:", divisionError);
+        }
+
+        if (divisionData) {
+          // Debug: Log division data
+          console.log("Division data:", divisionData);
+
           divisionMap = divisionData.reduce((acc, div) => {
             acc[div.id] = div.name;
             return acc;
           }, {} as Record<number, string>);
+
+          // Debug: Log division mapping
+          console.log("Division mapping:", divisionMap);
         }
       }
 
@@ -140,7 +179,11 @@ export function PldSdvSection() {
           .select("id, name")
           .in("id", calendarIds);
 
-        if (!calendarError && calendarData) {
+        if (calendarError) {
+          console.error("Error fetching calendars:", calendarError);
+        }
+
+        if (calendarData) {
           calendarMap = calendarData.reduce((acc, cal) => {
             acc[cal.id] = cal.name;
             return acc;
@@ -152,13 +195,16 @@ export function PldSdvSection() {
       const transformRequests = (data: any[]): PendingRequest[] => {
         if (!data?.length) return [];
 
-        return data.map(
-          (request): PendingRequest => ({
+        return data.map((request): PendingRequest => {
+          // Handle the updated join structure
+          const members = request.members;
+
+          const transformedRequest = {
             id: request.id,
             member_id: request.member_id,
-            pin_number: request.members?.[0]?.pin_number ?? "",
-            first_name: request.members?.[0]?.first_name ?? "",
-            last_name: request.members?.[0]?.last_name ?? "",
+            pin_number: members?.pin_number ?? "",
+            first_name: members?.first_name ?? "",
+            last_name: members?.last_name ?? "",
             request_date: request.request_date,
             leave_type: request.leave_type,
             created_at: request.created_at,
@@ -166,13 +212,39 @@ export function PldSdvSection() {
             paid_in_lieu: request.paid_in_lieu ?? false,
             calendar_id: request.calendar_id,
             calendar_name: request.calendar_id ? calendarMap[request.calendar_id] : null,
-            division:
-              (request.members?.[0]?.division_id && divisionMap[request.members?.[0]?.division_id]) || "Unknown",
-          })
-        );
+            division: (members?.division_id && divisionMap[members.division_id]) || "Unknown",
+          };
+
+          // Debug: Log individual transformed request
+          if (
+            !transformedRequest.pin_number ||
+            !transformedRequest.first_name ||
+            transformedRequest.division === "Unknown"
+          ) {
+            console.log("Missing data in transformed request:", {
+              id: transformedRequest.id,
+              pin: transformedRequest.pin_number,
+              firstName: transformedRequest.first_name,
+              lastName: transformedRequest.last_name,
+              divisionId: members?.division_id,
+              mappedDivision: transformedRequest.division,
+              rawDivisionId: members?.division_id,
+              hasDivisionMap: members?.division_id ? !!divisionMap[members.division_id] : false,
+            });
+          }
+
+          return transformedRequest;
+        });
       };
 
       const transformedData = transformRequests(requestData);
+
+      // Debug: Log count and first transformed item
+      console.log(
+        `Transformed ${transformedData.length} requests. First item:`,
+        transformedData.length > 0 ? transformedData[0] : "No requests"
+      );
+
       setPendingRequests(transformedData);
     } catch (error) {
       console.error("Error fetching pending requests:", error);
@@ -230,10 +302,63 @@ export function PldSdvSection() {
     fetchDenialReasons();
   }, [user, fetchPendingRequests, fetchDenialReasons]);
 
+  // Get the user's PIN number safely - for company admins, returns 0 as default
+  const getSenderPinNumber = (): number => {
+    // Company admins typically use 0 as their sender PIN number
+    // This matches the existing pattern in the database for admin messages
+    if (!user?.user_metadata?.pin) {
+      console.log("Company admin PIN not found in metadata, using default admin PIN (0)");
+      return 0; // Default PIN for company admin
+    }
+
+    const pinNumber = parseInt(user.user_metadata.pin);
+    if (isNaN(pinNumber)) {
+      console.log("Invalid PIN number format in metadata, using default admin PIN (0)");
+      return 0; // Default PIN for company admin if parsing fails
+    }
+
+    return pinNumber;
+  };
+
+  // Get a valid recipient PIN number or throw a descriptive error
+  const getRecipientPinNumber = (pinValue: string | number): number => {
+    // If pinValue is null or undefined
+    if (pinValue == null) {
+      console.error("Recipient PIN is null or undefined");
+      throw new Error("Recipient PIN number is missing");
+    }
+
+    // Convert to string for validation if it's not already a string
+    const pinString = String(pinValue);
+
+    // Now we can safely use string methods
+    if (pinString.trim() === "") {
+      console.error("Recipient PIN is an empty string");
+      throw new Error("Recipient PIN number is missing");
+    }
+
+    const pinNumber = parseInt(pinString);
+    if (isNaN(pinNumber)) {
+      console.error("Invalid recipient PIN format:", pinString);
+      throw new Error(`Invalid recipient PIN number: ${pinString}`);
+    }
+
+    return pinNumber;
+  };
+
   // Handle request approval
   const handleApprove = async (request: PendingRequest) => {
     setIsRequestLoading(true);
     try {
+      // Log the request data for debugging
+      console.log("Processing approval request:", {
+        id: request.id,
+        pin: request.pin_number,
+        date: request.request_date,
+        type: request.leave_type,
+        paid_in_lieu: request.paid_in_lieu,
+      });
+
       const { error } = await supabase
         .from("pld_sdv_requests")
         .update({
@@ -248,44 +373,61 @@ export function PldSdvSection() {
       if (error) throw error;
 
       // Get the sender's PIN number (company admin)
-      const senderPin = parseInt(user?.user_metadata?.pin || "0");
-      // Get the recipient's PIN number from the request
-      const recipientPin = parseInt(request.pin_number);
+      const senderPin = getSenderPinNumber();
 
-      // Validate PIN numbers
-      if (isNaN(senderPin) || isNaN(recipientPin)) {
-        throw new Error("Invalid PIN numbers for notification");
+      // Get and validate the recipient's PIN number from the request
+      try {
+        const recipientPin = getRecipientPinNumber(request.pin_number);
+
+        // Determine notification title and message based on request type and paid_in_lieu status
+        const notificationTitle = request.paid_in_lieu
+          ? `${request.leave_type} Paid in Lieu Approved`
+          : `${request.leave_type} Day Off Approved`;
+
+        const notificationMessage = request.paid_in_lieu
+          ? `Your ${request.leave_type} payment request for ${format(
+              parseISO(request.request_date),
+              "MMM d, yyyy"
+            )} has been approved. Please verify in CATS.`
+          : `Your ${request.leave_type} day off request for ${format(
+              parseISO(request.request_date),
+              "MMM d, yyyy"
+            )} has been approved. Please verify in CATS.`;
+
+        // Send notification
+        await sendMessageWithNotification(
+          senderPin,
+          [recipientPin],
+          notificationTitle,
+          notificationMessage,
+          false,
+          "approval"
+        );
+      } catch (pinError) {
+        console.error("Error with recipient PIN:", pinError);
+        Alert.alert(
+          "Partial Success",
+          "Request was approved, but notification could not be sent due to invalid recipient data."
+        );
       }
 
-      // Determine notification title and message based on request type and paid_in_lieu status
-      const notificationTitle = request.paid_in_lieu
-        ? `${request.leave_type} Paid in Lieu Approved`
-        : `${request.leave_type} Day Off Approved`;
-
-      const notificationMessage = request.paid_in_lieu
-        ? `Your ${request.leave_type} payment request for ${format(
-            parseISO(request.request_date),
-            "MMM d, yyyy"
-          )} has been approved.`
-        : `Your ${request.leave_type} day off request for ${format(
-            parseISO(request.request_date),
-            "MMM d, yyyy"
-          )} has been approved.`;
-
-      await sendMessageWithNotification(
-        senderPin,
-        [recipientPin],
-        notificationTitle,
-        notificationMessage,
-        false,
-        "approval"
-      );
-
+      // Refresh the list regardless of notification success
       await fetchPendingRequests();
       Alert.alert("Success", "Request approved successfully");
     } catch (error) {
       console.error("Error approving request:", error);
-      Alert.alert("Error", "Failed to approve request");
+
+      // If the error is related to PIN validation but the database update succeeded
+      if ((error as Error)?.message?.includes("PIN")) {
+        console.log("Request approved but notification failed due to PIN issue");
+        Alert.alert(
+          "Partial Success",
+          "Request was approved, but notification could not be sent due to invalid recipient data."
+        );
+        await fetchPendingRequests();
+      } else {
+        Alert.alert("Error", "Failed to approve request");
+      }
     } finally {
       setIsRequestLoading(false);
     }
@@ -297,6 +439,15 @@ export function PldSdvSection() {
 
     setIsRequestLoading(true);
     try {
+      // Log the request data for debugging
+      console.log("Processing denial request:", {
+        id: selectedRequest.id,
+        pin: selectedRequest.pin_number,
+        date: selectedRequest.request_date,
+        type: selectedRequest.leave_type,
+        reason_id: selectedDenialReason,
+      });
+
       const { error } = await supabase
         .from("pld_sdv_requests")
         .update({
@@ -312,17 +463,32 @@ export function PldSdvSection() {
 
       if (error) throw error;
 
-      await sendMessageWithNotification(
-        parseInt(user?.user_metadata?.pin),
-        [parseInt(selectedRequest.pin_number)],
-        "Leave Request Denied",
-        `Your ${selectedRequest.leave_type} request for ${format(
-          parseISO(selectedRequest.request_date),
-          "MMM d, yyyy"
-        )} has been denied.`,
-        false,
-        "denial"
-      );
+      // Get the sender's PIN number (company admin)
+      const senderPin = getSenderPinNumber();
+
+      // Get and validate the recipient's PIN number from the request
+      try {
+        const recipientPin = getRecipientPinNumber(selectedRequest.pin_number);
+
+        // Send notification
+        await sendMessageWithNotification(
+          senderPin,
+          [recipientPin],
+          "Leave Request Denied",
+          `Your ${selectedRequest.leave_type} request for ${format(
+            parseISO(selectedRequest.request_date),
+            "MMM d, yyyy"
+          )} has been denied. Please verify in CATS.`,
+          false,
+          "denial"
+        );
+      } catch (pinError) {
+        console.error("Error with recipient PIN:", pinError);
+        Alert.alert(
+          "Partial Success",
+          "Request was denied, but notification could not be sent due to invalid recipient data."
+        );
+      }
 
       setIsDenialModalVisible(false);
       setSelectedRequest(null);
@@ -332,7 +498,24 @@ export function PldSdvSection() {
       Alert.alert("Success", "Request denied successfully");
     } catch (error) {
       console.error("Error denying request:", error);
-      Alert.alert("Error", "Failed to deny request");
+
+      // If the error is related to PIN validation but the database update succeeded
+      if ((error as Error)?.message?.includes("PIN")) {
+        console.log("Request denied but notification failed due to PIN issue");
+
+        setIsDenialModalVisible(false);
+        setSelectedRequest(null);
+        setSelectedDenialReason(null);
+        setDenialComment("");
+
+        Alert.alert(
+          "Partial Success",
+          "Request was denied, but notification could not be sent due to invalid recipient data."
+        );
+        await fetchPendingRequests();
+      } else {
+        Alert.alert("Error", "Failed to deny request");
+      }
     } finally {
       setIsRequestLoading(false);
     }
@@ -342,6 +525,14 @@ export function PldSdvSection() {
   const handleCancellationApproval = async (request: PendingRequest) => {
     setIsRequestLoading(true);
     try {
+      // Log the request data for debugging
+      console.log("Processing cancellation request:", {
+        id: request.id,
+        pin: request.pin_number,
+        date: request.request_date,
+        type: request.leave_type,
+      });
+
       const { error } = await supabase
         .from("pld_sdv_requests")
         .update({
@@ -356,32 +547,64 @@ export function PldSdvSection() {
       if (error) throw error;
 
       // Get the sender's PIN number (company admin)
-      const senderPin = parseInt(user?.user_metadata?.pin || "0");
-      // Get the recipient's PIN number from the request
-      const recipientPin = parseInt(request.pin_number);
+      const senderPin = getSenderPinNumber();
 
-      // Validate PIN numbers
-      if (isNaN(senderPin) || isNaN(recipientPin)) {
-        throw new Error("Invalid PIN numbers for notification");
+      // Get and validate the recipient's PIN number from the request
+      try {
+        const recipientPin = getRecipientPinNumber(request.pin_number);
+
+        // Send notification
+        await sendMessageWithNotification(
+          senderPin,
+          [recipientPin],
+          "Leave Request Cancellation Approved",
+          `Your cancellation request for ${request.leave_type} on ${format(
+            parseISO(request.request_date),
+            "MMM d, yyyy"
+          )} has been approved. Please verify in CATS.`,
+          false,
+          "approval"
+        );
+      } catch (pinError) {
+        console.error("Error with recipient PIN:", pinError);
+        Alert.alert(
+          "Partial Success",
+          "Request was cancelled, but notification could not be sent due to invalid recipient data."
+        );
       }
-
-      await sendMessageWithNotification(
-        senderPin,
-        [recipientPin],
-        "Leave Request Cancellation Approved",
-        `Your cancellation request for ${request.leave_type} on ${format(
-          parseISO(request.request_date),
-          "MMM d, yyyy"
-        )} has been approved.`,
-        false,
-        "approval"
-      );
 
       await fetchPendingRequests();
       Alert.alert("Success", "Cancellation approved successfully");
     } catch (error) {
       console.error("Error approving cancellation:", error);
-      Alert.alert("Error", "Failed to approve cancellation");
+
+      // Update the database entry even if notification fails
+      if ((error as Error)?.message?.includes("PIN")) {
+        console.log("Attempting to update request status despite notification error...");
+        try {
+          await supabase
+            .from("pld_sdv_requests")
+            .update({
+              status: "cancelled",
+              actioned_by: user?.id,
+              actioned_at: new Date().toISOString(),
+              responded_at: new Date().toISOString(),
+              responded_by: user?.id,
+            })
+            .eq("id", request.id);
+
+          Alert.alert(
+            "Partial Success",
+            "Request was cancelled, but notification could not be sent due to invalid recipient data."
+          );
+          await fetchPendingRequests();
+        } catch (dbError) {
+          console.error("Failed to update request status:", dbError);
+          Alert.alert("Error", "Failed to approve cancellation");
+        }
+      } else {
+        Alert.alert("Error", "Failed to approve cancellation");
+      }
     } finally {
       setIsRequestLoading(false);
     }
