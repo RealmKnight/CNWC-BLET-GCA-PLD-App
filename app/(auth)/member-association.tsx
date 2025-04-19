@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { StyleSheet, TextInput, TouchableOpacity, Image } from "react-native";
+import { StyleSheet, TextInput, TouchableOpacity, Image, View } from "react-native";
 import { useAuth } from "@/hooks/useAuth";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -8,6 +8,15 @@ import { AdminMessageModal } from "@/components/AdminMessageModal";
 import Toast from "react-native-toast-message";
 import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { Modal } from "@/components/ui/Modal";
+import { supabase } from "@/utils/supabase";
+
+// Type for member data
+interface MemberData {
+  first_name: string;
+  last_name: string;
+  pin_number: number;
+}
 
 export default function MemberAssociationScreen() {
   const [pinNumber, setPinNumber] = useState("");
@@ -15,6 +24,8 @@ export default function MemberAssociationScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [showAdminModal, setShowAdminModal] = useState(false);
   const [associationSuccess, setAssociationSuccess] = useState(false);
+  const [memberData, setMemberData] = useState<MemberData | null>(null);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
   const { associateMemberWithPin, user, member } = useAuth();
 
   // Monitor member data and redirect when it's available after successful association
@@ -35,6 +46,52 @@ export default function MemberAssociationScreen() {
     }
   }, [associationSuccess, member]);
 
+  const handleFetchMember = async () => {
+    try {
+      setError(null);
+      setIsLoading(true);
+
+      // Convert pin to bigint by removing any non-numeric characters and parsing
+      const numericPin = parseInt(pinNumber.replace(/\D/g, ""), 10);
+      if (isNaN(numericPin)) throw new Error("Invalid PIN format");
+
+      // First verify the PIN exists and isn't already associated
+      const { data: memberRecord, error: checkError } = await supabase
+        .from("members")
+        .select("first_name, last_name, pin_number, id")
+        .eq("pin_number", numericPin)
+        .maybeSingle();
+
+      if (checkError) throw checkError;
+      if (!memberRecord) throw new Error("No member found with that PIN");
+
+      // If member already has an ID and it's not this user's ID, it's taken
+      if (memberRecord.id && memberRecord.id !== user?.id) {
+        throw new Error("Member is already associated with another user");
+      }
+
+      // Store member data and show confirmation modal
+      setMemberData(memberRecord);
+      setShowConfirmModal(true);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "An error occurred";
+      setError(errorMessage);
+
+      // Show admin modal for specific error cases
+      if (
+        [
+          "Member is not active",
+          "Member is already associated with another user",
+          "No member found with that PIN",
+        ].includes(errorMessage)
+      ) {
+        setShowAdminModal(true);
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleAssociate = async () => {
     try {
       setError(null);
@@ -51,19 +108,9 @@ export default function MemberAssociationScreen() {
       const errorMessage = err instanceof Error ? err.message : "An error occurred";
       setError(errorMessage);
       setAssociationSuccess(false);
-
-      // Show admin modal for specific error cases
-      if (
-        [
-          "Member is not active",
-          "Member is already associated with another user",
-          "No member found with that PIN",
-        ].includes(errorMessage)
-      ) {
-        setShowAdminModal(true);
-      }
     } finally {
       setIsLoading(false);
+      setShowConfirmModal(false);
     }
   };
 
@@ -109,14 +156,57 @@ export default function MemberAssociationScreen() {
 
         <TouchableOpacity
           style={[styles.button, (isLoading || associationSuccess) && styles.buttonDisabled]}
-          onPress={handleAssociate}
+          onPress={handleFetchMember}
           disabled={isLoading || associationSuccess}
         >
           <ThemedText style={styles.buttonText}>
-            {isLoading ? "Associating..." : associationSuccess ? "Association Successful!" : "Associate Member"}
+            {isLoading ? "Checking..." : associationSuccess ? "Association Successful!" : "Associate Member"}
           </ThemedText>
         </TouchableOpacity>
       </ThemedView>
+
+      {/* Member Confirmation Modal */}
+      <Modal visible={showConfirmModal} onClose={() => setShowConfirmModal(false)} title="Confirm Member Association">
+        <ThemedView style={styles.confirmContent}>
+          <ThemedText style={styles.confirmText}>
+            This is the member record of the PIN you entered, please confirm that this is yours:
+          </ThemedText>
+
+          {memberData && (
+            <ThemedView style={styles.memberDetails}>
+              <ThemedView style={styles.detailRow}>
+                <ThemedText style={styles.detailLabel}>First Name:</ThemedText>
+                <ThemedText style={styles.detailValue}>{memberData.first_name}</ThemedText>
+              </ThemedView>
+
+              <ThemedView style={styles.detailRow}>
+                <ThemedText style={styles.detailLabel}>Last Name:</ThemedText>
+                <ThemedText style={styles.detailValue}>{memberData.last_name}</ThemedText>
+              </ThemedView>
+
+              <ThemedView style={styles.detailRow}>
+                <ThemedText style={styles.detailLabel}>PIN:</ThemedText>
+                <ThemedText style={styles.detailValue}>{memberData.pin_number}</ThemedText>
+              </ThemedView>
+            </ThemedView>
+          )}
+
+          <View style={styles.centeredButtonContainer}>
+            <TouchableOpacity
+              style={[styles.modalButton, styles.cancelButton]}
+              onPress={() => {
+                setShowConfirmModal(false);
+                setMemberData(null);
+              }}
+            >
+              <ThemedText style={styles.buttonTextWhite}>Oops, try again</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.modalButton, styles.confirmButton]} onPress={handleAssociate}>
+              <ThemedText style={styles.buttonTextWhite}>Yes, It's me!</ThemedText>
+            </TouchableOpacity>
+          </View>
+        </ThemedView>
+      </Modal>
 
       <AdminMessageModal
         visible={showAdminModal}
@@ -203,5 +293,57 @@ const styles = StyleSheet.create({
     height: 163,
     alignSelf: "center",
     marginBottom: 20,
+  },
+  // Confirmation modal styles
+  confirmContent: {
+    paddingVertical: 10,
+  },
+  confirmText: {
+    fontSize: 16,
+    marginBottom: 20,
+    textAlign: "center",
+  },
+  memberDetails: {
+    backgroundColor: Colors.dark.card,
+    borderRadius: 8,
+    padding: 15,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    marginBottom: 20,
+  },
+  detailRow: {
+    flexDirection: "row",
+    marginBottom: 10,
+  },
+  detailLabel: {
+    fontWeight: "bold",
+    width: 100,
+  },
+  detailValue: {
+    flex: 1,
+  },
+  centeredButtonContainer: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 10,
+  },
+  modalButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    minWidth: 130,
+    alignItems: "center",
+  },
+  confirmButton: {
+    backgroundColor: Colors.dark.success,
+  },
+  cancelButton: {
+    backgroundColor: Colors.dark.error,
+  },
+  buttonTextWhite: {
+    color: "#000000",
+    fontWeight: "600",
   },
 });

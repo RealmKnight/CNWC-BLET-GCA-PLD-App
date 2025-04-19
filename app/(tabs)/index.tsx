@@ -6,6 +6,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useUserStore } from "@/store/userStore";
 import { ThemedText } from "@/components/ThemedText";
 import { HelloWave } from "@/components/HelloWave";
+import { Colors } from "@/constants/Colors";
 
 export default function HomeScreen() {
   const { member } = useAuth();
@@ -22,6 +23,10 @@ export default function HomeScreen() {
             <HelloWave />
             <ThemedText style={styles.welcomeText}>Welcome, {member?.first_name}</ThemedText>
           </ThemedView>
+          <ThemedText style={styles.noticeText}>
+            Most of the links below are only placeholders for future functionality of the app. They work, but the
+            subsequent links on the pages they lead to do not.
+          </ThemedText>
           <NavigationCard
             title="My Division"
             description="View your division information, officers, and members"
@@ -107,5 +112,11 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: "bold",
     marginLeft: 8,
+  },
+  noticeText: {
+    fontSize: 16,
+    textAlign: "center",
+    marginBottom: 16,
+    color: Colors.dark.disabled,
   },
 });
