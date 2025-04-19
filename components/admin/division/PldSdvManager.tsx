@@ -279,24 +279,24 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
   useEffect(() => {
     const now = new Date();
     let start: Date;
-    let end: Date = add(now, { days: 30 }); // Default end date is 30 days in the future
+    let end: Date = add(now, { days: 365 }); // Changed to 365 days (full year) in the future
 
     switch (datePreset) {
       case "3days":
-        start = subDays(now, 3);
-        end = add(now, { days: 3 });
-        break;
-      case "7days":
         start = subDays(now, 7);
         end = add(now, { days: 7 });
         break;
+      case "7days":
+        start = subDays(now, 14);
+        end = add(now, { days: 14 });
+        break;
       case "30days":
-        start = subDays(now, 30);
-        end = add(now, { days: 30 });
+        start = subDays(now, 60);
+        end = add(now, { days: 60 }); // Changed to 60 days in the future
         break;
       case "6months":
         start = subMonths(now, 6);
-        end = add(now, { months: 6 });
+        end = add(now, { months: 6 }); // Changed to 6 months in the future
         break;
       default:
         return; // Don't update dates for custom preset
@@ -390,6 +390,15 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
         query = query.eq("member_id", selectedMember.id);
       }
 
+      // Log the raw query (only in development)
+      if (process.env.NODE_ENV === "development") {
+        console.log("[PldSdvManager] Raw query details:", {
+          table: "pld_sdv_requests",
+          calendar_id: localSelectedCalendarId,
+          date_range: `${startDate} to ${endDate}`,
+        });
+      }
+
       const { data, error } = await query;
 
       if (error) throw error;
@@ -398,6 +407,18 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
         count: data?.length || 0,
         data: data,
       });
+
+      // If no results, perform a debug query to find closest dates
+      if (data?.length === 0 && process.env.NODE_ENV === "development") {
+        const { data: dateDebugData } = await supabase
+          .from("pld_sdv_requests")
+          .select("id, request_date, leave_type, status")
+          .eq("calendar_id", localSelectedCalendarId)
+          .order("request_date", { ascending: false })
+          .limit(5);
+
+        console.log("[PldSdvManager] Debug - closest dates found:", dateDebugData);
+      }
 
       setRequests(data || []);
     } catch (error) {
@@ -498,10 +519,10 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
           onChange={(e) => setDatePreset(e.target.value as DatePreset)}
           style={dynamicStyles.webSelect as React.CSSProperties}
         >
-          <option value="3days">Last 3 Days</option>
-          <option value="7days">Last 7 Days</option>
-          <option value="30days">Last 30 Days</option>
-          <option value="6months">Last 6 Months</option>
+          <option value="3days">Next 7 Days</option>
+          <option value="7days">Next 14 Days</option>
+          <option value="30days">Next 60 Days</option>
+          <option value="6months">Next 6 Months</option>
           <option value="custom">Custom Range</option>
         </select>
       ) : (
@@ -510,10 +531,10 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
           onValueChange={(value) => setDatePreset(value as DatePreset)}
           style={dynamicStyles.picker as unknown as StyleProp<TextStyle>}
         >
-          <Picker.Item label="Last 3 Days" value="3days" />
-          <Picker.Item label="Last 7 Days" value="7days" />
-          <Picker.Item label="Last 30 Days" value="30days" />
-          <Picker.Item label="Last 6 Months" value="6months" />
+          <Picker.Item label="Next 7 Days" value="3days" />
+          <Picker.Item label="Next 14 Days" value="7days" />
+          <Picker.Item label="Next 60 Days" value="30days" />
+          <Picker.Item label="Next 6 Months" value="6months" />
           <Picker.Item label="Custom Range" value="custom" />
         </Picker>
       )}
@@ -665,6 +686,26 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
 
   // Render requests table/list
   const renderRequests = () => {
+    // Show a message when no results are found
+    if (filteredAndSortedRequests.length === 0) {
+      return (
+        <View style={styles.noResultsContainer}>
+          <ThemedText style={styles.noResultsText}>No requests found for the selected date range.</ThemedText>
+          <ThemedText style={styles.noResultsSubText}>
+            Try extending the date range or switching to a different filter.
+          </ThemedText>
+          <Button
+            onPress={() => {
+              setDatePreset("6months");
+            }}
+            style={{ marginTop: 16 }}
+          >
+            View Last 6 Months
+          </Button>
+        </View>
+      );
+    }
+
     if (Platform.OS === "web") {
       return (
         <div style={styles.tableContainer as React.CSSProperties}>
@@ -969,6 +1010,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: Colors.light.textDim,
     fontWeight: "bold",
+  } as TextStyle,
+  noResultsContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  } as ViewStyle,
+  noResultsText: {
+    fontSize: 18,
+    fontWeight: "bold",
+    marginBottom: 16,
+  } as TextStyle,
+  noResultsSubText: {
+    fontSize: 16,
+    color: Colors.light.textDim,
   } as TextStyle,
 });
 

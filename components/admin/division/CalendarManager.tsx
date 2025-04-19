@@ -10,6 +10,7 @@ import {
   Pressable,
   useWindowDimensions,
   ScrollView,
+  ActivityIndicator,
 } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -25,8 +26,9 @@ import { Calendar } from "@/types/calendar";
 import { RequestEntry } from "./RequestEntry";
 import { Ionicons } from "@expo/vector-icons";
 import { PldSdvManager } from "./PldSdvManager";
+import { TimeOffManager } from "./TimeOffManager";
 // Define view types
-type CalendarView = "calendarManagement" | "enterRequests" | "managePldSdv";
+type CalendarView = "calendarManagement" | "enterRequests" | "managePldSdv" | "manageTimeOff";
 
 export function CalendarManager() {
   const {
@@ -261,7 +263,11 @@ export function CalendarManager() {
     switch (currentView) {
       case "calendarManagement":
         return (
-          <ScrollView style={styles.contentScroll} contentContainerStyle={styles.contentContainer}>
+          <ScrollView
+            style={[styles.contentScroll, Platform.OS === "android" && styles.androidContentScroll]}
+            contentContainerStyle={styles.contentContainer}
+            nestedScrollEnabled={true}
+          >
             <ThemedView style={styles.componentGroup}>
               <CalendarCrudAdmin selectedDivisionName={selectedDivision} style={{ marginBottom: 16 }} />
               {currentDivisionCalendars.length > 1 && (
@@ -297,14 +303,32 @@ export function CalendarManager() {
         );
       case "enterRequests":
         return (
-          <ScrollView style={styles.contentScroll} contentContainerStyle={styles.contentContainer}>
+          <ScrollView
+            style={[styles.contentScroll, Platform.OS === "android" && styles.androidContentScroll]}
+            contentContainerStyle={styles.contentContainer}
+            nestedScrollEnabled={true}
+          >
             <RequestEntry selectedDivision={selectedDivision} selectedCalendarId={selectedCalendarId} />
           </ScrollView>
         );
       case "managePldSdv":
         return (
-          <ScrollView style={styles.contentScroll} contentContainerStyle={styles.contentContainer}>
+          <ScrollView
+            style={[styles.contentScroll, Platform.OS === "android" && styles.androidContentScroll]}
+            contentContainerStyle={styles.contentContainer}
+            nestedScrollEnabled={true}
+          >
             <PldSdvManager selectedDivision={selectedDivision} selectedCalendarId={selectedCalendarId || undefined} />
+          </ScrollView>
+        );
+      case "manageTimeOff":
+        return (
+          <ScrollView
+            style={[styles.contentScroll, Platform.OS === "android" && styles.androidContentScroll]}
+            contentContainerStyle={styles.contentContainer}
+            nestedScrollEnabled={true}
+          >
+            <TimeOffManager selectedDivision={selectedDivision} selectedCalendarId={selectedCalendarId} />
           </ScrollView>
         );
       default:
@@ -330,6 +354,7 @@ export function CalendarManager() {
             {renderActionButton("calendarManagement", "settings-outline", "Manage Calendars")}
             {renderActionButton("enterRequests", "calendar-outline", "Enter Vacation")}
             {renderActionButton("managePldSdv", "today-outline", "Mange PLD/SDV")}
+            {renderActionButton("manageTimeOff", "time-outline", "Manage Time Off")}
           </View>
         </View>
         <View style={styles.divisionContainer}>
@@ -418,6 +443,10 @@ const styles = StyleSheet.create({
   },
   contentContainer: {
     padding: 16,
+    ...(Platform.OS === "android" && {
+      flexGrow: 1,
+      paddingBottom: 50,
+    }),
   },
   componentGroup: {
     flex: 1,
@@ -474,5 +503,10 @@ const styles = StyleSheet.create({
   },
   contentArea: {
     flex: 1,
+  },
+  androidContentScroll: {
+    flex: 1,
+    height: "auto",
+    maxHeight: "100%",
   },
 });

@@ -1,5 +1,5 @@
 import React, { ReactNode, useState } from "react";
-import { StyleSheet, TouchableOpacity, View } from "react-native";
+import { StyleSheet, TouchableOpacity, View, Platform } from "react-native";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
 import { Ionicons } from "@expo/vector-icons";
@@ -26,7 +26,7 @@ export function Accordion({ title, children, onExpand, initiallyExpanded = false
   };
 
   return (
-    <ThemedView style={styles.container}>
+    <ThemedView style={[styles.container, Platform.OS === "android" && styles.androidContainer]}>
       <TouchableOpacity style={styles.header} onPress={toggleExpand} activeOpacity={0.7}>
         <ThemedText style={styles.title}>{title}</ThemedText>
         <Ionicons name={isExpanded ? "chevron-up" : "chevron-down"} size={20} color={Colors[colorScheme].text} />
@@ -44,6 +44,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.light.border,
     overflow: "hidden",
+  },
+  androidContainer: {
+    height: "auto",
+    flex: 0,
+    flexGrow: 0,
   },
   header: {
     flexDirection: "row",

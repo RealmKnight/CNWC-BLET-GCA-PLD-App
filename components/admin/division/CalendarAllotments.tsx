@@ -71,7 +71,7 @@ const WeeklyAllotmentsDisplay = ({ allotments }: { allotments: WeeklyVacationAll
   );
 
   return (
-    <ThemedView style={styles.allotmentsContainer}>
+    <ThemedView style={[styles.allotmentsContainer, Platform.OS === "android" && styles.androidFlexContainer]}>
       {sortedAllotments.length === 0 ? (
         <ThemedText style={styles.noDataText}>No weekly allotments found for this year.</ThemedText>
       ) : (
@@ -97,7 +97,7 @@ const WeeklyAllotmentsDisplay = ({ allotments }: { allotments: WeeklyVacationAll
 // Component to display daily PLD/SDV allotments
 const DailyAllotmentsDisplay = ({ allotment }: { allotment?: YearlyAllotment }) => {
   return (
-    <ThemedView style={styles.allotmentsContainer}>
+    <ThemedView style={[styles.allotmentsContainer, Platform.OS === "android" && styles.androidFlexContainer]}>
       {!allotment ? (
         <ThemedText style={styles.noDataText}>No yearly allotment found.</ThemedText>
       ) : (
@@ -593,7 +593,7 @@ export function CalendarAllotments({ calendarId, selectedDivision }: CalendarAll
   };
 
   return (
-    <ThemedView style={styles.container}>
+    <ThemedView style={[styles.container, Platform.OS === "android" && styles.androidContainer]}>
       {/* Tab Navigation */}
       <ThemedView style={styles.tabContainer}>
         <TouchableOpacity
@@ -764,6 +764,10 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     padding: 16,
+  },
+  androidContainer: {
+    flex: 0,
+    height: "auto",
   },
   tabContainer: {
     flexDirection: "row",
@@ -993,5 +997,10 @@ const styles = StyleSheet.create({
   overrideReasonText: {
     fontSize: 12,
     color: Colors.dark.textDim,
+  },
+  androidFlexContainer: {
+    flex: 0,
+    flexGrow: 0,
+    height: "auto",
   },
 });

@@ -21,6 +21,7 @@ import { useColorScheme } from "@/hooks/useColorScheme";
 import { Ionicons } from "@expo/vector-icons";
 import { Calendar } from "@/types/calendar"; // Import Calendar type
 import { supabase } from "@/utils/supabase";
+import { Button as ThemedButton } from "@/components/ui/Button";
 
 interface CalendarCrudAdminProps {
   // Props needed? Perhaps the selected division ID/name if not easily accessible from stores?
@@ -207,18 +208,12 @@ export function CalendarCrudAdmin({ selectedDivisionName, style }: CalendarCrudA
             editable={!isLoading}
           />
           <View style={styles.editButtons}>
-            <Button
-              title="Cancel"
-              onPress={handleCancelEdit}
-              disabled={isLoading}
-              color={Colors[colorScheme].secondary}
-            />
-            <Button
-              title="Save"
-              onPress={handleUpdateCalendar}
-              disabled={isLoading || !editName.trim()}
-              color={tintColor}
-            />
+            <ThemedButton variant="secondary" onPress={handleCancelEdit} disabled={isLoading}>
+              Cancel
+            </ThemedButton>
+            <ThemedButton onPress={handleUpdateCalendar} disabled={isLoading || !editName.trim()}>
+              Save
+            </ThemedButton>
           </View>
         </View>
       ) : (
@@ -280,30 +275,24 @@ export function CalendarCrudAdmin({ selectedDivisionName, style }: CalendarCrudA
             editable={!isLoading}
           />
           <View style={styles.addButtons}>
-            <Button
-              title="Cancel"
-              onPress={() => setIsAdding(false)}
-              disabled={isLoading}
-              color={Colors[colorScheme].secondary}
-            />
-            <Button
-              title="Add Calendar"
-              onPress={handleAddCalendar}
-              disabled={isLoading || !newCalendarName.trim()}
-              color={tintColor}
-            />
+            <ThemedButton variant="secondary" onPress={() => setIsAdding(false)} disabled={isLoading}>
+              Cancel
+            </ThemedButton>
+            <ThemedButton onPress={handleAddCalendar} disabled={isLoading || !newCalendarName.trim()}>
+              Add Calendar
+            </ThemedButton>
           </View>
         </ThemedView>
       ) : (
-        <Button
-          title="Add New Calendar"
+        <ThemedButton
           onPress={() => {
             setIsAdding(true);
             setError(null);
           }}
           disabled={isLoading}
-          color={tintColor}
-        />
+        >
+          Add New Calendar
+        </ThemedButton>
       )}
 
       {error && <ThemedText style={styles.errorText}>{error}</ThemedText>}

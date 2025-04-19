@@ -55,6 +55,25 @@ interface WeeklyVacationAllotment {
 
 type AllotmentType = "pld_sdv" | "vacation";
 
+// Add these interfaces to the top of the file, near the other interface definitions
+interface Member {
+    pin_number: number;
+    first_name: string;
+    last_name: string;
+    company_hire_date: string;
+    curr_vacation_weeks: number;
+    next_vacation_weeks: number;
+    curr_vacation_split: number;
+    next_vacation_split: number;
+    sdv_entitlement: number;
+    sdv_election: number;
+    max_plds: number;
+    division_id: number;
+    wc_sen_roster: number;
+}
+
+type TimeOffYearType = "current" | "next";
+
 interface AdminCalendarManagementState {
     // Renamed state
     divisionZones: Record<string, Zone[]>; // Renamed from zones
@@ -117,6 +136,24 @@ interface AdminCalendarManagementState {
     rangeStartDate: string | undefined;
     rangeEndDate: string | undefined;
     rangeAllotmentValue: string;
+
+    // New state for time off management
+    selectedTimeOffYear: TimeOffYearType;
+    memberTimeOffData: Record<number, Member>;
+    memberTimeOffDataArray: Member[]; // Added to preserve original order
+    timeOffChanges: Record<
+        number,
+        Partial<{
+            curr_vacation_split: number;
+            next_vacation_split: number;
+            curr_vacation_weeks: number;
+            next_vacation_weeks: number;
+            sdv_election: number;
+            sdv_entitlement: number;
+        }>
+    >;
+    isTimeOffLoading: boolean;
+    timeOffError: string | null;
 
     // Actions
     setError: (error: string | null) => void;
@@ -211,6 +248,29 @@ interface AdminCalendarManagementState {
     ) => Promise<
         { affectedCount: number; startDate: string; endDate: string } | null
     >;
+
+    // New actions for time off management
+    setSelectedTimeOffYear: (year: TimeOffYearType) => void;
+    fetchMemberTimeOffData: (divisionId: number) => Promise<void>;
+    setTimeOffChange: (pinNumber: number, field: string, value: any) => void;
+    resetTimeOffChanges: () => void;
+    calculateAndUpdateSDVs: (
+        pinNumber: number,
+        vacationSplit: number,
+        year: TimeOffYearType,
+    ) => void;
+    updateMemberTimeOff: (
+        changes: Array<{
+            pin_number: number;
+            [key: string]: any;
+        }>,
+        year: TimeOffYearType,
+    ) => Promise<boolean>;
+    updateSingleMemberTimeOff: (
+        pinNumber: number,
+        fields: Record<string, any>,
+        year: TimeOffYearType,
+    ) => Promise<boolean>;
 }
 
 // Keep track of ongoing fetches outside the store state
@@ -302,6 +362,14 @@ export const useAdminCalendarManagementStore = create<
     rangeStartDate: undefined,
     rangeEndDate: undefined,
     rangeAllotmentValue: "",
+
+    // New state for time off management
+    selectedTimeOffYear: "current",
+    memberTimeOffData: {},
+    memberTimeOffDataArray: [],
+    timeOffChanges: {},
+    isTimeOffLoading: false,
+    timeOffError: null,
 
     // Simple Setters
     setError: (error) => set({ error }),
@@ -1546,6 +1614,382 @@ export const useAdminCalendarManagementStore = create<
             });
         }
     },
+
+    // New actions for time off management
+    setSelectedTimeOffYear: (year: TimeOffYearType) => {
+        set({ selectedTimeOffYear: year });
+    },
+
+    fetchMemberTimeOffData: async (divisionId: number) => {
+        set({ isTimeOffLoading: true, timeOffError: null });
+        try {
+            // Reset any existing changes first
+            get().resetTimeOffChanges();
+
+            // Fetch members for the division with status="ACTIVE" (case sensitive)
+            // Sort by wc_sen_roster primarily, and then by last_name as a fallback
+            const { data: members, error } = await supabase
+                .from("members")
+                .select("*")
+                .eq("division_id", divisionId)
+                .eq("status", "ACTIVE")
+                .order("wc_sen_roster", { ascending: true, nullsFirst: false }) // Sort by seniority, null values last
+                .order("last_name", { ascending: true }); // Fallback to last_name if wc_sen_roster is null or equal
+
+            if (error) {
+                throw new Error(
+                    `Error fetching member time off data: ${error.message}`,
+                );
+            }
+
+            console.log(
+                "Fetched members with ordering:",
+                members.map((m) => ({
+                    pin: m.pin_number,
+                    name: `${m.first_name} ${m.last_name}`,
+                    seniority: m.wc_sen_roster,
+                })),
+            );
+
+            // Calculate derived fields and format data
+            const membersWithTimeOff: Record<number, Member> = {};
+            const membersDataArray: Member[] = []; // Array to preserve original order
+
+            // Current and next year dates for calculations
+            const currentDate = new Date();
+            const nextYearDate = new Date();
+            nextYearDate.setFullYear(currentDate.getFullYear() + 1);
+
+            for (const member of members) {
+                if (!member.company_hire_date) {
+                    // Skip member if no company hire date
+                    continue;
+                }
+
+                // Calculate vacation weeks based on company hire date if not already set
+                const currVacationWeeks = member.curr_vacation_weeks !== null &&
+                        member.curr_vacation_weeks !== undefined
+                    ? member.curr_vacation_weeks
+                    : calculateVacationWeeks(
+                        member.company_hire_date,
+                        currentDate,
+                    );
+
+                const nextVacationWeeks = member.next_vacation_weeks !== null &&
+                        member.next_vacation_weeks !== undefined
+                    ? member.next_vacation_weeks
+                    : calculateVacationWeeks(
+                        member.company_hire_date,
+                        nextYearDate,
+                    );
+
+                // Calculate max_plds if not already set
+                const maxPlds =
+                    member.max_plds !== null && member.max_plds !== undefined
+                        ? member.max_plds
+                        : calculatePLDs(member.company_hire_date, currentDate);
+
+                // Format member data
+                const formattedMember: Member = {
+                    pin_number: member.pin_number,
+                    first_name: member.first_name,
+                    last_name: member.last_name,
+                    company_hire_date: member.company_hire_date,
+                    curr_vacation_weeks: currVacationWeeks,
+                    next_vacation_weeks: nextVacationWeeks,
+                    curr_vacation_split: member.curr_vacation_split ?? 0,
+                    next_vacation_split: member.next_vacation_split ?? 0,
+                    sdv_entitlement: member.sdv_entitlement ?? 0,
+                    sdv_election: member.sdv_election ?? 0,
+                    max_plds: maxPlds,
+                    division_id: member.division_id,
+                    wc_sen_roster: member.wc_sen_roster,
+                };
+
+                // Add to both record and array
+                membersWithTimeOff[member.pin_number] = formattedMember;
+                membersDataArray.push(formattedMember);
+            }
+
+            // Set both the record (for lookup by PIN) and array (for preserving order)
+            set({
+                memberTimeOffData: membersWithTimeOff,
+                memberTimeOffDataArray: membersDataArray,
+            });
+        } catch (error) {
+            console.error("Error fetching member time off data:", error);
+            set({
+                timeOffError: "Failed to load member data. Please try again.",
+            });
+        } finally {
+            set({ isTimeOffLoading: false });
+        }
+    },
+
+    setTimeOffChange: (pinNumber: number, field: string, value: any) => {
+        set((state) => {
+            const currentChanges = state.timeOffChanges[pinNumber] || {};
+
+            return {
+                timeOffChanges: {
+                    ...state.timeOffChanges,
+                    [pinNumber]: {
+                        ...currentChanges,
+                        [field]: value,
+                    },
+                },
+            };
+        });
+    },
+
+    resetTimeOffChanges: () => {
+        set({ timeOffChanges: {} });
+    },
+
+    calculateAndUpdateSDVs: (
+        pinNumber: number,
+        vacationSplit: number,
+        year: TimeOffYearType,
+    ) => {
+        const { setTimeOffChange } = get();
+
+        // Each split week provides 6 SDVs
+        const sdvs = vacationSplit * 6;
+
+        // Update the corresponding SDV field based on the year
+        if (year === "current") {
+            setTimeOffChange(pinNumber, "sdv_entitlement", sdvs);
+        } else {
+            setTimeOffChange(pinNumber, "sdv_election", sdvs);
+        }
+    },
+
+    updateMemberTimeOff: async (
+        changes: Array<{
+            pin_number: number;
+            [key: string]: any;
+        }>,
+        year: TimeOffYearType,
+    ) => {
+        try {
+            set({ isTimeOffLoading: true, timeOffError: null });
+            const { memberTimeOffData } = get();
+
+            // Process changes for each member
+            for (const change of changes) {
+                const { pin_number, ...fields } = change;
+                const memberData = memberTimeOffData[pin_number];
+
+                if (!memberData) {
+                    console.error(
+                        `Member with PIN ${pin_number} not found in state`,
+                    );
+                    continue;
+                }
+
+                // Prepare all fields that need to be saved
+                const fieldsToUpdate: Record<string, any> = { ...fields };
+
+                // Ensure we're storing the vacation weeks values
+                if (year === "current") {
+                    // Always save current year values when we're working on current year
+                    if (fieldsToUpdate.curr_vacation_split !== undefined) {
+                        // Calculate weeks to bid and ensure it's stored
+                        const vacationWeeks =
+                            fieldsToUpdate.curr_vacation_weeks !== undefined
+                                ? fieldsToUpdate.curr_vacation_weeks
+                                : memberData.curr_vacation_weeks;
+
+                        // Make sure curr_vacation_weeks is included in the update
+                        if (fieldsToUpdate.curr_vacation_weeks === undefined) {
+                            fieldsToUpdate.curr_vacation_weeks = vacationWeeks;
+                        }
+                    }
+                } else {
+                    // Always save next year values when we're working on next year
+                    if (fieldsToUpdate.next_vacation_split !== undefined) {
+                        // Calculate weeks to bid and ensure it's stored
+                        const vacationWeeks =
+                            fieldsToUpdate.next_vacation_weeks !== undefined
+                                ? fieldsToUpdate.next_vacation_weeks
+                                : memberData.next_vacation_weeks;
+
+                        // Make sure next_vacation_weeks is included in the update
+                        if (fieldsToUpdate.next_vacation_weeks === undefined) {
+                            fieldsToUpdate.next_vacation_weeks = vacationWeeks;
+                        }
+                    }
+                }
+
+                console.log(
+                    `Updating member ${pin_number} with fields:`,
+                    fieldsToUpdate,
+                );
+
+                // Update the member record
+                const { error: updateError } = await supabase
+                    .from("members")
+                    .update(fieldsToUpdate)
+                    .eq("pin_number", pin_number);
+
+                if (updateError) {
+                    throw updateError;
+                }
+            }
+
+            // Reset changes and refresh data
+            set((state) => {
+                // Create updated memberTimeOffData
+                const updatedMemberData = {
+                    ...state.memberTimeOffData,
+                    ...changes.reduce((acc, change) => {
+                        const member =
+                            state.memberTimeOffData[change.pin_number];
+                        if (member) {
+                            acc[change.pin_number] = { ...member, ...change };
+                        }
+                        return acc;
+                    }, {} as Record<number, Member>),
+                };
+
+                // Update the array to maintain the same order
+                const updatedMemberArray = state.memberTimeOffDataArray.map(
+                    (member) => {
+                        const change = changes.find((c) =>
+                            c.pin_number === member.pin_number
+                        );
+                        if (change) {
+                            return { ...member, ...change };
+                        }
+                        return member;
+                    },
+                );
+
+                return {
+                    timeOffChanges: {},
+                    memberTimeOffData: updatedMemberData,
+                    memberTimeOffDataArray: updatedMemberArray,
+                };
+            });
+
+            return true;
+        } catch (error) {
+            console.error("Error updating member time off data:", error);
+            set({ timeOffError: "Failed to save changes. Please try again." });
+            return false;
+        } finally {
+            set({ isTimeOffLoading: false });
+        }
+    },
+
+    updateSingleMemberTimeOff: async (
+        pinNumber: number,
+        fields: Record<string, any>,
+        year: TimeOffYearType,
+    ) => {
+        try {
+            const { memberTimeOffData, timeOffChanges } = get();
+
+            // Check if the member exists
+            const memberData = memberTimeOffData[pinNumber];
+            if (!memberData) {
+                console.error(
+                    `Member with PIN ${pinNumber} not found in state`,
+                );
+                return false;
+            }
+
+            // Prepare fields to update
+            const fieldsToUpdate: Record<string, any> = { ...fields };
+
+            // Ensure we're storing the vacation weeks values
+            if (year === "current") {
+                // Always save current year values when we're working on current year
+                if (fieldsToUpdate.curr_vacation_split !== undefined) {
+                    // Calculate weeks to bid and ensure it's stored
+                    const vacationWeeks =
+                        fieldsToUpdate.curr_vacation_weeks !== undefined
+                            ? fieldsToUpdate.curr_vacation_weeks
+                            : memberData.curr_vacation_weeks;
+
+                    // Make sure curr_vacation_weeks is included in the update
+                    if (fieldsToUpdate.curr_vacation_weeks === undefined) {
+                        fieldsToUpdate.curr_vacation_weeks = vacationWeeks;
+                    }
+                }
+            } else {
+                // Always save next year values when we're working on next year
+                if (fieldsToUpdate.next_vacation_split !== undefined) {
+                    // Calculate weeks to bid and ensure it's stored
+                    const vacationWeeks =
+                        fieldsToUpdate.next_vacation_weeks !== undefined
+                            ? fieldsToUpdate.next_vacation_weeks
+                            : memberData.next_vacation_weeks;
+
+                    // Make sure next_vacation_weeks is included in the update
+                    if (fieldsToUpdate.next_vacation_weeks === undefined) {
+                        fieldsToUpdate.next_vacation_weeks = vacationWeeks;
+                    }
+                }
+            }
+
+            console.log(
+                `Updating single member ${pinNumber} with fields:`,
+                fieldsToUpdate,
+            );
+
+            // Update the member record in the database
+            const { error: updateError } = await supabase
+                .from("members")
+                .update(fieldsToUpdate)
+                .eq("pin_number", pinNumber);
+
+            if (updateError) {
+                throw updateError;
+            }
+
+            // Update only this member in the state without resetting all changes
+            set((state) => {
+                // Update the member in the lookup object
+                const updatedMemberData = {
+                    ...state.memberTimeOffData,
+                    [pinNumber]: {
+                        ...state.memberTimeOffData[pinNumber],
+                        ...fieldsToUpdate,
+                    },
+                };
+
+                // Update the member in the array
+                const updatedMemberArray = state.memberTimeOffDataArray.map(
+                    (member) => {
+                        if (member.pin_number === pinNumber) {
+                            return { ...member, ...fieldsToUpdate };
+                        }
+                        return member;
+                    },
+                );
+
+                // Create a new timeOffChanges object without this member's changes
+                const newTimeOffChanges = { ...state.timeOffChanges };
+                delete newTimeOffChanges[pinNumber];
+
+                return {
+                    memberTimeOffData: updatedMemberData,
+                    memberTimeOffDataArray: updatedMemberArray,
+                    timeOffChanges: newTimeOffChanges,
+                };
+            });
+
+            return true;
+        } catch (error) {
+            console.error(`Error updating member ${pinNumber}:`, error);
+            set({
+                timeOffError:
+                    `Failed to save changes for member ${pinNumber}. Please try again.`,
+            });
+            return false;
+        }
+    },
 }));
 
 // Ensure existing exports remain
@@ -1554,8 +1998,78 @@ export type {
     AllotmentType,
     BulkUpdateResult,
     Calendar,
+    Member,
     PldSdvAllotment,
     VacationAllotment,
     WeeklyVacationAllotment,
     YearlyAllotment,
 };
+
+// Add this function to calculate vacation weeks based on company hire date
+function calculateVacationWeeks(
+    companyHireDate: string | null | undefined,
+    referenceDate: Date = new Date(),
+): number {
+    if (!companyHireDate) {
+        return 0; // Default value if no hire date is provided
+    }
+
+    const hireDate = new Date(companyHireDate);
+
+    // Create a date for the end of the reference year
+    const endOfYear = new Date(referenceDate.getFullYear(), 11, 31);
+
+    // Calculate years of service as of the end of the reference year
+    // This ensures the employee gets the higher entitlement for the entire calendar year
+    // if their anniversary falls within that year
+    let yearsOfService = endOfYear.getFullYear() - hireDate.getFullYear();
+
+    // Adjust if hire date's month & day is after Dec 31
+    if (
+        hireDate.getMonth() > 11 ||
+        (hireDate.getMonth() === 11 && hireDate.getDate() > 31)
+    ) {
+        yearsOfService--;
+    }
+
+    // Apply vacation week rules
+    if (yearsOfService < 2) return 1;
+    if (yearsOfService < 5) return 2;
+    if (yearsOfService < 14) return 3;
+    if (yearsOfService < 23) return 4;
+    return 5;
+}
+
+// Add this function to calculate PLDs based on years of service
+function calculatePLDs(
+    companyHireDate: string | null | undefined,
+    referenceDate: Date = new Date(),
+): number {
+    if (!companyHireDate) {
+        return 0; // Default value if no hire date is provided
+    }
+
+    const hireDate = new Date(companyHireDate);
+
+    // Create a date for the end of the reference year
+    const endOfYear = new Date(referenceDate.getFullYear(), 11, 31);
+
+    // Calculate years of service as of the end of the reference year
+    // This ensures the employee gets the higher entitlement for the entire calendar year
+    // if their anniversary falls within that year
+    let yearsOfService = endOfYear.getFullYear() - hireDate.getFullYear();
+
+    // Adjust if hire date's month & day is after Dec 31
+    if (
+        hireDate.getMonth() > 11 ||
+        (hireDate.getMonth() === 11 && hireDate.getDate() > 31)
+    ) {
+        yearsOfService--;
+    }
+
+    // Apply PLD rules
+    if (yearsOfService < 3) return 5;
+    if (yearsOfService < 6) return 8;
+    if (yearsOfService < 10) return 11;
+    return 13;
+}
