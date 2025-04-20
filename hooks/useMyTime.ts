@@ -42,6 +42,15 @@ export interface TimeStats {
   };
 }
 
+// New interface for vacation statistics
+export interface VacationStats {
+  totalWeeks: number;
+  splitWeeks: number;
+  weeksToBid: number;
+  approvedWeeks: number;
+  remainingWeeks: number;
+}
+
 export interface TimeOffRequest {
   id: string;
   request_date: string;
@@ -94,6 +103,9 @@ const RETRY_DELAY = 1000; // 1 second
 
 export function useMyTime() {
   const [stats, setStats] = useState<TimeStats | null>(null);
+  const [vacationStats, setVacationStats] = useState<VacationStats | null>(
+    null,
+  );
   const [requests, setRequests] = useState<TimeOffRequest[]>([]);
   const [vacationRequests, setVacationRequests] = useState<
     UserVacationRequest[]
@@ -119,6 +131,78 @@ export function useMyTime() {
     failedAttempts: 0,
     error: null,
   });
+
+  // New function to fetch vacation statistics
+  const fetchVacationStats = useCallback(async () => {
+    if (!member?.id || member.pin_number === null) {
+      console.log(
+        "[MyTime] Skipping fetchVacationStats - no member ID or PIN",
+      );
+      setVacationStats(null);
+      return;
+    }
+
+    try {
+      console.log(
+        "[MyTime] Fetching vacation statistics for member PIN:",
+        member.pin_number,
+      );
+      setError(null);
+
+      // Get current year's vacation statistics
+      const { data: memberData, error: memberError } = await supabase
+        .from("members")
+        .select("curr_vacation_weeks, curr_vacation_split")
+        .eq("id", member.id)
+        .single();
+
+      if (memberError) throw memberError;
+
+      const totalWeeks = memberData?.curr_vacation_weeks || 0;
+      const splitWeeks = memberData?.curr_vacation_split || 0;
+      const weeksToBid = totalWeeks - splitWeeks;
+
+      // Count approved vacation requests
+      const { data: vacationRequestsData, error: vacationError } =
+        await supabase
+          .from("vacation_requests")
+          .select("id")
+          .eq("pin_number", member.pin_number)
+          .eq("status", "approved")
+          .gte("start_date", `${new Date().getFullYear()}-01-01`)
+          .lte("end_date", `${new Date().getFullYear()}-12-31`);
+
+      if (vacationError) throw vacationError;
+
+      const approvedWeeks = vacationRequestsData?.length || 0;
+      const remainingWeeks = weeksToBid - approvedWeeks;
+
+      const vacStats: VacationStats = {
+        totalWeeks,
+        splitWeeks,
+        weeksToBid,
+        approvedWeeks,
+        remainingWeeks: Math.max(0, remainingWeeks),
+      };
+
+      console.log("[MyTime] Calculated vacation stats:", vacStats);
+      setVacationStats(vacStats);
+    } catch (err) {
+      console.error("[MyTime] Error in fetchVacationStats:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to fetch vacation statistics",
+      );
+      setVacationStats({
+        totalWeeks: 0,
+        splitWeeks: 0,
+        weeksToBid: 0,
+        approvedWeeks: 0,
+        remainingWeeks: 0,
+      });
+    }
+  }, [member?.id, member?.pin_number]);
 
   const fetchStats = useCallback(async () => {
     if (!member?.id) {
@@ -653,6 +737,7 @@ export function useMyTime() {
         fetchStats(),
         fetchRequests(),
         fetchVacationRequests(),
+        fetchVacationStats(),
       ]);
 
       setIsInitialized(true);
@@ -676,6 +761,7 @@ export function useMyTime() {
     fetchStats,
     fetchRequests,
     fetchVacationRequests,
+    fetchVacationStats,
     isInitialized,
   ]);
 
@@ -750,10 +836,19 @@ export function useMyTime() {
               prev.filter((req) => req.id !== oldRecord.id)
             );
           }
+          // Update vacation stats when requests change
+          await retryableOperation(fetchVacationStats);
+          break;
+
+        case "members":
+          if (eventType === "UPDATE" && newRecord.id === member?.id) {
+            // If member data was updated (like vacation weeks/split), refresh vacation stats
+            await retryableOperation(fetchVacationStats);
+          }
           break;
       }
     },
-    [fetchStats],
+    [fetchStats, fetchVacationStats, member?.id],
   );
 
   useIsomorphicLayoutEffect(() => {
@@ -935,6 +1030,7 @@ export function useMyTime() {
 
   return {
     stats,
+    vacationStats,
     requests,
     vacationRequests,
     isLoading,

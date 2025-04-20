@@ -34,6 +34,36 @@ interface LeaveRowProps {
   onIconPress?: () => void;
 }
 
+// Add new component for vacation summary display
+interface VacationSummaryRowProps {
+  label: string;
+  value: number;
+  highlight?: boolean;
+}
+
+function VacationSummaryRow({ label, value, highlight = false }: VacationSummaryRowProps) {
+  const colorScheme = useColorScheme();
+
+  // Add a fallback value of 0 if value is undefined or null
+  const displayValue = value !== undefined && value !== null ? value : 0;
+
+  return (
+    <ThemedView style={styles.row}>
+      <ThemedText style={styles.label}>{label}</ThemedText>
+      <ThemedView style={styles.vacationValueContainer}>
+        <ThemedText
+          style={[
+            styles.vacationValue,
+            highlight && { color: Colors[colorScheme ?? "light"].primary, fontWeight: "bold" },
+          ]}
+        >
+          {displayValue}
+        </ThemedText>
+      </ThemedView>
+    </ThemedView>
+  );
+}
+
 function LeaveRow({ label, pldValue, sdvValue = undefined, showIcon, onIconPress }: LeaveRowProps) {
   const colorScheme = useColorScheme();
 
@@ -391,6 +421,7 @@ export default function MyTimeScreen() {
 
   const {
     stats,
+    vacationStats,
     requests,
     vacationRequests,
     isLoading,
@@ -638,9 +669,11 @@ export default function MyTimeScreen() {
         )}
 
         {stats && <RolloverWarningBanner unusedPlds={stats.rolledOver.unusedPlds} />}
+
+        {/* Current Allocations Card */}
         <ThemedView style={[styles.card, { width: cardWidth }]}>
           <ThemedView style={styles.sectionHeader}>
-            <ThemedText style={styles.sectionTitle}>Current Allocations</ThemedText>
+            <ThemedText style={styles.sectionTitle}>Current Single Day Allocations</ThemedText>
           </ThemedView>
           <ThemedView style={styles.tableHeader}>
             <ThemedText style={styles.headerLabel}>Type</ThemedText>
@@ -663,10 +696,26 @@ export default function MyTimeScreen() {
           />
         </ThemedView>
 
-        <ThemedView style={styles.sectionHeader}>
+        {/* Vacation Summary Card */}
+        {vacationStats && (
+          <ThemedView style={[styles.card, { width: cardWidth, marginTop: 24 }]}>
+            <ThemedView style={styles.sectionHeader}>
+              <ThemedText style={styles.sectionTitle}>Vacation Summary</ThemedText>
+            </ThemedView>
+
+            <VacationSummaryRow label="Total Vacation Weeks" value={vacationStats.totalWeeks} />
+            <VacationSummaryRow label="Split Weeks (converted to SDVs)" value={vacationStats.splitWeeks} />
+            <VacationSummaryRow label="Weeks to Bid" value={vacationStats.weeksToBid} />
+            <VacationSummaryRow label="Approved Vacation Requests" value={vacationStats.approvedWeeks} />
+            <VacationSummaryRow label="Remaining Weeks to Bid" value={vacationStats.remainingWeeks} highlight={true} />
+          </ThemedView>
+        )}
+
+        <ThemedView style={[styles.sectionHeader, { marginTop: 12 }]}>
           <ThemedText style={styles.sectionTitle}>Time Off Requests</ThemedText>
         </ThemedView>
 
+        {/* PLD and SDV Requests Card */}
         <ThemedView style={[styles.card, { width: cardWidth }]}>
           <ThemedText style={styles.subsectionTitle}>Pending & Approved Requests</ThemedText>
           {pendingAndApproved.future.length > 0 || pendingAndApproved.past.length > 0 ? (
@@ -731,8 +780,9 @@ export default function MyTimeScreen() {
             </>
           )}
         </ThemedView>
-        <ThemedView style={[styles.card, { width: cardWidth }]}>
-          {/* Full-Week Vacation Requests - NEW SECTION */}
+
+        {/* Full-Week Vacation Requests Card - Updated Section */}
+        <ThemedView style={[styles.card, { width: cardWidth, marginTop: 24 }]}>
           <ThemedText style={styles.subsectionTitle}>Full-Week Vacation Requests</ThemedText>
           {sortedVacationRequests.future.length > 0 || sortedVacationRequests.past.length > 0 ? (
             <>
@@ -1141,5 +1191,14 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontStyle: "italic",
     opacity: 0.7,
+  },
+  vacationValueContainer: {
+    flex: 2,
+    alignItems: "flex-end",
+    paddingRight: 16,
+  },
+  vacationValue: {
+    fontSize: 16,
+    fontWeight: "500",
   },
 });

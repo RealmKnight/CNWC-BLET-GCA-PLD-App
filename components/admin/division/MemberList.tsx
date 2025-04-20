@@ -96,6 +96,8 @@ const MemberItem = React.memo(
     const isMobileView = width < 768;
     const isWeb = Platform.OS === "web";
 
+    const currentYear = new Date().getFullYear();
+
     const handleSave = async () => {
       try {
         const entitlementNum = parseInt(entitlement);
@@ -150,7 +152,7 @@ const MemberItem = React.memo(
         return (
           <View style={styles.sdvContainer}>
             <View style={styles.sdvSection}>
-              <ThemedText style={styles.sdvLabel}>SDV Allotment</ThemedText>
+              <ThemedText style={styles.sdvLabel}>SDV {currentYear}</ThemedText>
               {isEditing ? (
                 <TextInput
                   style={[styles.sdvInput, { color: Colors[colorScheme].text }]}
@@ -164,7 +166,7 @@ const MemberItem = React.memo(
               )}
             </View>
             <View style={styles.sdvSection}>
-              <ThemedText style={styles.sdvLabel}>SDV Election</ThemedText>
+              <ThemedText style={styles.sdvLabel}>SDV {currentYear + 1}</ThemedText>
               {isEditing ? (
                 <TextInput
                   style={[styles.sdvInput, { color: Colors[colorScheme].text }]}
@@ -386,7 +388,7 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   searchInputWrapper: {
-    flex: 2,
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     position: "relative",

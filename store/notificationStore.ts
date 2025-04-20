@@ -240,6 +240,17 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
   subscribeToMessages: (pinNumber: number) => {
     const channelId = `messages-${pinNumber}-${Date.now()}`;
 
+    // First get the current user's ID for push notification deliveries filtering
+    const getUserId = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        return user?.id;
+      } catch (error) {
+        console.error("[NotificationStore] Error getting current user:", error);
+        return null;
+      }
+    };
+
     // Subscribe to messages table changes
     const messagesSubscription = supabase
       .channel(channelId)
@@ -343,35 +354,54 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
         );
       });
 
-    // Subscribe to push notification deliveries with a separate channel
-    const deliveriesChannelId = `deliveries-${pinNumber}-${Date.now()}`;
-    const deliveriesSubscription = supabase
-      .channel(deliveriesChannelId)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "push_notification_deliveries",
-          filter: `recipient_pin_number=eq.${pinNumber}`,
-        },
-        async () => {
-          // Refetch messages when there's a delivery status change
-          await get().fetchMessages(pinNumber);
-        },
-      )
-      .subscribe((status) => {
-        console.log(
-          `[NotificationStore] Deliveries subscription status for ${deliveriesChannelId}:`,
-          status,
+    // Set up push notification deliveries subscription async
+    getUserId().then((userId) => {
+      if (userId) {
+        // Subscribe to push notification deliveries with a separate channel
+        const deliveriesChannelId = `deliveries-${pinNumber}-${Date.now()}`;
+        const deliveriesSubscription = supabase
+          .channel(deliveriesChannelId)
+          .on(
+            "postgres_changes",
+            {
+              event: "*",
+              schema: "public",
+              table: "push_notification_deliveries",
+              filter: `recipient_id=eq.${userId}`,
+            },
+            async () => {
+              // Refetch messages when there's a delivery status change
+              await get().fetchMessages(pinNumber);
+            },
+          )
+          .subscribe((status) => {
+            console.log(
+              `[NotificationStore] Deliveries subscription status for ${deliveriesChannelId}:`,
+              status,
+            );
+          });
+
+        // Update the original cleanup function to include the deliveries subscription
+        const originalUnsubscribe = messagesSubscription.unsubscribe;
+        messagesSubscription.unsubscribe = function (timeout?: number) {
+          // Call the original unsubscribe method
+          const result = originalUnsubscribe.call(this, timeout);
+          // Also unsubscribe from the deliveries subscription
+          deliveriesSubscription.unsubscribe();
+          // Return the original promise
+          return result;
+        };
+      } else {
+        console.warn(
+          "[NotificationStore] Could not get user ID for push notification deliveries subscription",
         );
-      });
+      }
+    });
 
     // Return cleanup function
     return () => {
       console.log("[NotificationStore] Cleaning up subscriptions");
       messagesSubscription.unsubscribe();
-      deliveriesSubscription.unsubscribe();
     };
   },
 
