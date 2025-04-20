@@ -31,7 +31,7 @@ import Toast from "react-native-toast-message";
 import { useThemeColor } from "@/hooks/useThemeColor";
 import { useAuth, AuthContext } from "@/hooks/useAuth";
 import { useAdminCalendarManagementStore } from "@/store/adminCalendarManagementStore";
-import { useAdminMemberManagementStore } from "@/store/adminMemberManagementStore";
+import { useAdminMemberManagementStore, type MemberData } from "@/store/adminMemberManagementStore";
 import { MemberEditForm } from "./MemberEditForm";
 
 type MemberAction = "list" | "add" | "edit" | "bulk" | "transfer";
@@ -41,6 +41,7 @@ type BulkActionTab = "calendar" | "seniority" | "sdv" | "zone";
 // TODO: This Member interface is temporary and needs to be refactored when implementing
 // the full edit functionality. We should consolidate this with the Database Member type
 // and MemberRow from types/auth.ts
+/*
 interface Member {
   pin_number: string | number;
   first_name: string;
@@ -52,6 +53,7 @@ interface Member {
   calendar_name: string | null;
   status: string;
 }
+*/
 
 type DbMember = Database["public"]["Tables"]["members"]["Row"];
 
@@ -766,13 +768,13 @@ const selectDivision = (state: UserState) => state.division || "";
 const selectSetDivision = (state: UserState) => state.setDivision;
 
 // Create a persistent MemberList component using React.memo
-const PersistentMemberList = React.memo(({ onEditMember }: { onEditMember: (member: Member) => void }) => {
+const PersistentMemberList = React.memo(({ onEditMember }: { onEditMember: (member: MemberData) => void }) => {
   return <MemberList onEditMember={onEditMember} />;
 });
 
 export function MemberManagement() {
   const [currentAction, setCurrentAction] = useState<MemberAction>("list");
-  const [selectedMember, setSelectedMember] = useState<Member | null>(null);
+  const [selectedMember, setSelectedMember] = useState<MemberData | null>(null);
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const tintColor = Colors[colorScheme].tint;
 
@@ -786,6 +788,7 @@ export function MemberManagement() {
     lastLoadedDivision,
     prepareDivisionSwitch,
     ensureDivisionMembersLoaded,
+    updateSingleMemberInList,
   } = useAdminMemberManagementStore();
 
   // Get user info from userStore
@@ -828,14 +831,21 @@ export function MemberManagement() {
     }
   };
 
-  const handleEditMember = useCallback((member: Member) => {
+  const handleEditMember = useCallback((member: MemberData) => {
     setSelectedMember(member);
     setCurrentAction("edit");
   }, []);
 
-  const handleCloseEditForm = useCallback(() => {
-    setCurrentAction("list");
-  }, []);
+  const handleCloseEditForm = useCallback(
+    (updatedMember?: MemberData | null) => {
+      if (updatedMember) {
+        updateSingleMemberInList(updatedMember);
+      }
+      setCurrentAction("list");
+      setSelectedMember(null);
+    },
+    [updateSingleMemberInList]
+  );
 
   const ButtonComponent = Platform.OS === "web" ? Pressable : TouchableOpacity;
 

@@ -23,7 +23,7 @@ import { useThemeColor } from "@/hooks/useThemeColor";
 import { supabase } from "@/utils/supabase";
 import { Picker } from "@react-native-picker/picker";
 import Toast from "react-native-toast-message";
-import { useAdminMemberManagementStore } from "@/store/adminMemberManagementStore";
+import { useAdminMemberManagementStore, type MemberData } from "@/store/adminMemberManagementStore";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { Modal, Button } from "@/components/ui";
 
@@ -42,18 +42,8 @@ interface Zone {
 }
 
 interface MemberEditFormProps {
-  member: {
-    pin_number: string | number;
-    first_name: string;
-    last_name: string;
-    division_id: number;
-    sdv_entitlement: number | null;
-    sdv_election: number | null;
-    calendar_id: string | null;
-    calendar_name: string | null;
-    status: string;
-  };
-  onClose: () => void;
+  member: MemberData;
+  onClose: (updatedMember?: MemberData | null) => void;
 }
 
 interface AuthUser {
@@ -156,7 +146,7 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
       if (formData.current_zone_id && !zonesForDivision.some((zone) => zone.id === formData.current_zone_id)) {
         setFormData((prev: Record<string, any>) => ({
           ...prev,
-          current_zone_id: null,
+          current_zone_id: "",
         }));
       }
     } else {
@@ -307,7 +297,7 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
         }
 
         // Default formatting
-        return value !== null && value !== undefined ? String(value) : "Not set";
+        return value !== null && value !== undefined && value !== "" ? String(value) : "Not set";
       };
 
       // Check each field for changes
@@ -315,17 +305,11 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
         const oldValue = originalData[key];
         const newValue = formData[key];
 
-        // Skip if the values are exactly the same
-        if (oldValue === newValue) return;
+        // Consider null and empty string as equivalent for comparison unless one is undefined
+        const areEquivalent =
+          oldValue === newValue || (oldValue === null && newValue === "") || (oldValue === "" && newValue === null);
 
-        // For dates, null, undefined and other special cases
-        if (
-          (oldValue === null && newValue === "") ||
-          (oldValue === undefined && newValue === "") ||
-          (oldValue === "" && newValue === null)
-        ) {
-          return;
-        }
+        if (areEquivalent) return;
 
         // Add to changed fields
         changes.push({
@@ -342,6 +326,10 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
 
   // Handle field changes
   const handleChange = (field: string, value: any) => {
+    // If the value from a picker is an empty string, store null internally
+    // if it's a field that should represent 'no selection' with null.
+    // For simplicity now, we'll store "" directly as picker now uses it.
+    // Consider converting back to null on save if needed.
     setFormData((prev: Record<string, any>) => ({
       ...prev,
       [field]: value,
@@ -352,10 +340,28 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
   const formatDate = (dateString: string | null) => {
     if (!dateString) return "";
     try {
+      // Attempt to create a date, handle potential invalid date strings
+      // If the string contains timezone info, Date() might adjust it.
+      // We want to preserve the YYYY-MM-DD part as is.
+      // Check if the string looks like YYYY-MM-DD format already.
+      if (/^\\d{4}-\\d{2}-\\d{2}$/.test(dateString)) {
+        return dateString;
+      }
+      // Otherwise, try parsing and formatting, but be cautious of timezones
       const date = new Date(dateString);
-      return date.toISOString().split("T")[0]; // YYYY-MM-DD format
+      // Check if the date is valid before formatting
+      if (isNaN(date.getTime())) {
+        return ""; // Return empty string for invalid dates
+      }
+      // Extract year, month, day parts carefully to avoid timezone shifts
+      const year = date.getFullYear();
+      const month = (date.getMonth() + 1).toString().padStart(2, "0"); // Month is 0-indexed
+      const day = date.getDate().toString().padStart(2, "0");
+      // Construct the YYYY-MM-DD string manually
+      return `${year}-${month}-${day}`;
     } catch (e) {
-      return dateString;
+      console.warn("Error formatting date:", dateString, e);
+      return ""; // Return empty string on error
     }
   };
 
@@ -397,6 +403,7 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
 
   // Handle date changes for native picker
   const handleDateChange = (field: string, date: Date | undefined) => {
+    setShowDatePicker(null); // Hide picker regardless of selection
     if (date) {
       handleChange(field, date.toISOString().split("T")[0]);
 
@@ -405,21 +412,128 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
         setTimeout(calculateMaxPLDs, 0);
       }
     }
-    setShowDatePicker(null);
   };
 
   // Save changes to the database
   const handleSave = async () => {
+    let updatedMemberData: MemberData | null = null;
     try {
       setIsSaving(true);
 
       const pinNumber = typeof formData.pin_number === "string" ? parseInt(formData.pin_number) : formData.pin_number;
 
-      const { error } = await supabase.from("members").update(formData).eq("pin_number", pinNumber);
+      // Prepare data for saving: Convert empty strings back to null where appropriate
+      const dataToSave = { ...formData };
+      Object.keys(dataToSave).forEach((key) => {
+        const nullableKeys = [
+          "division_id",
+          "current_zone_id",
+          "home_zone_id",
+          "calendar_id",
+          "sdv_entitlement",
+          "sdv_election",
+          "pld_rolled_over",
+          "prior_vac_sys",
+          "date_of_birth",
+          "company_hire_date",
+          "engineer_date",
+          "curr_vacation_weeks",
+          "curr_vacation_split",
+          "next_vacation_weeks",
+          "next_vacation_split",
+          "wc_sen_roster",
+          "dwp_sen_roster",
+          "dmir_sen_roster",
+          "eje_sen_roster",
+          "max_plds",
+          "misc_notes", // Misc notes can be null
+          "user_id", // User ID can be null
+          "rank", // Rank might be nullable
+        ];
+
+        if (nullableKeys.includes(key) && dataToSave[key] === "") {
+          dataToSave[key] = null;
+        }
+
+        const numericKeys = [
+          "pin_number",
+          "division_id",
+          "current_zone_id",
+          "home_zone_id",
+          "curr_vacation_weeks",
+          "curr_vacation_split",
+          "sdv_entitlement",
+          "pld_rolled_over",
+          "max_plds",
+          "next_vacation_weeks",
+          "next_vacation_split",
+          "sdv_election",
+          "prior_vac_sys",
+          "wc_sen_roster",
+          "dwp_sen_roster",
+          "dmir_sen_roster",
+          "eje_sen_roster",
+          // rank might be string or number, handle carefully or ensure it's string/null
+        ];
+        if (numericKeys.includes(key)) {
+          // Ensure '' becomes null for numeric fields, handle potential NaN
+          const value = dataToSave[key];
+          if (value === "" || value === null || value === undefined) {
+            dataToSave[key] = null;
+          } else {
+            const parsedValue = parseFloat(value);
+            dataToSave[key] = isNaN(parsedValue) ? null : parsedValue;
+          }
+        }
+      });
+
+      // Rank specific handling (if it should always be string)
+      if (dataToSave.rank === null || dataToSave.rank === undefined) {
+        dataToSave.rank = null;
+      } else {
+        dataToSave.rank = String(dataToSave.rank);
+      }
+
+      // Ensure boolean field is handled correctly
+      dataToSave.deleted = Boolean(dataToSave.deleted);
+
+      // Ensure pin_number is handled correctly (it should likely always be a number)
+      dataToSave.pin_number =
+        typeof dataToSave.pin_number === "string" ? parseInt(dataToSave.pin_number, 10) : dataToSave.pin_number;
+      if (isNaN(dataToSave.pin_number)) {
+        throw new Error("Invalid PIN Number provided.");
+      }
+      // Remove derived field before saving
+      delete dataToSave.calendar_name;
+
+      const { error } = await supabase.from("members").update(dataToSave).eq("pin_number", pinNumber);
 
       if (error) throw error;
 
-      await updateMember(); // Wait for the update to complete
+      // --- Fetch the single updated member record --- START
+      const { data: fetchedMember, error: fetchError } = await supabase
+        .from("members")
+        .select("*") // Select all fields to match the Member type potentially
+        .eq("pin_number", pinNumber)
+        .single();
+
+      if (fetchError) {
+        console.warn("Failed to fetch updated member data after save:", fetchError);
+        // Continue closing, but maybe show a different message or log?
+      } else if (fetchedMember) {
+        // Get calendar name
+        const calendarMap = new Map(availableCalendars?.map((cal) => [cal.id, cal.name]) || []);
+        // Format the fetched data into the Member type
+        updatedMemberData = {
+          ...fetchedMember,
+          pin_number: fetchedMember.pin_number, // Ensure correct type if needed
+          calendar_name: fetchedMember.calendar_id ? calendarMap.get(fetchedMember.calendar_id) || null : null,
+        } as MemberData; // Use MemberData type
+      }
+      // --- Fetch the single updated member record --- END
+
+      // Remove direct store update call
+      // await updateMember();
 
       Toast.show({
         type: "success",
@@ -427,14 +541,18 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
         text2: "Member updated successfully",
       });
 
+      setOriginalData(formData); // Update original data to reflect saved state
       setHasUnsavedChanges(false);
-      onClose(); // Close the form after successful save
+      setChangedFields([]); // Clear changed fields list
+      // Close the form and pass back the updated data
+      onClose(updatedMemberData);
     } catch (error) {
       console.error("Error updating member:", error);
+      const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
       Toast.show({
         type: "error",
         text1: "Error",
-        text2: "Failed to update member",
+        text2: `Failed to update member: ${errorMessage}`,
       });
     } finally {
       setIsSaving(false);
@@ -447,7 +565,8 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
       // Show the confirmation modal instead of platform-specific alerts
       setIsConfirmModalVisible(true);
     } else {
-      onClose();
+      // Pass null when closing without saving
+      onClose(null);
     }
   }, [hasUnsavedChanges, onClose]);
 
@@ -455,7 +574,12 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
   const handleWebDateInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const newDate = event.target.value;
     if (newDate && currentDateField) {
-      setTempDate(new Date(newDate));
+      try {
+        // Parse the date string directly without adding time info
+        setTempDate(new Date(newDate));
+      } catch (e) {
+        console.warn("Invalid date input:", newDate);
+      }
     }
   };
 
@@ -481,7 +605,8 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
         ]}
         placeholder={placeholder}
         placeholderTextColor={Colors[colorScheme].text + "80"}
-        value={formData[field]?.toString() || ""}
+        // Ensure value is always a string for TextInput
+        value={formData[field]?.toString() ?? ""}
         onChangeText={(text) => handleChange(field, text)}
         keyboardType={keyboardType}
         multiline={multiline}
@@ -518,6 +643,7 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
               mode="date"
               display={Platform.OS === "ios" ? "spinner" : "default"}
               onChange={(_, date) => handleDateChange(field, date)}
+              // Add maximumDate prop if necessary, e.g., maxDate={new Date()}
             />
           )}
         </>
@@ -531,7 +657,8 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
       <ThemedText style={styles.fieldLabel}>{label}</ThemedText>
       <View style={[styles.pickerContainer, { borderColor }]}>
         <Picker
-          selectedValue={formData[field]}
+          // Use empty string "" as the value for "no selection" instead of null
+          selectedValue={formData[field] ?? ""}
           onValueChange={(value) => handleChange(field, value)}
           style={[
             styles.picker,
@@ -541,8 +668,17 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
             },
           ]}
           dropdownIconColor={textColor}
+          // On Web, need accessibilityLabel for screen readers
+          accessibilityLabel={`Select ${label}`}
         >
-          <Picker.Item label="Select..." value={null} color={textColor} style={{ backgroundColor: backgroundColor }} />
+          {/* Use "" for the placeholder value */}
+          <Picker.Item
+            label="Select..."
+            value=""
+            color={textColor}
+            style={{ backgroundColor: backgroundColor }}
+            // enabled={false} // Optionally disable the placeholder item
+          />
           {options.map((option) => (
             <Picker.Item
               key={option.value}
@@ -567,6 +703,7 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
         ios_backgroundColor={Colors[colorScheme].border}
         onValueChange={(value) => handleChange(field, value)}
         value={Boolean(formData[field])}
+        accessibilityLabel={label}
       />
     </View>
   );
@@ -587,11 +724,15 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
         <ThemedText style={styles.authUserInfoLabel}>Auth User Info (Read Only)</ThemedText>
         <View style={styles.authUserInfoRow}>
           <ThemedText style={styles.authUserInfoField}>Email:</ThemedText>
-          <ThemedText style={styles.authUserInfoValue}>{authUser.email || "Not provided"}</ThemedText>
+          <ThemedText style={styles.authUserInfoValue} selectable>
+            {authUser.email || "Not provided"}
+          </ThemedText>
         </View>
         <View style={styles.authUserInfoRow}>
           <ThemedText style={styles.authUserInfoField}>Phone:</ThemedText>
-          <ThemedText style={styles.authUserInfoValue}>{authUser.phone || "Not provided"}</ThemedText>
+          <ThemedText style={styles.authUserInfoValue} selectable>
+            {authUser.phone || "Not provided"}
+          </ThemedText>
         </View>
       </View>
     );
@@ -630,12 +771,16 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
                     fontSize: 16,
                     width: "100%",
                   }}
+                  // Add accessibility label
+                  aria-label="Select date"
                 />
 
                 <View style={styles.modalButtons}>
                   <TouchableOpacityComponent
                     style={[styles.modalButton, { borderColor }]}
                     onPress={handleWebDateCancel}
+                    accessibilityRole="button"
+                    accessibilityLabel="Cancel date selection"
                   >
                     <ThemedText>Cancel</ThemedText>
                   </TouchableOpacityComponent>
@@ -643,6 +788,8 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
                   <TouchableOpacityComponent
                     style={[styles.modalButton, styles.applyButton, { backgroundColor: tintColor }]}
                     onPress={handleWebDateApply}
+                    accessibilityRole="button"
+                    accessibilityLabel="Apply selected date"
                   >
                     <ThemedText style={{ color: backgroundColor }}>Apply</ThemedText>
                   </TouchableOpacityComponent>
@@ -697,10 +844,18 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
     value: zone.id,
   }));
 
+  // Calendar options - ensure the "No Calendar" option uses value ""
+  const calendarOptions = [
+    { label: "No Calendar Assigned", value: "" }, // Use "" instead of null
+    ...availableCalendars.map((cal) => ({ label: cal.name, value: cal.id })),
+  ];
+
   // Render section header
   const renderSectionHeader = (title: string) => (
     <View style={styles.sectionHeader}>
-      <ThemedText style={styles.sectionHeaderText}>{title}</ThemedText>
+      <ThemedText style={styles.sectionHeaderText} accessibilityRole="header">
+        {title}
+      </ThemedText>
       <View style={[styles.sectionDivider, { backgroundColor: borderColor }]} />
     </View>
   );
@@ -720,7 +875,7 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
       <View style={[styles.header, { borderBottomColor: borderColor }]}>
         <View style={styles.titleContainer}>
           <ThemedText type="subtitle" style={styles.title}>
-            Edit Member: {formData.first_name} {formData.last_name}
+            Edit Member: {formData.first_name} {formData.last_name} ({formData.pin_number})
           </ThemedText>
         </View>
         <View style={styles.headerButtons}>
@@ -728,6 +883,9 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
             style={styles.closeButton}
             onPress={handleSave}
             disabled={isSaving || !hasUnsavedChanges}
+            accessibilityRole="button"
+            accessibilityLabel="Save changes"
+            accessibilityState={{ disabled: isSaving || !hasUnsavedChanges }}
           >
             {isSaving ? (
               <ActivityIndicator size="small" color={tintColor} />
@@ -739,7 +897,12 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
               />
             )}
           </TouchableOpacityComponent>
-          <TouchableOpacityComponent style={styles.closeButton} onPress={handleCloseAttempt}>
+          <TouchableOpacityComponent
+            style={styles.closeButton}
+            onPress={handleCloseAttempt}
+            accessibilityRole="button"
+            accessibilityLabel="Close form"
+          >
             <Ionicons name="close" size={24} color={textColor} />
           </TouchableOpacityComponent>
         </View>
@@ -761,13 +924,8 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
             {renderPickerField("Division", "division_id", divisionOptions)}
             {renderPickerField("Zone", "current_zone_id", zoneOptions)}
             {renderPickerField("Home Zone", "home_zone_id", allZoneOptions)}
-            {renderPickerField(
-              "Calendar",
-              "calendar_id",
-              [{ label: "No Calendar Assigned", value: "" }].concat(
-                availableCalendars.map((cal) => ({ label: cal.name, value: cal.id }))
-              )
-            )}
+            {/* Use updated calendarOptions */}
+            {renderPickerField("Calendar", "calendar_id", calendarOptions)}
             {renderPickerField("Role", "role", roleOptions)}
           </View>
         </View>
@@ -833,11 +991,14 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
               styles.actionButton,
               styles.saveButton,
               isSaving || !hasUnsavedChanges
-                ? [styles.disabledButton, { backgroundColor: "#6c757d" }]
+                ? [styles.disabledButton, { backgroundColor: Colors[colorScheme].disabled }]
                 : { backgroundColor: tintColor },
             ]}
             onPress={handleSave}
             disabled={isSaving || !hasUnsavedChanges}
+            accessibilityRole="button"
+            accessibilityLabel="Save changes"
+            accessibilityState={{ disabled: isSaving || !hasUnsavedChanges }}
           >
             {isSaving ? (
               <ActivityIndicator size="small" color={backgroundColor} />
@@ -852,6 +1013,8 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
           <TouchableOpacityComponent
             style={[styles.actionButton, styles.cancelButton, { borderColor }]}
             onPress={handleCloseAttempt}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel editing"
           >
             <Ionicons name="close-outline" size={20} color={textColor} />
             <ThemedText style={styles.cancelButtonText}>Cancel</ThemedText>
@@ -916,11 +1079,12 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
               Cancel
             </Button>
             <Button
+              variant="secondary" // Use secondary variant, apply custom styles if needed
               onPress={() => {
                 setIsConfirmModalVisible(false);
-                onClose();
+                // Pass null when discarding changes
+                onClose(null);
               }}
-              style={styles.applyButton}
             >
               Discard Changes
             </Button>
@@ -954,6 +1118,7 @@ const styles = StyleSheet.create({
   },
   titleContainer: {
     flex: 1,
+    marginRight: 8, // Add some space between title and buttons
   },
   title: {
     fontSize: 18,
@@ -977,18 +1142,19 @@ const styles = StyleSheet.create({
   formColumnsDesktop: {
     flexDirection: "row",
     flexWrap: "wrap",
-    marginHorizontal: -8,
+    marginHorizontal: -8, // Negative margin to counteract padding on columns
   },
   formColumnMobile: {
     flexDirection: "column",
   },
   formColumn: {
     flex: 1,
-    paddingHorizontal: 8,
-    minWidth: 300,
+    paddingHorizontal: 8, // Padding for spacing between columns
+    minWidth: 300, // Ensure columns have a minimum width
   },
   fullWidth: {
     width: "100%",
+    paddingHorizontal: 8, // Consistent padding
   },
   fieldContainer: {
     marginBottom: 16,
@@ -1004,9 +1170,12 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     paddingHorizontal: 12,
     width: "100%",
+    fontSize: 14, // Ensure consistent font size
     ...(Platform.OS === "web" && {
-      outlineColor: Colors.light.tint,
-      outlineWidth: 0,
+      outlineColor: Colors.light.tint, // Use a defined color
+      outlineOffset: 0,
+      outlineStyle: "solid", // Explicitly set outline style
+      outlineWidth: 0, // Start with 0, manage focus state if needed
     }),
   },
   multilineInput: {
@@ -1017,11 +1186,22 @@ const styles = StyleSheet.create({
   pickerContainer: {
     borderWidth: 1,
     borderRadius: 6,
-    overflow: "hidden",
+    overflow: "hidden", // Ensures border radius is applied correctly
   },
   picker: {
     height: 40,
     width: "100%",
+    fontSize: 14, // Consistent font size
+    // Web specific styling might be needed for consistent appearance
+    ...(Platform.OS === "web" && {
+      borderWidth: 0, // Remove default browser border inside the container
+      paddingLeft: 10, // Adjust padding
+      paddingRight: 30, // Space for dropdown arrow
+      appearance: "none", // Remove default browser appearance
+      backgroundImage: `url('data:image/svg+xml;utf8,<svg fill="currentColor" height="24" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/><path d="M0 0h24v24H0z" fill="none"/></svg>')`,
+      backgroundRepeat: "no-repeat",
+      backgroundPosition: "right 8px center",
+    }),
   },
   dateInput: {
     height: 40,
@@ -1035,6 +1215,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 16,
+    paddingVertical: 4, // Add some padding for better touch area
   },
   authUserInfoContainer: {
     marginTop: 24,
@@ -1085,13 +1266,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   disabledButton: {
-    opacity: 0.5,
+    opacity: 0.6, // Make disabled state more visually clear
   },
   actionButtonText: {
     fontWeight: "500",
+    fontSize: 14,
   },
   cancelButtonText: {
     fontWeight: "500",
+    fontSize: 14,
   },
   // Modal styles for web date picker
   modalOverlay: {
@@ -1104,7 +1287,8 @@ const styles = StyleSheet.create({
     padding: 20,
     borderRadius: 8,
     borderWidth: 1,
-    width: 300,
+    width: "90%", // Use percentage for responsiveness
+    maxWidth: 400, // Max width for larger screens
     alignItems: "center",
     gap: 16,
   },
@@ -1112,15 +1296,17 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "500",
     marginBottom: 16,
+    textAlign: "center", // Center title
   },
   modalButtons: {
     flexDirection: "row",
-    justifyContent: "space-between",
+    justifyContent: "space-around", // Better spacing for buttons
     width: "100%",
     marginTop: 16,
   },
   modalButton: {
-    padding: 10,
+    paddingVertical: 10, // Consistent padding
+    paddingHorizontal: 20,
     borderRadius: 6,
     borderWidth: 1,
     alignItems: "center",
@@ -1143,54 +1329,62 @@ const styles = StyleSheet.create({
     height: 1,
     width: "100%",
   },
+  // Confirmation Modal styles
   modalSubtitle: {
     fontSize: 16,
     fontWeight: "500",
     marginBottom: 16,
+    textAlign: "center",
   },
   changesScrollView: {
-    maxHeight: 300,
+    width: "100%", // Ensure ScrollView takes full width
+    maxHeight: 300, // Limit height
     marginBottom: 16,
+    paddingHorizontal: 4, // Add slight padding
   },
   changeRow: {
     marginBottom: 12,
-    padding: 8,
+    padding: 10, // Increase padding
     borderRadius: 6,
-    borderLeftWidth: 3,
-    borderLeftColor: "transparent",
-    backgroundColor: "transparent",
+    borderLeftWidth: 4, // Make border more prominent
+    borderLeftColor: "transparent", // Set dynamically
+    backgroundColor: "transparent", // Set dynamically
   },
   changeField: {
     fontWeight: "600",
-    marginBottom: 4,
+    marginBottom: 6, // Increase spacing
   },
   changeValuesContainer: {
+    // Keep as row, but allow wrapping if needed
     flexDirection: "row",
     flexWrap: "wrap",
-    justifyContent: "space-between",
+    justifyContent: "space-between", // Space out 'From' and 'To'
+    alignItems: "flex-start", // Align items to the start
   },
   changeValue: {
     flexDirection: "row",
     alignItems: "center",
-    marginRight: 8,
     marginBottom: 4,
-    flexWrap: "wrap",
+    flexBasis: "100%", // Start with full basis, wrap if needed
+    // Adjust based on content length if wrapping becomes an issue
   },
   oldValueLabel: {
     fontWeight: "500",
     marginRight: 4,
-    color: "transparent",
+    color: "transparent", // Set dynamically
   },
   oldValue: {
-    color: "transparent",
+    color: "transparent", // Set dynamically
+    flexShrink: 1, // Allow text to shrink if needed
   },
   newValueLabel: {
     fontWeight: "500",
     marginRight: 4,
-    color: "transparent",
+    color: "transparent", // Set dynamically
   },
   newValue: {
-    color: "transparent",
+    color: "transparent", // Set dynamically
+    flexShrink: 1, // Allow text to shrink if needed
   },
   confirmationWarning: {
     fontStyle: "italic",

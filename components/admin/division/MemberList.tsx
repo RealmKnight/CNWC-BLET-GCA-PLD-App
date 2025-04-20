@@ -24,31 +24,16 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/utils/supabase";
 import { Picker } from "@react-native-picker/picker";
 import Toast from "react-native-toast-message";
-import { useAdminMemberManagementStore } from "@/store/adminMemberManagementStore";
+import { useAdminMemberManagementStore, MemberData } from "@/store/adminMemberManagementStore";
 
-interface Member {
-  pin_number: string | number;
-  first_name: string;
-  last_name: string;
-  division_id: number;
-  sdv_entitlement: number | null;
-  sdv_election: number | null;
-  calendar_id: string | null;
-  calendar_name: string | null;
-  status: string;
-}
-
+// Re-add Calendar interface definition
 interface Calendar {
   id: string;
   name: string;
 }
 
-interface MemberWithCalendar extends Omit<Member, "calendar_name"> {
-  calendar: Calendar | null;
-}
-
 interface MemberListProps {
-  onEditMember: (member: Member) => void;
+  onEditMember: (member: MemberData) => void;
 }
 
 const WebButton = ({ onPress, children }: { onPress: () => void; children: React.ReactNode }) => (
@@ -78,7 +63,7 @@ const MemberItem = React.memo(
     availableCalendars,
     onCalendarChange,
   }: {
-    item: Member;
+    item: MemberData;
     onPress: () => void;
     onUpdate: () => void;
     onCalendarEdit: (pin: string) => void;
@@ -248,7 +233,7 @@ export function MemberList({ onEditMember }: MemberListProps) {
   const { width } = useWindowDimensions();
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const themeTintColor = useThemeColor({}, "tint");
-  const listRef = useRef<VirtualizedList<Member>>(null);
+  const listRef = useRef<VirtualizedList<MemberData>>(null);
   const scrollPositionRef = useRef<number>(0);
   const firstRenderRef = useRef<boolean>(true);
 
@@ -366,7 +351,7 @@ export function MemberList({ onEditMember }: MemberListProps) {
 
   // When selecting a member to edit, make sure we save the current scroll position
   const handleMemberEdit = useCallback(
-    (member: Member) => {
+    (member: MemberData) => {
       // Immediately save the current scroll position
       updateMemberListUIState({ scrollPosition: scrollPositionRef.current });
 
@@ -381,9 +366,9 @@ export function MemberList({ onEditMember }: MemberListProps) {
     [onEditMember, updateMemberListUIState]
   );
 
-  const getItem = (data: Member[], index: number) => data[index];
-  const getItemCount = (data: Member[]) => data.length;
-  const keyExtractor = (item: Member) => item.pin_number.toString();
+  const getItem = (data: MemberData[], index: number) => data[index];
+  const getItemCount = (data: MemberData[]) => data.length;
+  const keyExtractor = (item: MemberData) => item.pin_number.toString();
 
   const handleMemberUpdate = useCallback(() => {
     updateMember();
@@ -415,7 +400,7 @@ export function MemberList({ onEditMember }: MemberListProps) {
     }
   };
 
-  const renderItem = ({ item }: { item: Member }) => (
+  const renderItem = ({ item }: { item: MemberData }) => (
     <MemberItem
       item={item}
       onPress={() => handleMemberEdit(item)}

@@ -14,44 +14,84 @@ interface MemberSummary {
     last_name: string;
 }
 
-interface Member {
+// Define the data-only Member type
+export interface MemberData {
+    pin_number: string | number;
     first_name: string;
     last_name: string;
-    pin_number: number;
     division_id: number;
     sdv_entitlement: number | null;
     sdv_election: number | null;
     calendar_id: string | null;
-    calendar_name: string | null;
+    calendar_name: string | null; // This is derived/added client-side
     status: string;
-    lastLoadedDivision: string | null;
-    prepareDivisionSwitch: (
-        currentDivision: string,
-        newDivision: string,
-    ) => Promise<void>;
-    ensureDivisionMembersLoaded: (division: string) => Promise<void>;
-    updateMember: () => void;
-    setError: (error: Error | null) => void;
-
-    // New state and actions for fetching members by calendar
-    membersByCalendar: Record<string, MemberSummary[]>; // Map: calendarId -> members
-    isLoadingMembersByCalendar: boolean;
-    fetchMembersByCalendarId: (calendarId: string) => Promise<void>;
+    date_of_birth?: string | null;
+    home_zone_id?: number | null;
+    current_zone_id?: number | null;
+    role?: string | null;
+    company_hire_date?: string | null;
+    engineer_date?: string | null;
+    system_sen_type?: string | null;
+    rank?: string | null;
+    deleted?: boolean | null;
+    curr_vacation_weeks?: number | null;
+    curr_vacation_split?: number | null;
+    pld_rolled_over?: number | null;
+    max_plds?: number | null;
+    next_vacation_weeks?: number | null;
+    next_vacation_split?: number | null;
+    prior_vac_sys?: string | null;
+    wc_sen_roster?: number | null;
+    dwp_sen_roster?: number | null;
+    dmir_sen_roster?: number | null;
+    eje_sen_roster?: number | null;
+    misc_notes?: string | null;
+    user_id?: string | null;
 }
 
 interface SupabaseMember {
     first_name: string | null;
     last_name: string | null;
-    pin_number: number;
+    pin_number: string | number;
     division_id: number | null;
     sdv_entitlement: number | null;
     sdv_election: number | null;
     calendar_id: string | null;
     status: string | null;
+    id?: string;
+    date_of_birth?: string | null;
+    home_zone_id?: number | null;
+    current_zone_id?: number | null;
+    role?: string | null;
+    company_hire_date?: string | null;
+    engineer_date?: string | null;
+    system_sen_type?: string | null;
+    rank?: string | null;
+    deleted?: boolean | null;
+    curr_vacation_weeks?: number | null;
+    curr_vacation_split?: number | null;
+    pld_rolled_over?: number | null;
+    max_plds?: number | null;
+    next_vacation_weeks?: number | null;
+    next_vacation_split?: number | null;
+    prior_vac_sys?: string | null;
+    wc_sen_roster?: number | null;
+    dwp_sen_roster?: number | null;
+    dmir_sen_roster?: number | null;
+    eje_sen_roster?: number | null;
+    misc_notes?: string | null;
+    user_id?: string | null;
+}
+
+interface MemberListUIState {
+    searchQuery: string;
+    showInactive: boolean;
+    scrollPosition: number;
+    lastEditedMemberPin: string | null;
 }
 
 interface AdminMemberManagementState {
-    members: Member[];
+    members: MemberData[]; // Use MemberData here
     isLoading: boolean;
     isDivisionLoading: boolean;
     isSwitchingDivision: boolean;
@@ -59,34 +99,25 @@ interface AdminMemberManagementState {
     availableCalendars: Calendar[];
     currentDivisionId: number | null;
     lastLoadedDivision: string | null;
+    membersByCalendar: Record<string, MemberSummary[]>;
+    isLoadingMembersByCalendar: boolean;
+    memberListUIState: MemberListUIState;
+
     prepareDivisionSwitch: (
         currentDivision: string,
         newDivision: string,
     ) => Promise<void>;
     ensureDivisionMembersLoaded: (division: string) => Promise<void>;
-    updateMember: () => void;
+    updateMember: () => Promise<void>;
+    updateSingleMemberInList: (updatedMember: MemberData) => void; // Use MemberData here
     setError: (error: Error | null) => void;
-
-    // New state and actions for fetching members by calendar
-    membersByCalendar: Record<string, MemberSummary[]>; // Map: calendarId -> members
-    isLoadingMembersByCalendar: boolean;
     fetchMembersByCalendarId: (calendarId: string) => Promise<void>;
-
-    // UI state for MemberList component
-    memberListUIState: {
-        searchQuery: string;
-        showInactive: boolean;
-        scrollPosition: number;
-        lastEditedMemberPin: string | null;
-    };
-    updateMemberListUIState: (
-        state: Partial<AdminMemberManagementState["memberListUIState"]>,
-    ) => void;
+    updateMemberListUIState: (newState: Partial<MemberListUIState>) => void;
 }
 
 export const useAdminMemberManagementStore = create<AdminMemberManagementState>(
     (set, get) => ({
-        members: [],
+        members: [], // Initial state uses MemberData[]
         isLoading: false,
         isDivisionLoading: false,
         isSwitchingDivision: false,
@@ -179,7 +210,7 @@ export const useAdminMemberManagementStore = create<AdminMemberManagementState>(
 
                 const formattedMembers = (membersData || []).map((
                     member: SupabaseMember,
-                ): Member => ({
+                ): MemberData => ({
                     first_name: member.first_name || "",
                     last_name: member.last_name || "",
                     pin_number: member.pin_number,
@@ -191,27 +222,6 @@ export const useAdminMemberManagementStore = create<AdminMemberManagementState>(
                         ? calendarMap.get(member.calendar_id) || null
                         : null,
                     status: member.status || "IN-ACTIVE",
-                    lastLoadedDivision: null,
-                    prepareDivisionSwitch: async () => {
-                        await get().prepareDivisionSwitch(
-                            get().lastLoadedDivision || "",
-                            newDivision,
-                        );
-                    },
-                    ensureDivisionMembersLoaded: async () => {
-                        await get().ensureDivisionMembersLoaded(newDivision);
-                    },
-                    updateMember: () => {
-                        get().updateMember();
-                    },
-                    setError: (error: Error | null) => {
-                        get().setError(error);
-                    },
-                    membersByCalendar: {},
-                    isLoadingMembersByCalendar: false,
-                    fetchMembersByCalendarId: async (calendarId: string) => {
-                        await get().fetchMembersByCalendarId(calendarId);
-                    },
                 }));
 
                 set({
@@ -275,7 +285,7 @@ export const useAdminMemberManagementStore = create<AdminMemberManagementState>(
 
                 const formattedMembers = (membersData || []).map((
                     member: SupabaseMember,
-                ): Member => ({
+                ): MemberData => ({
                     first_name: member.first_name || "",
                     last_name: member.last_name || "",
                     pin_number: member.pin_number,
@@ -288,29 +298,6 @@ export const useAdminMemberManagementStore = create<AdminMemberManagementState>(
                         ? calendarMap.get(member.calendar_id) || null
                         : null,
                     status: member.status || "IN-ACTIVE",
-                    lastLoadedDivision: null,
-                    prepareDivisionSwitch: async () => {
-                        await get().prepareDivisionSwitch(
-                            get().lastLoadedDivision || "",
-                            state.lastLoadedDivision || "",
-                        );
-                    },
-                    ensureDivisionMembersLoaded: async () => {
-                        await get().ensureDivisionMembersLoaded(
-                            state.lastLoadedDivision || "",
-                        );
-                    },
-                    updateMember: () => {
-                        get().updateMember();
-                    },
-                    setError: (error: Error | null) => {
-                        get().setError(error);
-                    },
-                    membersByCalendar: {},
-                    isLoadingMembersByCalendar: false,
-                    fetchMembersByCalendarId: async (calendarId: string) => {
-                        await get().fetchMembersByCalendarId(calendarId);
-                    },
                 }));
 
                 set({
@@ -322,6 +309,29 @@ export const useAdminMemberManagementStore = create<AdminMemberManagementState>(
             } finally {
                 set({ isLoading: false });
             }
+        },
+
+        updateSingleMemberInList: (updatedMember: MemberData) => {
+            const calendarMap = new Map(
+                get().availableCalendars?.map((
+                    cal: Calendar,
+                ) => [cal.id, cal.name]) ||
+                    [],
+            );
+            const updatedMemberWithName: MemberData = {
+                ...updatedMember,
+                calendar_name: updatedMember.calendar_id
+                    ? calendarMap.get(updatedMember.calendar_id) || null
+                    : null,
+            };
+
+            set((state) => ({
+                members: state.members.map((member) =>
+                    member.pin_number === updatedMember.pin_number
+                        ? { ...member, ...updatedMemberWithName }
+                        : member
+                ),
+            }));
         },
 
         setError: (error: Error | null) => set({ error }),
@@ -382,4 +392,4 @@ export const useAdminMemberManagementStore = create<AdminMemberManagementState>(
     }),
 );
 
-export type { AdminMemberManagementState, Calendar, Member, MemberSummary };
+export type { AdminMemberManagementState, Calendar, MemberSummary };
