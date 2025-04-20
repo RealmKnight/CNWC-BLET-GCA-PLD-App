@@ -34,7 +34,7 @@ import { useAdminCalendarManagementStore } from "@/store/adminCalendarManagement
 import { useAdminMemberManagementStore, type MemberData } from "@/store/adminMemberManagementStore";
 import { MemberEditForm } from "./MemberEditForm";
 
-type MemberAction = "list" | "add" | "edit" | "bulk" | "transfer";
+type MemberAction = "list" | "edit" | "bulk" | "transfer";
 
 type BulkActionTab = "calendar" | "seniority" | "sdv" | "zone";
 
@@ -872,12 +872,6 @@ export function MemberManagement() {
           </View>
         )}
 
-        {currentAction === "add" && (
-          <View style={{ display: currentAction === "add" ? "flex" : "none", flex: 1 }}>
-            <ThemedText type="subtitle">Add New Member</ThemedText>
-          </View>
-        )}
-
         {currentAction === "bulk" && (
           <View style={{ display: currentAction === "bulk" ? "flex" : "none", flex: 1 }}>
             {lastLoadedDivision && (
@@ -925,7 +919,6 @@ export function MemberManagement() {
     () => (
       <ThemedView style={styles.actionButtons}>
         {renderActionButton("list", "list", "Member List")}
-        {isAdmin && renderActionButton("add", "person-add", "Add Member")}
         {isAdmin && renderActionButton("bulk", "people", "Bulk Actions")}
         {isAdmin && renderActionButton("transfer", "swap-horizontal", "Transfer Member")}
       </ThemedView>

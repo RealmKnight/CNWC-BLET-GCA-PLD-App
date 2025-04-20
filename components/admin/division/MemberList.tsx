@@ -57,7 +57,6 @@ const MemberItem = React.memo(
   ({
     item,
     onPress,
-    onUpdate,
     onCalendarEdit,
     isCalendarEditing,
     availableCalendars,
@@ -65,125 +64,20 @@ const MemberItem = React.memo(
   }: {
     item: MemberData;
     onPress: () => void;
-    onUpdate: () => void;
     onCalendarEdit: (pin: string) => void;
     isCalendarEditing: boolean;
     availableCalendars: Calendar[];
     onCalendarChange: (pin: string | number, calendarId: string | null) => void;
   }) => {
     const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
-    const [isExpanded, setIsExpanded] = useState(false);
-    const [isEditing, setIsEditing] = useState(false);
-    const [entitlement, setEntitlement] = useState(String(item.sdv_entitlement || ""));
-    const [election, setElection] = useState(String(item.sdv_election || ""));
-    const [hasChanges, setHasChanges] = useState(false);
     const { width } = useWindowDimensions();
     const isMobileView = width < 768;
     const isWeb = Platform.OS === "web";
-
-    const currentYear = new Date().getFullYear();
-
-    const handleSave = async () => {
-      try {
-        const entitlementNum = parseInt(entitlement);
-        const electionNum = parseInt(election);
-
-        if (
-          isNaN(entitlementNum) ||
-          isNaN(electionNum) ||
-          entitlementNum < 0 ||
-          entitlementNum > 12 ||
-          electionNum < 0 ||
-          electionNum > 12
-        ) {
-          Alert.alert("Invalid Input", "SDV values must be between 0 and 12");
-          return;
-        }
-
-        const { error } = await supabase
-          .from("members")
-          .update({
-            sdv_entitlement: entitlementNum,
-            sdv_election: electionNum,
-          })
-          .eq("pin_number", typeof item.pin_number === "string" ? parseInt(item.pin_number) : item.pin_number);
-
-        if (error) throw error;
-
-        // Update the item's values locally
-        item.sdv_entitlement = entitlementNum;
-        item.sdv_election = electionNum;
-
-        setIsEditing(false);
-        setHasChanges(false);
-        onUpdate(); // Trigger parent refresh
-      } catch (error) {
-        console.error("Error updating SDV values:", error);
-        Alert.alert("Error", "Failed to update SDV values");
-      }
-    };
-
-    const handleTextInput = (text: string, setter: (value: string) => void) => {
-      // Only allow numbers 0-9
-      const numericText = text.replace(/[^0-9]/g, "");
-      if (numericText === "" || parseInt(numericText) <= 12) {
-        setter(numericText);
-        setHasChanges(true);
-      }
-    };
-
-    const renderSDVContent = () => {
-      if (isWeb && !isMobileView) {
-        return (
-          <View style={styles.sdvContainer}>
-            <View style={styles.sdvSection}>
-              <ThemedText style={styles.sdvLabel}>SDV {currentYear}</ThemedText>
-              {isEditing ? (
-                <TextInput
-                  style={[styles.sdvInput, { color: Colors[colorScheme].text }]}
-                  value={entitlement}
-                  onChangeText={(text) => handleTextInput(text, setEntitlement)}
-                  keyboardType="numeric"
-                  maxLength={2}
-                />
-              ) : (
-                <ThemedText style={styles.sdvValue}>{item.sdv_entitlement || 0}</ThemedText>
-              )}
-            </View>
-            <View style={styles.sdvSection}>
-              <ThemedText style={styles.sdvLabel}>SDV {currentYear + 1}</ThemedText>
-              {isEditing ? (
-                <TextInput
-                  style={[styles.sdvInput, { color: Colors[colorScheme].text }]}
-                  value={election}
-                  onChangeText={(text) => handleTextInput(text, setElection)}
-                  keyboardType="numeric"
-                  maxLength={2}
-                />
-              ) : (
-                <ThemedText style={styles.sdvValue}>{item.sdv_election || 0}</ThemedText>
-              )}
-            </View>
-          </View>
-        );
-      }
-
-      // Mobile and mobile web view accordion content
-      return (
-        <View style={styles.mobileSDVWrapper}>
-          <TouchableOpacityComponent
-            style={[styles.mobileSDVButton, isExpanded && styles.mobileSDVButtonExpanded]}
-            onPress={() => setIsExpanded(!isExpanded)}
-          ></TouchableOpacityComponent>
-        </View>
-      );
-    };
 
     return (
       <TouchableOpacityComponent
         style={[
           styles.memberItem,
-          (!isWeb || isMobileView) && isExpanded && styles.memberItemExpanded,
           isMobileView && styles.mobileWebMemberItem,
           item.status !== "ACTIVE" && styles.inactiveMemberItem,
         ]}
@@ -223,7 +117,6 @@ const MemberItem = React.memo(
             </TouchableOpacityComponent>
           </View>
         </View>
-        {renderSDVContent()}
       </TouchableOpacityComponent>
     );
   }
@@ -404,7 +297,6 @@ export function MemberList({ onEditMember }: MemberListProps) {
     <MemberItem
       item={item}
       onPress={() => handleMemberEdit(item)}
-      onUpdate={handleMemberUpdate}
       onCalendarEdit={setIsEditingCalendar}
       isCalendarEditing={isEditingCalendar === String(item.pin_number)}
       availableCalendars={availableCalendars}
@@ -606,140 +498,6 @@ const styles = StyleSheet.create({
     minWidth: 200,
     maxWidth: "100%",
     height: Platform.OS === "web" ? 32 : undefined,
-  },
-  sdvContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 16,
-  },
-  sdvSection: {
-    alignItems: "center",
-    minWidth: 80,
-  },
-  sdvLabel: {
-    fontSize: 12,
-    opacity: 0.7,
-    marginBottom: 4,
-  },
-  sdvValue: {
-    fontSize: 16,
-    fontWeight: "500",
-  },
-  sdvInput: {
-    width: 50,
-    height: 32,
-    borderWidth: 1,
-    borderColor: "#ccc",
-    borderRadius: 4,
-    textAlign: "center",
-    fontSize: 16,
-  },
-  editButton: {
-    padding: 8,
-  },
-  memberItemExpanded: {},
-  mobileSDVWrapper: {
-    width: "100%",
-    maxWidth: "100%",
-    marginTop: 8,
-  },
-  mobileSDVButton: {
-    minHeight: 44,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    backgroundColor: Colors.light.background,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: Colors.light.border,
-  },
-  mobileSDVButtonExpanded: {
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.light.border,
-    borderBottomLeftRadius: 0,
-    borderBottomRightRadius: 0,
-  },
-  mobileSDVButtonContent: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  mobileSDVButtonText: {
-    fontSize: 14,
-    fontWeight: "500",
-  },
-  mobileSDVContent: {
-    padding: 16,
-    paddingBottom: 20,
-    backgroundColor: Colors.light.background + "f0",
-    borderBottomLeftRadius: 4,
-    borderBottomRightRadius: 4,
-    borderWidth: 1,
-    borderColor: Colors.light.border,
-    borderTopWidth: 0,
-  },
-  mobileSDVRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 16,
-    paddingHorizontal: 8,
-  },
-  mobileSDVField: {
-    flex: 1,
-    alignItems: "center",
-    marginHorizontal: 4,
-  },
-  mobileSDVLabel: {
-    fontSize: 12,
-    opacity: 0.7,
-    marginRight: 8,
-  },
-  mobileSDVValue: {
-    fontSize: 16,
-    fontWeight: "500",
-  },
-  mobileSDVInput: {
-    width: 60,
-    height: 40,
-    borderWidth: 1,
-    borderColor: Colors.light.border,
-    borderRadius: 4,
-    textAlign: "center",
-    fontSize: 16,
-    paddingVertical: 8,
-    ...(Platform.OS === "web" && {
-      outlineColor: Colors.light.tint,
-      outlineWidth: 0,
-    }),
-  },
-  mobileEditButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: 44,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    backgroundColor: Colors.light.background,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: Colors.light.tint,
-    gap: 8,
-    marginTop: 12,
-  },
-  mobileEditButtonActive: {
-    backgroundColor: Colors.light.tint,
-  },
-  mobileEditButtonText: {
-    fontSize: 14,
-    fontWeight: "500",
-    color: Colors.light.tint,
-  },
-  mobileEditButtonTextActive: {
-    color: "#fff",
-  },
-  mobileEditButtonDisabled: {
-    opacity: 0.5,
-    backgroundColor: Colors.light.background,
   },
   mobileWebMemberItem: {
     marginBottom: 12,
