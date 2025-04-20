@@ -1,5 +1,14 @@
 import React, { useEffect, useState, useMemo } from "react";
-import { View, StyleSheet, Platform, useWindowDimensions, ScrollView, ViewStyle, TouchableOpacity } from "react-native";
+import {
+  View,
+  StyleSheet,
+  Platform,
+  useWindowDimensions,
+  ScrollView,
+  ViewStyle,
+  TouchableOpacity,
+  KeyboardAvoidingView,
+} from "react-native";
 import { useAuth } from "../hooks/useAuth";
 import { Colors } from "../constants/Colors";
 import { useColorScheme } from "../hooks/useColorScheme";
@@ -10,7 +19,6 @@ import { router, useNavigation } from "expo-router";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { ThemedText } from "../components/ThemedText";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
 
 // Import all section components
 import { PldSdvSection } from "../components/admin/pld-sdv/PldSdvSection";
@@ -101,21 +109,19 @@ interface AdaptiveScrollViewProps {
 }
 
 const AdaptiveScrollView: React.FC<AdaptiveScrollViewProps> = ({ children, style }) => {
-  // On iOS/Android use KeyboardAwareScrollView to handle keyboard avoiding
+  // On iOS/Android use KeyboardAvoidingView to handle keyboard avoiding
   if (Platform.OS !== "web") {
     return (
-      <KeyboardAwareScrollView
-        style={style}
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={true}
-        enableOnAndroid={true}
-        enableResetScrollToCoords={false}
-        extraScrollHeight={100}
-        keyboardOpeningTime={0}
-      >
-        {children}
-      </KeyboardAwareScrollView>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
+        <ScrollView
+          style={style}
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={true}
+        >
+          {children}
+        </ScrollView>
+      </KeyboardAvoidingView>
     );
   }
 
