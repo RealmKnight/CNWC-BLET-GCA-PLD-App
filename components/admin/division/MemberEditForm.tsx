@@ -723,9 +723,26 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
             Edit Member: {formData.first_name} {formData.last_name}
           </ThemedText>
         </View>
-        <TouchableOpacityComponent style={styles.closeButton} onPress={handleCloseAttempt}>
-          <Ionicons name="close" size={24} color={textColor} />
-        </TouchableOpacityComponent>
+        <View style={styles.headerButtons}>
+          <TouchableOpacityComponent
+            style={styles.closeButton}
+            onPress={handleSave}
+            disabled={isSaving || !hasUnsavedChanges}
+          >
+            {isSaving ? (
+              <ActivityIndicator size="small" color={tintColor} />
+            ) : (
+              <Ionicons
+                name="save-outline"
+                size={24}
+                color={isSaving || !hasUnsavedChanges ? Colors[colorScheme].textDim : textColor}
+              />
+            )}
+          </TouchableOpacityComponent>
+          <TouchableOpacityComponent style={styles.closeButton} onPress={handleCloseAttempt}>
+            <Ionicons name="close" size={24} color={textColor} />
+          </TouchableOpacityComponent>
+        </View>
       </View>
 
       <ScrollView style={styles.formContainer} contentContainerStyle={styles.formContent}>
@@ -815,8 +832,9 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
             style={[
               styles.actionButton,
               styles.saveButton,
-              isSaving && styles.disabledButton,
-              { backgroundColor: tintColor },
+              isSaving || !hasUnsavedChanges
+                ? [styles.disabledButton, { backgroundColor: "#6c757d" }]
+                : { backgroundColor: tintColor },
             ]}
             onPress={handleSave}
             disabled={isSaving || !hasUnsavedChanges}
@@ -941,6 +959,11 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "500",
   },
+  headerButtons: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
   closeButton: {
     padding: 8,
     borderRadius: 4,
@@ -1062,7 +1085,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   disabledButton: {
-    opacity: 0.6,
+    opacity: 0.5,
   },
   actionButtonText: {
     fontWeight: "500",
