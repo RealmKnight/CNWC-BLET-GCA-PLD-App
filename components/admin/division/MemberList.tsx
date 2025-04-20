@@ -202,7 +202,7 @@ const MemberItem = React.memo(
           isMobileView && styles.mobileWebMemberItem,
           item.status !== "ACTIVE" && styles.inactiveMemberItem,
         ]}
-        onPress={isWeb && !isMobileView && !isCalendarEditing ? onPress : undefined}
+        onPress={!isCalendarEditing ? onPress : undefined}
         activeOpacity={0.7}
       >
         <View style={styles.memberInfo}>
@@ -245,15 +245,28 @@ const MemberItem = React.memo(
 );
 
 export function MemberList({ onEditMember }: MemberListProps) {
-  const [searchQuery, setSearchQuery] = useState("");
-  const [showInactive, setShowInactive] = useState(false);
-  const [isEditingCalendar, setIsEditingCalendar] = useState<string | null>(null);
+  const { width } = useWindowDimensions();
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const themeTintColor = useThemeColor({}, "tint");
+  const listRef = useRef<VirtualizedList<Member>>(null);
+  const scrollPositionRef = useRef<number>(0);
+  const firstRenderRef = useRef<boolean>(true);
 
-  // Use the store
-  const { members, isLoading, error, updateMember, availableCalendars } = useAdminMemberManagementStore();
+  // Use the store for data and UI state
+  const { members, isLoading, error, updateMember, availableCalendars, memberListUIState, updateMemberListUIState } =
+    useAdminMemberManagementStore();
 
+  // Use local state that's initialized from the store
+  const [searchQuery, setSearchQuery] = useState(memberListUIState.searchQuery);
+  const [showInactive, setShowInactive] = useState(memberListUIState.showInactive);
+  const [isEditingCalendar, setIsEditingCalendar] = useState<string | null>(null);
+
+  // Initialize the scroll position ref from the store
+  useEffect(() => {
+    scrollPositionRef.current = memberListUIState.scrollPosition;
+  }, []);
+
+  // Filter members based on current search and toggle state
   const filteredMembers = members
     .filter((member) => showInactive || member.status === "ACTIVE")
     .filter(
@@ -262,6 +275,111 @@ export function MemberList({ onEditMember }: MemberListProps) {
         `${member.first_name} ${member.last_name}`.toLowerCase().includes(searchQuery.toLowerCase()) ||
         member.pin_number.toString().includes(searchQuery)
     );
+
+  // Update store when local state changes
+  const updateSearchQuery = useCallback(
+    (query: string) => {
+      setSearchQuery(query);
+      updateMemberListUIState({ searchQuery: query });
+    },
+    [updateMemberListUIState]
+  );
+
+  const updateShowInactive = useCallback(
+    (value: boolean) => {
+      setShowInactive(value);
+      updateMemberListUIState({ showInactive: value });
+    },
+    [updateMemberListUIState]
+  );
+
+  // Restore scroll position or find last edited member
+  useEffect(() => {
+    if (!firstRenderRef.current) return;
+    firstRenderRef.current = false;
+
+    // Sync UI state from store first
+    setSearchQuery(memberListUIState.searchQuery);
+    setShowInactive(memberListUIState.showInactive);
+
+    // Restore scroll position after component is fully mounted
+    const restoreScrollTimer = setTimeout(() => {
+      // Only restore if we have a list ref
+      if (listRef.current) {
+        // First try to find the last edited member if we have one
+        if (memberListUIState.lastEditedMemberPin) {
+          const memberIndex = filteredMembers.findIndex(
+            (m) => m.pin_number.toString() === memberListUIState.lastEditedMemberPin
+          );
+
+          if (memberIndex >= 0) {
+            // We found the member, scroll to its position with some offset
+            listRef.current.scrollToIndex({
+              index: memberIndex,
+              animated: false,
+              viewOffset: 80, // Show some members above the selected one
+            });
+            return;
+          }
+        }
+
+        // Fall back to the stored scroll position if we can't find the member
+        if (memberListUIState.scrollPosition > 0) {
+          listRef.current.scrollToOffset({
+            offset: memberListUIState.scrollPosition,
+            animated: false,
+          });
+        }
+      }
+    }, 100);
+
+    return () => clearTimeout(restoreScrollTimer);
+  }, [filteredMembers, memberListUIState]);
+
+  // Save scroll position when component unmounts
+  useEffect(() => {
+    return () => {
+      // Save the latest scroll position when unmounting
+      updateMemberListUIState({ scrollPosition: scrollPositionRef.current });
+    };
+  }, [updateMemberListUIState]);
+
+  // Save scroll position to ref and store
+  const handleScroll = useCallback(
+    (event: any) => {
+      const position = event.nativeEvent.contentOffset.y;
+      scrollPositionRef.current = position;
+
+      // Debounce updates to the store to avoid excessive state updates
+      if (Platform.OS === "web") {
+        // For web, use a more aggressive throttling - less frequent updates
+        if (Math.abs(position - memberListUIState.scrollPosition) > 100) {
+          updateMemberListUIState({ scrollPosition: position });
+        }
+      } else {
+        // For mobile, use less aggressive throttling
+        updateMemberListUIState({ scrollPosition: position });
+      }
+    },
+    [updateMemberListUIState, memberListUIState.scrollPosition]
+  );
+
+  // When selecting a member to edit, make sure we save the current scroll position
+  const handleMemberEdit = useCallback(
+    (member: Member) => {
+      // Immediately save the current scroll position
+      updateMemberListUIState({ scrollPosition: scrollPositionRef.current });
+
+      // Store the selected member's pin for better position recovery
+      updateMemberListUIState({
+        lastEditedMemberPin: member.pin_number.toString(),
+      });
+
+      // Call the provided edit callback
+      onEditMember(member);
+    },
+    [onEditMember, updateMemberListUIState]
+  );
 
   const getItem = (data: Member[], index: number) => data[index];
   const getItemCount = (data: Member[]) => data.length;
@@ -300,7 +418,7 @@ export function MemberList({ onEditMember }: MemberListProps) {
   const renderItem = ({ item }: { item: Member }) => (
     <MemberItem
       item={item}
-      onPress={() => onEditMember(item)}
+      onPress={() => handleMemberEdit(item)}
       onUpdate={handleMemberUpdate}
       onCalendarEdit={setIsEditingCalendar}
       isCalendarEditing={isEditingCalendar === String(item.pin_number)}
@@ -318,12 +436,12 @@ export function MemberList({ onEditMember }: MemberListProps) {
             placeholder="Search members..."
             placeholderTextColor={Colors[colorScheme].text}
             value={searchQuery}
-            onChangeText={setSearchQuery}
+            onChangeText={updateSearchQuery}
           />
           {searchQuery !== "" && (
             <TouchableOpacityComponent
               style={styles.clearButton}
-              onPress={() => setSearchQuery("")}
+              onPress={() => updateSearchQuery("")}
               activeOpacity={0.7}
             >
               <Ionicons name="close-circle" size={20} color={Colors[colorScheme].text} />
@@ -336,7 +454,7 @@ export function MemberList({ onEditMember }: MemberListProps) {
             trackColor={{ false: Colors[colorScheme].border, true: themeTintColor }}
             thumbColor={showInactive ? Colors[colorScheme].background : Colors[colorScheme].icon}
             ios_backgroundColor={Colors[colorScheme].border}
-            onValueChange={setShowInactive}
+            onValueChange={updateShowInactive}
             value={showInactive}
           />
         </View>
@@ -352,6 +470,7 @@ export function MemberList({ onEditMember }: MemberListProps) {
         </View>
       ) : (
         <VirtualizedList
+          ref={listRef}
           data={filteredMembers}
           renderItem={renderItem}
           keyExtractor={keyExtractor}
@@ -365,6 +484,12 @@ export function MemberList({ onEditMember }: MemberListProps) {
           initialNumToRender={10}
           maxToRenderPerBatch={10}
           windowSize={5}
+          onScroll={handleScroll}
+          scrollEventThrottle={16}
+          maintainVisibleContentPosition={{
+            minIndexForVisible: 0,
+            autoscrollToTopThreshold: 10,
+          }}
         />
       )}
     </ThemedView>

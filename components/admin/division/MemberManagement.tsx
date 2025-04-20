@@ -32,6 +32,7 @@ import { useThemeColor } from "@/hooks/useThemeColor";
 import { useAuth, AuthContext } from "@/hooks/useAuth";
 import { useAdminCalendarManagementStore } from "@/store/adminCalendarManagementStore";
 import { useAdminMemberManagementStore } from "@/store/adminMemberManagementStore";
+import { MemberEditForm } from "./MemberEditForm";
 
 type MemberAction = "list" | "add" | "edit" | "bulk" | "transfer";
 
@@ -49,6 +50,7 @@ interface Member {
   sdv_election: number | null;
   calendar_id: string | null;
   calendar_name: string | null;
+  status: string;
 }
 
 type DbMember = Database["public"]["Tables"]["members"]["Row"];
@@ -763,6 +765,11 @@ const selectMember = (state: UserState) => state.member;
 const selectDivision = (state: UserState) => state.division || "";
 const selectSetDivision = (state: UserState) => state.setDivision;
 
+// Create a persistent MemberList component using React.memo
+const PersistentMemberList = React.memo(({ onEditMember }: { onEditMember: (member: Member) => void }) => {
+  return <MemberList onEditMember={onEditMember} />;
+});
+
 export function MemberManagement() {
   const [currentAction, setCurrentAction] = useState<MemberAction>("list");
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
@@ -826,7 +833,57 @@ export function MemberManagement() {
     setCurrentAction("edit");
   }, []);
 
+  const handleCloseEditForm = useCallback(() => {
+    setCurrentAction("list");
+  }, []);
+
   const ButtonComponent = Platform.OS === "web" ? Pressable : TouchableOpacity;
+
+  // Always render the MemberList component
+  const memberListUI = useMemo(() => <PersistentMemberList onEditMember={handleEditMember} />, [handleEditMember]);
+
+  const renderContent = useCallback(() => {
+    if (!lastLoadedDivision) {
+      return (
+        <ThemedView style={styles.contentContainer}>
+          <ThemedText>Please select a division to manage members.</ThemedText>
+        </ThemedView>
+      );
+    }
+
+    // Use conditional UI instead of conditional rendering
+    return (
+      <ThemedView style={styles.contentContainer}>
+        <View style={{ display: currentAction === "list" ? "flex" : "none", flex: 1 }}>{memberListUI}</View>
+
+        {currentAction === "edit" && selectedMember && (
+          <View style={{ display: currentAction === "edit" ? "flex" : "none", flex: 1 }}>
+            <MemberEditForm member={selectedMember} onClose={handleCloseEditForm} />
+          </View>
+        )}
+
+        {currentAction === "add" && (
+          <View style={{ display: currentAction === "add" ? "flex" : "none", flex: 1 }}>
+            <ThemedText type="subtitle">Add New Member</ThemedText>
+          </View>
+        )}
+
+        {currentAction === "bulk" && (
+          <View style={{ display: currentAction === "bulk" ? "flex" : "none", flex: 1 }}>
+            {lastLoadedDivision && (
+              <BulkActions division={lastLoadedDivision} onDivisionChange={handleDivisionChange} />
+            )}
+          </View>
+        )}
+
+        {currentAction === "transfer" && (
+          <View style={{ display: currentAction === "transfer" ? "flex" : "none", flex: 1 }}>
+            <ThemedText type="subtitle">Transfer Member</ThemedText>
+          </View>
+        )}
+      </ThemedView>
+    );
+  }, [currentAction, lastLoadedDivision, memberListUI, selectedMember, handleCloseEditForm]);
 
   const renderActionButton = useCallback(
     (action: MemberAction, icon: string, label: string) => {
@@ -865,58 +922,6 @@ export function MemberManagement() {
     ),
     [renderActionButton, isAdmin]
   );
-
-  const renderContent = useCallback(() => {
-    if (!lastLoadedDivision) {
-      return (
-        <ThemedView style={styles.contentContainer}>
-          <ThemedText>Please select a division to manage members.</ThemedText>
-        </ThemedView>
-      );
-    }
-
-    switch (currentAction) {
-      case "list":
-        return (
-          <ThemedView style={styles.contentContainer}>
-            <MemberList onEditMember={handleEditMember} />
-          </ThemedView>
-        );
-      case "add":
-        return (
-          <ThemedView style={styles.contentContainer}>
-            <ThemedText type="subtitle">Add New Member</ThemedText>
-          </ThemedView>
-        );
-      case "edit":
-        return (
-          <ThemedView style={styles.contentContainer}>
-            <ThemedText type="subtitle">Edit Member</ThemedText>
-            {selectedMember && (
-              <ThemedText>
-                Editing: {selectedMember.first_name} {selectedMember.last_name}
-              </ThemedText>
-            )}
-          </ThemedView>
-        );
-      case "bulk":
-        return (
-          <ThemedView style={styles.contentContainer}>
-            {lastLoadedDivision && (
-              <BulkActions division={lastLoadedDivision} onDivisionChange={handleDivisionChange} />
-            )}
-          </ThemedView>
-        );
-      case "transfer":
-        return (
-          <ThemedView style={styles.contentContainer}>
-            <ThemedText type="subtitle">Transfer Member</ThemedText>
-          </ThemedView>
-        );
-      default:
-        return null;
-    }
-  }, [currentAction, lastLoadedDivision, handleEditMember, selectedMember]);
 
   if (!lastLoadedDivision) {
     return (
@@ -1126,5 +1131,14 @@ const styles = StyleSheet.create({
     marginTop: 8,
     marginBottom: 8,
     fontStyle: "italic",
+  },
+  contentLayer: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    width: "100%",
+    height: "100%",
   },
 });

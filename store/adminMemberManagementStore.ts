@@ -71,6 +71,17 @@ interface AdminMemberManagementState {
     membersByCalendar: Record<string, MemberSummary[]>; // Map: calendarId -> members
     isLoadingMembersByCalendar: boolean;
     fetchMembersByCalendarId: (calendarId: string) => Promise<void>;
+
+    // UI state for MemberList component
+    memberListUIState: {
+        searchQuery: string;
+        showInactive: boolean;
+        scrollPosition: number;
+        lastEditedMemberPin: string | null;
+    };
+    updateMemberListUIState: (
+        state: Partial<AdminMemberManagementState["memberListUIState"]>,
+    ) => void;
 }
 
 export const useAdminMemberManagementStore = create<AdminMemberManagementState>(
@@ -87,6 +98,23 @@ export const useAdminMemberManagementStore = create<AdminMemberManagementState>(
         // Initialize new state
         membersByCalendar: {},
         isLoadingMembersByCalendar: false,
+
+        // Initialize MemberList UI state
+        memberListUIState: {
+            searchQuery: "",
+            showInactive: false,
+            scrollPosition: 0,
+            lastEditedMemberPin: null,
+        },
+
+        updateMemberListUIState: (newState) => {
+            set((state) => ({
+                memberListUIState: {
+                    ...state.memberListUIState,
+                    ...newState,
+                },
+            }));
+        },
 
         prepareDivisionSwitch: async (
             currentDivision: string,
@@ -212,13 +240,87 @@ export const useAdminMemberManagementStore = create<AdminMemberManagementState>(
             }
         },
 
-        updateMember: () => {
+        updateMember: async () => {
             const state = get();
-            if (state.lastLoadedDivision) {
-                state.prepareDivisionSwitch(
-                    state.lastLoadedDivision,
-                    state.lastLoadedDivision,
+            if (!state.lastLoadedDivision || !state.currentDivisionId) return;
+
+            try {
+                set({ isLoading: true, error: null });
+
+                // Get members for the division
+                const { data: membersData, error: membersError } =
+                    await supabase
+                        .from("members")
+                        .select(`
+                        first_name,
+                        last_name,
+                        pin_number,
+                        division_id,
+                        sdv_entitlement,
+                        sdv_election,
+                        calendar_id,
+                        status
+                    `)
+                        .eq("division_id", state.currentDivisionId)
+                        .order("last_name", { ascending: true });
+
+                if (membersError) throw membersError;
+
+                // Create a map of calendar IDs to names using existing availableCalendars
+                const calendarMap = new Map(
+                    state.availableCalendars?.map((
+                        cal: Calendar,
+                    ) => [cal.id, cal.name]) || [],
                 );
+
+                const formattedMembers = (membersData || []).map((
+                    member: SupabaseMember,
+                ): Member => ({
+                    first_name: member.first_name || "",
+                    last_name: member.last_name || "",
+                    pin_number: member.pin_number,
+                    division_id: member.division_id ||
+                        state.currentDivisionId || 0,
+                    sdv_entitlement: member.sdv_entitlement,
+                    sdv_election: member.sdv_election,
+                    calendar_id: member.calendar_id,
+                    calendar_name: member.calendar_id
+                        ? calendarMap.get(member.calendar_id) || null
+                        : null,
+                    status: member.status || "IN-ACTIVE",
+                    lastLoadedDivision: null,
+                    prepareDivisionSwitch: async () => {
+                        await get().prepareDivisionSwitch(
+                            get().lastLoadedDivision || "",
+                            state.lastLoadedDivision || "",
+                        );
+                    },
+                    ensureDivisionMembersLoaded: async () => {
+                        await get().ensureDivisionMembersLoaded(
+                            state.lastLoadedDivision || "",
+                        );
+                    },
+                    updateMember: () => {
+                        get().updateMember();
+                    },
+                    setError: (error: Error | null) => {
+                        get().setError(error);
+                    },
+                    membersByCalendar: {},
+                    isLoadingMembersByCalendar: false,
+                    fetchMembersByCalendarId: async (calendarId: string) => {
+                        await get().fetchMembersByCalendarId(calendarId);
+                    },
+                }));
+
+                set({
+                    members: formattedMembers,
+                    error: null,
+                });
+            } catch (error) {
+                set({ error: error as Error });
+            } finally {
+                set({ isLoading: false });
             }
         },
 

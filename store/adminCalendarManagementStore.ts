@@ -2005,6 +2005,9 @@ export type {
     YearlyAllotment,
 };
 
+// Export the PLD calculation function so it can be used in other components
+export { calculatePLDs };
+
 // Add this function to calculate vacation weeks based on company hire date
 function calculateVacationWeeks(
     companyHireDate: string | null | undefined,
