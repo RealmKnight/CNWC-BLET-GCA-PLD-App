@@ -75,76 +75,99 @@ function RequestDialog({
     setLocalRequests(allRequests);
   }, [allRequests]);
 
-  // Setup realtime subscription when the dialog becomes visible
+  // Set up real-time subscription to handle active requests
   useEffect(() => {
-    if (isVisible && selectedDate && member?.calendar_id) {
-      console.log("[RequestDialog] Setting up realtime subscription for date:", selectedDate);
+    if (!selectedDate || !member?.calendar_id || !isVisible) return;
 
-      // Clean up any existing subscription
+    // Clean up any existing subscription first
+    if (realtimeChannelRef.current) {
+      console.log("[RequestDialog] Cleaning up existing real-time subscription");
+      realtimeChannelRef.current.unsubscribe();
+      realtimeChannelRef.current = null;
+    }
+
+    console.log("[RequestDialog] Setting up real-time subscription for", selectedDate);
+
+    // Create a unique channel name with timestamp to prevent stale subscriptions
+    const channelName = `request-dialog-${selectedDate}-${Date.now()}`;
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "pld_sdv_requests",
+          filter: `request_date=eq.${selectedDate}`,
+        },
+        (payload: RealtimePostgresChangesPayload<any>) => {
+          console.log("[RequestDialog] Received realtime update:", payload);
+
+          const { eventType, new: newRecord, old: oldRecord } = payload;
+
+          if (eventType === "INSERT") {
+            // Check if this request already exists in our local state
+            const requestAlreadyExists = localRequests.some((req) => req.id === newRecord.id);
+
+            if (requestAlreadyExists) {
+              console.log("[RequestDialog] Skipping INSERT for already existing request:", newRecord.id);
+              return;
+            }
+
+            // Fetch the member details for the new request
+            supabase
+              .from("members")
+              .select("id, first_name, last_name, pin_number")
+              .eq("id", newRecord.member_id)
+              .single()
+              .then(({ data: memberData, error }) => {
+                if (!error && memberData) {
+                  const newRequest: DayRequest = {
+                    ...newRecord,
+                    member: {
+                      id: memberData.id,
+                      first_name: memberData.first_name,
+                      last_name: memberData.last_name,
+                      pin_number: memberData.pin_number || 0,
+                    },
+                  };
+
+                  // Do a final check before adding to prevent race conditions
+                  setLocalRequests((prev) => {
+                    // Check again inside the setter to ensure we have the latest state
+                    if (prev.some((req) => req.id === newRecord.id)) {
+                      console.log(
+                        "[RequestDialog] Request already added in state update, preventing duplicate:",
+                        newRecord.id
+                      );
+                      return prev;
+                    }
+                    return [...prev, newRequest];
+                  });
+                }
+              });
+          } else if (eventType === "UPDATE") {
+            setLocalRequests((prev) => prev.map((req) => (req.id === newRecord.id ? { ...req, ...newRecord } : req)));
+          } else if (eventType === "DELETE") {
+            setLocalRequests((prev) => prev.filter((req) => req.id !== oldRecord.id));
+          }
+        }
+      )
+      .subscribe((status) => {
+        console.log("[RequestDialog] Subscription status:", status);
+      });
+
+    realtimeChannelRef.current = channel;
+
+    // Cleanup function
+    return () => {
+      console.log("[RequestDialog] Cleaning up real-time subscription on unmount/update");
       if (realtimeChannelRef.current) {
         realtimeChannelRef.current.unsubscribe();
+        realtimeChannelRef.current = null;
       }
-
-      // Create a new subscription for the selected date
-      const channel = supabase
-        .channel(`request-dialog-${selectedDate}`)
-        .on(
-          "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table: "pld_sdv_requests",
-            filter: `request_date=eq.${selectedDate}`,
-          },
-          (payload: RealtimePostgresChangesPayload<any>) => {
-            console.log("[RequestDialog] Received realtime update:", payload);
-
-            const { eventType, new: newRecord, old: oldRecord } = payload;
-
-            if (eventType === "INSERT") {
-              // Fetch the member details for the new request
-              supabase
-                .from("members")
-                .select("id, first_name, last_name, pin_number")
-                .eq("id", newRecord.member_id)
-                .single()
-                .then(({ data: memberData, error }) => {
-                  if (!error && memberData) {
-                    const newRequest: DayRequest = {
-                      ...newRecord,
-                      member: {
-                        id: memberData.id,
-                        first_name: memberData.first_name,
-                        last_name: memberData.last_name,
-                        pin_number: memberData.pin_number || 0,
-                      },
-                    };
-
-                    setLocalRequests((prev) => [...prev, newRequest]);
-                  }
-                });
-            } else if (eventType === "UPDATE") {
-              setLocalRequests((prev) => prev.map((req) => (req.id === newRecord.id ? { ...req, ...newRecord } : req)));
-            } else if (eventType === "DELETE") {
-              setLocalRequests((prev) => prev.filter((req) => req.id !== oldRecord.id));
-            }
-          }
-        )
-        .subscribe();
-
-      // Store the channel reference for cleanup
-      realtimeChannelRef.current = channel;
-
-      // Return cleanup function
-      return () => {
-        console.log("[RequestDialog] Cleaning up realtime subscription");
-        if (realtimeChannelRef.current) {
-          realtimeChannelRef.current.unsubscribe();
-          realtimeChannelRef.current = null;
-        }
-      };
-    }
-  }, [isVisible, selectedDate, member?.calendar_id]);
+    };
+  }, [selectedDate, member?.calendar_id, isVisible]);
 
   // Refresh stats whenever the dialog becomes visible
   useEffect(() => {
@@ -166,10 +189,102 @@ function RequestDialog({
   // Wrap the onSubmit handler to also refresh stats after a request
   const handleSubmit = async (leaveType: "PLD" | "SDV") => {
     setIsSubmitting(true);
+
+    // Store the current real-time channel to temporarily pause updates
+    const currentChannel = realtimeChannelRef.current;
+
+    // Temporarily disable real-time updates to prevent duplicates
+    if (currentChannel) {
+      console.log("[RequestDialog] Temporarily disabling real-time updates during submission");
+      realtimeChannelRef.current = null;
+      currentChannel.unsubscribe();
+    }
+
     try {
-      await onSubmit(leaveType);
+      const result = await onSubmit(leaveType);
+
       // Force refresh stats after submitting a request
       await refreshMyTimeStats(true);
+
+      // Allow some time for the database to process the request before re-enabling real-time
+      setTimeout(() => {
+        // Restart the real-time subscription if the dialog is still open
+        if (isVisible && selectedDate && member?.calendar_id) {
+          console.log("[RequestDialog] Re-enabling real-time updates after successful submission");
+
+          // Set up a new subscription
+          const channel = supabase
+            .channel(`request-dialog-${selectedDate}-${Date.now()}`) // Add timestamp to ensure unique channel
+            .on(
+              "postgres_changes",
+              {
+                event: "*",
+                schema: "public",
+                table: "pld_sdv_requests",
+                filter: `request_date=eq.${selectedDate}`,
+              },
+              (payload: RealtimePostgresChangesPayload<any>) => {
+                // Use the same handler as before, but with additional duplicate prevention
+                console.log("[RequestDialog] Received realtime update after resubscription:", payload);
+
+                const { eventType, new: newRecord, old: oldRecord } = payload;
+
+                if (eventType === "INSERT") {
+                  // Check if this request already exists
+                  const requestAlreadyExists = localRequests.some((req) => req.id === newRecord.id);
+
+                  if (requestAlreadyExists) {
+                    console.log("[RequestDialog] Skipping INSERT for already existing request:", newRecord.id);
+                    return;
+                  }
+
+                  // Fetch the member details for the new request
+                  supabase
+                    .from("members")
+                    .select("id, first_name, last_name, pin_number")
+                    .eq("id", newRecord.member_id)
+                    .single()
+                    .then(({ data: memberData, error }) => {
+                      if (!error && memberData) {
+                        const newRequest: DayRequest = {
+                          ...newRecord,
+                          member: {
+                            id: memberData.id,
+                            first_name: memberData.first_name,
+                            last_name: memberData.last_name,
+                            pin_number: memberData.pin_number || 0,
+                          },
+                        };
+
+                        // Double-check again before adding
+                        setLocalRequests((prev) => {
+                          if (prev.some((req) => req.id === newRecord.id)) {
+                            console.log("[RequestDialog] Request already added, preventing duplicate:", newRecord.id);
+                            return prev;
+                          }
+                          return [...prev, newRequest];
+                        });
+                      }
+                    });
+                } else if (eventType === "UPDATE") {
+                  setLocalRequests((prev) =>
+                    prev.map((req) => (req.id === newRecord.id ? { ...req, ...newRecord } : req))
+                  );
+                } else if (eventType === "DELETE") {
+                  setLocalRequests((prev) => prev.filter((req) => req.id !== oldRecord.id));
+                }
+              }
+            )
+            .subscribe();
+
+          realtimeChannelRef.current = channel;
+        }
+      }, 1000); // Wait 1 second before re-enabling real-time updates
+
+      return result;
+    } catch (err) {
+      console.error("[RequestDialog] Error in handleSubmit:", err);
+      throw err;
     } finally {
       setIsSubmitting(false);
     }
