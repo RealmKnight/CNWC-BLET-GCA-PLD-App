@@ -197,18 +197,15 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       return true;
     }
 
-    // For regular requests, check if the date is already full
+    // For regular requests, we allow selection even if the date is full
+    // so users can join the waitlist if needed
     const dateRequests = state.requests[date] || [];
     const activeRequests = dateRequests.filter((r) =>
       r.status === "approved" || r.status === "pending" ||
       r.status === "waitlisted"
     );
 
-    if (activeRequests.length >= maxAllotment) {
-      console.log("[CalendarStore] Date not selectable - full:", date);
-      return false;
-    }
-
+    // Don't check if the date is full here - allow selection of full dates for waitlisting
     // Regular requests - anything between 48 hours and six months
     if (
       !isBefore(dateObj, fortyEightHoursFromNow) &&
@@ -701,7 +698,7 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
   userSubmitRequest: async (
     date: string,
     type: "PLD" | "SDV",
-  ) => {
+  ): Promise<DayRequest> => {
     const member = useUserStore.getState().member;
     const calendarId = member?.calendar_id;
 
@@ -797,12 +794,50 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
         throw new Error("No allotments available for this date");
       }
 
+      // Check if the day is full and determine status
+      const dateRequests = get().requests[date] || [];
+      const activeRequests = dateRequests.filter((r: DayRequest) =>
+        r.status === "approved" || r.status === "pending"
+      );
+      const waitlistedRequests = dateRequests.filter((r: DayRequest) =>
+        r.status === "waitlisted"
+      );
+
+      // Use explicit string literal type
+      let status:
+        | "pending"
+        | "waitlisted"
+        | "approved"
+        | "denied"
+        | "cancelled"
+        | "cancellation_pending" = "pending";
+      let waitlist_position: number | null = null;
+
+      // If the allotment is already full, add to waitlist
+      if (activeRequests.length >= maxAllotment) {
+        status = "waitlisted";
+        // Calculate waitlist position (next position after current waitlisted requests)
+        const currentMaxPosition = waitlistedRequests.length > 0
+          ? Math.max(
+            ...waitlistedRequests.map((r: DayRequest) =>
+              r.waitlist_position || 0
+            ),
+          )
+          : 0;
+        waitlist_position = currentMaxPosition + 1;
+        console.log(
+          "[CalendarStore] Adding to waitlist with position:",
+          waitlist_position,
+        );
+      }
+
       const insertPayload: TablesInsert<"pld_sdv_requests"> = {
         member_id: member.id,
         calendar_id: calendarId,
         request_date: date,
         leave_type: type,
-        status: "pending",
+        status,
+        waitlist_position,
       };
 
       const { data: insertedRequest, error: insertError } = await supabase
@@ -829,7 +864,7 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       } as DayRequest;
 
       const currentRequests = get().requests[date] || [];
-      set((state) => ({
+      set((state: CalendarState) => ({
         requests: {
           ...state.requests,
           [date]: [...currentRequests, request],

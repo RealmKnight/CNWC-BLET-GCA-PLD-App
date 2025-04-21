@@ -324,11 +324,17 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
         }
       }
     } else {
-      // This case handles when the date is within range but not available (e.g., full)
+      // Get the availability to customize the message
+      const availability = getDateAvailability(day.dateString);
+
+      // Customize message based on the availability
       Toast.show({
         type: "info",
         text1: "Not Available",
-        text2: "This date is not available for requests",
+        text2:
+          availability === "full"
+            ? "This date is full but you can still request to be on the waitlist"
+            : "This date is not available for requests",
         position: "bottom",
         visibilityTime: 3000,
         topOffset: 50,

@@ -572,27 +572,19 @@ function RequestDialog({
       };
     }
 
-    // For regular requests, follow normal rules
-    const isDisabled =
-      (stats?.available.pld ?? 0) <= 0 ||
-      isSubmitting ||
-      hasExistingRequest ||
-      currentAllotment.current >= currentAllotment.max;
+    // For regular requests, ONLY disable for:
+    // - No available PLD days
+    // - Submission in progress
+    // - User already has a request for this date
+    // DO NOT disable for full days as that prevents waitlisting
+    const isDisabled = (stats?.available.pld ?? 0) <= 0 || isSubmitting || hasExistingRequest;
 
     return {
       onPress: () => handleSubmit("PLD"),
       disabled: isDisabled,
       loadingState: isSubmitting,
     };
-  }, [
-    stats?.available.pld,
-    isSubmitting,
-    hasExistingRequest,
-    currentAllotment,
-    handleSubmit,
-    hasSixMonthRequest,
-    isSixMonthRequest,
-  ]);
+  }, [stats?.available.pld, isSubmitting, hasExistingRequest, handleSubmit, hasSixMonthRequest, isSixMonthRequest]);
 
   const sdvButtonProps = useMemo(() => {
     // For six-month requests, we allow submission even if the day is full
@@ -607,27 +599,19 @@ function RequestDialog({
       };
     }
 
-    // For regular requests, follow normal rules
-    const isDisabled =
-      (stats?.available.sdv ?? 0) <= 0 ||
-      isSubmitting ||
-      hasExistingRequest ||
-      currentAllotment.current >= currentAllotment.max;
+    // For regular requests, ONLY disable for:
+    // - No available SDV days
+    // - Submission in progress
+    // - User already has a request for this date
+    // DO NOT disable for full days as that prevents waitlisting
+    const isDisabled = (stats?.available.sdv ?? 0) <= 0 || isSubmitting || hasExistingRequest;
 
     return {
       onPress: () => handleSubmit("SDV"),
       disabled: isDisabled,
       loadingState: isSubmitting,
     };
-  }, [
-    stats?.available.sdv,
-    isSubmitting,
-    hasExistingRequest,
-    currentAllotment,
-    handleSubmit,
-    hasSixMonthRequest,
-    isSixMonthRequest,
-  ]);
+  }, [stats?.available.sdv, isSubmitting, hasExistingRequest, handleSubmit, hasSixMonthRequest, isSixMonthRequest]);
 
   return (
     <Modal visible={isVisible} transparent animationType="fade" onRequestClose={onClose}>
@@ -716,9 +700,8 @@ function RequestDialog({
               style={[
                 dialogStyles.modalButton,
                 dialogStyles.submitButton,
-                isFull && dialogStyles.waitlistButton,
-                hasExistingRequest && dialogStyles.disabledButton,
-                (stats?.available.pld ?? 0) <= 0 && !isFull && dialogStyles.disabledButton,
+                isFull && (stats?.available.pld ?? 0) > 0 ? dialogStyles.waitlistButton : null,
+                ((stats?.available.pld ?? 0) <= 0 || hasExistingRequest) && dialogStyles.disabledButton,
               ]}
               onPress={submitButtonProps.onPress}
               disabled={submitButtonProps.disabled}
@@ -731,9 +714,8 @@ function RequestDialog({
               style={[
                 dialogStyles.modalButton,
                 dialogStyles.submitButton,
-                isFull && dialogStyles.waitlistButton,
-                hasExistingRequest && dialogStyles.disabledButton,
-                (stats?.available.sdv ?? 0) <= 0 && !isFull && dialogStyles.disabledButton,
+                isFull && (stats?.available.sdv ?? 0) > 0 ? dialogStyles.waitlistButton : null,
+                ((stats?.available.sdv ?? 0) <= 0 || hasExistingRequest) && dialogStyles.disabledButton,
               ]}
               onPress={sdvButtonProps.onPress}
               disabled={sdvButtonProps.disabled}
