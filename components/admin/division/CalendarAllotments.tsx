@@ -19,7 +19,7 @@ import { supabase } from "@/utils/supabase";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserStore } from "@/store/userStore";
 import { UserRole, CompanyAdminRole } from "@/types/auth";
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
 import { Tooltip } from "../../../components/Tooltip";
 import { useAdminCalendarManagementStore } from "@/store/adminCalendarManagementStore";
 import Toast from "react-native-toast-message";
@@ -496,7 +496,7 @@ export function CalendarAllotments({ calendarId, selectedDivision }: CalendarAll
       return;
     }
 
-    // Format dates for display
+    // Format dates for display - use midnight UTC to represent whole days
     const formattedStartDate = format(startDate, "MMM d, yyyy");
     const formattedEndDate = format(endDate, "MMM d, yyyy");
 
@@ -511,7 +511,7 @@ export function CalendarAllotments({ calendarId, selectedDivision }: CalendarAll
       return;
     }
 
-    // Format dates for API consumption (YYYY-MM-DD)
+    // Format dates for API consumption (YYYY-MM-DD) - Using consistent format
     const apiStartDate = format(startDate, "yyyy-MM-dd");
     const apiEndDate = format(endDate, "yyyy-MM-dd");
 
@@ -870,6 +870,9 @@ const styles = StyleSheet.create({
   datePicker: {
     flex: 1,
     minWidth: 120,
+    height: Platform.OS === "android" ? 48 : 40,
+    borderRadius: 4,
+    overflow: "hidden",
   },
   rangeInput: {
     flex: 0.5,
