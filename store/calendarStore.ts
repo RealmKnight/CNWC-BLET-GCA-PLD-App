@@ -575,6 +575,22 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
         throw new Error("Unable to check existing requests. Please try again.");
       }
 
+      // Get existing six-month requests to also count against available days
+      const { data: existingSixMonthRequests, error: sixMonthRequestsError } =
+        await supabase
+          .from("six_month_requests")
+          .select("leave_type")
+          .eq("member_id", member.id)
+          .eq("processed", false)
+          .gte("request_date", `${currentYear}-01-01`)
+          .lte("request_date", `${currentYear}-12-31`);
+
+      if (sixMonthRequestsError) {
+        throw new Error(
+          "Unable to check six-month requests. Please try again.",
+        );
+      }
+
       // Calculate used days
       let usedPlds = 0;
       let usedSdvs = 0;
@@ -593,6 +609,15 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
           } else if (request.leave_type === "SDV") {
             usedSdvs++;
           }
+        }
+      });
+
+      // Count pending six-month requests against available days
+      existingSixMonthRequests?.forEach((request) => {
+        if (request.leave_type === "PLD") {
+          usedPlds++;
+        } else if (request.leave_type === "SDV") {
+          usedSdvs++;
         }
       });
 
@@ -743,6 +768,22 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
         throw new Error("Unable to check existing requests. Please try again.");
       }
 
+      // Get existing six-month requests to also count against available days
+      const { data: sixMonthRequests, error: sixMonthRequestsError } =
+        await supabase
+          .from("six_month_requests")
+          .select("leave_type")
+          .eq("member_id", member.id)
+          .eq("processed", false)
+          .gte("request_date", `${currentYear}-01-01`)
+          .lte("request_date", `${currentYear}-12-31`);
+
+      if (sixMonthRequestsError) {
+        throw new Error(
+          "Unable to check six-month requests. Please try again.",
+        );
+      }
+
       // Calculate used days
       let usedPlds = 0;
       let usedSdvs = 0;
@@ -761,6 +802,15 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
           } else if (request.leave_type === "SDV") {
             usedSdvs++;
           }
+        }
+      });
+
+      // Count pending six-month requests against available days
+      sixMonthRequests?.forEach((request) => {
+        if (request.leave_type === "PLD") {
+          usedPlds++;
+        } else if (request.leave_type === "SDV") {
+          usedSdvs++;
         }
       });
 

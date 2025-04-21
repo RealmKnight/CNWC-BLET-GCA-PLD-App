@@ -423,11 +423,8 @@ export function useMyTime() {
 
   const requestPaidInLieu = useCallback(
     async (type: "PLD" | "SDV") => {
-      if (
-        !member?.id || member.division_id === null ||
-        member.division_id === undefined
-      ) {
-        throw new Error("No member ID or division ID found");
+      if (!member?.id) {
+        throw new Error("No member ID found");
       }
       if (!member.calendar_id) {
         throw new Error("No calendar ID assigned to the member");
@@ -437,9 +434,135 @@ export function useMyTime() {
         console.log("[MyTime] Requesting paid in lieu for:", {
           type,
           memberId: member.id,
-          divisionId: member.division_id,
           calendarId: member.calendar_id,
         });
+
+        // Check if user has available days for the requested type
+        const currentYear = new Date().getFullYear();
+        const { data: memberEntitlements, error: memberError } = await supabase
+          .from("members")
+          .select("max_plds, sdv_entitlement, pld_rolled_over")
+          .eq("id", member.id)
+          .single();
+
+        if (memberError) {
+          throw new Error(
+            "Unable to determine available days. Please try again.",
+          );
+        }
+
+        // Get existing requests to determine how many days are already used
+        const { data: existingRequests, error: requestsError } = await supabase
+          .from("pld_sdv_requests")
+          .select("leave_type, status, paid_in_lieu")
+          .eq("member_id", member.id)
+          .gte("request_date", `${currentYear}-01-01`)
+          .lte("request_date", `${currentYear}-12-31`);
+
+        if (requestsError) {
+          throw new Error(
+            "Unable to check existing requests. Please try again.",
+          );
+        }
+
+        // Check if user already has a paid in lieu request for this type
+        const hasExistingPaidInLieuRequest = existingRequests?.some(
+          (req) =>
+            req.leave_type === type &&
+            req.paid_in_lieu === true &&
+            (req.status === "pending" || req.status === "approved"),
+        );
+
+        if (hasExistingPaidInLieuRequest) {
+          throw new Error(
+            `You already have an active paid in lieu request for ${type}. Please cancel it before creating a new one.`,
+          );
+        }
+
+        // Get existing six-month requests to also count against available days
+        const { data: sixMonthRequests, error: sixMonthRequestsError } =
+          await supabase
+            .from("six_month_requests")
+            .select("leave_type")
+            .eq("member_id", member.id)
+            .eq("processed", false)
+            .gte("request_date", `${currentYear}-01-01`)
+            .lte("request_date", `${currentYear}-12-31`);
+
+        if (sixMonthRequestsError) {
+          throw new Error(
+            "Unable to check six-month requests. Please try again.",
+          );
+        }
+
+        // Calculate used days
+        let usedPlds = 0;
+        let usedSdvs = 0;
+
+        existingRequests?.forEach((request) => {
+          // Only count requests that are consuming days (approved, pending, or waitlisted but not paid in lieu)
+          if (
+            (request.status === "approved" ||
+              request.status === "pending" ||
+              request.status === "waitlisted" ||
+              request.status === "cancellation_pending") &&
+            !request.paid_in_lieu
+          ) {
+            if (request.leave_type === "PLD") {
+              usedPlds++;
+            } else if (request.leave_type === "SDV") {
+              usedSdvs++;
+            }
+          }
+
+          // Count paid in lieu requests separately
+          if (
+            (request.status === "approved" || request.status === "pending") &&
+            request.paid_in_lieu
+          ) {
+            if (request.leave_type === "PLD") {
+              usedPlds++;
+            } else if (request.leave_type === "SDV") {
+              usedSdvs++;
+            }
+          }
+        });
+
+        // Count pending six-month requests against available days
+        sixMonthRequests?.forEach((request) => {
+          if (request.leave_type === "PLD") {
+            usedPlds++;
+          } else if (request.leave_type === "SDV") {
+            usedSdvs++;
+          }
+        });
+
+        // Calculate available days
+        const totalPlds = (memberEntitlements?.max_plds || 0) +
+          (memberEntitlements?.pld_rolled_over || 0);
+        const totalSdvs = memberEntitlements?.sdv_entitlement || 0;
+
+        const availablePlds = totalPlds - usedPlds;
+        const availableSdvs = totalSdvs - usedSdvs;
+
+        console.log("[MyTime] Available days for paid in lieu:", {
+          pld: availablePlds,
+          sdv: availableSdvs,
+          totalPlds,
+          totalSdvs,
+          usedPlds,
+          usedSdvs,
+        });
+
+        // Check if user has available days for the requested type
+        const availableDays = type === "PLD" ? availablePlds : availableSdvs;
+
+        if (availableDays <= 0) {
+          throw new Error(
+            `No available ${type} days left. Cannot request paid in lieu.`,
+          );
+        }
+
         const { data, error } = await supabase
           .from("pld_sdv_requests")
           .insert({
@@ -448,7 +571,6 @@ export function useMyTime() {
             paid_in_lieu: true,
             status: "pending",
             request_date: new Date().toISOString().split("T")[0],
-            division_id: member.division_id,
             calendar_id: member.calendar_id,
           })
           .select()
@@ -456,6 +578,16 @@ export function useMyTime() {
 
         if (error) {
           console.error("[MyTime] Error requesting paid in lieu:", error);
+
+          // Handle specific database errors with user-friendly messages
+          if (error.code === "P0001") {
+            if (error.message?.includes("active request already exists")) {
+              throw new Error(
+                `You already have an active request for this date. Please cancel it before creating a new one.`,
+              );
+            }
+          }
+
           throw error;
         }
 
@@ -463,10 +595,16 @@ export function useMyTime() {
         return true;
       } catch (err) {
         console.error("[MyTime] Error in requestPaidInLieu:", err);
-        throw err;
+
+        // Return the error message directly for display to user
+        if (err instanceof Error) {
+          throw new Error(err.message);
+        } else {
+          throw new Error("An error occurred while requesting paid in lieu.");
+        }
       }
     },
-    [member?.id, member?.division_id, member?.calendar_id],
+    [member?.id, member?.calendar_id],
   );
 
   const fetchRequests = useCallback(async () => {

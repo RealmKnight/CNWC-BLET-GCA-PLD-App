@@ -507,10 +507,11 @@ export default function MyTimeScreen() {
         });
       }
     } catch (error) {
+      console.error("[MyTime] Error in handleConfirmPaidInLieu:", error);
       Toast.show({
         type: "error",
-        text1: "Error",
-        text2: "An error occurred while processing your request.",
+        text1: "Request Failed",
+        text2: error instanceof Error ? error.message : "An error occurred while processing your request.",
         position: "bottom",
         visibilityTime: 3000,
       });
@@ -819,22 +820,70 @@ export default function MyTimeScreen() {
               Select the type of day you want to request payment for:
             </ThemedText>
 
+            {/* Warning message if no days are available */}
+            {stats && stats.available.pld <= 0 && stats.available.sdv <= 0 && (
+              <ThemedView style={styles.warningContainer}>
+                <Feather name="alert-triangle" size={18} color={Colors[colorScheme ?? "light"].warning} />
+                <ThemedText style={styles.warningMessageText}>
+                  You don't have any available days to request payment for.
+                </ThemedText>
+              </ThemedView>
+            )}
+
+            {/* PLD warning if only PLD is unavailable */}
+            {stats && stats.available.pld <= 0 && stats.available.sdv > 0 && (
+              <ThemedView style={styles.warningContainer}>
+                <Feather name="info" size={18} color={Colors[colorScheme ?? "light"].warning} />
+                <ThemedText style={styles.warningMessageText}>
+                  You don't have any available PLD days.
+                </ThemedText>
+              </ThemedView>
+            )}
+
+            {/* SDV warning if only SDV is unavailable */}
+            {stats && stats.available.pld > 0 && stats.available.sdv <= 0 && (
+              <ThemedView style={styles.warningContainer}>
+                <Feather name="info" size={18} color={Colors[colorScheme ?? "light"].warning} />
+                <ThemedText style={styles.warningMessageText}>
+                  You don't have any available SDV days.
+                </ThemedText>
+              </ThemedView>
+            )}
+
             <ThemedView style={styles.typeButtonsContainer}>
               <ThemedTouchableOpacity
-                style={[styles.typeButton, selectedType === "PLD" && styles.selectedTypeButton]}
+                style={[
+                  styles.typeButton, 
+                  selectedType === "PLD" && styles.selectedTypeButton,
+                  stats && stats.available.pld <= 0 && styles.disabledButton
+                ]}
                 onPress={() => setSelectedType("PLD")}
+                disabled={stats && stats.available.pld <= 0}
               >
-                <ThemedText style={[styles.typeButtonText, selectedType === "PLD" && styles.selectedTypeButtonText]}>
-                  PLD
+                <ThemedText style={[
+                  styles.typeButtonText, 
+                  selectedType === "PLD" && styles.selectedTypeButtonText,
+                  stats && stats.available.pld <= 0 && styles.disabledButtonText
+                ]}>
+                  PLD ({stats?.available.pld || 0})
                 </ThemedText>
               </ThemedTouchableOpacity>
 
               <ThemedTouchableOpacity
-                style={[styles.typeButton, selectedType === "SDV" && styles.selectedTypeButton]}
+                style={[
+                  styles.typeButton, 
+                  selectedType === "SDV" && styles.selectedTypeButton,
+                  stats && stats.available.sdv <= 0 && styles.disabledButton
+                ]}
                 onPress={() => setSelectedType("SDV")}
+                disabled={stats && stats.available.sdv <= 0}
               >
-                <ThemedText style={[styles.typeButtonText, selectedType === "SDV" && styles.selectedTypeButtonText]}>
-                  SDV
+                <ThemedText style={[
+                  styles.typeButtonText, 
+                  selectedType === "SDV" && styles.selectedTypeButtonText,
+                  stats && stats.available.sdv <= 0 && styles.disabledButtonText
+                ]}>
+                  SDV ({stats?.available.sdv || 0})
                 </ThemedText>
               </ThemedTouchableOpacity>
             </ThemedView>
@@ -845,9 +894,14 @@ export default function MyTimeScreen() {
               </ThemedTouchableOpacity>
 
               <ThemedTouchableOpacity
-                style={[styles.confirmButton, !selectedType && styles.disabledButton]}
+                style={[
+                  styles.confirmButton, 
+                  (!selectedType || (stats && selectedType === "PLD" && stats.available.pld <= 0) || 
+                  (stats && selectedType === "SDV" && stats.available.sdv <= 0)) && styles.disabledButton
+                ]}
                 onPress={handleConfirmPaidInLieu}
-                disabled={!selectedType}
+                disabled={!selectedType || (stats && selectedType === "PLD" && stats.available.pld <= 0) || 
+                  (stats && selectedType === "SDV" && stats.available.sdv <= 0)}
               >
                 <ThemedText style={styles.confirmButtonText}>Request Payment</ThemedText>
               </ThemedTouchableOpacity>
@@ -1007,7 +1061,10 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
   },
   selectedTypeButtonText: {
-    color: Colors.dark.background,
+    color: Colors.dark.text,
+  },
+  disabledButtonText: {
+    opacity: 0.5,
   },
   modalButtonsContainer: {
     flexDirection: "row",
@@ -1201,4 +1258,16 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "500",
   },
+  warningContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 8,
+    marginBottom: 16,
+    borderRadius: 8,
+    backgroundColor: Colors.dark.background,
+  },
+  warningMessageText: {
+    marginLeft: 8,
+    fontSize: 14
+  }
 });
