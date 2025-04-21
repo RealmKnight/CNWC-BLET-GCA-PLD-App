@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useCallback, useState } from "react";
 import { StyleSheet, ActivityIndicator } from "react-native";
 import { Calendar as RNCalendar, DateData } from "react-native-calendars";
 import { addMonths, format, parseISO, eachDayOfInterval, startOfDay, isAfter, isBefore, addDays } from "date-fns";
@@ -50,6 +50,7 @@ const AVAILABILITY_COLORS = {
   limited: { color: "#FFC107", text: "black" }, // Yellow - Less than 30% slots left
   full: { color: "#F44336", text: "black" }, // Red - No slots available
   unavailable: { color: "#9E9E9E", text: "#666633" }, // Grey - Cannot be requested (past/too far)
+  userRequested: { color: "#2196F3", text: "black" }, // Blue - User has already requested this day
 };
 
 interface CalendarProps {
@@ -73,7 +74,11 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
     allotments,
     yearlyAllotments,
     requests,
+    checkSixMonthRequest,
   } = useCalendarStore();
+
+  // Store days with six month requests to avoid excessive DB lookups
+  const [sixMonthRequestDays, setSixMonthRequestDays] = useState<Record<string, boolean>>({});
 
   // Use the current prop directly for the calendar view
   const calendarDate = current || selectedDate || format(new Date(), "yyyy-MM-dd");
@@ -96,6 +101,74 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
       end: format(endDate, "yyyy-MM-dd"),
     };
   }, []);
+
+  // Function to check if user has an active regular request for a specific date
+  const hasUserRequestForDate = useCallback(
+    (dateStr: string) => {
+      if (!member?.id || !requests[dateStr]) return false;
+
+      return requests[dateStr].some(
+        (req) =>
+          req.member_id === member.id &&
+          ["approved", "pending", "waitlisted", "cancellation_pending"].includes(req.status)
+      );
+    },
+    [member?.id, requests]
+  );
+
+  // Function to check if user has either a regular or six-month request for a date
+  const hasUserAnyRequestForDate = useCallback(
+    async (dateStr: string) => {
+      // First check regular requests
+      const hasRegularRequest = hasUserRequestForDate(dateStr);
+      if (hasRegularRequest) return true;
+
+      // If we've already checked for a six-month request for this date, use cached result
+      if (sixMonthRequestDays[dateStr] !== undefined) {
+        return sixMonthRequestDays[dateStr];
+      }
+
+      // Otherwise, check for six-month request
+      try {
+        const hasSixMonthRequest = await checkSixMonthRequest(dateStr);
+
+        // Cache the result
+        setSixMonthRequestDays((prev) => ({
+          ...prev,
+          [dateStr]: hasSixMonthRequest,
+        }));
+
+        return hasSixMonthRequest;
+      } catch (error) {
+        console.error(`[Calendar] Error checking six month request for ${dateStr}:`, error);
+        return false;
+      }
+    },
+    [hasUserRequestForDate, checkSixMonthRequest, sixMonthRequestDays]
+  );
+
+  // Prefetch six-month request data for visible dates
+  useEffect(() => {
+    if (!isInitialized || !member?.id) return;
+
+    // Get the six-month date
+    const sixMonthDate = addMonths(new Date(), 6);
+    const sixMonthDateStr = format(sixMonthDate, "yyyy-MM-dd");
+
+    // Check if user has a six-month request and cache the result
+    checkSixMonthRequest(sixMonthDateStr)
+      .then((hasRequest) => {
+        if (hasRequest) {
+          setSixMonthRequestDays((prev) => ({
+            ...prev,
+            [sixMonthDateStr]: true,
+          }));
+        }
+      })
+      .catch((error) => {
+        console.error("[Calendar] Error pre-fetching six month request data:", error);
+      });
+  }, [isInitialized, member?.id, checkSixMonthRequest]);
 
   // Generate marked dates for the calendar
   const markedDates = useMemo(() => {
@@ -130,7 +203,19 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
     // Add marks for all dates in range
     allDates.forEach((date) => {
       const dateStr = format(date, "yyyy-MM-dd");
-      const availability = getDateAvailability(dateStr);
+
+      // First check if the user has a regular request for this date
+      const userHasRegularRequest = hasUserRequestForDate(dateStr);
+
+      // Then check if the user has a six-month request for this date
+      const userHasSixMonthRequest = sixMonthRequestDays[dateStr] === true;
+
+      // User has any request (regular or six-month)
+      const userHasAnyRequest = userHasRegularRequest || userHasSixMonthRequest;
+
+      // If user has any request, use the userRequested color
+      // Otherwise, use the regular availability color
+      const availability = userHasAnyRequest ? "userRequested" : getDateAvailability(dateStr);
       const colors = AVAILABILITY_COLORS[availability];
 
       if (!colors) {
@@ -179,6 +264,8 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
     yearlyAllotments,
     requests,
     getDateAvailability,
+    hasUserRequestForDate,
+    sixMonthRequestDays,
   ]);
 
   // Log when marked dates are regenerated
@@ -225,6 +312,17 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
 
     if (isDateSelectable(day.dateString)) {
       setSelectedDate(day.dateString);
+
+      // Check if the selected date has a six-month request after selection
+      if (day.dateString) {
+        const hasSixMonthRequest = await checkSixMonthRequest(day.dateString);
+        if (hasSixMonthRequest) {
+          setSixMonthRequestDays((prev) => ({
+            ...prev,
+            [day.dateString]: true,
+          }));
+        }
+      }
     } else {
       // This case handles when the date is within range but not available (e.g., full)
       Toast.show({
@@ -297,7 +395,11 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
                   ? "Limited Slots"
                   : key === "full"
                   ? "Full"
-                  : "Not Available"}
+                  : key === "unavailable"
+                  ? "Not Available"
+                  : key === "userRequested"
+                  ? "Your Requests"
+                  : key}
               </ThemedText>
             </ThemedView>
           ))}
