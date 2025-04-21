@@ -129,14 +129,13 @@ export default function MemberAssociationScreen() {
       <ThemedView style={styles.header}>
         <ThemedText type="title">Associate Member</ThemedText>
         <ThemedText type="subtitle">
-          Please enter your member PIN number to associate your account with your member profile
+          Please enter your CN Employee PIN number to associate your user account with your union profile
         </ThemedText>
       </ThemedView>
 
       <ThemedView style={styles.infoBox}>
         <ThemedText style={styles.infoText}>
-          Don't have a PIN number? Contact your Division Administrative Secretary or Division Secretary Treasurer to
-          obtain your PIN.
+          Having troubles? Contact your Division Admin (or Local Chairman).
         </ThemedText>
       </ThemedView>
 

@@ -110,6 +110,8 @@ interface CalendarState {
     type: "PLD" | "SDV",
   ) => Promise<DayRequest>;
 
+  checkSixMonthRequest: (date: string) => Promise<boolean>;
+
   cleanupCalendarState: () => void;
 }
 
@@ -118,6 +120,16 @@ const isLastDayOfMonth = (date: Date): boolean => {
   const tomorrow = new Date(date);
   tomorrow.setDate(tomorrow.getDate() + 1);
   return tomorrow.getDate() === 1;
+};
+
+// Add getSixMonthDate function to calculate date exactly six months from now
+export const getSixMonthDate = (): Date => {
+  const now = new Date();
+  return new Date(
+    now.getFullYear(),
+    now.getMonth() + 6,
+    now.getDate(),
+  );
 };
 
 export const useCalendarStore = create<CalendarState>((set, get) => ({
@@ -142,11 +154,7 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
     const now = new Date();
     const dateObj = parseISO(date);
     const fortyEightHoursFromNow = addDays(now, 2);
-    const sixMonthsFromNow = new Date(
-      now.getFullYear(),
-      now.getMonth() + 6,
-      now.getDate(),
-    );
+    const sixMonthsFromNow = getSixMonthDate();
 
     // First check basic time constraints
     if (isBefore(dateObj, fortyEightHoursFromNow)) {
@@ -163,7 +171,15 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       return false;
     }
 
-    // Check allotments and existing requests
+    // Check if today is end of month for six month request handling or exact 6-month date
+    const isEndOfMonth = isLastDayOfMonth(now);
+    const isSixMonthDate = dateObj.getTime() === sixMonthsFromNow.getTime();
+    const isSixMonthRequest = isSixMonthDate || (isEndOfMonth &&
+      dateObj.getMonth() === sixMonthsFromNow.getMonth() &&
+      dateObj.getFullYear() === sixMonthsFromNow.getFullYear() &&
+      !isBefore(dateObj, sixMonthsFromNow));
+
+    // Check allotments
     const year = dateObj.getFullYear();
     const dateAllotment = state.allotments[date];
     const yearlyAllotment = state.yearlyAllotments[year];
@@ -174,6 +190,14 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       return false;
     }
 
+    // For six-month requests, we allow selection even if the date is full
+    // because they are processed by seniority and waitlisted if needed
+    if (isSixMonthRequest) {
+      console.log("[CalendarStore] Date selectable - six month request:", date);
+      return true;
+    }
+
+    // For regular requests, check if the date is already full
     const dateRequests = state.requests[date] || [];
     const activeRequests = dateRequests.filter((r) =>
       r.status === "approved" || r.status === "pending" ||
@@ -183,22 +207,6 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
     if (activeRequests.length >= maxAllotment) {
       console.log("[CalendarStore] Date not selectable - full:", date);
       return false;
-    }
-
-    // Check if today is end of month for six month request handling
-    const isEndOfMonth = isLastDayOfMonth(now);
-    const isSixMonthDate = dateObj.getTime() === sixMonthsFromNow.getTime();
-
-    // Handle six month requests
-    if (
-      isSixMonthDate || (isEndOfMonth &&
-        dateObj.getMonth() === sixMonthsFromNow.getMonth() &&
-        dateObj.getFullYear() === sixMonthsFromNow.getFullYear() &&
-        !isBefore(dateObj, sixMonthsFromNow))
-    ) {
-      // This is either exactly six months out or part of end-of-month six month requests
-      console.log("[CalendarStore] Date selectable - six month request:", date);
-      return true;
     }
 
     // Regular requests - anything between 48 hours and six months
@@ -331,6 +339,9 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
     }
 
     try {
+      // Only fetch regular requests, not six month requests
+      // Six month requests are stored in a separate table and should not be
+      // displayed on the calendar or count against daily allotments
       const { data: requestsData, error } = await supabase
         .from("pld_sdv_requests")
         .select(`
@@ -541,6 +552,75 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
         calendarId: member.calendar_id,
       });
 
+      // Check if user has available days for the requested type
+      const currentYear = new Date().getFullYear();
+      const { data: memberEntitlements, error: memberError } = await supabase
+        .from("members")
+        .select("max_plds, sdv_entitlement, pld_rolled_over")
+        .eq("id", member.id)
+        .single();
+
+      if (memberError) {
+        throw new Error(
+          "Unable to determine available days. Please try again.",
+        );
+      }
+
+      // Get existing requests to determine how many days are already used
+      const { data: existingRequests, error: requestsError } = await supabase
+        .from("pld_sdv_requests")
+        .select("leave_type, status, paid_in_lieu")
+        .eq("member_id", member.id)
+        .gte("request_date", `${currentYear}-01-01`)
+        .lte("request_date", `${currentYear}-12-31`);
+
+      if (requestsError) {
+        throw new Error("Unable to check existing requests. Please try again.");
+      }
+
+      // Calculate used days
+      let usedPlds = 0;
+      let usedSdvs = 0;
+
+      existingRequests?.forEach((request) => {
+        // Only count requests that are consuming days (approved, pending, or waitlisted but not paid in lieu)
+        if (
+          (request.status === "approved" ||
+            request.status === "pending" ||
+            request.status === "waitlisted" ||
+            request.status === "cancellation_pending") &&
+          !request.paid_in_lieu
+        ) {
+          if (request.leave_type === "PLD") {
+            usedPlds++;
+          } else if (request.leave_type === "SDV") {
+            usedSdvs++;
+          }
+        }
+      });
+
+      // Calculate available days
+      const totalPlds = (memberEntitlements?.max_plds || 0) +
+        (memberEntitlements?.pld_rolled_over || 0);
+      const totalSdvs = memberEntitlements?.sdv_entitlement || 0;
+
+      const availablePlds = totalPlds - usedPlds;
+      const availableSdvs = totalSdvs - usedSdvs;
+
+      console.log("[CalendarStore] Available days for six-month request:", {
+        pld: availablePlds,
+        sdv: availableSdvs,
+      });
+
+      // Check if user has available days for the requested type
+      const availableDays = type === "PLD" ? availablePlds : availableSdvs;
+
+      if (availableDays <= 0) {
+        throw new Error(
+          `No available ${type} days left. Cannot submit six-month request.`,
+        );
+      }
+
       // Create the six-month request
       const insertPayload = {
         member_id: member.id,
@@ -640,6 +720,75 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
         calendarId,
       });
 
+      // Get member's PLD and SDV entitlements and current requests from the database
+      const currentYear = new Date().getFullYear();
+      const { data: memberEntitlements, error: memberError } = await supabase
+        .from("members")
+        .select("max_plds, sdv_entitlement, pld_rolled_over")
+        .eq("id", member.id)
+        .single();
+
+      if (memberError) {
+        throw new Error(
+          "Unable to determine available days. Please try again.",
+        );
+      }
+
+      // Get existing requests to determine how many days are already used
+      const { data: existingRequests, error: requestsError } = await supabase
+        .from("pld_sdv_requests")
+        .select("leave_type, status, paid_in_lieu")
+        .eq("member_id", member.id)
+        .gte("request_date", `${currentYear}-01-01`)
+        .lte("request_date", `${currentYear}-12-31`);
+
+      if (requestsError) {
+        throw new Error("Unable to check existing requests. Please try again.");
+      }
+
+      // Calculate used days
+      let usedPlds = 0;
+      let usedSdvs = 0;
+
+      existingRequests?.forEach((request) => {
+        // Only count requests that are consuming days (approved, pending, or waitlisted but not paid in lieu)
+        if (
+          (request.status === "approved" ||
+            request.status === "pending" ||
+            request.status === "waitlisted" ||
+            request.status === "cancellation_pending") &&
+          !request.paid_in_lieu
+        ) {
+          if (request.leave_type === "PLD") {
+            usedPlds++;
+          } else if (request.leave_type === "SDV") {
+            usedSdvs++;
+          }
+        }
+      });
+
+      // Calculate available days
+      const totalPlds = (memberEntitlements?.max_plds || 0) +
+        (memberEntitlements?.pld_rolled_over || 0);
+      const totalSdvs = memberEntitlements?.sdv_entitlement || 0;
+
+      const availablePlds = totalPlds - usedPlds;
+      const availableSdvs = totalSdvs - usedSdvs;
+
+      console.log("[CalendarStore] Available days:", {
+        pld: availablePlds,
+        sdv: availableSdvs,
+      });
+
+      // Check if user has available days for the requested type
+      const availableDays = type === "PLD" ? availablePlds : availableSdvs;
+
+      if (availableDays <= 0) {
+        throw new Error(
+          `No available ${type} days left. Cannot submit request.`,
+        );
+      }
+
       const year = new Date(date).getFullYear();
       const maxAllotment = get().allotments[date] ??
         get().yearlyAllotments[year] ?? 0;
@@ -691,6 +840,37 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
     } catch (error) {
       console.error("[CalendarStore] Error submitting request:", error);
       throw error;
+    }
+  },
+
+  checkSixMonthRequest: async (date: string) => {
+    const member = useUserStore.getState().member;
+
+    if (!member?.id) {
+      return false;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from("six_month_requests")
+        .select("id")
+        .eq("member_id", member.id)
+        .eq("request_date", date)
+        .eq("processed", false)
+        .maybeSingle();
+
+      if (error) {
+        console.error(
+          "[CalendarStore] Error checking six month request:",
+          error,
+        );
+        return false;
+      }
+
+      return !!data; // Return true if a request exists, false otherwise
+    } catch (error) {
+      console.error("[CalendarStore] Error checking six month request:", error);
+      return false;
     }
   },
 

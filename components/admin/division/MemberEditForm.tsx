@@ -1192,7 +1192,6 @@ const styles = StyleSheet.create({
     height: 40,
     width: "100%",
     fontSize: 14, // Consistent font size
-    // Web specific styling might be needed for consistent appearance
     ...(Platform.OS === "web" && {
       borderWidth: 0, // Remove default browser border inside the container
       paddingLeft: 10, // Adjust padding
@@ -1200,7 +1199,8 @@ const styles = StyleSheet.create({
       appearance: "none", // Remove default browser appearance
       backgroundImage: `url('data:image/svg+xml;utf8,<svg fill="currentColor" height="24" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/><path d="M0 0h24v24H0z" fill="none"/></svg>')`,
       backgroundRepeat: "no-repeat",
-      backgroundPosition: "right 8px center",
+      backgroundPositionX: "right",
+      backgroundPositionY: "center",
     }),
   },
   dateInput: {
