@@ -1069,7 +1069,7 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
   },
   selectedTypeButtonText: {
-    color: Colors.dark.text,
+    color: Colors.dark.buttonText,
   },
   disabledButtonText: {
     opacity: 0.5,

@@ -1656,7 +1656,7 @@ export default function CalendarScreen() {
           disabled={!isPldInitialized || !isDateSelectable(selectedDate)}
         >
           <ThemedText style={styles.requestButtonText}>
-            {isDateSelectable(selectedDate) ? "Request Day Off" : "This date is not available for requests"}
+            {isDateSelectable(selectedDate) ? "Request Day/View Requests" : "This date is not available for requests"}
           </ThemedText>
         </TouchableOpacity>
       )}
