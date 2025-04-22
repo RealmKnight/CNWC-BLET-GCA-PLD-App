@@ -533,6 +533,7 @@ export default function ChangePasswordScreen() {
           <TextInput
             style={styles.input}
             placeholder="New Password"
+            placeholderTextColor={Colors.dark.secondary}
             value={password}
             onChangeText={setPassword}
             secureTextEntry
@@ -541,6 +542,7 @@ export default function ChangePasswordScreen() {
           <TextInput
             style={styles.input}
             placeholder="Confirm New Password"
+            placeholderTextColor={Colors.dark.secondary}
             value={confirmPassword}
             onChangeText={setConfirmPassword}
             secureTextEntry
@@ -591,7 +593,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 15,
     marginBottom: 15,
     backgroundColor: Colors.dark.card,
-    color: Colors.dark.secondary,
+    color: Colors.dark.primary,
   },
   button: {
     backgroundColor: Colors.dark.buttonBackground,

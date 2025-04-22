@@ -143,7 +143,7 @@ export default function MemberAssociationScreen() {
         <TextInput
           style={styles.input}
           placeholder="PIN Number"
-          placeholderTextColor="#666666"
+          placeholderTextColor={Colors.dark.secondary}
           value={pinNumber}
           onChangeText={setPinNumber}
           keyboardType="numeric"
@@ -262,7 +262,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 15,
     marginBottom: 15,
     backgroundColor: Colors.dark.card,
-    color: Colors.dark.secondary,
+    color: Colors.dark.primary,
   },
   button: {
     backgroundColor: Colors.dark.buttonBackground,

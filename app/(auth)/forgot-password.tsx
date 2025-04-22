@@ -73,6 +73,7 @@ export default function ForgotPasswordScreen() {
             <TextInput
               style={styles.input}
               placeholder="Email"
+              placeholderTextColor={Colors.dark.secondary}
               value={email}
               onChangeText={setEmail}
               autoCapitalize="none"
@@ -137,7 +138,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 15,
     marginBottom: 15,
     backgroundColor: Colors.dark.card,
-    color: Colors.dark.secondary,
+    color: Colors.dark.primary,
   },
   button: {
     backgroundColor: Colors.dark.buttonBackground,
