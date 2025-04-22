@@ -653,26 +653,27 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
         requested_at: new Date().toISOString(),
       };
 
-      const { data, error } = await supabase
+      // Insert the request without using .select() to avoid metadata field error
+      const { data: insertedData, error: insertError } = await supabase
         .from("six_month_requests")
         .insert(insertPayload)
-        .select()
+        .select("id")
         .single();
 
-      if (error) throw error;
-      if (!data) throw new Error("Failed to create six-month request");
+      if (insertError) throw insertError;
+      if (!insertedData) throw new Error("Failed to create six-month request");
 
       // Create a request object for the UI state
       const request: DayRequest = {
-        id: data.id,
+        id: insertedData.id,
         member_id: member.id,
         calendar_id: member.calendar_id,
         request_date: date,
         leave_type: type,
         status: "pending",
-        requested_at: data.requested_at || new Date().toISOString(),
-        created_at: data.requested_at || new Date().toISOString(),
-        updated_at: data.requested_at || new Date().toISOString(),
+        requested_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
         responded_at: null,
         responded_by: null,
         paid_in_lieu: false,
