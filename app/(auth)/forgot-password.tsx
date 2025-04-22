@@ -137,7 +137,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 15,
     marginBottom: 15,
     backgroundColor: Colors.dark.card,
-    color: Colors.dark.text,
+    color: Colors.dark.secondary,
   },
   button: {
     backgroundColor: Colors.dark.buttonBackground,
