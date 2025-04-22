@@ -231,9 +231,9 @@ export default function NotificationsScreen() {
   }, [messages, groupBy, filterType, searchQuery]);
 
   const handleRefresh = useCallback(async () => {
-    if (!member?.pin_number) return;
+    if (!member?.pin_number || !member?.id) return;
     setRefreshing(true);
-    await fetchMessages(member.pin_number);
+    await fetchMessages(member.pin_number, member.id);
     setRefreshing(false);
   }, [member, fetchMessages]);
 
@@ -275,8 +275,8 @@ export default function NotificationsScreen() {
 
   // Initial fetch
   useEffect(() => {
-    if (member?.pin_number) {
-      fetchMessages(member.pin_number);
+    if (member?.pin_number && member?.id) {
+      fetchMessages(member.pin_number, member.id);
     }
   }, [member]);
 
@@ -299,7 +299,7 @@ export default function NotificationsScreen() {
         // Refresh messages list
         if (member?.pin_number) {
           console.log("[Notifications] Refreshing messages list");
-          await fetchMessages(member.pin_number);
+          await fetchMessages(member.pin_number, member.id);
         }
 
         Toast.show({

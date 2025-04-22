@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { supabase } from "@/utils/supabase";
 import { StateCreator } from "zustand";
 import { Platform } from "react-native";
+import { useUserStore } from "@/store/userStore";
 
 interface Message {
   id: string;
@@ -39,7 +40,7 @@ interface NotificationStore {
   isLoading: boolean;
   error: string | null;
   setMessages: (messages: Message[]) => void;
-  fetchMessages: (pinNumber: number) => Promise<void>;
+  fetchMessages: (pinNumber: number, userId: string) => Promise<void>;
   markAsRead: (messageId: string, pinNumber: number) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
   subscribeToMessages: (pinNumber: number) => () => void;
@@ -60,10 +61,27 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
     });
   },
 
-  fetchMessages: async (pinNumber: number) => {
+  fetchMessages: async (pinNumber: number, userId: string) => {
+    console.log(
+      `[NotificationStore] fetchMessages called with pinNumber: ${pinNumber}, userId: ${userId}`,
+    );
+
+    if (!pinNumber || !userId) {
+      console.warn(
+        "[NotificationStore] fetchMessages requires pinNumber and userId.",
+      );
+      set({
+        messages: [],
+        unreadCount: 0,
+        isLoading: false,
+        error: "User identifiers missing.",
+      });
+      return;
+    }
     try {
       set({ isLoading: true, error: null });
 
+      // Revert to original select to include push_notification_deliveries
       const { data: messages, error: messagesError } = await supabase
         .from("messages")
         .select(`
@@ -75,14 +93,50 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
             error_message
           )
         `)
-        .eq("recipient_pin_number", pinNumber)
+        .or(`recipient_pin_number.eq.${pinNumber},recipient_id.eq.${userId}`)
         .eq("is_deleted", false)
         .order("created_at", { ascending: false });
 
-      if (messagesError) throw messagesError;
+      // Log the raw data and error *directly* after the query
+      console.log("[NotificationStore] Raw Supabase query result:", {
+        data: messages,
+        error: messagesError,
+      });
 
-      // Transform the data to include delivery status in metadata
-      const transformedMessages = messages.map((msg: any) => ({
+      if (messagesError) {
+        console.error(
+          "[NotificationStore] Supabase query error detected:",
+          messagesError,
+        );
+        throw messagesError;
+      }
+
+      // Check if data is null or empty even if no error
+      if (!messages) {
+        console.warn(
+          "[NotificationStore] Supabase query returned null/undefined data, but no error.",
+        );
+      } else {
+        console.log(
+          "[NotificationStore] Supabase query successful, raw messages count:",
+          messages.length,
+        );
+        // Log the recipient identifiers from the raw data
+        console.log(
+          "[NotificationStore] Raw recipient identifiers:",
+          messages.map((m) => ({
+            id: m.id,
+            recipient_id: m.recipient_id,
+            recipient_pin_number: m.recipient_pin_number,
+          })),
+        );
+      }
+
+      // Ensure messages is an array before proceeding
+      const validMessages = messages || [];
+
+      // Transform the data (only if validMessages is not empty)
+      const transformedMessages = validMessages.map((msg: any) => ({
         ...msg,
         metadata: {
           ...msg.metadata,
@@ -97,15 +151,23 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
         },
       }));
 
+      console.log(
+        "[NotificationStore] Setting messages in store (count):",
+        transformedMessages.length,
+      );
       set({
         messages: transformedMessages,
         unreadCount: transformedMessages.filter((msg) => !msg.is_read).length,
         isLoading: false,
       });
-    } catch (error) {
-      console.error("Error fetching messages:", error);
+    } catch (error: any) { // Added type any to error for better logging
+      // Log the specific error encountered
+      console.error(
+        "[NotificationStore] Error fetching messages inside catch block:",
+        error,
+      );
       set({
-        error: "Failed to fetch messages",
+        error: `Failed to fetch messages: ${error.message || "Unknown error"}`,
         isLoading: false,
       });
     }
@@ -240,7 +302,6 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
   subscribeToMessages: (pinNumber: number) => {
     const channelId = `messages-${pinNumber}-${Date.now()}`;
 
-    // First get the current user's ID for push notification deliveries filtering
     const getUserId = async () => {
       try {
         const { data: { user } } = await supabase.auth.getUser();
@@ -264,87 +325,12 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
         },
         async (payload) => {
           console.log("[NotificationStore] Received realtime update:", payload);
-          const { messages } = get();
+          const { fetchMessages: refetch, messages: currentMessages } = get();
+          const user = useUserStore.getState().member;
 
-          // Handle different types of changes
-          switch (payload.eventType) {
-            case "INSERT": {
-              // Fetch the new message to get all related data
-              const { data: newMessage, error } = await supabase
-                .from("messages")
-                .select(`
-                  *,
-                  push_notification_deliveries (
-                    status,
-                    sent_at,
-                    delivered_at,
-                    error_message
-                  )
-                `)
-                .eq("id", payload.new.id)
-                .single();
+          if (!user?.id || !user?.pin_number) return;
 
-              if (error) {
-                console.error(
-                  "[NotificationStore] Error fetching new message:",
-                  error,
-                );
-                return;
-              }
-
-              if (newMessage && !newMessage.is_deleted) {
-                const updatedMessages = [newMessage, ...messages];
-                set({
-                  messages: updatedMessages,
-                  unreadCount: updatedMessages.filter((msg) =>
-                    !msg.is_read
-                  ).length,
-                });
-              }
-              break;
-            }
-
-            case "UPDATE": {
-              if (payload.new.is_deleted) {
-                // If message was marked as deleted, remove it from the local state
-                const updatedMessages = messages.filter(
-                  (msg) => msg.id !== payload.new.id,
-                );
-                set({
-                  messages: updatedMessages,
-                  unreadCount: updatedMessages.filter((msg) =>
-                    !msg.is_read
-                  ).length,
-                });
-              } else {
-                // For other updates, update the message in the local state
-                const updatedMessages = messages.map((msg) =>
-                  msg.id === payload.new.id ? { ...msg, ...payload.new } : msg
-                );
-                set({
-                  messages: updatedMessages,
-                  unreadCount: updatedMessages.filter((msg) =>
-                    !msg.is_read
-                  ).length,
-                });
-              }
-              break;
-            }
-
-            case "DELETE": {
-              // Remove the message from local state
-              const updatedMessages = messages.filter(
-                (msg) => msg.id !== payload.old.id,
-              );
-              set({
-                messages: updatedMessages,
-                unreadCount: updatedMessages.filter((msg) =>
-                  !msg.is_read
-                ).length,
-              });
-              break;
-            }
-          }
+          await refetch(user.pin_number, user.id);
         },
       )
       .subscribe((status) => {
@@ -371,7 +357,7 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
             },
             async () => {
               // Refetch messages when there's a delivery status change
-              await get().fetchMessages(pinNumber);
+              await get().fetchMessages(pinNumber, userId);
             },
           )
           .subscribe((status) => {
