@@ -9,7 +9,10 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "runtimeVersion": {
+        "policy": "appVersion"
+      }
     },
     "android": {
       "package": "com.cnwcgcablet.pldapp",
@@ -17,7 +20,8 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#000000"
-      }
+      },
+      "runtimeVersion": "1.0.0"
     },
     "web": {
       "bundler": "metro",
@@ -40,7 +44,9 @@
         {
           "icon": "./assets/images/notification-icon.png",
           "color": "#000000",
-          "sounds": ["./assets/sounds/notification.wav"]
+          "sounds": [
+            "./assets/sounds/notification.wav"
+          ]
         }
       ]
     ],
@@ -54,6 +60,9 @@
       "eas": {
         "projectId": "785abfbf-3ca5-44e8-a365-9bb0e974f604"
       }
+    },
+    "updates": {
+      "url": "https://u.expo.dev/785abfbf-3ca5-44e8-a365-9bb0e974f604"
     }
   }
 }
