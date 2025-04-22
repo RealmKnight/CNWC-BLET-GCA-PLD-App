@@ -45,6 +45,11 @@ android/
 *.gradle
 google-services.json
 
+# tests
+__tests__/
+*.test.ts
+*.test.tsx
+
 # typescript
 *.tsbuildinfo
 
