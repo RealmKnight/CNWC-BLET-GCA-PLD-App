@@ -71,6 +71,9 @@ function RequestDialog({
   const [localRequests, setLocalRequests] = useState<DayRequest[]>([]);
   const realtimeChannelRef = useRef<RealtimeChannel | null>(null);
   const [sixMonthRequestId, setSixMonthRequestId] = useState<string | null>(null);
+  // Add state for cancel confirmation dialog
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [cancelType, setCancelType] = useState<"regular" | "six-month">("regular");
 
   // Initialize local requests with the ones passed as props
   useEffect(() => {
@@ -515,24 +518,68 @@ function RequestDialog({
       return;
     }
 
+    // Show confirmation dialog instead of immediately canceling
+    setCancelType("regular");
+    setShowCancelModal(true);
+  }, [userRequest, selectedDate]);
+
+  // Handler for confirming cancellation
+  const handleConfirmCancel = useCallback(async () => {
     setIsSubmitting(true);
     try {
-      const success = await cancelRequest(userRequest.id, selectedDate);
-      if (success) {
-        Toast.show({ type: "success", text1: "Request cancellation initiated" });
-        await refreshMyTimeStats(true); // Refresh stats after cancellation
-        onClose(); // Close the dialog
-      } else {
-        Toast.show({ type: "error", text1: "Failed to cancel request" });
+      if (cancelType === "regular") {
+        if (!userRequest || !selectedDate) {
+          Toast.show({ type: "error", text1: "Cannot find request to cancel" });
+          return;
+        }
+
+        const success = await cancelRequest(userRequest.id, selectedDate);
+        if (success) {
+          Toast.show({ type: "success", text1: "Request cancellation initiated" });
+          await refreshMyTimeStats(true); // Refresh stats after cancellation
+          onClose(); // Close the dialog
+        } else {
+          Toast.show({ type: "error", text1: "Failed to cancel request" });
+        }
+      } else if (cancelType === "six-month") {
+        if (!sixMonthRequestId) {
+          Toast.show({ type: "error", text1: "Cannot find six-month request to cancel" });
+          return;
+        }
+
+        const success = await cancelSixMonthRequest(sixMonthRequestId);
+        if (success) {
+          Toast.show({ type: "success", text1: "Six-month request cancelled" });
+          await refreshMyTimeStats(true); // Refresh stats
+          setHasSixMonthRequest(false); // Update local state
+          setSixMonthRequestId(null);
+          onClose(); // Close the dialog
+        } else {
+          Toast.show({ type: "error", text1: "Failed to cancel six-month request" });
+        }
       }
     } catch (error) {
       console.error("[RequestDialog] Error cancelling request:", error);
       const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
-      Toast.show({ type: "error", text1: "Error cancelling request", text2: errorMessage });
+      Toast.show({
+        type: "error",
+        text1: "Error cancelling request",
+        text2: errorMessage,
+      });
     } finally {
       setIsSubmitting(false);
+      setShowCancelModal(false);
     }
-  }, [userRequest, selectedDate, cancelRequest, onClose, refreshMyTimeStats]);
+  }, [
+    cancelType,
+    userRequest,
+    selectedDate,
+    cancelRequest,
+    refreshMyTimeStats,
+    onClose,
+    sixMonthRequestId,
+    cancelSixMonthRequest,
+  ]);
 
   // For six month dates, don't count other users' requests against the allotment
   // But we do want to show the total count of six-month requests
@@ -745,26 +792,10 @@ function RequestDialog({
       return;
     }
 
-    setIsSubmitting(true);
-    try {
-      const success = await cancelSixMonthRequest(sixMonthRequestId);
-      if (success) {
-        Toast.show({ type: "success", text1: "Six-month request cancelled" });
-        await refreshMyTimeStats(true); // Refresh stats
-        setHasSixMonthRequest(false); // Update local state
-        setSixMonthRequestId(null);
-        onClose(); // Close the dialog
-      } else {
-        Toast.show({ type: "error", text1: "Failed to cancel six-month request" });
-      }
-    } catch (error) {
-      console.error("[RequestDialog] Error cancelling six-month request:", error);
-      const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
-      Toast.show({ type: "error", text1: "Error cancelling six-month request", text2: errorMessage });
-    } finally {
-      setIsSubmitting(false);
-    }
-  }, [sixMonthRequestId, cancelSixMonthRequest, onClose, refreshMyTimeStats]);
+    // Show confirmation dialog instead of immediately canceling
+    setCancelType("six-month");
+    setShowCancelModal(true);
+  }, [sixMonthRequestId]);
 
   // Determine if the user can cancel their six-month request
   const canCancelSixMonthRequest = useMemo(() => {
@@ -1080,6 +1111,49 @@ function RequestDialog({
           </View>
         </View>
       </View>
+
+      {/* Cancel Request Confirmation Modal */}
+      <Modal
+        visible={showCancelModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCancelModal(false)}
+      >
+        <View style={dialogStyles.modalOverlay}>
+          <View style={dialogStyles.modalContent}>
+            <ThemedText style={dialogStyles.modalTitle}>Confirm Cancellation</ThemedText>
+            <ThemedText style={dialogStyles.modalDescription}>
+              {cancelType === "regular"
+                ? `Are you sure you want to cancel your ${userRequest?.leave_type} request for ${selectedDate}?`
+                : "Are you sure you want to cancel your six-month request?"}
+            </ThemedText>
+            <View style={dialogStyles.modalButtons}>
+              <TouchableOpacity
+                style={[dialogStyles.modalButton, dialogStyles.cancelButton]}
+                onPress={() => setShowCancelModal(false)}
+                disabled={isSubmitting}
+              >
+                <ThemedText style={dialogStyles.closeButtonText}>No, Keep It</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  dialogStyles.modalButton,
+                  dialogStyles.cancelRequestButton,
+                  isSubmitting && dialogStyles.disabledButton,
+                ]}
+                onPress={handleConfirmCancel}
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? (
+                  <ActivityIndicator color={Colors[theme].background} />
+                ) : (
+                  <ThemedText style={dialogStyles.modalButtonText}>Yes, Cancel</ThemedText>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </Modal>
   );
 }
@@ -2059,5 +2133,11 @@ const dialogStyles = StyleSheet.create({
     color: Colors.dark.textDim,
     textAlign: "center",
     lineHeight: 16,
+  } as TextStyle,
+  modalDescription: {
+    fontSize: 16,
+    marginVertical: 16,
+    textAlign: "center",
+    paddingHorizontal: 8,
   } as TextStyle,
 });
