@@ -1929,7 +1929,7 @@ const dialogStyles = StyleSheet.create({
     minWidth: Platform.OS === "web" ? 80 : 100,
     borderWidth: Platform.OS === "web" ? 0 : 1,
     borderColor: Colors.dark.border,
-    color: Colors.dark.buttonText,
+    color: Colors.dark.secondary,
   } as ViewStyle,
   submitButton: {
     backgroundColor: Colors.light.primary,
