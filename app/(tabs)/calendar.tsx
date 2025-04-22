@@ -496,22 +496,48 @@ function RequestDialog({
     const statusPriority: Record<string, number> = {
       approved: 0,
       pending: 1,
-      waitlisted: 2,
+      cancellation_pending: 2, // Show cancellation pending with approved/pending
+      waitlisted: 3,
     };
 
     return [...activeRequests].sort((a, b) => {
-      const aStatus = statusPriority[a.status] ?? 999;
-      const bStatus = statusPriority[b.status] ?? 999;
+      const aStatusPriority = statusPriority[a.status] ?? 999;
+      const bStatusPriority = statusPriority[b.status] ?? 999;
 
-      if (aStatus !== bStatus) return aStatus - bStatus;
+      // If status priorities are different, sort by priority
+      if (aStatusPriority !== bStatusPriority) return aStatusPriority - bStatusPriority;
 
+      // If both are waitlisted, sort by waitlist position (ascending)
       if (a.status === "waitlisted" && b.status === "waitlisted") {
         return (a.waitlist_position || 0) - (b.waitlist_position || 0);
       }
 
+      // Otherwise, sort by requested time (ascending)
       return new Date(a.requested_at || "").getTime() - new Date(b.requested_at || "").getTime();
     });
   }, [activeRequests]);
+
+  // Split sorted requests into approved/pending/cancellation_pending and waitlisted
+  const approvedPendingRequests = useMemo(() => {
+    return sortedRequests.filter(
+      (r) => r.status === "approved" || r.status === "pending" || r.status === "cancellation_pending"
+    );
+  }, [sortedRequests]);
+
+  const waitlistedRequests = useMemo(() => {
+    return sortedRequests.filter((r) => r.status === "waitlisted");
+  }, [sortedRequests]);
+
+  // Calculate capped filled spots and waitlist count
+  const filledSpotsCapped = useMemo(() => {
+    if (isSixMonthRequest) return currentAllotment.current;
+    return Math.min(approvedPendingRequests.length, currentAllotment.max);
+  }, [approvedPendingRequests.length, currentAllotment.max, currentAllotment.current, isSixMonthRequest]);
+
+  const waitlistCount = useMemo(() => {
+    if (isSixMonthRequest) return 0; // Waitlist doesn't apply to six-month view
+    return waitlistedRequests.length;
+  }, [waitlistedRequests.length, isSixMonthRequest]);
 
   const isFullMessage = useMemo(() => {
     if (currentAllotment.max <= 0) {
@@ -532,12 +558,21 @@ function RequestDialog({
       return "You already have a request for this date";
     }
 
-    if (currentAllotment.current >= currentAllotment.max) {
-      return `This day is full (${currentAllotment.current}/${currentAllotment.max})`;
+    // Only show "day is full" if there are no waitlisted spots AND approved/pending is full
+    if (approvedPendingRequests.length >= currentAllotment.max && waitlistCount === 0) {
+      return `This day is full (${filledSpotsCapped}/${currentAllotment.max})`;
     }
 
     return null;
-  }, [currentAllotment, hasExistingRequest, hasSixMonthRequest, isSixMonthRequest]);
+  }, [
+    currentAllotment.max,
+    hasExistingRequest,
+    hasSixMonthRequest,
+    isSixMonthRequest,
+    approvedPendingRequests.length,
+    waitlistCount,
+    filledSpotsCapped,
+  ]);
 
   // Ensure we clean up the subscription when the component unmounts or when dialog closes
   useEffect(() => {
@@ -622,13 +657,11 @@ function RequestDialog({
           <View style={dialogStyles.allotmentContainer}>
             <ThemedText style={dialogStyles.allotmentInfo}>
               {isSixMonthRequest
-                ? `${currentAllotment.current} six-month requests for this date`
-                : `${currentAllotment.current}/${currentAllotment.max} spots filled`}
+                ? `${currentAllotment.current} six-month requests` // Only show total count for six-month
+                : `${filledSpotsCapped}/${currentAllotment.max} spots filled`}
             </ThemedText>
-            {isFull && activeRequests.length > currentAllotment.max && !isSixMonthRequest && (
-              <ThemedText style={dialogStyles.waitlistInfo}>
-                Waitlist: {activeRequests.length - currentAllotment.max}
-              </ThemedText>
+            {waitlistCount > 0 && !isSixMonthRequest && (
+              <ThemedText style={dialogStyles.waitlistInfo}>Waitlist: {waitlistCount}</ThemedText>
             )}
           </View>
           {isFullMessage && (
@@ -649,7 +682,8 @@ function RequestDialog({
           </View>
 
           <ScrollView style={dialogStyles.requestList}>
-            {sortedRequests.map((request, index) => (
+            {/* Approved/Pending/Cancellation Pending Requests */}
+            {approvedPendingRequests.map((request, index) => (
               <View key={request.id} style={dialogStyles.requestSpot}>
                 <ThemedText style={dialogStyles.spotNumber}>#{index + 1}</ThemedText>
                 <View style={dialogStyles.spotInfo}>
@@ -660,35 +694,55 @@ function RequestDialog({
                     style={[
                       dialogStyles.requestStatus,
                       request.status === "approved" && dialogStyles.approvedStatus,
-                      request.status === "waitlisted" && dialogStyles.waitlistedStatus,
                       request.status === "cancellation_pending" && dialogStyles.cancellationPendingStatus,
                     ]}
                   >
                     {request.status === "cancellation_pending"
                       ? "Cancellation Pending"
                       : request.status.charAt(0).toUpperCase() + request.status.slice(1)}
-                    {request.status === "waitlisted" && request.waitlist_position
-                      ? ` #${request.waitlist_position}`
-                      : ""}
                   </ThemedText>
                 </View>
               </View>
             ))}
-            {/* For six month dates, show empty slots differently */}
-            {isSixMonthRequest ? (
+
+            {/* Available Spots */}
+            {!isSixMonthRequest &&
+              Array.from({
+                length: Math.max(0, currentAllotment.max - approvedPendingRequests.length),
+              }).map((_, index) => (
+                <View key={`empty-${index}`} style={dialogStyles.requestSpot}>
+                  <ThemedText style={dialogStyles.spotNumber}>#{approvedPendingRequests.length + index + 1}</ThemedText>
+                  <ThemedText style={dialogStyles.emptySpot}>Available</ThemedText>
+                </View>
+              ))}
+
+            {/* Waitlisted Requests */}
+            {waitlistCount > 0 && !isSixMonthRequest && (
+              <>
+                <ThemedText style={dialogStyles.waitlistHeader}>Waitlist</ThemedText>
+                {waitlistedRequests.map((request, index) => (
+                  <View key={request.id} style={dialogStyles.requestSpot}>
+                    <ThemedText style={dialogStyles.spotNumber}>#{index + 1}</ThemedText>
+                    <View style={dialogStyles.spotInfo}>
+                      <ThemedText>
+                        {request.member.first_name} {request.member.last_name}
+                      </ThemedText>
+                      <ThemedText style={[dialogStyles.requestStatus, dialogStyles.waitlistedStatus]}>
+                        Waitlisted #{request.waitlist_position || index + 1}
+                      </ThemedText>
+                    </View>
+                  </View>
+                ))}
+              </>
+            )}
+
+            {/* Note for Six Month Requests */}
+            {isSixMonthRequest && (
               <View key="six-month-note" style={dialogStyles.requestSpot}>
                 <ThemedText style={{ ...dialogStyles.emptySpot, textAlign: "center", flex: 1 }}>
                   Six month requests are processed by seniority
                 </ThemedText>
               </View>
-            ) : (
-              // For regular dates, show the empty slots
-              Array.from({ length: Math.max(0, currentAllotment.max - sortedRequests.length) }).map((_, index) => (
-                <View key={`empty-${index}`} style={dialogStyles.requestSpot}>
-                  <ThemedText style={dialogStyles.spotNumber}>#{sortedRequests.length + index + 1}</ThemedText>
-                  <ThemedText style={dialogStyles.emptySpot}>Available</ThemedText>
-                </View>
-              ))
             )}
           </ScrollView>
 
@@ -700,28 +754,44 @@ function RequestDialog({
               style={[
                 dialogStyles.modalButton,
                 dialogStyles.submitButton,
-                isFull && (stats?.available.pld ?? 0) > 0 ? dialogStyles.waitlistButton : null,
-                ((stats?.available.pld ?? 0) <= 0 || hasExistingRequest) && dialogStyles.disabledButton,
+                // Show waitlist button style if day is full (approved/pending >= max)
+                approvedPendingRequests.length >= currentAllotment.max &&
+                (stats?.available.pld ?? 0) > 0 &&
+                !isSixMonthRequest
+                  ? dialogStyles.waitlistButton
+                  : null,
+                ((stats?.available.pld ?? 0) <= 0 || hasExistingRequest || isSubmitting) && dialogStyles.disabledButton,
               ]}
               onPress={submitButtonProps.onPress}
               disabled={submitButtonProps.disabled}
             >
               <ThemedText style={dialogStyles.modalButtonText}>
-                {isFull ? "Join Waitlist (PLD)" : "Request PLD"}
+                {/* Show "Join Waitlist" if approved/pending >= max and not six-month */}
+                {approvedPendingRequests.length >= currentAllotment.max && !isSixMonthRequest
+                  ? "Join Waitlist (PLD)"
+                  : "Request PLD"}
               </ThemedText>
             </TouchableOpacity>
             <TouchableOpacity
               style={[
                 dialogStyles.modalButton,
                 dialogStyles.submitButton,
-                isFull && (stats?.available.sdv ?? 0) > 0 ? dialogStyles.waitlistButton : null,
-                ((stats?.available.sdv ?? 0) <= 0 || hasExistingRequest) && dialogStyles.disabledButton,
+                // Show waitlist button style if day is full (approved/pending >= max)
+                approvedPendingRequests.length >= currentAllotment.max &&
+                (stats?.available.sdv ?? 0) > 0 &&
+                !isSixMonthRequest
+                  ? dialogStyles.waitlistButton
+                  : null,
+                ((stats?.available.sdv ?? 0) <= 0 || hasExistingRequest || isSubmitting) && dialogStyles.disabledButton,
               ]}
               onPress={sdvButtonProps.onPress}
               disabled={sdvButtonProps.disabled}
             >
               <ThemedText style={dialogStyles.modalButtonText}>
-                {isFull ? "Join Waitlist (SDV)" : "Request SDV"}
+                {/* Show "Join Waitlist" if approved/pending >= max and not six-month */}
+                {approvedPendingRequests.length >= currentAllotment.max && !isSixMonthRequest
+                  ? "Join Waitlist (SDV)"
+                  : "Request SDV"}
               </ThemedText>
             </TouchableOpacity>
           </View>
@@ -1611,6 +1681,15 @@ const dialogStyles = StyleSheet.create({
   waitlistInfo: {
     fontSize: 14,
     fontStyle: "italic",
+    color: Colors.light.warning,
+    fontWeight: "500",
+  } as TextStyle,
+  waitlistHeader: {
+    marginTop: 10,
+    marginBottom: 5,
+    marginLeft: 10, // Align with request spot padding
+    fontSize: 16,
+    fontWeight: "600",
     color: Colors.light.warning,
   } as TextStyle,
   approvedStatus: {
