@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import {
   Modal,
   StyleSheet,
@@ -7,6 +7,7 @@ import {
   Pressable,
   NativeScrollEvent,
   NativeSyntheticEvent,
+  LayoutChangeEvent,
 } from "react-native";
 import { ThemedView } from "./ThemedView";
 import { ThemedText } from "./ThemedText";
@@ -33,6 +34,67 @@ export function MessageModal({ message, visible, onClose, onAcknowledge, onDelet
   const [hasReadFully, setHasReadFully] = useState(false);
   const scrollViewRef = useRef<ScrollView>(null);
   const archiveMessage = useNotificationStore((state) => state.archiveMessage);
+  const [contentHeight, setContentHeight] = useState(0);
+  const [containerHeight, setContainerHeight] = useState(0);
+  const [updateCounter, setUpdateCounter] = useState(0);
+
+  // Force remeasure if needed
+  const forceUpdate = useCallback(() => {
+    setUpdateCounter((prev) => prev + 1);
+  }, []);
+
+  // Reset states when a new message is displayed
+  useEffect(() => {
+    if (visible && message) {
+      console.log(`[MessageModal] New message opened: ${message.id}, resetting states`);
+      setHasReadFully(false);
+      setContentHeight(0);
+      setContainerHeight(0);
+
+      // Force update after a short delay to ensure measurements are triggered
+      const updateTimer = setTimeout(() => {
+        forceUpdate();
+      }, 100);
+
+      // Safety timeout for short messages - if after 500ms we still haven't
+      // detected scrollability, assume the message is short enough to read
+      const timer = setTimeout(() => {
+        if (contentHeight === 0 || containerHeight === 0) {
+          console.log(`[MessageModal] Timeout reached, auto-enabling acknowledge for message: ${message.id}`);
+          setHasReadFully(true);
+        }
+      }, 500);
+
+      return () => {
+        clearTimeout(timer);
+        clearTimeout(updateTimer);
+      };
+    }
+  }, [visible, message?.id, forceUpdate]);
+
+  // Check if content is shorter than container and doesn't need scrolling
+  useEffect(() => {
+    if (contentHeight > 0 && containerHeight > 0 && message) {
+      console.log(
+        `[MessageModal] Heights measured - Content: ${contentHeight}, Container: ${containerHeight}, MessageID: ${message.id}`
+      );
+      if (contentHeight <= containerHeight) {
+        console.log(`[MessageModal] Content fits without scrolling, enabling acknowledge for message: ${message.id}`);
+        setHasReadFully(true);
+      }
+    }
+  }, [contentHeight, containerHeight, message?.id]);
+
+  // Add a forced check when the component updates
+  useEffect(() => {
+    if (visible && message && contentHeight > 0 && containerHeight > 0) {
+      const needsScrolling = contentHeight > containerHeight;
+      console.log(`[MessageModal] Forced check - Needs scrolling: ${needsScrolling}, MessageID: ${message.id}`);
+      if (!needsScrolling && !hasReadFully) {
+        setHasReadFully(true);
+      }
+    }
+  }, [visible, message, contentHeight, containerHeight, hasReadFully]);
 
   if (!message) return null;
 
@@ -85,9 +147,24 @@ export function MessageModal({ message, visible, onClose, onAcknowledge, onDelet
     const paddingToBottom = 20; // Adjust this value as needed
     const isCloseToBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - paddingToBottom;
 
+    console.log(`[MessageModal] Scroll event - Close to bottom: ${isCloseToBottom}, MessageID: ${message.id}`);
+
     if (isCloseToBottom && !hasReadFully) {
+      console.log(`[MessageModal] Scrolled to bottom, enabling acknowledge for message: ${message.id}`);
       setHasReadFully(true);
     }
+  };
+
+  const handleContentLayout = (event: LayoutChangeEvent) => {
+    const height = event.nativeEvent.layout.height;
+    console.log(`[MessageModal] Content layout event - Height: ${height}, MessageID: ${message.id}`);
+    setContentHeight(height);
+  };
+
+  const handleContainerLayout = (event: LayoutChangeEvent) => {
+    const height = event.nativeEvent.layout.height;
+    console.log(`[MessageModal] Container layout event - Height: ${height}, MessageID: ${message.id}`);
+    setContainerHeight(height);
   };
 
   const getMessageTypeIcon = () => {
@@ -169,8 +246,11 @@ export function MessageModal({ message, visible, onClose, onAcknowledge, onDelet
             contentContainerStyle={styles.contentContainer}
             onScroll={handleScroll}
             scrollEventThrottle={16}
+            onLayout={handleContainerLayout}
           >
-            <ThemedText style={styles.content}>{message.content}</ThemedText>
+            <ThemedView onLayout={handleContentLayout}>
+              <ThemedText style={styles.content}>{message.content}</ThemedText>
+            </ThemedView>
           </ScrollView>
 
           {/* Footer */}
@@ -186,7 +266,11 @@ export function MessageModal({ message, visible, onClose, onAcknowledge, onDelet
               >
                 <Ionicons name="checkmark" size={16} color="#fff" />
                 <ThemedText style={styles.acknowledgeButtonText}>
-                  {hasReadFully ? "Acknowledge" : "Read Full Message to Acknowledge"}
+                  {hasReadFully
+                    ? "Acknowledge Message"
+                    : contentHeight <= containerHeight
+                    ? "Loading..."
+                    : "Scroll to End to Acknowledge"}
                 </ThemedText>
               </TouchableOpacity>
             )}
