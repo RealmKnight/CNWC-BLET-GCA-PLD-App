@@ -1917,7 +1917,7 @@ const dialogStyles = StyleSheet.create({
   closeButtonText: {
     fontSize: Platform.OS === "web" ? 14 : 16,
     fontWeight: "600",
-    color: Colors.dark.buttonText,
+    color: Platform.OS === "web" ? Colors.dark.buttonText : Colors.dark.secondary,
     textAlign: "center",
     lineHeight: Platform.OS === "web" ? 16 : 20,
   } as TextStyle,
@@ -1929,7 +1929,7 @@ const dialogStyles = StyleSheet.create({
     minWidth: Platform.OS === "web" ? 80 : 100,
     borderWidth: Platform.OS === "web" ? 0 : 1,
     borderColor: Colors.dark.border,
-    color: Colors.dark.secondary,
+    color: Colors.dark.buttonText,
   } as ViewStyle,
   submitButton: {
     backgroundColor: Colors.light.primary,
