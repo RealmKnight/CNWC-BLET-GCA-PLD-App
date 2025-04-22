@@ -61,14 +61,16 @@ function RequestDialog({
   requests: allRequests,
 }: RequestDialogProps) {
   const theme = (useColorScheme() ?? "light") as ColorScheme;
-  const { stats, initialize: refreshMyTimeStats } = useMyTime();
+  const { stats, initialize: refreshMyTimeStats, cancelSixMonthRequest } = useMyTime();
   const { member } = useUserStore();
   const checkSixMonthRequest = useCalendarStore((state) => state.checkSixMonthRequest);
+  const cancelRequest = useCalendarStore((state) => state.cancelRequest);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasSixMonthRequest, setHasSixMonthRequest] = useState(false);
   const [totalSixMonthRequests, setTotalSixMonthRequests] = useState(0);
   const [localRequests, setLocalRequests] = useState<DayRequest[]>([]);
   const realtimeChannelRef = useRef<RealtimeChannel | null>(null);
+  const [sixMonthRequestId, setSixMonthRequestId] = useState<string | null>(null);
 
   // Initialize local requests with the ones passed as props
   useEffect(() => {
@@ -107,45 +109,47 @@ function RequestDialog({
 
           if (eventType === "INSERT") {
             // Check if this request already exists in our local state
-            const requestAlreadyExists = localRequests.some((req) => req.id === newRecord.id);
+            // Use a function callback for setLocalRequests to get the latest state
+            setLocalRequests((prev) => {
+              const requestAlreadyExists = prev.some((req) => req.id === newRecord.id);
+              if (requestAlreadyExists) {
+                console.log("[RequestDialog] Skipping INSERT for already existing request:", newRecord.id);
+                return prev;
+              }
 
-            if (requestAlreadyExists) {
-              console.log("[RequestDialog] Skipping INSERT for already existing request:", newRecord.id);
-              return;
-            }
+              // Fetch the member details for the new request
+              supabase
+                .from("members")
+                .select("id, first_name, last_name, pin_number")
+                .eq("id", newRecord.member_id)
+                .single()
+                .then(({ data: memberData, error }) => {
+                  if (!error && memberData) {
+                    const newRequest: DayRequest = {
+                      ...newRecord,
+                      member: {
+                        id: memberData.id,
+                        first_name: memberData.first_name,
+                        last_name: memberData.last_name,
+                        pin_number: memberData.pin_number || 0,
+                      },
+                    };
 
-            // Fetch the member details for the new request
-            supabase
-              .from("members")
-              .select("id, first_name, last_name, pin_number")
-              .eq("id", newRecord.member_id)
-              .single()
-              .then(({ data: memberData, error }) => {
-                if (!error && memberData) {
-                  const newRequest: DayRequest = {
-                    ...newRecord,
-                    member: {
-                      id: memberData.id,
-                      first_name: memberData.first_name,
-                      last_name: memberData.last_name,
-                      pin_number: memberData.pin_number || 0,
-                    },
-                  };
-
-                  // Do a final check before adding to prevent race conditions
-                  setLocalRequests((prev) => {
-                    // Check again inside the setter to ensure we have the latest state
-                    if (prev.some((req) => req.id === newRecord.id)) {
-                      console.log(
-                        "[RequestDialog] Request already added in state update, preventing duplicate:",
-                        newRecord.id
-                      );
-                      return prev;
-                    }
-                    return [...prev, newRequest];
-                  });
-                }
-              });
+                    // Double-check again before adding inside the state setter
+                    setLocalRequests((currentPrev) => {
+                      if (currentPrev.some((req) => req.id === newRecord.id)) {
+                        console.log(
+                          "[RequestDialog] Request already added in state update, preventing duplicate:",
+                          newRecord.id
+                        );
+                        return currentPrev;
+                      }
+                      return [...currentPrev, newRequest];
+                    });
+                  }
+                });
+              return prev; // Return the previous state while async fetch happens
+            });
           } else if (eventType === "UPDATE") {
             setLocalRequests((prev) => prev.map((req) => (req.id === newRecord.id ? { ...req, ...newRecord } : req)));
           } else if (eventType === "DELETE") {
@@ -201,7 +205,8 @@ function RequestDialog({
     }
 
     try {
-      const result = await onSubmit(leaveType);
+      // Call the original onSubmit passed from props
+      await onSubmit(leaveType);
 
       // Force refresh stats after submitting a request
       await refreshMyTimeStats(true);
@@ -230,42 +235,50 @@ function RequestDialog({
                 const { eventType, new: newRecord, old: oldRecord } = payload;
 
                 if (eventType === "INSERT") {
-                  // Check if this request already exists
-                  const requestAlreadyExists = localRequests.some((req) => req.id === newRecord.id);
+                  // Use functional update to prevent stale closures
+                  setLocalRequests((prev) => {
+                    const requestAlreadyExists = prev.some((req) => req.id === newRecord.id);
+                    if (requestAlreadyExists) {
+                      console.log(
+                        "[RequestDialog] Skipping INSERT for already existing request (resubscribe):",
+                        newRecord.id
+                      );
+                      return prev;
+                    }
 
-                  if (requestAlreadyExists) {
-                    console.log("[RequestDialog] Skipping INSERT for already existing request:", newRecord.id);
-                    return;
-                  }
+                    // Fetch the member details for the new request
+                    supabase
+                      .from("members")
+                      .select("id, first_name, last_name, pin_number")
+                      .eq("id", newRecord.member_id)
+                      .single()
+                      .then(({ data: memberData, error }) => {
+                        if (!error && memberData) {
+                          const newRequest: DayRequest = {
+                            ...newRecord,
+                            member: {
+                              id: memberData.id,
+                              first_name: memberData.first_name,
+                              last_name: memberData.last_name,
+                              pin_number: memberData.pin_number || 0,
+                            },
+                          };
 
-                  // Fetch the member details for the new request
-                  supabase
-                    .from("members")
-                    .select("id, first_name, last_name, pin_number")
-                    .eq("id", newRecord.member_id)
-                    .single()
-                    .then(({ data: memberData, error }) => {
-                      if (!error && memberData) {
-                        const newRequest: DayRequest = {
-                          ...newRecord,
-                          member: {
-                            id: memberData.id,
-                            first_name: memberData.first_name,
-                            last_name: memberData.last_name,
-                            pin_number: memberData.pin_number || 0,
-                          },
-                        };
-
-                        // Double-check again before adding
-                        setLocalRequests((prev) => {
-                          if (prev.some((req) => req.id === newRecord.id)) {
-                            console.log("[RequestDialog] Request already added, preventing duplicate:", newRecord.id);
-                            return prev;
-                          }
-                          return [...prev, newRequest];
-                        });
-                      }
-                    });
+                          // Double-check again before adding inside the state setter
+                          setLocalRequests((currentPrev) => {
+                            if (currentPrev.some((req) => req.id === newRecord.id)) {
+                              console.log(
+                                "[RequestDialog] Request already added, preventing duplicate (resubscribe):",
+                                newRecord.id
+                              );
+                              return currentPrev;
+                            }
+                            return [...currentPrev, newRequest];
+                          });
+                        }
+                      });
+                    return prev; // Return the previous state while async fetch happens
+                  });
                 } else if (eventType === "UPDATE") {
                   setLocalRequests((prev) =>
                     prev.map((req) => (req.id === newRecord.id ? { ...req, ...newRecord } : req))
@@ -280,11 +293,9 @@ function RequestDialog({
           realtimeChannelRef.current = channel;
         }
       }, 1000); // Wait 1 second before re-enabling real-time updates
-
-      return result;
     } catch (err) {
       console.error("[RequestDialog] Error in handleSubmit:", err);
-      throw err;
+      // Don't re-throw, let the original onSubmit handle its errors
     } finally {
       setIsSubmitting(false);
     }
@@ -294,8 +305,25 @@ function RequestDialog({
     // Check if there is an existing six-month request for this date
     if (selectedDate && isVisible) {
       const checkForSixMonthRequest = async () => {
-        const exists = await checkSixMonthRequest(selectedDate);
-        setHasSixMonthRequest(exists);
+        // Check if the user has a six month request for this date and get its ID
+        const { data: existingSixMonthReq, error } = await supabase
+          .from("six_month_requests")
+          .select("id")
+          .eq("member_id", member?.id || "")
+          .eq("request_date", selectedDate)
+          .eq("processed", false)
+          .maybeSingle();
+
+        if (error) {
+          console.error("[RequestDialog] Error checking for existing six-month request:", error);
+          setHasSixMonthRequest(false);
+          setSixMonthRequestId(null);
+        } else {
+          const exists = !!existingSixMonthReq;
+          setHasSixMonthRequest(exists);
+          setSixMonthRequestId(existingSixMonthReq?.id || null);
+          console.log("[RequestDialog] Six month request check:", { exists, id: existingSixMonthReq?.id });
+        }
       };
 
       checkForSixMonthRequest();
@@ -457,14 +485,54 @@ function RequestDialog({
     );
   }, [filteredRequests]);
 
+  // Find the user's specific request for the selected date
+  const userRequest = useMemo(() => {
+    if (!member?.id) return null;
+    // Look in localRequests, which is updated in realtime, not just activeRequests
+    return localRequests.find(
+      (req) =>
+        req.member_id === member.id &&
+        (req.status === "approved" ||
+          req.status === "pending" ||
+          req.status === "waitlisted" ||
+          req.status === "cancellation_pending")
+    );
+  }, [localRequests, member?.id]);
+
   const hasExistingRequest = useMemo(() => {
     // For six-month requests, check the hasSixMonthRequest flag
     if (isSixMonthRequest) {
       return hasSixMonthRequest;
     }
-    // For regular requests, check if any of the active requests are from the current user
-    return activeRequests.some((r) => r.member.id === member?.id);
-  }, [activeRequests, member?.id, isSixMonthRequest, hasSixMonthRequest]);
+    // For regular requests, check if we found a userRequest
+    return !!userRequest;
+  }, [userRequest, isSixMonthRequest, hasSixMonthRequest]);
+
+  // Handler for cancelling a request
+  const handleCancelRequest = useCallback(async () => {
+    if (!userRequest || !selectedDate) {
+      Toast.show({ type: "error", text1: "Cannot find request to cancel" });
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const success = await cancelRequest(userRequest.id, selectedDate);
+      if (success) {
+        Toast.show({ type: "success", text1: "Request cancellation initiated" });
+        await refreshMyTimeStats(true); // Refresh stats after cancellation
+        onClose(); // Close the dialog
+      } else {
+        Toast.show({ type: "error", text1: "Failed to cancel request" });
+      }
+    } catch (error) {
+      console.error("[RequestDialog] Error cancelling request:", error);
+      const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
+      Toast.show({ type: "error", text1: "Error cancelling request", text2: errorMessage });
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [userRequest, selectedDate, cancelRequest, onClose, refreshMyTimeStats]);
 
   // For six month dates, don't count other users' requests against the allotment
   // But we do want to show the total count of six-month requests
@@ -546,16 +614,19 @@ function RequestDialog({
 
     // Show message about existing six-month request - only if user already submitted one
     if (hasSixMonthRequest && isSixMonthRequest) {
-      return "You already have a six-month request pending for this date";
+      // Don't show if userRequest exists (it implies a regular request which is handled below)
+      if (!userRequest) return "You already have a six-month request pending for this date";
     }
 
-    // If this is a six month request, show special message
-    if (isSixMonthRequest) {
+    // If this is a six month request, show special message (unless user has existing)
+    if (isSixMonthRequest && !hasExistingRequest) {
       return "Six-month requests are processed by seniority and do not count against daily allotment";
     }
 
+    // Check if user has an existing request (regular or six-month request that became regular)
     if (hasExistingRequest) {
-      return "You already have a request for this date";
+      const status = userRequest?.status === "cancellation_pending" ? "Cancellation Pending" : userRequest?.status;
+      return `You have a request for this date (Status: ${status})`;
     }
 
     // Only show "day is full" if there are no waitlisted spots AND approved/pending is full
@@ -572,6 +643,7 @@ function RequestDialog({
     approvedPendingRequests.length,
     waitlistCount,
     filledSpotsCapped,
+    userRequest,
   ]);
 
   // Ensure we clean up the subscription when the component unmounts or when dialog closes
@@ -610,16 +682,22 @@ function RequestDialog({
     // For regular requests, ONLY disable for:
     // - No available PLD days
     // - Submission in progress
-    // - User already has a request for this date
+    // - User already has a request for this date (handled by showing Cancel button)
     // DO NOT disable for full days as that prevents waitlisting
-    const isDisabled = (stats?.available.pld ?? 0) <= 0 || isSubmitting || hasExistingRequest;
+    const isDisabled = (stats?.available.pld ?? 0) <= 0 || isSubmitting; // Remove hasExistingRequest check
 
     return {
       onPress: () => handleSubmit("PLD"),
       disabled: isDisabled,
       loadingState: isSubmitting,
     };
-  }, [stats?.available.pld, isSubmitting, hasExistingRequest, handleSubmit, hasSixMonthRequest, isSixMonthRequest]);
+  }, [
+    stats?.available.pld,
+    isSubmitting,
+    handleSubmit,
+    hasSixMonthRequest, // Keep this for six-month logic
+    isSixMonthRequest,
+  ]);
 
   const sdvButtonProps = useMemo(() => {
     // For six-month requests, we allow submission even if the day is full
@@ -637,16 +715,61 @@ function RequestDialog({
     // For regular requests, ONLY disable for:
     // - No available SDV days
     // - Submission in progress
-    // - User already has a request for this date
+    // - User already has a request for this date (handled by showing Cancel button)
     // DO NOT disable for full days as that prevents waitlisting
-    const isDisabled = (stats?.available.sdv ?? 0) <= 0 || isSubmitting || hasExistingRequest;
+    const isDisabled = (stats?.available.sdv ?? 0) <= 0 || isSubmitting; // Remove hasExistingRequest check
 
     return {
       onPress: () => handleSubmit("SDV"),
       disabled: isDisabled,
       loadingState: isSubmitting,
     };
-  }, [stats?.available.sdv, isSubmitting, hasExistingRequest, handleSubmit, hasSixMonthRequest, isSixMonthRequest]);
+  }, [
+    stats?.available.sdv,
+    isSubmitting,
+    handleSubmit,
+    hasSixMonthRequest, // Keep this for six-month logic
+    isSixMonthRequest,
+  ]);
+
+  // Determine if the user can cancel their request
+  const canCancelRequest = useMemo(() => {
+    // Can only cancel if there is an existing request and it's not already 'cancelled' or 'denied'
+    return userRequest && userRequest.status !== "cancelled" && userRequest.status !== "denied";
+  }, [userRequest]);
+
+  // Handler for cancelling a six-month request
+  const handleCancelSixMonthRequest = useCallback(async () => {
+    if (!sixMonthRequestId) {
+      Toast.show({ type: "error", text1: "Cannot find six-month request to cancel" });
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const success = await cancelSixMonthRequest(sixMonthRequestId);
+      if (success) {
+        Toast.show({ type: "success", text1: "Six-month request cancelled" });
+        await refreshMyTimeStats(true); // Refresh stats
+        setHasSixMonthRequest(false); // Update local state
+        setSixMonthRequestId(null);
+        onClose(); // Close the dialog
+      } else {
+        Toast.show({ type: "error", text1: "Failed to cancel six-month request" });
+      }
+    } catch (error) {
+      console.error("[RequestDialog] Error cancelling six-month request:", error);
+      const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
+      Toast.show({ type: "error", text1: "Error cancelling six-month request", text2: errorMessage });
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [sixMonthRequestId, cancelSixMonthRequest, onClose, refreshMyTimeStats]);
+
+  // Determine if the user can cancel their six-month request
+  const canCancelSixMonthRequest = useMemo(() => {
+    return hasSixMonthRequest && sixMonthRequestId; // Can cancel if it exists
+  }, [hasSixMonthRequest, sixMonthRequestId]);
 
   return (
     <Modal visible={isVisible} transparent animationType="fade" onRequestClose={onClose}>
@@ -666,7 +789,12 @@ function RequestDialog({
           </View>
           {isFullMessage && (
             <View style={dialogStyles.messageContainer}>
-              <ThemedText style={[dialogStyles.allotmentInfo, { color: Colors[theme].error }]}>
+              <ThemedText
+                style={[
+                  dialogStyles.allotmentInfo,
+                  { color: hasExistingRequest ? Colors[theme].tint : Colors[theme].error }, // Use tint color if user has request
+                ]}
+              >
                 {isFullMessage}
               </ThemedText>
             </View>
@@ -695,6 +823,7 @@ function RequestDialog({
                       dialogStyles.requestStatus,
                       request.status === "approved" && dialogStyles.approvedStatus,
                       request.status === "cancellation_pending" && dialogStyles.cancellationPendingStatus,
+                      request.status === "pending" && dialogStyles.pendingStatus, // Add style for pending
                     ]}
                   >
                     {request.status === "cancellation_pending"
@@ -748,52 +877,101 @@ function RequestDialog({
 
           <View style={dialogStyles.modalButtons}>
             <TouchableOpacity style={[dialogStyles.modalButton, dialogStyles.cancelButton]} onPress={onClose}>
-              <ThemedText style={dialogStyles.modalButtonText}>Cancel</ThemedText>
+              <ThemedText style={dialogStyles.modalButtonText}>Close</ThemedText>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                dialogStyles.modalButton,
-                dialogStyles.submitButton,
-                // Show waitlist button style if day is full (approved/pending >= max)
-                approvedPendingRequests.length >= currentAllotment.max &&
-                (stats?.available.pld ?? 0) > 0 &&
-                !isSixMonthRequest
-                  ? dialogStyles.waitlistButton
-                  : null,
-                ((stats?.available.pld ?? 0) <= 0 || hasExistingRequest || isSubmitting) && dialogStyles.disabledButton,
-              ]}
-              onPress={submitButtonProps.onPress}
-              disabled={submitButtonProps.disabled}
-            >
-              <ThemedText style={dialogStyles.modalButtonText}>
-                {/* Show "Join Waitlist" if approved/pending >= max and not six-month */}
-                {approvedPendingRequests.length >= currentAllotment.max && !isSixMonthRequest
-                  ? "Join Waitlist (PLD)"
-                  : "Request PLD"}
-              </ThemedText>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                dialogStyles.modalButton,
-                dialogStyles.submitButton,
-                // Show waitlist button style if day is full (approved/pending >= max)
-                approvedPendingRequests.length >= currentAllotment.max &&
-                (stats?.available.sdv ?? 0) > 0 &&
-                !isSixMonthRequest
-                  ? dialogStyles.waitlistButton
-                  : null,
-                ((stats?.available.sdv ?? 0) <= 0 || hasExistingRequest || isSubmitting) && dialogStyles.disabledButton,
-              ]}
-              onPress={sdvButtonProps.onPress}
-              disabled={sdvButtonProps.disabled}
-            >
-              <ThemedText style={dialogStyles.modalButtonText}>
-                {/* Show "Join Waitlist" if approved/pending >= max and not six-month */}
-                {approvedPendingRequests.length >= currentAllotment.max && !isSixMonthRequest
-                  ? "Join Waitlist (SDV)"
-                  : "Request SDV"}
-              </ThemedText>
-            </TouchableOpacity>
+
+            {/* Conditional rendering for Request/Cancel buttons */}
+            {isSixMonthRequest ? (
+              // --- SIX MONTH REQUEST DATE ---
+              canCancelSixMonthRequest ? (
+                // User has an existing, cancellable six-month request
+                <TouchableOpacity
+                  style={[
+                    dialogStyles.modalButton,
+                    dialogStyles.cancelRequestButton, // Use same style
+                    isSubmitting && dialogStyles.disabledButton,
+                  ]}
+                  onPress={handleCancelSixMonthRequest}
+                  disabled={isSubmitting}
+                >
+                  <ThemedText style={dialogStyles.modalButtonText}>Cancel Six-Month Request</ThemedText>
+                </TouchableOpacity>
+              ) : (
+                // User does NOT have an existing six-month request, show PLD request button
+                <TouchableOpacity
+                  style={[
+                    dialogStyles.modalButton,
+                    dialogStyles.submitButton,
+                    submitButtonProps.disabled && dialogStyles.disabledButton,
+                  ]}
+                  onPress={submitButtonProps.onPress} // Uses PLD props
+                  disabled={submitButtonProps.disabled}
+                >
+                  <ThemedText style={dialogStyles.modalButtonText}>Request PLD (Six Month)</ThemedText>
+                </TouchableOpacity>
+              )
+            ) : hasExistingRequest ? (
+              // --- REGULAR REQUEST DATE ---
+              // User has an existing regular request
+              canCancelRequest ? (
+                // Existing regular request IS cancellable
+                <TouchableOpacity
+                  style={[
+                    dialogStyles.modalButton,
+                    dialogStyles.cancelRequestButton,
+                    isSubmitting && dialogStyles.disabledButton,
+                  ]}
+                  onPress={handleCancelRequest}
+                  disabled={isSubmitting}
+                >
+                  <ThemedText style={dialogStyles.modalButtonText}>
+                    {userRequest?.status === "cancellation_pending" ? "Cancellation Pending..." : "Cancel My Request"}
+                  </ThemedText>
+                </TouchableOpacity>
+              ) : (
+                // Existing regular request is NOT cancellable (e.g., denied/cancelled)
+                <View style={dialogStyles.modalButtonDisabledPlaceholder}>
+                  <ThemedText style={dialogStyles.modalButtonTextDisabled}>Request Cannot Be Cancelled</ThemedText>
+                </View>
+              )
+            ) : (
+              // --- REGULAR REQUEST DATE ---
+              // User has NO existing regular request, show PLD/SDV buttons
+              <>
+                <TouchableOpacity
+                  style={[
+                    dialogStyles.modalButton,
+                    dialogStyles.submitButton,
+                    approvedPendingRequests.length >= currentAllotment.max && (stats?.available.pld ?? 0) > 0
+                      ? dialogStyles.waitlistButton
+                      : null,
+                    submitButtonProps.disabled && dialogStyles.disabledButton,
+                  ]}
+                  onPress={submitButtonProps.onPress}
+                  disabled={submitButtonProps.disabled}
+                >
+                  <ThemedText style={dialogStyles.modalButtonText}>
+                    {approvedPendingRequests.length >= currentAllotment.max ? "Join Waitlist (PLD)" : "Request PLD"}
+                  </ThemedText>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    dialogStyles.modalButton,
+                    dialogStyles.submitButton,
+                    approvedPendingRequests.length >= currentAllotment.max && (stats?.available.sdv ?? 0) > 0
+                      ? dialogStyles.waitlistButton
+                      : null,
+                    sdvButtonProps.disabled && dialogStyles.disabledButton,
+                  ]}
+                  onPress={sdvButtonProps.onPress}
+                  disabled={sdvButtonProps.disabled}
+                >
+                  <ThemedText style={dialogStyles.modalButtonText}>
+                    {approvedPendingRequests.length >= currentAllotment.max ? "Join Waitlist (SDV)" : "Request SDV"}
+                  </ThemedText>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
         </View>
       </View>
@@ -1620,14 +1798,39 @@ const dialogStyles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 16,
   } as TextStyle,
+  modalButtonTextDisabled: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: Colors.dark.textDim,
+    textAlign: "center",
+    lineHeight: 16,
+  } as TextStyle,
   cancelButton: {
     backgroundColor: Colors.dark.border,
+    flexGrow: 0,
+    flexBasis: "auto",
+    paddingHorizontal: 20,
   } as ViewStyle,
   submitButton: {
     backgroundColor: Colors.light.primary,
   } as ViewStyle,
   waitlistButton: {
     backgroundColor: Colors.light.warning,
+  } as ViewStyle,
+  cancelRequestButton: {
+    backgroundColor: Colors.light.error,
+    flex: 2,
+  } as ViewStyle,
+  modalButtonDisabledPlaceholder: {
+    flex: 2,
+    minHeight: 44,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: Colors.dark.card,
+    opacity: 0.7,
   } as ViewStyle,
   requestList: {
     width: "100%",
@@ -1687,13 +1890,16 @@ const dialogStyles = StyleSheet.create({
   waitlistHeader: {
     marginTop: 10,
     marginBottom: 5,
-    marginLeft: 10, // Align with request spot padding
+    marginLeft: 10,
     fontSize: 16,
     fontWeight: "600",
     color: Colors.light.warning,
   } as TextStyle,
   approvedStatus: {
     color: Colors.light.success,
+  } as TextStyle,
+  pendingStatus: {
+    color: Colors.light.warning,
   } as TextStyle,
   waitlistedStatus: {
     color: Colors.light.error,

@@ -196,7 +196,10 @@ function RequestRow({ request, onCancel, onCancelSixMonth }: RequestRowProps) {
       <ThemedView style={styles.typeContainer}>
         <ThemedText style={styles.type}>{request.leave_type}</ThemedText>
       </ThemedView>
-      {(request.status === "pending" || request.status === "approved" || request.is_six_month_request) &&
+      {(request.status === "pending" ||
+        request.status === "approved" ||
+        request.status === "waitlisted" ||
+        request.is_six_month_request) &&
         parseISO(request.request_date) > new Date() &&
         !isWithin48Hours && (
           <ThemedTouchableOpacity
@@ -834,9 +837,7 @@ export default function MyTimeScreen() {
             {stats && stats.available.pld <= 0 && stats.available.sdv > 0 && (
               <ThemedView style={styles.warningContainer}>
                 <Feather name="info" size={18} color={Colors[colorScheme ?? "light"].warning} />
-                <ThemedText style={styles.warningMessageText}>
-                  You don't have any available PLD days.
-                </ThemedText>
+                <ThemedText style={styles.warningMessageText}>You don't have any available PLD days.</ThemedText>
               </ThemedView>
             )}
 
@@ -844,45 +845,47 @@ export default function MyTimeScreen() {
             {stats && stats.available.pld > 0 && stats.available.sdv <= 0 && (
               <ThemedView style={styles.warningContainer}>
                 <Feather name="info" size={18} color={Colors[colorScheme ?? "light"].warning} />
-                <ThemedText style={styles.warningMessageText}>
-                  You don't have any available SDV days.
-                </ThemedText>
+                <ThemedText style={styles.warningMessageText}>You don't have any available SDV days.</ThemedText>
               </ThemedView>
             )}
 
             <ThemedView style={styles.typeButtonsContainer}>
               <ThemedTouchableOpacity
                 style={[
-                  styles.typeButton, 
+                  styles.typeButton,
                   selectedType === "PLD" && styles.selectedTypeButton,
-                  stats && stats.available.pld <= 0 && styles.disabledButton
+                  stats && stats.available.pld <= 0 && styles.disabledButton,
                 ]}
                 onPress={() => setSelectedType("PLD")}
                 disabled={stats && stats.available.pld <= 0}
               >
-                <ThemedText style={[
-                  styles.typeButtonText, 
-                  selectedType === "PLD" && styles.selectedTypeButtonText,
-                  stats && stats.available.pld <= 0 && styles.disabledButtonText
-                ]}>
+                <ThemedText
+                  style={[
+                    styles.typeButtonText,
+                    selectedType === "PLD" && styles.selectedTypeButtonText,
+                    stats && stats.available.pld <= 0 && styles.disabledButtonText,
+                  ]}
+                >
                   PLD ({stats?.available.pld || 0})
                 </ThemedText>
               </ThemedTouchableOpacity>
 
               <ThemedTouchableOpacity
                 style={[
-                  styles.typeButton, 
+                  styles.typeButton,
                   selectedType === "SDV" && styles.selectedTypeButton,
-                  stats && stats.available.sdv <= 0 && styles.disabledButton
+                  stats && stats.available.sdv <= 0 && styles.disabledButton,
                 ]}
                 onPress={() => setSelectedType("SDV")}
                 disabled={stats && stats.available.sdv <= 0}
               >
-                <ThemedText style={[
-                  styles.typeButtonText, 
-                  selectedType === "SDV" && styles.selectedTypeButtonText,
-                  stats && stats.available.sdv <= 0 && styles.disabledButtonText
-                ]}>
+                <ThemedText
+                  style={[
+                    styles.typeButtonText,
+                    selectedType === "SDV" && styles.selectedTypeButtonText,
+                    stats && stats.available.sdv <= 0 && styles.disabledButtonText,
+                  ]}
+                >
                   SDV ({stats?.available.sdv || 0})
                 </ThemedText>
               </ThemedTouchableOpacity>
@@ -895,13 +898,18 @@ export default function MyTimeScreen() {
 
               <ThemedTouchableOpacity
                 style={[
-                  styles.confirmButton, 
-                  (!selectedType || (stats && selectedType === "PLD" && stats.available.pld <= 0) || 
-                  (stats && selectedType === "SDV" && stats.available.sdv <= 0)) && styles.disabledButton
+                  styles.confirmButton,
+                  (!selectedType ||
+                    (stats && selectedType === "PLD" && stats.available.pld <= 0) ||
+                    (stats && selectedType === "SDV" && stats.available.sdv <= 0)) &&
+                    styles.disabledButton,
                 ]}
                 onPress={handleConfirmPaidInLieu}
-                disabled={!selectedType || (stats && selectedType === "PLD" && stats.available.pld <= 0) || 
-                  (stats && selectedType === "SDV" && stats.available.sdv <= 0)}
+                disabled={
+                  !selectedType ||
+                  (stats && selectedType === "PLD" && stats.available.pld <= 0) ||
+                  (stats && selectedType === "SDV" && stats.available.sdv <= 0)
+                }
               >
                 <ThemedText style={styles.confirmButtonText}>Request Payment</ThemedText>
               </ThemedTouchableOpacity>
@@ -1268,6 +1276,6 @@ const styles = StyleSheet.create({
   },
   warningMessageText: {
     marginLeft: 8,
-    fontSize: 14
-  }
+    fontSize: 14,
+  },
 });
