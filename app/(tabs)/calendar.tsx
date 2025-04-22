@@ -500,7 +500,7 @@ function RequestDialog({
   }, [localRequests, member?.id]);
 
   const hasExistingRequest = useMemo(() => {
-    // For six-month requests, check the hasSixMonthRequest flag
+    // For six month requests, check the hasSixMonthRequest flag
     if (isSixMonthRequest) {
       return hasSixMonthRequest;
     }
@@ -876,36 +876,80 @@ function RequestDialog({
           </ScrollView>
 
           <View style={dialogStyles.modalButtons}>
-            <TouchableOpacity style={[dialogStyles.modalButton, dialogStyles.cancelButton]} onPress={onClose}>
-              <ThemedText style={dialogStyles.modalButtonText}>Close</ThemedText>
-            </TouchableOpacity>
+            {Platform.OS === "web" ? (
+              <TouchableOpacity
+                style={[dialogStyles.modalButton, dialogStyles.cancelButton]}
+                onPress={onClose}
+                activeOpacity={0.7}
+              >
+                <ThemedText style={dialogStyles.closeButtonText}>Close</ThemedText>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={[dialogStyles.modalButton, dialogStyles.cancelButton]}
+                onPress={onClose}
+                activeOpacity={0.7}
+              >
+                <ThemedText style={dialogStyles.closeButtonText}>Close</ThemedText>
+              </TouchableOpacity>
+            )}
 
             {/* Conditional rendering for Request/Cancel buttons */}
             {isSixMonthRequest ? (
               // --- SIX MONTH REQUEST DATE ---
               canCancelSixMonthRequest ? (
                 // User has an existing, cancellable six-month request
-                <TouchableOpacity
-                  style={[
-                    dialogStyles.modalButton,
-                    dialogStyles.cancelRequestButton, // Use same style
-                    isSubmitting && dialogStyles.disabledButton,
-                  ]}
-                  onPress={handleCancelSixMonthRequest}
-                  disabled={isSubmitting}
-                >
-                  <ThemedText style={dialogStyles.modalButtonText}>Cancel Six-Month Request</ThemedText>
-                </TouchableOpacity>
-              ) : (
-                // User does NOT have an existing six-month request, show PLD request button
+                Platform.OS === "web" ? (
+                  <TouchableOpacity
+                    style={[
+                      dialogStyles.modalButton,
+                      dialogStyles.cancelRequestButton,
+                      isSubmitting && dialogStyles.disabledButton,
+                    ]}
+                    onPress={handleCancelSixMonthRequest}
+                    disabled={isSubmitting}
+                    activeOpacity={0.7}
+                  >
+                    <ThemedText style={dialogStyles.modalButtonText}>Cancel Six-Month Request</ThemedText>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    style={[
+                      dialogStyles.modalButton,
+                      dialogStyles.cancelRequestButton,
+                      isSubmitting && dialogStyles.disabledButton,
+                    ]}
+                    onPress={handleCancelSixMonthRequest}
+                    disabled={isSubmitting}
+                    activeOpacity={0.7}
+                  >
+                    <ThemedText style={dialogStyles.modalButtonText}>Cancel Six-Month Request</ThemedText>
+                  </TouchableOpacity>
+                )
+              ) : // User does NOT have an existing six-month request, show PLD request button
+              Platform.OS === "web" ? (
                 <TouchableOpacity
                   style={[
                     dialogStyles.modalButton,
                     dialogStyles.submitButton,
                     submitButtonProps.disabled && dialogStyles.disabledButton,
                   ]}
-                  onPress={submitButtonProps.onPress} // Uses PLD props
+                  onPress={submitButtonProps.onPress}
                   disabled={submitButtonProps.disabled}
+                  activeOpacity={0.7}
+                >
+                  <ThemedText style={dialogStyles.modalButtonText}>Request PLD (Six Month)</ThemedText>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={[
+                    dialogStyles.modalButton,
+                    dialogStyles.submitButton,
+                    submitButtonProps.disabled && dialogStyles.disabledButton,
+                  ]}
+                  onPress={submitButtonProps.onPress}
+                  disabled={submitButtonProps.disabled}
+                  activeOpacity={0.7}
                 >
                   <ThemedText style={dialogStyles.modalButtonText}>Request PLD (Six Month)</ThemedText>
                 </TouchableOpacity>
@@ -915,19 +959,37 @@ function RequestDialog({
               // User has an existing regular request
               canCancelRequest ? (
                 // Existing regular request IS cancellable
-                <TouchableOpacity
-                  style={[
-                    dialogStyles.modalButton,
-                    dialogStyles.cancelRequestButton,
-                    isSubmitting && dialogStyles.disabledButton,
-                  ]}
-                  onPress={handleCancelRequest}
-                  disabled={isSubmitting}
-                >
-                  <ThemedText style={dialogStyles.modalButtonText}>
-                    {userRequest?.status === "cancellation_pending" ? "Cancellation Pending..." : "Cancel My Request"}
-                  </ThemedText>
-                </TouchableOpacity>
+                Platform.OS === "web" ? (
+                  <TouchableOpacity
+                    style={[
+                      dialogStyles.modalButton,
+                      dialogStyles.cancelRequestButton,
+                      isSubmitting && dialogStyles.disabledButton,
+                    ]}
+                    onPress={handleCancelRequest}
+                    disabled={isSubmitting}
+                    activeOpacity={0.7}
+                  >
+                    <ThemedText style={dialogStyles.modalButtonText}>
+                      {userRequest?.status === "cancellation_pending" ? "Cancellation Pending..." : "Cancel My Request"}
+                    </ThemedText>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    style={[
+                      dialogStyles.modalButton,
+                      dialogStyles.cancelRequestButton,
+                      isSubmitting && dialogStyles.disabledButton,
+                    ]}
+                    onPress={handleCancelRequest}
+                    disabled={isSubmitting}
+                    activeOpacity={0.7}
+                  >
+                    <ThemedText style={dialogStyles.modalButtonText}>
+                      {userRequest?.status === "cancellation_pending" ? "Cancellation Pending..." : "Cancel My Request"}
+                    </ThemedText>
+                  </TouchableOpacity>
+                )
               ) : (
                 // Existing regular request is NOT cancellable (e.g., denied/cancelled)
                 <View style={dialogStyles.modalButtonDisabledPlaceholder}>
@@ -938,38 +1000,81 @@ function RequestDialog({
               // --- REGULAR REQUEST DATE ---
               // User has NO existing regular request, show PLD/SDV buttons
               <>
-                <TouchableOpacity
-                  style={[
-                    dialogStyles.modalButton,
-                    dialogStyles.submitButton,
-                    approvedPendingRequests.length >= currentAllotment.max && (stats?.available.pld ?? 0) > 0
-                      ? dialogStyles.waitlistButton
-                      : null,
-                    submitButtonProps.disabled && dialogStyles.disabledButton,
-                  ]}
-                  onPress={submitButtonProps.onPress}
-                  disabled={submitButtonProps.disabled}
-                >
-                  <ThemedText style={dialogStyles.modalButtonText}>
-                    {approvedPendingRequests.length >= currentAllotment.max ? "Join Waitlist (PLD)" : "Request PLD"}
-                  </ThemedText>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    dialogStyles.modalButton,
-                    dialogStyles.submitButton,
-                    approvedPendingRequests.length >= currentAllotment.max && (stats?.available.sdv ?? 0) > 0
-                      ? dialogStyles.waitlistButton
-                      : null,
-                    sdvButtonProps.disabled && dialogStyles.disabledButton,
-                  ]}
-                  onPress={sdvButtonProps.onPress}
-                  disabled={sdvButtonProps.disabled}
-                >
-                  <ThemedText style={dialogStyles.modalButtonText}>
-                    {approvedPendingRequests.length >= currentAllotment.max ? "Join Waitlist (SDV)" : "Request SDV"}
-                  </ThemedText>
-                </TouchableOpacity>
+                {Platform.OS === "web" ? (
+                  <TouchableOpacity
+                    style={[
+                      dialogStyles.modalButton,
+                      dialogStyles.submitButton,
+                      approvedPendingRequests.length >= currentAllotment.max && (stats?.available.pld ?? 0) > 0
+                        ? dialogStyles.waitlistButton
+                        : null,
+                      submitButtonProps.disabled && dialogStyles.disabledButton,
+                    ]}
+                    onPress={submitButtonProps.onPress}
+                    disabled={submitButtonProps.disabled}
+                    activeOpacity={0.7}
+                  >
+                    <ThemedText style={dialogStyles.modalButtonText}>
+                      {approvedPendingRequests.length >= currentAllotment.max ? "Join Waitlist (PLD)" : "Request PLD"}
+                    </ThemedText>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    style={[
+                      dialogStyles.modalButton,
+                      dialogStyles.submitButton,
+                      approvedPendingRequests.length >= currentAllotment.max && (stats?.available.pld ?? 0) > 0
+                        ? dialogStyles.waitlistButton
+                        : null,
+                      submitButtonProps.disabled && dialogStyles.disabledButton,
+                    ]}
+                    onPress={submitButtonProps.onPress}
+                    disabled={submitButtonProps.disabled}
+                    activeOpacity={0.7}
+                  >
+                    <ThemedText style={dialogStyles.modalButtonText}>
+                      {approvedPendingRequests.length >= currentAllotment.max ? "Join Waitlist (PLD)" : "Request PLD"}
+                    </ThemedText>
+                  </TouchableOpacity>
+                )}
+
+                {Platform.OS === "web" ? (
+                  <TouchableOpacity
+                    style={[
+                      dialogStyles.modalButton,
+                      dialogStyles.submitButton,
+                      approvedPendingRequests.length >= currentAllotment.max && (stats?.available.sdv ?? 0) > 0
+                        ? dialogStyles.waitlistButton
+                        : null,
+                      sdvButtonProps.disabled && dialogStyles.disabledButton,
+                    ]}
+                    onPress={sdvButtonProps.onPress}
+                    disabled={sdvButtonProps.disabled}
+                    activeOpacity={0.7}
+                  >
+                    <ThemedText style={dialogStyles.modalButtonText}>
+                      {approvedPendingRequests.length >= currentAllotment.max ? "Join Waitlist (SDV)" : "Request SDV"}
+                    </ThemedText>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    style={[
+                      dialogStyles.modalButton,
+                      dialogStyles.submitButton,
+                      approvedPendingRequests.length >= currentAllotment.max && (stats?.available.sdv ?? 0) > 0
+                        ? dialogStyles.waitlistButton
+                        : null,
+                      sdvButtonProps.disabled && dialogStyles.disabledButton,
+                    ]}
+                    onPress={sdvButtonProps.onPress}
+                    disabled={sdvButtonProps.disabled}
+                    activeOpacity={0.7}
+                  >
+                    <ThemedText style={dialogStyles.modalButtonText}>
+                      {approvedPendingRequests.length >= currentAllotment.max ? "Join Waitlist (SDV)" : "Request SDV"}
+                    </ThemedText>
+                  </TouchableOpacity>
+                )}
               </>
             )}
           </View>
@@ -1784,32 +1889,46 @@ const dialogStyles = StyleSheet.create({
   } as ViewStyle,
   modalButton: {
     flex: 1,
-    minHeight: 44,
-    paddingVertical: 10,
+    minHeight: Platform.OS === "web" ? 44 : 48, // Taller buttons on mobile
+    paddingVertical: Platform.OS === "web" ? 10 : 12,
     paddingHorizontal: 8,
     borderRadius: 8,
     alignItems: "center",
     justifyContent: "center",
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.22,
+        shadowRadius: 2.22,
+      },
+      android: {
+        elevation: 3,
+      },
+    }),
   } as ViewStyle,
   modalButtonText: {
-    fontSize: 14,
+    fontSize: Platform.OS === "web" ? 14 : 16,
     fontWeight: "600",
     color: "black",
     textAlign: "center",
-    lineHeight: 16,
+    lineHeight: Platform.OS === "web" ? 16 : 20,
   } as TextStyle,
-  modalButtonTextDisabled: {
-    fontSize: 14,
+  closeButtonText: {
+    fontSize: Platform.OS === "web" ? 14 : 16,
     fontWeight: "600",
-    color: Colors.dark.textDim,
+    color: Colors.dark.buttonText,
     textAlign: "center",
-    lineHeight: 16,
+    lineHeight: Platform.OS === "web" ? 16 : 20,
   } as TextStyle,
   cancelButton: {
-    backgroundColor: Colors.dark.border,
+    backgroundColor: Platform.OS === "web" ? Colors.dark.border : Colors.dark.card,
     flexGrow: 0,
     flexBasis: "auto",
     paddingHorizontal: 20,
+    minWidth: Platform.OS === "web" ? 80 : 100,
+    borderWidth: Platform.OS === "web" ? 0 : 1,
+    borderColor: Colors.dark.border,
   } as ViewStyle,
   submitButton: {
     backgroundColor: Colors.light.primary,
@@ -1821,16 +1940,9 @@ const dialogStyles = StyleSheet.create({
     backgroundColor: Colors.light.error,
     flex: 2,
   } as ViewStyle,
-  modalButtonDisabledPlaceholder: {
-    flex: 2,
-    minHeight: 44,
-    paddingVertical: 10,
-    paddingHorizontal: 8,
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: Colors.dark.card,
-    opacity: 0.7,
+  buttonPressed: {
+    opacity: 0.8,
+    transform: [{ scale: 0.98 }],
   } as ViewStyle,
   requestList: {
     width: "100%",
@@ -1928,5 +2040,23 @@ const dialogStyles = StyleSheet.create({
   } as ViewStyle,
   cancellationPendingStatus: {
     color: Colors.light.warning,
+  } as TextStyle,
+  modalButtonDisabledPlaceholder: {
+    flex: 2,
+    minHeight: 44,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: Colors.dark.card,
+    opacity: 0.7,
+  } as ViewStyle,
+  modalButtonTextDisabled: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: Colors.dark.textDim,
+    textAlign: "center",
+    lineHeight: 16,
   } as TextStyle,
 });
