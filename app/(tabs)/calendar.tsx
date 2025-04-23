@@ -957,12 +957,29 @@ function RequestDialog({
                     <ThemedText style={dialogStyles.modalButtonText}>Cancel Six-Month Request</ThemedText>
                   </TouchableOpacity>
                 )
-              ) : // User does NOT have an existing six-month request, show PLD request button
-              Platform.OS === "web" ? (
+              ) : // User does NOT have an existing six-month request, show either one or both buttons
+              (stats?.available.pld ?? 0) <= 0 && (stats?.available.sdv ?? 0) > 0 ? (
+                // Only SDV is available, show one button that takes up full width
                 <TouchableOpacity
                   style={[
                     dialogStyles.modalButton,
                     dialogStyles.submitButton,
+                    { flex: 2 }, // Take up full width (space of both buttons)
+                    sdvButtonProps.disabled && dialogStyles.disabledButton,
+                  ]}
+                  onPress={sdvButtonProps.onPress}
+                  disabled={sdvButtonProps.disabled}
+                  activeOpacity={0.7}
+                >
+                  <ThemedText style={dialogStyles.modalButtonText}>Request SDV (Six Month)</ThemedText>
+                </TouchableOpacity>
+              ) : (stats?.available.sdv ?? 0) <= 0 && (stats?.available.pld ?? 0) > 0 ? (
+                // Only PLD is available, show one button that takes up full width
+                <TouchableOpacity
+                  style={[
+                    dialogStyles.modalButton,
+                    dialogStyles.submitButton,
+                    { flex: 2 }, // Take up full width (space of both buttons)
                     submitButtonProps.disabled && dialogStyles.disabledButton,
                   ]}
                   onPress={submitButtonProps.onPress}
@@ -972,18 +989,34 @@ function RequestDialog({
                   <ThemedText style={dialogStyles.modalButtonText}>Request PLD (Six Month)</ThemedText>
                 </TouchableOpacity>
               ) : (
-                <TouchableOpacity
-                  style={[
-                    dialogStyles.modalButton,
-                    dialogStyles.submitButton,
-                    submitButtonProps.disabled && dialogStyles.disabledButton,
-                  ]}
-                  onPress={submitButtonProps.onPress}
-                  disabled={submitButtonProps.disabled}
-                  activeOpacity={0.7}
-                >
-                  <ThemedText style={dialogStyles.modalButtonText}>Request PLD (Six Month)</ThemedText>
-                </TouchableOpacity>
+                // Both PLD and SDV are available or both are unavailable, show both buttons
+                <>
+                  <TouchableOpacity
+                    style={[
+                      dialogStyles.modalButton,
+                      dialogStyles.submitButton,
+                      submitButtonProps.disabled && dialogStyles.disabledButton,
+                    ]}
+                    onPress={submitButtonProps.onPress}
+                    disabled={submitButtonProps.disabled}
+                    activeOpacity={0.7}
+                  >
+                    <ThemedText style={dialogStyles.modalButtonText}>Request PLD (Six Month)</ThemedText>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      dialogStyles.modalButton,
+                      dialogStyles.submitButton,
+                      sdvButtonProps.disabled && dialogStyles.disabledButton,
+                    ]}
+                    onPress={sdvButtonProps.onPress}
+                    disabled={sdvButtonProps.disabled}
+                    activeOpacity={0.7}
+                  >
+                    <ThemedText style={dialogStyles.modalButtonText}>Request SDV (Six Month)</ThemedText>
+                  </TouchableOpacity>
+                </>
               )
             ) : hasExistingRequest ? (
               // --- REGULAR REQUEST DATE ---
@@ -1032,48 +1065,97 @@ function RequestDialog({
               // User has NO existing regular request, show PLD/SDV buttons
               <>
                 {Platform.OS === "web" ? (
-                  <TouchableOpacity
-                    style={[
-                      dialogStyles.modalButton,
-                      dialogStyles.submitButton,
-                      approvedPendingRequests.length >= currentAllotment.max && (stats?.available.pld ?? 0) > 0
-                        ? dialogStyles.waitlistButton
-                        : null,
-                      submitButtonProps.disabled && dialogStyles.disabledButton,
-                    ]}
-                    onPress={submitButtonProps.onPress}
-                    disabled={submitButtonProps.disabled}
-                    activeOpacity={0.7}
-                  >
-                    <ThemedText style={dialogStyles.modalButtonText}>
-                      {approvedPendingRequests.length >= currentAllotment.max ? "Join Waitlist (PLD)" : "Request PLD"}
-                    </ThemedText>
-                  </TouchableOpacity>
-                ) : (
-                  <TouchableOpacity
-                    style={[
-                      dialogStyles.modalButton,
-                      dialogStyles.submitButton,
-                      approvedPendingRequests.length >= currentAllotment.max && (stats?.available.pld ?? 0) > 0
-                        ? dialogStyles.waitlistButton
-                        : null,
-                      submitButtonProps.disabled && dialogStyles.disabledButton,
-                    ]}
-                    onPress={submitButtonProps.onPress}
-                    disabled={submitButtonProps.disabled}
-                    activeOpacity={0.7}
-                  >
-                    <ThemedText style={dialogStyles.modalButtonText}>
-                      {approvedPendingRequests.length >= currentAllotment.max ? "Join Waitlist (PLD)" : "Request PLD"}
-                    </ThemedText>
-                  </TouchableOpacity>
-                )}
+                  (stats?.available.pld ?? 0) <= 0 && (stats?.available.sdv ?? 0) > 0 ? (
+                    // Only SDV is available, show one button that takes up full width
+                    <TouchableOpacity
+                      style={[
+                        dialogStyles.modalButton,
+                        dialogStyles.submitButton,
+                        { flex: 2 }, // Take up full width (space of both buttons)
+                        approvedPendingRequests.length >= currentAllotment.max && (stats?.available.sdv ?? 0) > 0
+                          ? dialogStyles.waitlistButton
+                          : null,
+                        sdvButtonProps.disabled && dialogStyles.disabledButton,
+                      ]}
+                      onPress={sdvButtonProps.onPress}
+                      disabled={sdvButtonProps.disabled}
+                      activeOpacity={0.7}
+                    >
+                      <ThemedText style={dialogStyles.modalButtonText}>
+                        {approvedPendingRequests.length >= currentAllotment.max ? "Join Waitlist (SDV)" : "Request SDV"}
+                      </ThemedText>
+                    </TouchableOpacity>
+                  ) : (stats?.available.sdv ?? 0) <= 0 && (stats?.available.pld ?? 0) > 0 ? (
+                    // Only PLD is available, show one button that takes up full width
+                    <TouchableOpacity
+                      style={[
+                        dialogStyles.modalButton,
+                        dialogStyles.submitButton,
+                        { flex: 2 }, // Take up full width (space of both buttons)
+                        approvedPendingRequests.length >= currentAllotment.max && (stats?.available.pld ?? 0) > 0
+                          ? dialogStyles.waitlistButton
+                          : null,
+                        submitButtonProps.disabled && dialogStyles.disabledButton,
+                      ]}
+                      onPress={submitButtonProps.onPress}
+                      disabled={submitButtonProps.disabled}
+                      activeOpacity={0.7}
+                    >
+                      <ThemedText style={dialogStyles.modalButtonText}>
+                        {approvedPendingRequests.length >= currentAllotment.max ? "Join Waitlist (PLD)" : "Request PLD"}
+                      </ThemedText>
+                    </TouchableOpacity>
+                  ) : (
+                    // Both PLD and SDV are available or both are unavailable, show both buttons
+                    <>
+                      <TouchableOpacity
+                        style={[
+                          dialogStyles.modalButton,
+                          dialogStyles.submitButton,
+                          approvedPendingRequests.length >= currentAllotment.max && (stats?.available.pld ?? 0) > 0
+                            ? dialogStyles.waitlistButton
+                            : null,
+                          submitButtonProps.disabled && dialogStyles.disabledButton,
+                        ]}
+                        onPress={submitButtonProps.onPress}
+                        disabled={submitButtonProps.disabled}
+                        activeOpacity={0.7}
+                      >
+                        <ThemedText style={dialogStyles.modalButtonText}>
+                          {approvedPendingRequests.length >= currentAllotment.max
+                            ? "Join Waitlist (PLD)"
+                            : "Request PLD"}
+                        </ThemedText>
+                      </TouchableOpacity>
 
-                {Platform.OS === "web" ? (
+                      <TouchableOpacity
+                        style={[
+                          dialogStyles.modalButton,
+                          dialogStyles.submitButton,
+                          approvedPendingRequests.length >= currentAllotment.max && (stats?.available.sdv ?? 0) > 0
+                            ? dialogStyles.waitlistButton
+                            : null,
+                          sdvButtonProps.disabled && dialogStyles.disabledButton,
+                        ]}
+                        onPress={sdvButtonProps.onPress}
+                        disabled={sdvButtonProps.disabled}
+                        activeOpacity={0.7}
+                      >
+                        <ThemedText style={dialogStyles.modalButtonText}>
+                          {approvedPendingRequests.length >= currentAllotment.max
+                            ? "Join Waitlist (SDV)"
+                            : "Request SDV"}
+                        </ThemedText>
+                      </TouchableOpacity>
+                    </>
+                  )
+                ) : (stats?.available.pld ?? 0) <= 0 && (stats?.available.sdv ?? 0) > 0 ? (
+                  // Only SDV is available, show one button that takes up full width
                   <TouchableOpacity
                     style={[
                       dialogStyles.modalButton,
                       dialogStyles.submitButton,
+                      { flex: 2 }, // Take up full width (space of both buttons)
                       approvedPendingRequests.length >= currentAllotment.max && (stats?.available.sdv ?? 0) > 0
                         ? dialogStyles.waitlistButton
                         : null,
@@ -1085,26 +1167,67 @@ function RequestDialog({
                   >
                     <ThemedText style={dialogStyles.modalButtonText}>
                       {approvedPendingRequests.length >= currentAllotment.max ? "Join Waitlist (SDV)" : "Request SDV"}
+                    </ThemedText>
+                  </TouchableOpacity>
+                ) : (stats?.available.sdv ?? 0) <= 0 && (stats?.available.pld ?? 0) > 0 ? (
+                  // Only PLD is available, show one button that takes up full width
+                  <TouchableOpacity
+                    style={[
+                      dialogStyles.modalButton,
+                      dialogStyles.submitButton,
+                      { flex: 2 }, // Take up full width (space of both buttons)
+                      approvedPendingRequests.length >= currentAllotment.max && (stats?.available.pld ?? 0) > 0
+                        ? dialogStyles.waitlistButton
+                        : null,
+                      submitButtonProps.disabled && dialogStyles.disabledButton,
+                    ]}
+                    onPress={submitButtonProps.onPress}
+                    disabled={submitButtonProps.disabled}
+                    activeOpacity={0.7}
+                  >
+                    <ThemedText style={dialogStyles.modalButtonText}>
+                      {approvedPendingRequests.length >= currentAllotment.max ? "Join Waitlist (PLD)" : "Request PLD"}
                     </ThemedText>
                   </TouchableOpacity>
                 ) : (
-                  <TouchableOpacity
-                    style={[
-                      dialogStyles.modalButton,
-                      dialogStyles.submitButton,
-                      approvedPendingRequests.length >= currentAllotment.max && (stats?.available.sdv ?? 0) > 0
-                        ? dialogStyles.waitlistButton
-                        : null,
-                      sdvButtonProps.disabled && dialogStyles.disabledButton,
-                    ]}
-                    onPress={sdvButtonProps.onPress}
-                    disabled={sdvButtonProps.disabled}
-                    activeOpacity={0.7}
-                  >
-                    <ThemedText style={dialogStyles.modalButtonText}>
-                      {approvedPendingRequests.length >= currentAllotment.max ? "Join Waitlist (SDV)" : "Request SDV"}
-                    </ThemedText>
-                  </TouchableOpacity>
+                  // Both PLD and SDV are available or both are unavailable, show both buttons
+                  <>
+                    <TouchableOpacity
+                      style={[
+                        dialogStyles.modalButton,
+                        dialogStyles.submitButton,
+                        approvedPendingRequests.length >= currentAllotment.max && (stats?.available.pld ?? 0) > 0
+                          ? dialogStyles.waitlistButton
+                          : null,
+                        submitButtonProps.disabled && dialogStyles.disabledButton,
+                      ]}
+                      onPress={submitButtonProps.onPress}
+                      disabled={submitButtonProps.disabled}
+                      activeOpacity={0.7}
+                    >
+                      <ThemedText style={dialogStyles.modalButtonText}>
+                        {approvedPendingRequests.length >= currentAllotment.max ? "Join Waitlist (PLD)" : "Request PLD"}
+                      </ThemedText>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[
+                        dialogStyles.modalButton,
+                        dialogStyles.submitButton,
+                        approvedPendingRequests.length >= currentAllotment.max && (stats?.available.sdv ?? 0) > 0
+                          ? dialogStyles.waitlistButton
+                          : null,
+                        sdvButtonProps.disabled && dialogStyles.disabledButton,
+                      ]}
+                      onPress={sdvButtonProps.onPress}
+                      disabled={sdvButtonProps.disabled}
+                      activeOpacity={0.7}
+                    >
+                      <ThemedText style={dialogStyles.modalButtonText}>
+                        {approvedPendingRequests.length >= currentAllotment.max ? "Join Waitlist (SDV)" : "Request SDV"}
+                      </ThemedText>
+                    </TouchableOpacity>
+                  </>
                 )}
               </>
             )}
