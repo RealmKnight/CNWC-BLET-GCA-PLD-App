@@ -7,6 +7,7 @@ import { Platform, AppState } from "react-native";
 import { UserRole, UserProfile } from "@/types/auth";
 import { useUserStore } from "@/store/userStore";
 import * as Linking from "expo-linking";
+import { useNotificationStore } from "@/store/notificationStore";
 
 declare global {
   interface Window {
@@ -350,6 +351,24 @@ export function AuthProvider({ children }: AuthProviderProps) {
               console.error("[Auth] Error getting session on foreground:", error);
             } else if (currentSession && mounted) {
               await updateAuthState(currentSession, "APP_STATE");
+
+              // Add notification refresh when returning to foreground
+              try {
+                if (currentSession?.user?.id) {
+                  const member = useUserStore.getState().member;
+                  if (member?.pin_number && member?.id) {
+                    console.log("[Notifications] Refreshing notifications on app foreground");
+                    const notificationStore = useNotificationStore.getState();
+
+                    // Only refresh if already initialized
+                    if (notificationStore.isInitialized) {
+                      notificationStore.fetchMessages(member.pin_number, member.id);
+                    }
+                  }
+                }
+              } catch (notificationError) {
+                console.error("[Auth] Error refreshing notifications on foreground:", notificationError);
+              }
             }
           } catch (error) {
             console.error("[Auth] Exception getting session on foreground:", error);

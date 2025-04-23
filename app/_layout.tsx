@@ -44,12 +44,15 @@ function RootLayoutContent() {
   const { fetchMessages, subscribeToMessages } = useNotificationStore();
   const [initialRouteHandled, setInitialRouteHandled] = useState(false);
 
+  // Configure basic notifications at app startup (independent of auth)
   useEffect(() => {
     // Configure notifications when the app starts
     configureNotifications();
 
-    // Set up notification listeners and store cleanup function
+    // Set up notification listeners (NOT subscriptions yet)
     const cleanupNotifications = setupNotificationListeners();
+
+    console.log("[Notifications] Basic notification configuration complete");
 
     return () => {
       // Clean up notification listeners when component unmounts
@@ -57,21 +60,44 @@ function RootLayoutContent() {
     };
   }, []);
 
-  // Initialize notifications when user is authenticated
+  // Initialize user-specific notifications only after auth is complete and member data is available
   useEffect(() => {
-    if (session && member?.pin_number) {
-      console.log("[Notifications] Initializing notifications for user:", member.pin_number);
-      // Fetch initial messages
-      fetchMessages(member.pin_number);
+    // Only proceed if we have a complete member object with all required fields
+    if (!session || !member?.pin_number || !member?.id) {
+      console.log("[Notifications] Skipping initialization, incomplete member data:", {
+        hasSession: !!session,
+        pinNumber: member?.pin_number,
+        memberId: member?.id,
+      });
+      return;
+    }
+
+    // Check if notifications are already initialized to avoid duplicate subscriptions
+    if (useNotificationStore.getState().isInitialized) {
+      console.log("[Notifications] Notifications already initialized, skipping");
+      return;
+    }
+
+    console.log("[Notifications] Initializing notifications for user:", {
+      pinNumber: member.pin_number,
+      memberId: member.id,
+    });
+
+    try {
+      // Fetch initial messages with both required parameters
+      useNotificationStore.getState().fetchMessages(member.pin_number, member.id);
+
       // Subscribe to real-time updates
-      const unsubscribe = subscribeToMessages(member.pin_number);
+      const unsubscribe = useNotificationStore.getState().subscribeToMessages(member.pin_number);
 
       return () => {
         console.log("[Notifications] Cleaning up notifications subscription");
         unsubscribe();
       };
+    } catch (error) {
+      console.error("[Notifications] Error initializing notifications:", error);
     }
-  }, [session, member?.pin_number, fetchMessages, subscribeToMessages]);
+  }, [session, member]); // Depend on the entire member object to ensure we have complete data
 
   useEffect(() => {
     console.log("[Router Check] Start", { isLoading, initialRouteHandled, session: !!session, segments });

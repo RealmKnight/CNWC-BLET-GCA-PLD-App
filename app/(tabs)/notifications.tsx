@@ -264,21 +264,34 @@ export default function NotificationsScreen() {
     }
   };
 
-  // Set up realtime subscription
+  // Set up realtime subscription - modified to check if already initialized
   useEffect(() => {
+    // Skip creating subscription if already initialized at the app level
+    const isGloballyInitialized = useNotificationStore.getState().isInitialized;
+
+    if (isGloballyInitialized) {
+      console.log("[NotificationsScreen] Notifications already initialized at app level, skipping subscription");
+      return;
+    }
+
+    // Fall back to creating a subscription only if not already done at app level
     if (!member?.pin_number) return;
+
+    console.log("[NotificationsScreen] Creating fallback subscription");
     const unsubscribe = subscribeToMessages(member.pin_number);
     return () => {
       unsubscribe();
     };
-  }, [member]);
+  }, [member, subscribeToMessages]);
 
-  // Initial fetch
+  // Initial fetch - keep but ensure it refreshes data when screen becomes active
   useEffect(() => {
     if (member?.pin_number && member?.id) {
-      fetchMessages(member.pin_number, member.id);
+      console.log("[NotificationsScreen] Refreshing messages on screen visit");
+      setRefreshing(true);
+      fetchMessages(member.pin_number, member.id).finally(() => setRefreshing(false));
     }
-  }, [member]);
+  }, [member, fetchMessages]);
 
   const handleDelete = async (messageId: string) => {
     console.log("[Notifications] handleDelete called with messageId:", messageId);
@@ -296,8 +309,8 @@ export default function NotificationsScreen() {
           setSelectedMessage(null);
         }
 
-        // Refresh messages list
-        if (member?.pin_number) {
+        // Refresh messages list - Fix the type safety issue
+        if (member?.pin_number && member?.id) {
           console.log("[Notifications] Refreshing messages list");
           await fetchMessages(member.pin_number, member.id);
         }

@@ -39,6 +39,7 @@ interface NotificationStore {
   unreadCount: number;
   isLoading: boolean;
   error: string | null;
+  isInitialized: boolean;
   setMessages: (messages: Message[]) => void;
   fetchMessages: (pinNumber: number, userId: string) => Promise<void>;
   markAsRead: (messageId: string, pinNumber: number) => Promise<void>;
@@ -46,6 +47,7 @@ interface NotificationStore {
   subscribeToMessages: (pinNumber: number) => () => void;
   acknowledgeMessage: (messageId: string, pinNumber: number) => Promise<void>;
   archiveMessage: (messageId: string) => Promise<void>;
+  setIsInitialized: (initialized: boolean) => void;
 }
 
 const useNotificationStore = create<NotificationStore>((set, get) => ({
@@ -53,6 +55,12 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
   unreadCount: 0,
   isLoading: false,
   error: null,
+  isInitialized: false,
+
+  setIsInitialized: (initialized: boolean) => {
+    console.log(`[NotificationStore] Setting isInitialized to ${initialized}`);
+    set({ isInitialized: initialized });
+  },
 
   setMessages: (messages: Message[]) => {
     set({
@@ -300,6 +308,11 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
   },
 
   subscribeToMessages: (pinNumber: number) => {
+    console.log(`[NotificationStore] Starting subscription for ${pinNumber}`);
+
+    // Track initialization state
+    set({ isInitialized: true });
+
     const channelId = `messages-${pinNumber}-${Date.now()}`;
 
     const getUserId = async () => {
@@ -384,10 +397,13 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
       }
     });
 
-    // Return cleanup function
+    // Update the cleanup function to reset initialization state
     return () => {
       console.log("[NotificationStore] Cleaning up subscriptions");
       messagesSubscription.unsubscribe();
+
+      // Reset initialization state on cleanup
+      set({ isInitialized: false });
     };
   },
 
