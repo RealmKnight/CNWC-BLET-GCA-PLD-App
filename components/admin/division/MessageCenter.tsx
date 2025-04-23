@@ -362,7 +362,7 @@ export function MessageCenter() {
         onPress={handleSendMessage}
         disabled={isLoading}
       >
-        <Ionicons name="send" size={20} color="#fff" />
+        <Ionicons name="send" size={20} color={Colors.dark.buttonText} />
         <ThemedText style={styles.sendButtonText}>{isLoading ? "Sending..." : "Send Message"}</ThemedText>
       </TouchableOpacityComponent>
     </ThemedView>
@@ -426,10 +426,10 @@ const styles = StyleSheet.create({
     flex: 1,
     height: 40,
     borderWidth: 1,
-    borderColor: "#ccc",
+    borderColor: Colors.dark.border,
     borderRadius: 8,
     paddingHorizontal: 12,
-    color: Colors.light.text,
+    color: Colors.dark.text,
   },
   urgentToggle: {
     flexDirection: "row",
@@ -438,7 +438,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     gap: 8,
     borderWidth: 1,
-    borderColor: "#ccc",
+    borderColor: Colors.dark.border,
   },
   urgentActive: {
     backgroundColor: "#ff4444",
@@ -453,28 +453,28 @@ const styles = StyleSheet.create({
   contentInput: {
     flex: 1,
     borderWidth: 1,
-    borderColor: "#ccc",
+    borderColor: Colors.dark.border,
     borderRadius: 8,
     padding: 12,
     marginBottom: 16,
-    color: Colors.light.text,
+    color: Colors.dark.text,
   },
   sendButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.dark.tint,
     padding: 12,
     borderRadius: 8,
     gap: 8,
   },
   sendButtonText: {
-    color: "#fff",
+    color: Colors.dark.buttonText,
     fontSize: 16,
     fontWeight: "600",
   },
   activeText: {
-    color: "#000000",
+    color: Colors.dark.text,
   },
   memberItem: {
     flexDirection: "row",
@@ -483,7 +483,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 8,
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(128, 128, 128, 0.2)",
+    borderBottomColor: Colors.dark.border,
   },
   memberInfo: {
     flexDirection: "row",
@@ -526,9 +526,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderWidth: 1,
-    borderColor: Colors.light.border,
+    borderColor: Colors.dark.border,
     borderRadius: 8,
-    backgroundColor: Colors.light.background,
+    backgroundColor: Colors.dark.background,
   },
   dropdownButtonText: {
     fontSize: 14,
