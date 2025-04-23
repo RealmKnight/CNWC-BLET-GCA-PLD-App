@@ -11,14 +11,17 @@
         "ndk": "25.1.8937393",
         "gradleCommand": ":app:assembleDebug -stacktrace --info"
       },
-      "channel": "development"
+      "channel": "development",
+      "environment": "development"
     },
     "preview": {
       "distribution": "internal",
+      "environment": "preview",
       "channel": "preview"
     },
     "production": {
       "autoIncrement": true,
+      "environment": "production",
       "channel": "production"
     },
     "development-simulator": {
