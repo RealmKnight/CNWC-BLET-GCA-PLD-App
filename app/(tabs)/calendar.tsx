@@ -1285,9 +1285,10 @@ interface DateControlsProps {
   selectedDate: string | null;
   onDateChange: (date: string | null) => void;
   onCurrentDateChange: (date: string) => void;
+  onClearDate: () => void; // Add new prop
 }
 
-function DateControls({ selectedDate, onDateChange, onCurrentDateChange }: DateControlsProps) {
+function DateControls({ selectedDate, onDateChange, onCurrentDateChange, onClearDate }: DateControlsProps) {
   const theme = (useColorScheme() ?? "light") as ColorScheme;
   const [showPicker, setShowPicker] = useState(false);
   const fadeAnim = useRef(new Animated.Value(1)).current;
@@ -1388,6 +1389,14 @@ function DateControls({ selectedDate, onDateChange, onCurrentDateChange }: DateC
           </>
         )}
       </View>
+      {/* Add Clear Button */}
+      <TouchableOpacity
+        style={[controlStyles.clearButton, !selectedDate && controlStyles.clearButtonDisabled]}
+        onPress={onClearDate}
+        disabled={!selectedDate}
+      >
+        <ThemedText style={controlStyles.clearButtonText}>Clear Date</ThemedText>
+      </TouchableOpacity>
       <Animated.View style={{ opacity: fadeAnim }}>
         <TouchableOpacity
           style={[controlStyles.todayButton, isToday && controlStyles.todayButtonDisabled]}
@@ -1444,7 +1453,24 @@ const controlStyles = StyleSheet.create({
     opacity: 0.5,
   } as ViewStyle,
   todayButtonText: {
-    color: "black",
+    color: Colors.dark.buttonText,
+    fontWeight: "600",
+  } as TextStyle,
+  clearButton: {
+    backgroundColor: Colors.dark.buttonBackground,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    color: Colors.dark.buttonText,
+    alignItems: "center",
+  } as ViewStyle,
+  clearButtonDisabled: {
+    opacity: 0.5,
+  } as ViewStyle,
+  clearButtonText: {
+    color: Colors.dark.buttonText,
     fontWeight: "600",
   } as TextStyle,
 });
@@ -1935,7 +1961,21 @@ export default function CalendarScreen() {
             setSelectedWeek(date);
           }
         }}
-        onCurrentDateChange={setCurrentDate}
+        onCurrentDateChange={(date) => {
+          setCurrentDate(date);
+          setCalendarKey(Date.now()); // Force re-render
+        }}
+        onClearDate={() => {
+          if (activeCalendar === "PLD/SDV") {
+            setSelectedDate(null);
+          } else {
+            setSelectedWeek(null);
+          }
+          // Optionally, uncomment the line below if you want the calendar view
+          // to reset to today's month when clearing the selection.
+          // setCurrentDate(format(new Date(), "yyyy-MM-dd"));
+          // setCalendarKey(Date.now()); // Add if resetting currentDate
+        }}
       />
 
       {/* Calendar Content */}
@@ -1943,7 +1983,10 @@ export default function CalendarScreen() {
         {activeCalendar === "PLD/SDV" ? (
           <Calendar key={`pld-calendar-${currentDate}-${member?.calendar_id}-${calendarKey}`} current={currentDate} />
         ) : (
-          <VacationCalendar key={`vacation-calendar-base-${member?.calendar_id}`} current={currentDate} />
+          <VacationCalendar
+            key={`vacation-calendar-base-${member?.calendar_id}-${currentDate}`}
+            current={currentDate}
+          />
         )}
       </ScrollView>
 
