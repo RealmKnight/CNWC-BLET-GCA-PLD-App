@@ -831,6 +831,7 @@ const styles = StyleSheet.create({
         fontSize: 16,
         paddingVertical: 8,
         marginRight: 8,
+        placeholderTextColor: Colors.dark.textDim,
       },
       ios: {
         flex: 0.15,

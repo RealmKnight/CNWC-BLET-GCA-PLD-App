@@ -70,6 +70,7 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
   const [currentDateField, setCurrentDateField] = useState<string | null>(null);
   const [tempDate, setTempDate] = useState<Date>(new Date());
   const [isConfirmModalVisible, setIsConfirmModalVisible] = useState(false);
+  const [currentUserRole, setCurrentUserRole] = useState<string | null>(null);
 
   // Member data
   const [formData, setFormData] = useState<any>({});
@@ -85,6 +86,74 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
   const [isLoadingZones, setIsLoadingZones] = useState(false);
 
   const { availableCalendars, updateMember } = useAdminMemberManagementStore();
+
+  // Role-based permission helper functions
+  const isDivisionAdmin = useCallback(() => {
+    return currentUserRole === "division_admin";
+  }, [currentUserRole]);
+
+  const canEditField = useCallback(
+    (fieldName: string) => {
+      // Division admins can't edit these fields
+      const divisionAdminReadonlyFields = [
+        "division_id",
+        "current_zone_id",
+        "home_zone_id",
+        "calendar_id",
+        "system_sen_type",
+        "rank",
+        "deleted",
+      ];
+
+      if (isDivisionAdmin() && divisionAdminReadonlyFields.includes(fieldName)) {
+        return false;
+      }
+
+      return true;
+    },
+    [isDivisionAdmin]
+  );
+
+  const canViewSection = useCallback(
+    (sectionName: string) => {
+      // Division admins can't view these sections
+      const divisionAdminHiddenSections = ["seniority"];
+
+      if (isDivisionAdmin() && divisionAdminHiddenSections.includes(sectionName)) {
+        return false;
+      }
+
+      return true;
+    },
+    [isDivisionAdmin]
+  );
+
+  // Get current user role
+  useEffect(() => {
+    const getCurrentUserRole = async () => {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        if (session?.user?.id) {
+          const { data: userData, error } = await supabase
+            .from("members")
+            .select("role")
+            .eq("id", session.user.id)
+            .single();
+
+          if (!error && userData) {
+            setCurrentUserRole(userData.role);
+            console.log("Current user role:", userData.role);
+          }
+        }
+      } catch (error) {
+        console.error("Error getting current user role:", error);
+      }
+    };
+
+    getCurrentUserRole();
+  }, []);
 
   // Fetch all divisions
   useEffect(() => {
@@ -189,20 +258,26 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
 
         if (error) throw error;
 
-        // Get auth user data if the member has a user_id
-        if (data.user_id) {
-          const { data: userData, error: userError } = await supabase
-            .from("auth_user_data")
-            .select("email, phone")
-            .eq("id", data.user_id)
-            .single();
+        // Get auth user data with admin privileges
+        try {
+          const { data: authData, error: authError } = await supabase.rpc("admin_get_member_auth", {
+            member_pin_number: pinNumber,
+          });
 
-          if (!userError && userData) {
-            setAuthUser({
-              email: userData.email,
-              phone: userData.phone,
-            });
+          if (authError) {
+            console.error("Error fetching auth data:", authError);
+          } else if (authData) {
+            console.log("Auth data:", authData);
+
+            if (authData.email || authData.phone) {
+              setAuthUser({
+                email: authData.email || null,
+                phone: authData.phone || null,
+              });
+            }
           }
+        } catch (authError) {
+          console.error("Error in admin_get_member_auth call:", authError);
         }
 
         setFormData(data);
@@ -367,14 +442,23 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
 
   // Handle date field click
   const handleDateFieldClick = (field: string) => {
-    if (isWeb) {
-      // For web, open a custom date picker modal
-      setCurrentDateField(field);
-      const currentDate = formData[field] ? new Date(formData[field]) : new Date();
-      setTempDate(currentDate);
-      setWebDatePickerModalVisible(true);
+    if (Platform.OS === "web") {
+      // For web, handle desktop vs mobile differently
+      if (isMobileView) {
+        // On mobile web, use a native-like date input in a modal
+        setCurrentDateField(field);
+        const currentDate = formData[field] ? new Date(formData[field]) : new Date();
+        setTempDate(currentDate);
+        setWebDatePickerModalVisible(true);
+      } else {
+        // On desktop web, show the inline date picker
+        setCurrentDateField(field);
+        const currentDate = formData[field] ? new Date(formData[field]) : new Date();
+        setTempDate(currentDate);
+        setWebDatePickerModalVisible(true);
+      }
     } else {
-      // For mobile, use the native picker
+      // For native iOS/Android, use the platform picker
       setShowDatePicker(field);
     }
   };
@@ -597,6 +681,7 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
         style={[
           styles.textInput,
           multiline && styles.multilineInput,
+          !canEditField(field) && styles.readonlyInput,
           {
             color: textColor,
             borderColor: borderColor,
@@ -611,6 +696,7 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
         keyboardType={keyboardType}
         multiline={multiline}
         numberOfLines={multiline ? 3 : 1}
+        editable={canEditField(field)}
       />
     </View>
   );
@@ -619,22 +705,36 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
   const renderDateField = (label: string, field: string) => (
     <View style={styles.fieldContainer}>
       <ThemedText style={styles.fieldLabel}>{label}</ThemedText>
-      {isWeb ? (
-        // Web implementation for date
+
+      {Platform.OS === "web" ? (
+        // Web implementation
         <TouchableOpacityComponent
-          style={[styles.dateInput, { borderColor, backgroundColor }]}
-          onPress={() => handleDateFieldClick(field)}
+          style={[styles.dateInput, !canEditField(field) && styles.readonlyInput, { borderColor, backgroundColor }]}
+          onPress={() => canEditField(field) && handleDateFieldClick(field)}
+          disabled={!canEditField(field)}
         >
-          <ThemedText>{formData[field] ? formatDate(formData[field]) : "Select Date"}</ThemedText>
+          <View style={styles.dateInputContent}>
+            <ThemedText>{formData[field] ? formatDate(formData[field]) : "Select Date"}</ThemedText>
+            <Ionicons name="calendar-outline" size={18} color={textColor} style={{ opacity: 0.7 }} />
+          </View>
         </TouchableOpacityComponent>
       ) : (
-        // Mobile native implementation
+        // Native mobile implementation
         <>
           <TouchableOpacityComponent
-            style={[styles.dateInput, { borderColor, backgroundColor }]}
-            onPress={() => handleDateFieldClick(field)}
+            style={[styles.dateInput, !canEditField(field) && styles.readonlyInput, { borderColor, backgroundColor }]}
+            onPress={() => canEditField(field) && handleDateFieldClick(field)}
+            disabled={!canEditField(field)}
           >
-            <ThemedText>{formData[field] ? formatDate(formData[field]) : "Select Date"}</ThemedText>
+            <View style={styles.dateInputContent}>
+              <ThemedText>{formData[field] ? formatDate(formData[field]) : "Select Date"}</ThemedText>
+              <Ionicons
+                name={Platform.OS === "ios" ? "calendar-outline" : "calendar"}
+                size={18}
+                color={textColor}
+                style={{ opacity: 0.7 }}
+              />
+            </View>
           </TouchableOpacityComponent>
 
           {showDatePicker === field && (
@@ -643,7 +743,15 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
               mode="date"
               display={Platform.OS === "ios" ? "spinner" : "default"}
               onChange={(_, date) => handleDateChange(field, date)}
-              // Add maximumDate prop if necessary, e.g., maxDate={new Date()}
+              // Theme-aware styling for iOS
+              textColor={Platform.OS === "ios" ? textColor : undefined}
+              // Add iOS/Android specific props
+              {...(Platform.OS === "ios"
+                ? {
+                    themeVariant: colorScheme,
+                    style: { width: "100%" },
+                  }
+                : {})}
             />
           )}
         </>
@@ -655,40 +763,91 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
   const renderPickerField = (label: string, field: string, options: { label: string; value: any }[]) => (
     <View style={styles.fieldContainer}>
       <ThemedText style={styles.fieldLabel}>{label}</ThemedText>
-      <View style={[styles.pickerContainer, { borderColor }]}>
-        <Picker
-          // Use empty string "" as the value for "no selection" instead of null
-          selectedValue={formData[field] ?? ""}
-          onValueChange={(value) => handleChange(field, value)}
-          style={[
-            styles.picker,
-            {
+      <View style={[styles.pickerContainer, !canEditField(field) && styles.readonlyInput, { borderColor }]}>
+        {Platform.OS === "web" ? (
+          // Web implementation with better styling
+          <View style={styles.webPickerWrapper}>
+            <Picker
+              selectedValue={formData[field] ?? ""}
+              onValueChange={(value) => canEditField(field) && handleChange(field, value)}
+              style={[
+                styles.picker,
+                styles.webPicker,
+                {
+                  color: textColor,
+                  backgroundColor: backgroundColor,
+                },
+              ]}
+              dropdownIconColor={textColor}
+              accessibilityLabel={`Select ${label}`}
+              enabled={canEditField(field)}
+            >
+              <Picker.Item label="Select..." value="" color={textColor} style={{ backgroundColor: backgroundColor }} />
+              {options.map((option) => (
+                <Picker.Item
+                  key={option.value}
+                  label={option.label}
+                  value={option.value}
+                  color={textColor}
+                  style={{ backgroundColor: backgroundColor }}
+                />
+              ))}
+            </Picker>
+            <Ionicons name="chevron-down" size={16} color={textColor} style={styles.webPickerIcon} />
+          </View>
+        ) : Platform.OS === "ios" ? (
+          // iOS-specific implementation
+          <Picker
+            selectedValue={formData[field] ?? ""}
+            onValueChange={(value) => canEditField(field) && handleChange(field, value)}
+            style={[
+              styles.picker,
+              styles.iosPicker,
+              {
+                color: textColor,
+                backgroundColor: backgroundColor,
+              },
+            ]}
+            itemStyle={{
+              fontSize: 16,
+              height: 120,
               color: textColor,
-              backgroundColor: backgroundColor,
-            },
-          ]}
-          dropdownIconColor={textColor}
-          // On Web, need accessibilityLabel for screen readers
-          accessibilityLabel={`Select ${label}`}
-        >
-          {/* Use "" for the placeholder value */}
-          <Picker.Item
-            label="Select..."
-            value=""
-            color={textColor}
-            style={{ backgroundColor: backgroundColor }}
-            // enabled={false} // Optionally disable the placeholder item
-          />
-          {options.map((option) => (
-            <Picker.Item
-              key={option.value}
-              label={option.label}
-              value={option.value}
-              color={textColor}
-              style={{ backgroundColor: backgroundColor }}
-            />
-          ))}
-        </Picker>
+            }}
+            enabled={canEditField(field)}
+          >
+            <Picker.Item label="Select..." value="" />
+            {options.map((option) => (
+              <Picker.Item key={option.value} label={option.label} value={option.value} />
+            ))}
+          </Picker>
+        ) : (
+          // Android-specific implementation
+          <Picker
+            selectedValue={formData[field] ?? ""}
+            onValueChange={(value) => canEditField(field) && handleChange(field, value)}
+            style={[
+              styles.androidPicker,
+              {
+                color: textColor,
+                backgroundColor: backgroundColor,
+              },
+              !canEditField(field) && styles.readonlyInput,
+            ]}
+            dropdownIconColor={textColor}
+            enabled={canEditField(field)}
+            mode="dropdown"
+          >
+            <Picker.Item label="Select..." value="" style={{ backgroundColor: backgroundColor, color: textColor }} />
+            {options.map((option) => (
+              <Picker.Item
+                key={option.value}
+                label={option.label}
+                value={option.value}
+                style={{ backgroundColor: backgroundColor, color: textColor }}
+              />
+            ))}
+          </Picker>
+        )}
       </View>
     </View>
   );
@@ -697,14 +856,41 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
   const renderSwitchField = (label: string, field: string) => (
     <View style={styles.switchFieldContainer}>
       <ThemedText style={styles.fieldLabel}>{label}</ThemedText>
-      <Switch
-        trackColor={{ false: Colors[colorScheme].border, true: tintColor }}
-        thumbColor={formData[field] ? Colors[colorScheme].background : Colors[colorScheme].icon}
-        ios_backgroundColor={Colors[colorScheme].border}
-        onValueChange={(value) => handleChange(field, value)}
-        value={Boolean(formData[field])}
-        accessibilityLabel={label}
-      />
+      {Platform.OS === "web" ? (
+        // Web implementation with better styling
+        <View style={styles.switchWrapper}>
+          <Switch
+            trackColor={{ false: Colors[colorScheme].border, true: tintColor }}
+            thumbColor={formData[field] ? Colors[colorScheme].background : Colors[colorScheme].icon}
+            ios_backgroundColor={Colors[colorScheme].border}
+            onValueChange={(value) => (canEditField(field) ? handleChange(field, value) : undefined)}
+            value={Boolean(formData[field])}
+            accessibilityLabel={label}
+            disabled={!canEditField(field)}
+            style={isMobileView ? styles.mobileSwitch : styles.webSwitch}
+          />
+        </View>
+      ) : (
+        // Native implementation
+        <Switch
+          trackColor={{
+            false: Platform.OS === "ios" ? Colors[colorScheme].border : Colors[colorScheme].textDim,
+            true: tintColor,
+          }}
+          thumbColor={
+            Platform.OS === "ios"
+              ? Colors[colorScheme].background
+              : formData[field]
+              ? tintColor
+              : Colors[colorScheme].icon
+          }
+          ios_backgroundColor={Colors[colorScheme].border}
+          onValueChange={(value) => (canEditField(field) ? handleChange(field, value) : undefined)}
+          value={Boolean(formData[field])}
+          accessibilityLabel={label}
+          disabled={!canEditField(field)}
+        />
+      )}
     </View>
   );
 
@@ -740,7 +926,7 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
 
   // Web date picker modal
   const renderWebDatePickerModal = () => {
-    if (!isWeb) return null;
+    if (Platform.OS !== "web") return null;
 
     return (
       <RNModal
@@ -752,32 +938,66 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
         <TouchableWithoutFeedback onPress={handleWebDateCancel}>
           <View style={styles.modalOverlay}>
             <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
-              <View style={[styles.modalContent, { backgroundColor, borderColor }]}>
+              <View
+                style={[
+                  styles.modalContent,
+                  isMobileView && styles.modalContentMobile,
+                  { backgroundColor, borderColor },
+                ]}
+              >
                 <ThemedText style={styles.modalTitle}>Select Date</ThemedText>
 
-                <input
-                  type="date"
-                  value={tempDate ? tempDate.toISOString().split("T")[0] : ""}
-                  onChange={handleWebDateInputChange}
-                  style={{
-                    color: textColor,
-                    backgroundColor: backgroundColor,
-                    borderColor: borderColor,
-                    borderWidth: 1,
-                    borderRadius: 4,
-                    padding: 10,
-                    marginTop: 10,
-                    marginBottom: 10,
-                    fontSize: 16,
-                    width: "100%",
-                  }}
-                  // Add accessibility label
-                  aria-label="Select date"
-                />
+                {isMobileView ? (
+                  // Mobile web date input
+                  <View style={styles.mobileDateInputContainer}>
+                    <input
+                      type="date"
+                      value={tempDate ? tempDate.toISOString().split("T")[0] : ""}
+                      onChange={handleWebDateInputChange}
+                      style={{
+                        color: textColor,
+                        backgroundColor: backgroundColor,
+                        borderColor: borderColor,
+                        borderWidth: 1,
+                        borderRadius: 4,
+                        padding: 12,
+                        marginTop: 10,
+                        marginBottom: 10,
+                        fontSize: 16,
+                        width: "100%",
+                        maxWidth: "100%",
+                        appearance: "none", // Remove browser styling
+                      }}
+                      aria-label="Select date"
+                    />
+                  </View>
+                ) : (
+                  // Desktop web date picker with more space
+                  <View style={styles.desktopDatePickerContainer}>
+                    <input
+                      type="date"
+                      value={tempDate ? tempDate.toISOString().split("T")[0] : ""}
+                      onChange={handleWebDateInputChange}
+                      style={{
+                        color: textColor,
+                        backgroundColor: backgroundColor,
+                        borderColor: borderColor,
+                        borderWidth: 1,
+                        borderRadius: 4,
+                        padding: 10,
+                        marginTop: 10,
+                        marginBottom: 20,
+                        fontSize: 16,
+                        width: "100%",
+                      }}
+                      aria-label="Select date"
+                    />
+                  </View>
+                )}
 
-                <View style={styles.modalButtons}>
+                <View style={[styles.modalButtons, isMobileView && styles.modalButtonsMobile]}>
                   <TouchableOpacityComponent
-                    style={[styles.modalButton, { borderColor }]}
+                    style={[styles.modalButton, isMobileView && styles.modalButtonMobile, { borderColor }]}
                     onPress={handleWebDateCancel}
                     accessibilityRole="button"
                     accessibilityLabel="Cancel date selection"
@@ -786,7 +1006,12 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
                   </TouchableOpacityComponent>
 
                   <TouchableOpacityComponent
-                    style={[styles.modalButton, styles.applyButton, { backgroundColor: tintColor }]}
+                    style={[
+                      styles.modalButton,
+                      styles.applyButton,
+                      isMobileView && styles.modalButtonMobile,
+                      { backgroundColor: tintColor },
+                    ]}
                     onPress={handleWebDateApply}
                     accessibilityRole="button"
                     accessibilityLabel="Apply selected date"
@@ -815,6 +1040,30 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
     { label: "Division Admin", value: "division_admin" },
     { label: "User", value: "user" },
   ];
+
+  // Get filtered role options based on current user's role
+  const getFilteredRoleOptions = useCallback(() => {
+    // Default to just showing user role if we don't know current role
+    if (!currentUserRole) {
+      return roleOptions.filter((option) => option.value === "user");
+    }
+
+    // Define role hierarchy and permissions
+    switch (currentUserRole) {
+      case "application_admin":
+        // Application admins can assign any role
+        return roleOptions;
+      case "union_admin":
+        // Union admins can't assign application_admin role
+        return roleOptions.filter((option) => option.value !== "application_admin");
+      case "division_admin":
+        // Division admins can only assign division_admin and user roles
+        return roleOptions.filter((option) => option.value === "division_admin" || option.value === "user");
+      default:
+        // Regular users can't assign roles
+        return roleOptions.filter((option) => option.value === "user");
+    }
+  }, [currentUserRole]);
 
   // System Seniority Type options from the database values
   const systemSenTypeOptions = [
@@ -909,6 +1158,7 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
       </View>
 
       <ScrollView style={styles.formContainer} contentContainerStyle={styles.formContent}>
+        {renderAuthUserInfo()}
         {/* Basic Info Section */}
         {renderSectionHeader("Basic Information")}
         <View style={isMobileView ? styles.formColumnMobile : styles.formColumnsDesktop}>
@@ -926,7 +1176,7 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
             {renderPickerField("Home Zone", "home_zone_id", allZoneOptions)}
             {/* Use updated calendarOptions */}
             {renderPickerField("Calendar", "calendar_id", calendarOptions)}
-            {renderPickerField("Role", "role", roleOptions)}
+            {renderPickerField("Role", "role", getFilteredRoleOptions())}
           </View>
         </View>
 
@@ -941,7 +1191,8 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
           <View style={isMobileView ? styles.fullWidth : styles.formColumn}>
             {renderPickerField("System Sen Type", "system_sen_type", systemSenTypeOptions)}
             {renderTextField("Rank", "rank", "Rank")}
-            {renderSwitchField("Deleted", "deleted")}
+            {/* Only render Deleted toggle for admins with appropriate permissions */}
+            {!isDivisionAdmin() && renderSwitchField("Deleted", "deleted")}
           </View>
         </View>
 
@@ -954,7 +1205,6 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
             {renderTextField("Current Vacation Split", "curr_vacation_split", "Current Split Weeks Count", "numeric")}
             {renderTextField("SDV Entitlement", "sdv_entitlement", "Current Year SDVs", "numeric")}
             {renderTextField("PLD Rolled Over", "pld_rolled_over", "PLDs Rolled Over", "numeric")}
-            {renderTextField("Max PLDs", "max_plds", "Maximum PLDs", "numeric")}
           </View>
 
           <View style={isMobileView ? styles.fullWidth : styles.formColumn}>
@@ -962,28 +1212,32 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
             {renderTextField("Next Vacation Weeks", "next_vacation_weeks", "Total Next Year Weeks", "numeric")}
             {renderTextField("Next Vacation Split", "next_vacation_split", "Next Split Weeks Count", "numeric")}
             {renderTextField("SDV Election", "sdv_election", "Next Year SDVs", "numeric")}
-            {renderTextField("Prior Vac Sys", "prior_vac_sys", "Prior Vacation System", "numeric")}
+            {renderTextField("Max PLDs", "max_plds", "Maximum PLDs", "numeric")}
           </View>
         </View>
 
-        {/* Seniority Section */}
-        {renderSectionHeader("Seniority Rosters")}
-        <View style={isMobileView ? styles.formColumnMobile : styles.formColumnsDesktop}>
-          <View style={isMobileView ? styles.fullWidth : styles.formColumn}>
-            {renderTextField("WC Seniority Roster", "wc_sen_roster", "WC Seniority Roster", "numeric")}
-            {renderTextField("DWP Seniority Roster", "dwp_sen_roster", "DWP Seniority Roster", "numeric")}
-          </View>
+        {/* Seniority Section - only show if user has permission */}
+        {canViewSection("seniority") && (
+          <>
+            {renderSectionHeader("Seniority Rosters")}
+            <View style={isMobileView ? styles.formColumnMobile : styles.formColumnsDesktop}>
+              <View style={isMobileView ? styles.fullWidth : styles.formColumn}>
+                {renderTextField("WC Seniority Roster", "wc_sen_roster", "WC Seniority Roster", "numeric")}
+                {renderTextField("DWP Seniority Roster", "dwp_sen_roster", "DWP Seniority Roster", "numeric")}
+              </View>
 
-          <View style={isMobileView ? styles.fullWidth : styles.formColumn}>
-            {renderTextField("DMIR Seniority Roster", "dmir_sen_roster", "DMIR Seniority Roster", "numeric")}
-            {renderTextField("EJE Seniority Roster", "eje_sen_roster", "EJE Seniority Roster", "numeric")}
-          </View>
-        </View>
+              <View style={isMobileView ? styles.fullWidth : styles.formColumn}>
+                {renderTextField("DMIR Seniority Roster", "dmir_sen_roster", "DMIR Seniority Roster", "numeric")}
+                {renderTextField("EJE Seniority Roster", "eje_sen_roster", "EJE Seniority Roster", "numeric")}
+                {renderTextField("Prior Vac Sys", "prior_vac_sys", "Prior Vacation System", "numeric")}
+              </View>
+            </View>
+          </>
+        )}
 
         {/* Additional Notes */}
         {renderSectionHeader("Additional Information")}
         {renderTextField("Misc Notes", "misc_notes", "Miscellaneous Notes", "default", true)}
-        {renderAuthUserInfo()}
 
         <View style={styles.actionContainer}>
           <TouchableOpacityComponent
@@ -1178,6 +1432,10 @@ const styles = StyleSheet.create({
       outlineWidth: 0, // Start with 0, manage focus state if needed
     }),
   },
+  readonlyInput: {
+    opacity: 0.7,
+    backgroundColor: "#f5f5f5",
+  },
   multilineInput: {
     height: 80,
     textAlignVertical: "top",
@@ -1187,12 +1445,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 6,
     overflow: "hidden", // Ensures border radius is applied correctly
+    // Let the Picker component control its height on Android
+    ...(Platform.OS !== "android" && { height: 40 }),
   },
   picker: {
-    height: 40,
     width: "100%",
     fontSize: 14, // Consistent font size
+    // Base height for non-Android platforms
+    ...(Platform.OS !== "android" && { height: 40 }),
     ...(Platform.OS === "web" && {
+      height: 40, // Explicit height for web
       borderWidth: 0, // Remove default browser border inside the container
       paddingLeft: 10, // Adjust padding
       paddingRight: 30, // Space for dropdown arrow
@@ -1210,12 +1472,49 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     justifyContent: "center",
   },
+  dateInputContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
   switchFieldContainer: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 16,
     paddingVertical: 4, // Add some padding for better touch area
+  },
+  switchWrapper: {
+    // Styling for web switch wrapper
+  },
+  webSwitch: {
+    // Desktop web specific styling
+  },
+  mobileSwitch: {
+    transform: [{ scale: 1.2 }], // Make mobile switches slightly larger
+  },
+  webPickerWrapper: {
+    flexDirection: "row",
+    alignItems: "center",
+    position: "relative",
+    height: 40, // Ensure wrapper has height for web
+  },
+  webPicker: {
+    flex: 1,
+    height: "100%", // Ensure picker fills the wrapper height
+  },
+  webPickerIcon: {
+    position: "absolute",
+    right: 10,
+    pointerEvents: "none",
+  },
+  iosPicker: {
+    height: 120, // Specific height for iOS spinner
+  },
+  androidPicker: {
+    // Don't set a fixed height for Android, let it adjust
+    width: "100%",
+    fontSize: 14,
   },
   authUserInfoContainer: {
     marginTop: 24,
@@ -1292,6 +1591,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 16,
   },
+  modalContentMobile: {
+    width: "95%",
+    padding: 16,
+  },
   modalTitle: {
     fontSize: 18,
     fontWeight: "500",
@@ -1304,6 +1607,9 @@ const styles = StyleSheet.create({
     width: "100%",
     marginTop: 16,
   },
+  modalButtonsMobile: {
+    marginTop: 12,
+  },
   modalButton: {
     paddingVertical: 10, // Consistent padding
     paddingHorizontal: 20,
@@ -1312,6 +1618,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     minWidth: 100,
+  },
+  modalButtonMobile: {
+    minWidth: 80,
+    paddingHorizontal: 15,
   },
   applyButton: {
     borderWidth: 0,
@@ -1391,5 +1701,11 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     marginTop: 16,
     textAlign: "center",
+  },
+  mobileDateInputContainer: {
+    width: "100%",
+  },
+  desktopDatePickerContainer: {
+    width: "100%",
   },
 });

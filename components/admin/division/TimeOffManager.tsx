@@ -15,7 +15,11 @@ import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { Ionicons } from "@expo/vector-icons";
 import { useUserStore } from "@/store/userStore";
-import { useAdminCalendarManagementStore } from "@/store/adminCalendarManagementStore";
+import {
+  useAdminCalendarManagementStore,
+  calculateVacationWeeks,
+  calculatePLDs,
+} from "@/store/adminCalendarManagementStore";
 import type { Member } from "@/store/adminCalendarManagementStore";
 
 interface TimeOffManagerProps {
@@ -74,6 +78,59 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
     // Fallback to Object.values if the array isn't available
     return Object.values(memberTimeOffData);
   }, [memberTimeOffData]);
+
+  // Effect to automatically stage changes if calculated values differ from stored ones
+  useEffect(() => {
+    console.log("[TimeOffManager] Checking for calculated changes...");
+    // Access the original, potentially unmodified data directly from the store state
+    const originalMemberData = useAdminCalendarManagementStore.getState().memberTimeOffData;
+
+    membersList.forEach((member: Member) => {
+      if (!member || !originalMemberData[member.pin_number]) return; // Skip if member data is missing
+
+      const pinNumber = member.pin_number;
+      const originalData = originalMemberData[pinNumber];
+      const existingChanges = timeOffChanges[pinNumber] || {};
+
+      const isCurrentYear = selectedTimeOffYear === "current";
+
+      // Determine the reference date for calculation
+      const currentReferenceDate = new Date();
+      const nextReferenceDate = new Date();
+      nextReferenceDate.setFullYear(currentReferenceDate.getFullYear() + 1);
+      const referenceDate = isCurrentYear ? currentReferenceDate : nextReferenceDate;
+
+      // --- Check Vacation Weeks ---
+      const calculatedVacationWeeks = calculateVacationWeeks(member.company_hire_date, referenceDate);
+      const originalVacationField = isCurrentYear ? "curr_vacation_weeks" : "next_vacation_weeks";
+      const originalVacationValue = originalData[originalVacationField];
+
+      // If calculated value differs from original AND user hasn't already changed it
+      if (
+        calculatedVacationWeeks !== originalVacationValue &&
+        existingChanges[originalVacationField] === undefined // Check if user hasn't manually changed this field
+      ) {
+        console.log(
+          `[TimeOffManager] Staging calculated ${originalVacationField} change for ${pinNumber}: ${originalVacationValue} -> ${calculatedVacationWeeks}`
+        );
+        // Use a timeout to avoid triggering state updates during render cycle if possible
+        // and prevent potential infinite loops if calculateVacationWeeks had side effects (it shouldn't)
+        setTimeout(() => {
+          setTimeOffChange(pinNumber, originalVacationField, calculatedVacationWeeks);
+        }, 0);
+      }
+
+      // --- Optionally Check PLDs (but likely not needed based on rules) ---
+      // const calculatedPlds = calculatePLDs(member.company_hire_date, referenceDate);
+      // const originalPldValue = originalData.max_plds; // Assuming max_plds always reflects current
+      // if (calculatedPlds !== originalPldValue && existingChanges['max_plds'] === undefined) {
+      //   // console.log(`[TimeOffManager] Staging calculated PLD change for ${pinNumber}: ${originalPldValue} -> ${calculatedPlds}`);
+      //   // setTimeOffChange(pinNumber, 'max_plds', calculatedPlds); // Be cautious enabling this
+      // }
+    });
+    // Depend on membersList and selectedTimeOffYear to re-run checks when they change.
+    // Also include setTimeOffChange in dependency array as per linting rules.
+  }, [membersList, selectedTimeOffYear, setTimeOffChange, timeOffChanges]);
 
   // Load division members when selectedDivision changes
   useEffect(() => {
@@ -228,11 +285,15 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
   const renderTableHeader = () => {
     return (
       <View style={styles.tableHeader}>
-        <ThemedText style={[styles.headerCell, { flex: 2 }]}>Name</ThemedText>
-        <ThemedText style={[styles.headerCell, { textAlign: "center" }]}>PIN</ThemedText>
-        <ThemedText style={[styles.headerCell, { flex: 1.5 }]}>Hire Date</ThemedText>
-        <ThemedText style={[styles.headerCell, { textAlign: "center" }]}>Vacation Weeks</ThemedText>
-        <ThemedText style={[styles.headerCell, { textAlign: "center" }]}>Vacation Split</ThemedText>
+        <ThemedText style={[styles.headerCell, { flex: isMobile ? 2.5 : 2 }]}>Name</ThemedText>
+        {!isMobile && <ThemedText style={[styles.headerCell, { textAlign: "center" }]}>PIN</ThemedText>}
+        {!isMobile && <ThemedText style={[styles.headerCell, { flex: 1.5 }]}>Hire Date</ThemedText>}
+        <ThemedText style={[styles.headerCell, { textAlign: "center" }]}>
+          {isMobile ? "Vac Wks" : "Vacation Weeks"}
+        </ThemedText>
+        <ThemedText style={[styles.headerCell, { textAlign: "center" }]}>
+          {isMobile ? "Vac Splt" : "Vacation Split"}
+        </ThemedText>
         <ThemedText style={[styles.headerCell, { textAlign: "center" }]}>Weeks to Bid</ThemedText>
         <ThemedText style={[styles.headerCell, { textAlign: "center" }]}>PLDs</ThemedText>
         <ThemedText style={[styles.headerCell, { textAlign: "center" }]}>SDVs</ThemedText>
@@ -264,19 +325,29 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
 
     return filteredMembers.map((member: Member) => {
       const isCurrentYear = selectedTimeOffYear === "current";
-      const originalVacationWeeks = isCurrentYear ? member.curr_vacation_weeks : member.next_vacation_weeks;
-      const originalVacationSplit = isCurrentYear ? member.curr_vacation_split : member.next_vacation_split;
-
-      // Get values from changes if they exist
       const pinChanges = timeOffChanges[member.pin_number] || {};
+
+      // Determine the reference date for calculation based on selected year
+      const currentReferenceDate = new Date();
+      const nextReferenceDate = new Date();
+      nextReferenceDate.setFullYear(currentReferenceDate.getFullYear() + 1);
+      const referenceDate = isCurrentYear ? currentReferenceDate : nextReferenceDate;
+
+      // Calculate the correct base entitlements for the selected year
+      const calculatedVacationWeeks = calculateVacationWeeks(member.company_hire_date, referenceDate);
+      const calculatedPlds = calculatePLDs(member.company_hire_date, referenceDate);
+
+      // Determine displayed vacation weeks: prioritize changes, then use calculated value
       const vacationWeeks = isCurrentYear
         ? pinChanges.curr_vacation_weeks !== undefined
           ? pinChanges.curr_vacation_weeks
-          : originalVacationWeeks
+          : calculatedVacationWeeks
         : pinChanges.next_vacation_weeks !== undefined
         ? pinChanges.next_vacation_weeks
-        : originalVacationWeeks;
+        : calculatedVacationWeeks;
 
+      // Determine displayed vacation split: prioritize changes, then use original value
+      const originalVacationSplit = isCurrentYear ? member.curr_vacation_split : member.next_vacation_split;
       const vacationSplit = isCurrentYear
         ? pinChanges.curr_vacation_split !== undefined
           ? pinChanges.curr_vacation_split
@@ -295,7 +366,12 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
         sdvs = pinChanges.sdv_election !== undefined ? pinChanges.sdv_election : member.sdv_election;
       }
 
+      // Calculate weeks to bid based on the *displayed* vacationWeeks and vacationSplit
       const weeksToBid = calculateWeeksToBid(vacationWeeks, vacationSplit);
+
+      // Determine displayed PLDs (use calculated value for the selected year)
+      // Assuming PLDs aren't directly editable here, so no need to check timeOffChanges
+      const displayPlds = calculatedPlds;
 
       // Check if this member has any changes
       const hasChangesForMember = !!timeOffChanges[member.pin_number];
@@ -304,11 +380,15 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
 
       return (
         <View key={member.pin_number} style={styles.tableRow}>
-          <ThemedText style={[styles.cell, { flex: 2 }]}>{`${member.first_name} ${member.last_name}`}</ThemedText>
-          <ThemedText style={[styles.cell, { textAlign: "center" }]}>{member.pin_number}</ThemedText>
-          <ThemedText style={[styles.cell, { flex: 1.5 }]}>
-            {new Date(member.company_hire_date).toLocaleDateString()}
-          </ThemedText>
+          <ThemedText
+            style={[styles.cell, { flex: isMobile ? 2.5 : 2 }]}
+          >{`${member.first_name} ${member.last_name}`}</ThemedText>
+          {!isMobile && <ThemedText style={[styles.cell, { textAlign: "center" }]}>{member.pin_number}</ThemedText>}
+          {!isMobile && (
+            <ThemedText style={[styles.cell, { flex: 1.5 }]}>
+              {new Date(member.company_hire_date).toLocaleDateString()}
+            </ThemedText>
+          )}
           <ThemedText style={[styles.cell, { textAlign: "center" }]}>{vacationWeeks}</ThemedText>
 
           {/* Editable vacation split as dropdown */}
@@ -369,7 +449,7 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
           </View>
 
           <ThemedText style={[styles.cell, { textAlign: "center" }]}>{weeksToBid}</ThemedText>
-          <ThemedText style={[styles.cell, { textAlign: "center" }]}>{member.max_plds}</ThemedText>
+          <ThemedText style={[styles.cell, { textAlign: "center" }]}>{displayPlds}</ThemedText>
           <ThemedText style={[styles.cell, { textAlign: "center" }]}>{sdvs}</ThemedText>
 
           {/* Save button for this row */}
@@ -422,13 +502,21 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
         <>
           {/* Main content in a relative container - no more need for the saveButtonContainer */}
           <View style={styles.contentWithSaveButton}>
-            {/* Table area */}
+            {/* Table area - Wrap ScrollView in View with flex: 1 */}
             <View style={styles.tableContainer}>
               {renderTableHeader()}
-              <ScrollView style={styles.tableScrollView}>
-                {renderTableRows()}
-                <View style={{ height: 20 }} />
-              </ScrollView>
+              {/* This View allows the ScrollView to flex correctly */}
+              <View style={{ flex: 1 }}>
+                <ScrollView
+                  style={styles.tableScrollView} // Style might just need basic layout, not flex: 1
+                  nestedScrollEnabled={true} // Ensure nested scrolling is enabled
+                  scrollEnabled={true}
+                >
+                  {renderTableRows()}
+                  {/* Add some padding at the bottom if needed */}
+                  <View style={{ height: 20 }} />
+                </ScrollView>
+              </View>
             </View>
           </View>
         </>
@@ -503,11 +591,13 @@ const styles = StyleSheet.create({
     }),
   },
   tableContainer: {
-    flex: 1,
+    flex: 1, // Let table container take available space
     borderWidth: 1,
     borderColor: Colors.light.border,
     borderRadius: 8,
-    overflow: "hidden",
+    overflow: "hidden", // Important for containing the scrolling
+    display: "flex", // Ensure flex properties apply
+    flexDirection: "column", // Stack header and scroll view vertically
   },
   tableHeader: {
     flexDirection: "row",
@@ -516,6 +606,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     borderBottomWidth: 1,
     borderBottomColor: Colors.light.border,
+    // Header should not flex, size based on content
   },
   headerCell: {
     flex: 1,
@@ -523,7 +614,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   tableScrollView: {
-    flex: 1,
+    // ScrollView itself doesn't need flex: 1 when wrapped
+    // flex: 1, // Removed flex: 1 here
   },
   tableRow: {
     flexDirection: "row",

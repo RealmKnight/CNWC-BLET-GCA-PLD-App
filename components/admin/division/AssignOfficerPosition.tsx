@@ -112,34 +112,59 @@ export function AssignOfficerPosition({
       console.log("[AssignOfficerPosition] Fetching members for division:", division);
       setIsLoading(true);
 
-      // First, let's log what we're querying
+      // Step 1: Get division ID from division name
+      console.log(`[AssignOfficerPosition] Fetching ID for division name: ${division}`);
+      const { data: divisionData, error: divisionError } = await supabase
+        .from("divisions")
+        .select("id")
+        .eq("name", division)
+        .single();
+
+      if (divisionError) {
+        console.error("[AssignOfficerPosition] Error fetching division ID:", divisionError);
+        throw new Error(`Division '${division}' not found.`);
+      }
+      if (!divisionData) {
+        throw new Error(`Division '${division}' not found.`);
+      }
+
+      const divisionId = divisionData.id;
+      console.log(`[AssignOfficerPosition] Found division ID: ${divisionId} for name: ${division}`);
+
+      // Step 2: Fetch members using the division ID
       const query = supabase
         .from("members")
         .select("pin_number, first_name, last_name, status")
-        .eq("division", division)
+        .eq("division_id", divisionId) // Use the fetched divisionId
         .eq("status", "ACTIVE")
         .is("deleted", false)
         .order("last_name", { ascending: true });
 
-      console.log("[AssignOfficerPosition] Query parameters:", { division, status: "ACTIVE", deleted: false });
+      console.log("[AssignOfficerPosition] Query parameters:", {
+        division_id: divisionId, // Log the actual ID used
+        status: "ACTIVE",
+        deleted: false,
+      });
 
-      const { data, error } = await query;
+      const { data: memberData, error: memberError } = await query;
 
-      if (error) {
-        console.error("[AssignOfficerPosition] Database error:", error);
-        throw error;
+      if (memberError) {
+        console.error("[AssignOfficerPosition] Database error fetching members:", memberError);
+        throw memberError;
       }
 
-      console.log("[AssignOfficerPosition] Raw response:", data);
-      console.log("[AssignOfficerPosition] Fetched members:", data?.length || 0);
+      console.log("[AssignOfficerPosition] Raw response:", memberData);
+      console.log("[AssignOfficerPosition] Fetched members:", memberData?.length || 0);
 
-      if (data) {
-        setMembers(data);
-        setIsLoading(false);
+      if (memberData) {
+        setMembers(memberData);
       }
     } catch (err) {
       console.error("[AssignOfficerPosition] Error fetching members:", err);
-      setError("Failed to fetch members");
+      const message = err instanceof Error ? err.message : "Failed to fetch members";
+      setError(message);
+      setMembers([]); // Clear members on error
+    } finally {
       setIsLoading(false);
     }
   };
@@ -337,15 +362,15 @@ export function AssignOfficerPosition({
           </ThemedView>
         )}
         <TextInput
-          style={[styles.searchInput, { color: Colors[colorScheme].text }]}
+          style={[styles.searchInput, { color: Colors.dark.text }]}
           placeholder="Search members..."
-          placeholderTextColor={Colors[colorScheme].textDim}
+          placeholderTextColor={Colors.dark.textDim}
           value={searchQuery}
           onChangeText={setSearchQuery}
         />
         {searchQuery !== "" && (
           <TouchableOpacityComponent style={styles.clearButton} onPress={() => setSearchQuery("")}>
-            <Ionicons name="close-circle" size={20} color={Colors[colorScheme].text} />
+            <Ionicons name="close-circle" size={20} color={Colors.dark.buttonText} />
           </TouchableOpacityComponent>
         )}
       </ThemedView>
@@ -398,7 +423,7 @@ export function AssignOfficerPosition({
           >
             <View style={styles.buttonContent}>
               {isLoading ? (
-                <ActivityIndicator color="#fff" size="small" />
+                <ActivityIndicator color={Colors.dark.text} size="small" />
               ) : (
                 <ThemedText style={styles.buttonText}>{isLoading ? "Assigning..." : "Assign"}</ThemedText>
               )}
@@ -431,7 +456,7 @@ const styles = StyleSheet.create({
   },
   webModalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    backgroundColor: Colors.dark.background,
     justifyContent: "center",
     alignItems: "center",
   },
@@ -439,7 +464,7 @@ const styles = StyleSheet.create({
     width: "100%",
     maxWidth: 600,
     height: "90%",
-    backgroundColor: Colors.light.background,
+    backgroundColor: Colors.dark.background,
     borderRadius: 12,
     overflow: "hidden",
   },
@@ -449,7 +474,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(0, 0, 0, 0.1)",
+    borderBottomColor: Colors.dark.border,
   },
   backButton: {
     width: 40,
@@ -466,10 +491,10 @@ const styles = StyleSheet.create({
   currentHolderCard: {
     margin: 16,
     padding: 16,
-    backgroundColor: Colors.light.background,
+    backgroundColor: Colors.dark.background,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "rgba(0, 0, 0, 0.1)",
+    borderColor: Colors.dark.border,
   },
   currentHolderTitle: {
     fontSize: 16,
@@ -491,13 +516,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(0, 0, 0, 0.1)",
+    borderBottomColor: Colors.dark.border,
+    backgroundColor: Colors.dark.background,
   },
   searchInput: {
     flex: 1,
     height: 40,
     borderWidth: 1,
-    borderColor: "rgba(0, 0, 0, 0.1)",
+    borderColor: Colors.dark.border,
     borderRadius: 8,
     paddingHorizontal: 12,
   },
@@ -508,6 +534,7 @@ const styles = StyleSheet.create({
   },
   memberList: {
     flex: 1,
+    backgroundColor: Colors.dark.background,
   },
   memberListContent: {
     padding: 16,
@@ -517,11 +544,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     padding: 16,
-    backgroundColor: Colors.light.background,
+    backgroundColor: Colors.dark.background,
     borderRadius: 8,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: "rgba(0, 0, 0, 0.1)",
+    borderColor: Colors.dark.border,
   },
   memberInfo: {
     flex: 1,
@@ -536,14 +563,14 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   selectedMember: {
-    borderColor: Colors.light.tint,
-    backgroundColor: Colors.light.tint + "10",
+    borderColor: Colors.dark.tint,
+    backgroundColor: Colors.dark.tint + "10",
   },
   footer: {
     padding: 16,
     borderTopWidth: 1,
-    borderTopColor: "rgba(0, 0, 0, 0.1)",
-    backgroundColor: Colors.light.background,
+    borderTopColor: Colors.dark.border,
+    backgroundColor: Colors.dark.background,
   },
   dateContainer: {
     flexDirection: "row",
@@ -552,7 +579,7 @@ const styles = StyleSheet.create({
   },
   dateText: {
     fontSize: 16,
-    color: Colors.light.tint,
+    color: Colors.dark.tint,
     marginLeft: 8,
   },
   buttonContainer: {
@@ -565,23 +592,26 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     justifyContent: "center",
     alignItems: "center",
+    backgroundColor: Colors.dark.buttonBackground,
   },
   cancelButton: {
-    backgroundColor: "rgba(0, 0, 0, 0.1)",
+    backgroundColor: Colors.dark.buttonBackground,
+    color: Colors.dark.buttonText,
   },
   assignButton: {
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.dark.buttonBackground,
+    color: Colors.dark.buttonText,
   },
   disabledButton: {
     opacity: 0.5,
   },
   buttonText: {
-    color: "#fff",
+    color: Colors.dark.buttonText,
     fontSize: 16,
     fontWeight: "600",
   },
   errorText: {
-    color: Colors.light.error,
+    color: Colors.dark.error,
     marginBottom: 16,
     textAlign: "center",
   },
@@ -597,9 +627,11 @@ const styles = StyleSheet.create({
   },
   dateButton: {
     padding: 8,
-    backgroundColor: `${Colors.light.tint}10`,
+    backgroundColor: `${Colors.dark.tint}10`,
     borderRadius: 8,
     marginLeft: 8,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
   },
   webDatePickerContainer: {
     padding: 20,

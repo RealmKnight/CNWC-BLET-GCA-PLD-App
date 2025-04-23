@@ -83,6 +83,14 @@ interface DynamicStyles extends Record<string, StyleProp<ViewStyle | TextStyle |
   tableRow: StyleProp<ViewStyle>;
   tableCell: StyleProp<ViewStyle | TextStyle>;
   sortableHeader: StyleProp<ViewStyle | TextStyle>;
+  iosPickerSpecificStyle: StyleProp<ViewStyle>;
+  androidPickerSpecificStyle: StyleProp<ViewStyle>;
+  picker: StyleProp<ViewStyle>;
+  webSelect?: StyleProp<TextStyle>;
+  webInput?: StyleProp<TextStyle>;
+  webDateInput?: StyleProp<TextStyle>;
+  searchResults?: StyleProp<ViewStyle>;
+  searchResultItem?: StyleProp<ViewStyle>;
 }
 
 export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelectedCalendarId }: PldSdvManagerProps) {
@@ -129,11 +137,27 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
       } as TextStyle,
       default: {} as TextStyle,
     }),
+    iosPickerSpecificStyle: {
+      height: undefined,
+    },
+    androidPickerSpecificStyle: {
+      paddingHorizontal: 8,
+      height: undefined,
+    },
     picker: {
       width: "100%",
-      height: 40,
       backgroundColor: Colors[colorScheme].background,
       color: Colors[colorScheme].tint,
+      ...(Platform.OS === "ios"
+        ? {
+            height: undefined,
+          }
+        : {}),
+      ...(Platform.OS === "android"
+        ? {
+            paddingHorizontal: 8,
+          }
+        : {}),
     } as ViewStyle,
     input: {
       width: "100%",
@@ -530,6 +554,7 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
           selectedValue={datePreset}
           onValueChange={(value) => setDatePreset(value as DatePreset)}
           style={dynamicStyles.picker as unknown as StyleProp<TextStyle>}
+          dropdownIconColor={Colors[colorScheme].tint}
         >
           <Picker.Item label="Next 7 Days" value="3days" />
           <Picker.Item label="Next 14 Days" value="7days" />
@@ -589,6 +614,7 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
             selectedValue={statusFilter}
             onValueChange={(value) => setStatusFilter(value as RequestStatus | "all")}
             style={dynamicStyles.picker as unknown as StyleProp<TextStyle>}
+            dropdownIconColor={Colors[colorScheme].tint}
           >
             <Picker.Item label="All Statuses" value="all" />
             {REQUEST_STATUSES.map((status) => (
@@ -622,6 +648,7 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
             selectedValue={typeFilter}
             onValueChange={(value) => setTypeFilter(value as RequestType | "all")}
             style={dynamicStyles.picker as unknown as StyleProp<TextStyle>}
+            dropdownIconColor={Colors[colorScheme].tint}
           >
             <Picker.Item label="All Types" value="all" />
             {REQUEST_TYPES.map((type) => (
@@ -760,43 +787,45 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
     }
 
     return (
-      <FlatList
-        data={filteredAndSortedRequests}
-        keyExtractor={(item) => item.id}
-        ListHeaderComponent={
-          <View style={styles.listHeader}>
-            <Pressable style={styles.listHeaderItem} onPress={() => handleSortChange("request_date")}>
-              <ThemedText>Date {sortField === "request_date" && (sortDirection === "asc" ? "↑" : "↓")}</ThemedText>
-            </Pressable>
-            <Pressable style={styles.listHeaderItem} onPress={() => handleSortChange("member")}>
-              <ThemedText>Member {sortField === "member" && (sortDirection === "asc" ? "↑" : "↓")}</ThemedText>
-            </Pressable>
-            <Pressable style={styles.listHeaderItem} onPress={() => handleSortChange("leave_type")}>
-              <ThemedText>Type {sortField === "leave_type" && (sortDirection === "asc" ? "↑" : "↓")}</ThemedText>
-            </Pressable>
-            <Pressable style={styles.listHeaderItem} onPress={() => handleSortChange("status")}>
-              <ThemedText>Status {sortField === "status" && (sortDirection === "asc" ? "↑" : "↓")}</ThemedText>
-            </Pressable>
-          </View>
-        }
-        renderItem={({ item: request }) => (
-          <Pressable
-            style={[styles.listItem, highlightedRequestId === request.id && styles.highlightedListItem]}
-            onPress={() => handleRequestSelect(request)}
-          >
-            <View style={styles.listItemContent}>
-              <ThemedText style={styles.listItemDate as StyleProp<TextStyle>}>
-                {format(parseISO(request.request_date), "MMM d, yyyy")}
-              </ThemedText>
-              <ThemedText style={styles.listItemMember as StyleProp<TextStyle>}>
-                {request.member ? `${request.member.last_name}, ${request.member.first_name}` : "Unknown"}
-              </ThemedText>
-              <ThemedText style={styles.listItemType as StyleProp<TextStyle>}>{request.leave_type}</ThemedText>
-              <ThemedText style={styles.listItemStatus as StyleProp<TextStyle>}>{request.status}</ThemedText>
+      <View style={{ flex: 1 }}>
+        <FlatList
+          data={filteredAndSortedRequests}
+          keyExtractor={(item) => item.id}
+          ListHeaderComponent={
+            <View style={styles.listHeader}>
+              <Pressable style={styles.listHeaderItem} onPress={() => handleSortChange("request_date")}>
+                <ThemedText>Date {sortField === "request_date" && (sortDirection === "asc" ? "↑" : "↓")}</ThemedText>
+              </Pressable>
+              <Pressable style={styles.listHeaderItem} onPress={() => handleSortChange("member")}>
+                <ThemedText>Member {sortField === "member" && (sortDirection === "asc" ? "↑" : "↓")}</ThemedText>
+              </Pressable>
+              <Pressable style={styles.listHeaderItem} onPress={() => handleSortChange("leave_type")}>
+                <ThemedText>Type {sortField === "leave_type" && (sortDirection === "asc" ? "↑" : "↓")}</ThemedText>
+              </Pressable>
+              <Pressable style={styles.listHeaderItem} onPress={() => handleSortChange("status")}>
+                <ThemedText>Status {sortField === "status" && (sortDirection === "asc" ? "↑" : "↓")}</ThemedText>
+              </Pressable>
             </View>
-          </Pressable>
-        )}
-      />
+          }
+          renderItem={({ item: request }) => (
+            <Pressable
+              style={[styles.listItem, highlightedRequestId === request.id && styles.highlightedListItem]}
+              onPress={() => handleRequestSelect(request)}
+            >
+              <View style={styles.listItemContent}>
+                <ThemedText style={styles.listItemDate as StyleProp<TextStyle>}>
+                  {format(parseISO(request.request_date), "MMM d, yyyy")}
+                </ThemedText>
+                <ThemedText style={styles.listItemMember as StyleProp<TextStyle>}>
+                  {request.member ? `${request.member.last_name}, ${request.member.first_name}` : "Unknown"}
+                </ThemedText>
+                <ThemedText style={styles.listItemType as StyleProp<TextStyle>}>{request.leave_type}</ThemedText>
+                <ThemedText style={styles.listItemStatus as StyleProp<TextStyle>}>{request.status}</ThemedText>
+              </View>
+            </Pressable>
+          )}
+        />
+      </View>
     );
   };
 
@@ -825,6 +854,7 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
               onValueChange={(itemValue) => handleCalendarChange(itemValue)}
               style={dynamicStyles.picker as unknown as StyleProp<TextStyle>}
               enabled={currentDivisionCalendars.length > 0}
+              dropdownIconColor={Colors[colorScheme].tint}
             >
               <Picker.Item label="Select Calendar..." value={null} />
               {currentDivisionCalendars.map((calendar) => (
@@ -1027,83 +1057,170 @@ const styles = StyleSheet.create({
   } as TextStyle,
 });
 
-const getStyles = (colorScheme: "light" | "dark"): DynamicStyles => ({
-  container: {
-    flex: 1,
-    backgroundColor: colorScheme === "dark" ? "#1a1a1a" : "#ffffff",
-  },
-  header: {
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: colorScheme === "dark" ? "#333333" : "#e0e0e0",
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: colorScheme === "dark" ? "#ffffff" : "#000000",
-  },
-  searchContainer: {
-    padding: 16,
-  },
-  input: {
-    height: 40,
-    borderWidth: 1,
-    borderColor: colorScheme === "dark" ? "#333333" : "#e0e0e0",
-    borderRadius: 8,
-    padding: 8,
-    color: colorScheme === "dark" ? "#ffffff" : "#000000",
-  },
-  resultsList: {
-    padding: 16,
-  },
-  resultItem: {
-    padding: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: colorScheme === "dark" ? "#333333" : "#e0e0e0",
-  },
-  resultText: {
-    fontSize: 16,
-    color: colorScheme === "dark" ? "#ffffff" : "#000000",
-  },
-  tableContainer: Platform.select({
-    web: {
+const getStyles = (colorScheme: "light" | "dark"): DynamicStyles => {
+  const baseColors = Colors[colorScheme];
+  const iosPickerStyle = {
+    height: undefined, // Let iOS determine height
+  };
+  const androidPickerStyle = {
+    paddingHorizontal: 8,
+    height: 50, // Example fixed height for Android, adjust as needed
+  };
+
+  return {
+    container: {
       flex: 1,
-      overflowX: "auto",
-      borderWidth: 1,
-      borderColor: colorScheme === "dark" ? "#333333" : "#e0e0e0",
-      borderRadius: 8,
-      marginTop: 16,
+      backgroundColor: baseColors.background,
     },
-    default: {},
-  }),
-  table: Platform.select({
-    web: {
-      width: "100%",
-      backgroundColor: colorScheme === "dark" ? "#1a1a1a" : "#ffffff",
-    } as any, // Use any to bypass borderCollapse type issue
-    default: {},
-  }),
-  tableRow: Platform.select({
-    web: {
+    header: {
+      padding: 16,
       borderBottomWidth: 1,
-      borderBottomColor: colorScheme === "dark" ? "#333333" : "#e0e0e0",
-      backgroundColor: "transparent",
-    } as any, // Use any to bypass transition type issue
-    default: {},
-  }),
-  tableCell: {
-    padding: 12,
-    color: colorScheme === "dark" ? "#ffffff" : "#000000",
-  },
-  sortableHeader: {
-    cursor: "pointer",
-    userSelect: "none",
-    padding: 8,
-    backgroundColor: colorScheme === "dark" ? "#333333" : "#e0e0e0",
-    borderBottomWidth: 1,
-    borderBottomColor: colorScheme === "dark" ? "#555555" : "#e0e0e0",
-    color: colorScheme === "dark" ? "#ffffff" : "#000000",
-    fontWeight: "bold",
-    textAlign: "left",
-  },
-});
+      borderBottomColor: baseColors.border,
+    },
+    title: {
+      fontSize: 24,
+      fontWeight: "bold",
+      color: baseColors.text,
+    },
+    searchContainer: {
+      padding: 16,
+    },
+    input: {
+      height: 40,
+      borderWidth: 1,
+      borderColor: baseColors.border,
+      borderRadius: 8,
+      padding: 8,
+      color: baseColors.text,
+    },
+    resultsList: {
+      padding: 16,
+    },
+    resultItem: {
+      padding: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: baseColors.border,
+      backgroundColor: baseColors.background, // Added for consistency
+    },
+    resultText: {
+      fontSize: 16,
+      color: baseColors.text,
+    },
+    tableContainer: Platform.select({
+      web: {
+        flex: 1,
+        overflowX: "auto",
+        borderWidth: 1,
+        borderColor: baseColors.border,
+        borderRadius: 8,
+        marginTop: 16,
+      },
+      default: {},
+    }),
+    table: Platform.select({
+      web: {
+        width: "100%",
+        backgroundColor: baseColors.background,
+        borderCollapse: "collapse",
+      } as any,
+      default: {},
+    }),
+    tableRow: Platform.select({
+      web: {
+        borderBottomWidth: 1,
+        borderBottomColor: baseColors.border,
+        backgroundColor: "transparent",
+        transition: "background-color 0.3s ease",
+        cursor: "pointer",
+        "&:hover": {
+          backgroundColor: baseColors.secondary, // Use colorScheme variable
+        },
+      } as any,
+      default: {},
+    }),
+    tableCell: {
+      padding: 12,
+      color: baseColors.text,
+    },
+    sortableHeader: {
+      cursor: "pointer",
+      userSelect: "none",
+      padding: 8,
+      backgroundColor: baseColors.background,
+      borderBottomWidth: 1,
+      borderBottomColor: baseColors.border,
+      color: baseColors.text,
+      fontWeight: "bold",
+      textAlign: "left",
+    },
+    iosPickerSpecificStyle: iosPickerStyle,
+    androidPickerSpecificStyle: androidPickerStyle,
+    picker: {
+      width: "100%",
+      backgroundColor: baseColors.background,
+      ...(Platform.OS === "ios" ? iosPickerStyle : {}),
+      ...(Platform.OS === "android" ? androidPickerStyle : {}),
+    },
+    webSelect: Platform.select({
+      web: {
+        width: "100%",
+        padding: 8,
+        borderRadius: 4,
+        fontSize: 16,
+        backgroundColor: baseColors.background,
+        color: baseColors.tint,
+        borderColor: baseColors.border,
+        borderWidth: 1,
+      } as TextStyle,
+      default: {} as TextStyle,
+    }),
+    webInput: Platform.select({
+      web: {
+        width: "100%",
+        padding: 8,
+        borderRadius: 4,
+        fontSize: 16,
+        backgroundColor: baseColors.background,
+        color: baseColors.tint,
+        borderColor: baseColors.border,
+        borderWidth: 1,
+      } as TextStyle,
+      default: {} as TextStyle,
+    }),
+    webDateInput: Platform.select({
+      web: {
+        width: "100%",
+        padding: 8,
+        borderRadius: 4,
+        fontSize: 16,
+        backgroundColor: baseColors.background,
+        color: baseColors.tint,
+        borderColor: baseColors.border,
+        borderWidth: 1,
+      } as TextStyle,
+      default: {} as TextStyle,
+    }),
+    searchResults: {
+      position: "absolute",
+      top: "100%",
+      left: 0,
+      right: 0,
+      backgroundColor: baseColors.background,
+      borderRadius: 4,
+      borderColor: baseColors.border,
+      borderWidth: 1,
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.25,
+      shadowRadius: 3.84,
+      elevation: 5,
+      zIndex: 1000,
+    } as ViewStyle,
+    searchResultItem: {
+      padding: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: baseColors.border,
+      backgroundColor: baseColors.background,
+    } as ViewStyle,
+  };
+};

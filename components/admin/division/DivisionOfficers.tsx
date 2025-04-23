@@ -343,9 +343,9 @@ const styles = StyleSheet.create({
   },
   positionItem: {
     borderRadius: 8,
-    backgroundColor: Colors.light.background,
+    backgroundColor: Colors.dark.background,
     elevation: 1,
-    shadowColor: "#000",
+    shadowColor: Colors.dark.border,
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 2,
@@ -368,23 +368,26 @@ const styles = StyleSheet.create({
   },
   optionalBadge: {
     fontSize: 12,
-    color: Colors.light.tint,
-    backgroundColor: Colors.light.tint + "20",
+    color: Colors.dark.tint,
+    backgroundColor: Colors.dark.tint + "20",
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
   },
   selectedPosition: {
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.dark.tint,
+    color: Colors.dark.buttonText,
   },
   selectedPositionText: {
-    color: "#fff",
+    color: Colors.dark.buttonText,
   },
   positionDetails: {
     padding: 16,
     borderTopWidth: 1,
-    borderTopColor: "rgba(0,0,0,0.1)",
-    backgroundColor: Colors.light.background,
+    borderTopColor: Colors.dark.border,
+    borderBottomColor: Colors.dark.border,
+    backgroundColor: Colors.dark.background,
+    color: Colors.dark.text,
   },
   officerInfo: {
     flexDirection: "row",
@@ -432,6 +435,7 @@ const styles = StyleSheet.create({
   },
   changeButton: {
     backgroundColor: Colors.light.tint,
+    color: Colors.dark.buttonText,
   },
   assignButton: {
     backgroundColor: Colors.light.tint,
@@ -440,7 +444,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   buttonText: {
-    color: "#fff",
+    color: Colors.dark.buttonText,
     fontSize: 14,
     fontWeight: "600",
   },
@@ -456,9 +460,11 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   cancelButton: {
-    backgroundColor: Colors.light.text + "80",
+    backgroundColor: Colors.dark.buttonText,
+    color: Colors.dark.buttonBackground,
   },
   updateButton: {
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.dark.buttonText,
+    color: Colors.dark.buttonBackground,
   },
 });

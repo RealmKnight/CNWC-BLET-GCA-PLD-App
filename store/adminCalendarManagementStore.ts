@@ -609,6 +609,13 @@ export const useAdminCalendarManagementStore = create<
                 `[AdminStore] Found division ID ${divisionId} for name ${divisionName}`,
             );
 
+            // Ensure divisionId is valid before proceeding
+            if (typeof divisionId !== "number") {
+                throw new Error(
+                    `Invalid division ID received for ${divisionName}`,
+                );
+            }
+
             // Fetch zones and calendars in parallel
             const [fetchedZones, fetchedCalendars] = await Promise.all([
                 get().fetchDivisionZones(divisionId),
@@ -2005,8 +2012,8 @@ export type {
     YearlyAllotment,
 };
 
-// Export the PLD calculation function so it can be used in other components
-export { calculatePLDs };
+// Export the calculation functions so they can be used in other components
+export { calculatePLDs, calculateVacationWeeks };
 
 // Add this function to calculate vacation weeks based on company hire date
 function calculateVacationWeeks(
@@ -2018,22 +2025,11 @@ function calculateVacationWeeks(
     }
 
     const hireDate = new Date(companyHireDate);
+    const referenceYear = referenceDate.getFullYear();
 
-    // Create a date for the end of the reference year
-    const endOfYear = new Date(referenceDate.getFullYear(), 11, 31);
-
-    // Calculate years of service as of the end of the reference year
-    // This ensures the employee gets the higher entitlement for the entire calendar year
-    // if their anniversary falls within that year
-    let yearsOfService = endOfYear.getFullYear() - hireDate.getFullYear();
-
-    // Adjust if hire date's month & day is after Dec 31
-    if (
-        hireDate.getMonth() > 11 ||
-        (hireDate.getMonth() === 11 && hireDate.getDate() > 31)
-    ) {
-        yearsOfService--;
-    }
+    // Calculate years of service completed *at the end* of the reference year.
+    // If the anniversary falls within the reference year, this grants the higher entitlement for the whole year.
+    const yearsOfService = referenceYear - hireDate.getFullYear();
 
     // Apply vacation week rules
     if (yearsOfService < 2) return 1;
@@ -2054,23 +2050,23 @@ function calculatePLDs(
 
     const hireDate = new Date(companyHireDate);
 
-    // Create a date for the end of the reference year
-    const endOfYear = new Date(referenceDate.getFullYear(), 11, 31);
+    // Calculate base years of service
+    let yearsOfService = referenceDate.getFullYear() - hireDate.getFullYear();
 
-    // Calculate years of service as of the end of the reference year
-    // This ensures the employee gets the higher entitlement for the entire calendar year
-    // if their anniversary falls within that year
-    let yearsOfService = endOfYear.getFullYear() - hireDate.getFullYear();
-
-    // Adjust if hire date's month & day is after Dec 31
+    // Adjust if the anniversary in the reference year hasn't occurred yet
+    // compared to the reference date.
     if (
-        hireDate.getMonth() > 11 ||
-        (hireDate.getMonth() === 11 && hireDate.getDate() > 31)
+        referenceDate.getMonth() < hireDate.getMonth() ||
+        (referenceDate.getMonth() === hireDate.getMonth() &&
+            referenceDate.getDate() < hireDate.getDate())
     ) {
-        yearsOfService--;
+        yearsOfService--; // Decrement if anniversary is later in the year than referenceDate
     }
 
-    // Apply PLD rules
+    // Ensure yearsOfService is not negative if hire date is in the future relative to referenceDate (edge case)
+    yearsOfService = Math.max(0, yearsOfService);
+
+    // Apply PLD rules based on completed years of service as of the reference date
     if (yearsOfService < 3) return 5;
     if (yearsOfService < 6) return 8;
     if (yearsOfService < 10) return 11;

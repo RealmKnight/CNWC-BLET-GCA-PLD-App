@@ -297,29 +297,34 @@ export function CalendarCrudAdmin({ selectedDivisionName, style }: CalendarCrudA
 
       {error && <ThemedText style={styles.errorText}>{error}</ThemedText>}
 
-      {/* List of Calendars */}
-      <FlatList
-        data={calendars}
-        renderItem={renderCalendarItem}
-        keyExtractor={(item) => item.id}
-        style={styles.list}
-        nestedScrollEnabled={true}
-        scrollEnabled={Platform.OS !== "web"}
-      />
+      {/* List of Calendars - Wrap FlatList in a View with flex: 1 */}
+      <View style={{ flex: 1 }}>
+        <FlatList
+          data={calendars}
+          renderItem={renderCalendarItem}
+          keyExtractor={(item) => item.id}
+          style={styles.list}
+          // Ensure FlatList can scroll independently if needed
+          // nestedScrollEnabled={true} // Usually not needed on FlatList itself, parent ScrollView handles it
+          scrollEnabled={true} // Explicitly ensure scrolling is enabled
+        />
+      </View>
     </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    flex: Platform.OS === "web" ? 1 : undefined,
+    // Let the parent determine the flex, or set flex: 1 if it's meant to fill space
+    // flex: Platform.OS === "web" ? 1 : undefined, // Removed flex: 1 for web here
     minHeight: 0,
   },
   sectionTitle: {
     marginBottom: 16,
   },
   list: {
-    flex: Platform.OS === "web" ? 1 : undefined,
+    // Removed flex: 1 from FlatList style, the wrapping View handles flex
+    // flex: Platform.OS === "web" ? 1 : undefined,
     minHeight: 0,
     marginBottom: 16,
   },
