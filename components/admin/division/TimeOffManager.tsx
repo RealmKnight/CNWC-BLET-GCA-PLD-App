@@ -162,7 +162,6 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
 
   // Update membersList type
   const membersList = useMemo(() => {
-    console.log("[TimeOffManager Debug] Recalculating membersList...");
     // Get the raw data array from the store if available
     const storeData = useAdminCalendarManagementStore.getState().memberTimeOffDataArray || [];
 
@@ -178,14 +177,6 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
   // Effect to automatically stage changes if calculated values differ from stored ones
   const prevMembersListRef = React.useRef<Member[]>();
   useEffect(() => {
-    console.log("[TimeOffManager] Running effect to check calculated changes...");
-    if (prevMembersListRef.current && prevMembersListRef.current === membersList) {
-      console.log("[TimeOffManager Debug] membersList reference HAS NOT changed.");
-    } else {
-      console.log("[TimeOffManager Debug] membersList reference HAS changed.");
-    }
-    prevMembersListRef.current = membersList;
-
     // Access the original, potentially unmodified data directly from the store state
     const originalMemberData = useAdminCalendarManagementStore.getState().memberTimeOffData;
 
@@ -209,27 +200,27 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
       const originalVacationField = isCurrentYear ? "curr_vacation_weeks" : "next_vacation_weeks";
       const originalVacationValue = originalData[originalVacationField];
 
-      // ---- Add Detailed Logging ----
+      // ---- REMOVE Detailed Logging ----
       const isFieldManuallyChanged = existingChanges[originalVacationField] !== undefined;
       const valuesDiffer = calculatedVacationWeeks !== originalVacationValue;
-      console.log(
-        `[TimeOffManager Debug - ${pinNumber} (${originalVacationField})] Calculated: ${calculatedVacationWeeks} (Type: ${typeof calculatedVacationWeeks}), Original: ${originalVacationValue} (Type: ${typeof originalVacationValue}), Differs: ${valuesDiffer}, Manually Changed: ${isFieldManuallyChanged}`
-      );
-      // ---- End Detailed Logging ----
+      // console.log( // <-- REMOVE
+      //   `[TimeOffManager Debug - ${pinNumber} (${originalVacationField})] Calculated: ${calculatedVacationWeeks} (Type: ${typeof calculatedVacationWeeks}), Original: ${originalVacationValue} (Type: ${typeof originalVacationValue}), Differs: ${valuesDiffer}, Manually Changed: ${isFieldManuallyChanged}`
+      // );
+      // ---- End REMOVE Detailed Logging ----
 
       // If calculated value differs from original AND user hasn't already changed it
       if (valuesDiffer && !isFieldManuallyChanged) {
-        console.log(
-          `[TimeOffManager] Staging calculated ${originalVacationField} change for ${pinNumber}: ${originalVacationValue} -> ${calculatedVacationWeeks}`
-        );
+        // console.log( // <-- Keep this potentially useful log for now
+        //   `[TimeOffManager] Staging calculated ${originalVacationField} change for ${pinNumber}: ${originalVacationValue} -> ${calculatedVacationWeeks}`
+        // );
         // Use a timeout to avoid triggering state updates during render cycle if possible
         // and prevent potential infinite loops if calculateVacationWeeks had side effects (it shouldn't)
         setTimeout(() => {
-          // ---- Add Logging inside setTimeout ----
-          console.log(
-            `[TimeOffManager Debug - ${pinNumber}] Calling setTimeOffChange for ${originalVacationField} with value ${calculatedVacationWeeks} inside setTimeout`
-          );
-          // ---- End Logging inside setTimeout ----
+          // ---- REMOVE Logging inside setTimeout ----
+          // console.log( // <-- REMOVE
+          //   `[TimeOffManager Debug - ${pinNumber}] Calling setTimeOffChange for ${originalVacationField} with value ${calculatedVacationWeeks} inside setTimeout`
+          // );
+          // ---- End REMOVE Logging inside setTimeout ----
           setTimeOffChange(pinNumber, originalVacationField, calculatedVacationWeeks);
         }, 0);
       }
