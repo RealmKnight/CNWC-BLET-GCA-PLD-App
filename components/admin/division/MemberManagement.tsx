@@ -38,23 +38,6 @@ type MemberAction = "list" | "edit" | "bulk" | "transfer";
 
 type BulkActionTab = "calendar" | "seniority" | "sdv" | "zone";
 
-// TODO: This Member interface is temporary and needs to be refactored when implementing
-// the full edit functionality. We should consolidate this with the Database Member type
-// and MemberRow from types/auth.ts
-/*
-interface Member {
-  pin_number: string | number;
-  first_name: string;
-  last_name: string;
-  division_id: number;
-  sdv_entitlement: number | null;
-  sdv_election: number | null;
-  calendar_id: string | null;
-  calendar_name: string | null;
-  status: string;
-}
-*/
-
 type DbMember = Database["public"]["Tables"]["members"]["Row"];
 
 interface UserState {

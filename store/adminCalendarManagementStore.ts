@@ -70,6 +70,7 @@ interface Member {
     max_plds: number;
     division_id: number;
     wc_sen_roster: number;
+    calendar_id: string | null;
 }
 
 type TimeOffYearType = "current" | "next";
@@ -1711,6 +1712,7 @@ export const useAdminCalendarManagementStore = create<
                     max_plds: maxPlds,
                     division_id: member.division_id,
                     wc_sen_roster: member.wc_sen_roster,
+                    calendar_id: member.calendar_id,
                 };
 
                 // Add to both record and array

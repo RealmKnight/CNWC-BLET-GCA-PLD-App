@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   StyleSheet,
   Platform,
@@ -37,7 +37,7 @@ import {
 } from "./constants";
 
 // Types for our component
-type DatePreset = "3days" | "7days" | "30days" | "6months" | "custom";
+type DatePreset = "3days" | "7days" | "30days" | "6months" | "alltime" | "custom";
 
 interface PldSdvRequest extends Tables<"pld_sdv_requests"> {
   member?: {
@@ -195,14 +195,21 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
 
   // Store state
   const { membersByCalendar, isLoadingMembersByCalendar, fetchMembersByCalendarId } = useAdminMemberManagementStore();
-  const { calendars } = useAdminCalendarManagementStore();
+  const { calendars, fetchDivisionSettings } = useAdminCalendarManagementStore();
   const { member: adminUser } = useUserStore();
 
+  // Use ref instead of state for tracking processed divisions to prevent infinite loop
+  const processedDivisionRef = useRef<string | null>(null);
+
+  // Initialize with a wider date range to capture more requests
+  const currentDate = new Date();
+  const defaultStartDate = format(subMonths(currentDate, 12), "yyyy-MM-dd"); // 1 year ago
+  const defaultEndDate = format(add(currentDate, { years: 1 }), "yyyy-MM-dd"); // 1 year in future
+
   // Local state
-  const [localSelectedCalendarId, setLocalSelectedCalendarId] = useState<string | null>(propSelectedCalendarId || null);
-  const [datePreset, setDatePreset] = useState<DatePreset>("30days");
-  const [startDate, setStartDate] = useState<string>(format(subDays(new Date(), 30), "yyyy-MM-dd"));
-  const [endDate, setEndDate] = useState<string>(format(add(new Date(), { days: 30 }), "yyyy-MM-dd"));
+  const [datePreset, setDatePreset] = useState<DatePreset>("alltime");
+  const [startDate, setStartDate] = useState<string>(defaultStartDate);
+  const [endDate, setEndDate] = useState<string>(defaultEndDate);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [searchResults, setSearchResults] = useState<MemberSearchResult[]>([]);
   const [selectedMember, setSelectedMember] = useState<MemberSearchResult | null>(null);
@@ -216,6 +223,14 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
   const [isDetailsModalVisible, setIsDetailsModalVisible] = useState(false);
   const [statusFilter, setStatusFilter] = useState<RequestStatus | "all">("all");
   const [typeFilter, setTypeFilter] = useState<RequestType | "all">("all");
+  const [isDivisionReady, setIsDivisionReady] = useState(false);
+
+  // Refs to hold the latest state for fetchRequests to avoid closure issues
+  const currentCalendarIdRef = useRef<string | null | undefined>(propSelectedCalendarId);
+  const currentStartDateRef = useRef<string>(startDate);
+  const currentEndDateRef = useRef<string>(endDate);
+  const currentSelectedMemberRef = useRef<MemberSearchResult | null>(selectedMember);
+  const currentSearchQueryRef = useRef<string>(searchQuery);
 
   // Get current division's calendars
   const currentDivisionCalendars = calendars[selectedDivision] || [];
@@ -292,56 +307,116 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
     return filtered;
   }, [requests, statusFilter, typeFilter, sortField, sortDirection]);
 
-  // Effect to sync prop calendar with local state
-  useEffect(() => {
-    if (propSelectedCalendarId !== localSelectedCalendarId) {
-      setLocalSelectedCalendarId(propSelectedCalendarId || null);
-    }
-  }, [propSelectedCalendarId]);
+  // Ref to track last fetch request to prevent duplicate fetches
+  const lastFetchRef = useRef<{
+    calendarId: string | null;
+    startDate: string;
+    endDate: string;
+    timestamp: number;
+  }>({ calendarId: null, startDate: "", endDate: "", timestamp: 0 });
 
-  // Effect to handle date preset changes
-  useEffect(() => {
-    const now = new Date();
-    let start: Date;
-    let end: Date = add(now, { days: 365 }); // Changed to 365 days (full year) in the future
+  // Fetch requests - Reads parameters from refs to ensure latest values
+  const fetchRequests = useCallback(async () => {
+    // Read latest values from refs
+    const calendarId = currentCalendarIdRef.current;
+    const start = currentStartDateRef.current;
+    const end = currentEndDateRef.current;
+    const member = currentSelectedMemberRef.current;
+    const search = currentSearchQueryRef.current;
 
-    switch (datePreset) {
-      case "3days":
-        start = subDays(now, 7);
-        end = add(now, { days: 7 });
-        break;
-      case "7days":
-        start = subDays(now, 14);
-        end = add(now, { days: 14 });
-        break;
-      case "30days":
-        start = subDays(now, 60);
-        end = add(now, { days: 60 }); // Changed to 60 days in the future
-        break;
-      case "6months":
-        start = subMonths(now, 6);
-        end = add(now, { months: 6 }); // Changed to 6 months in the future
-        break;
-      default:
-        return; // Don't update dates for custom preset
+    if (!calendarId) {
+      console.log("[PldSdvManager] fetchRequests: Skip - no calendarId in ref");
+      setRequests([]);
+      return;
     }
 
-    setStartDate(format(start, "yyyy-MM-dd"));
-    setEndDate(format(end, "yyyy-MM-dd"));
-  }, [datePreset]);
+    console.log("[PldSdvManager] fetchRequests: Preparing with ref values:", {
+      calendarId,
+      startDate: start,
+      endDate: end,
+      selectedMember: member?.id,
+      searchQuery: search,
+      division: selectedDivision, // division prop doesn't need a ref usually
+    });
+
+    try {
+      setIsLoading(true);
+      setError(null);
+
+      // Deduplication check using ref values
+      const now = Date.now();
+      if (
+        lastFetchRef.current.calendarId === calendarId &&
+        lastFetchRef.current.startDate === start &&
+        lastFetchRef.current.endDate === end &&
+        lastFetchRef.current.timestamp > 0 &&
+        now - lastFetchRef.current.timestamp < 500
+      ) {
+        console.log("[PldSdvManager] Skipping duplicate fetch request (refs)");
+        setIsLoading(false);
+        return;
+      }
+      lastFetchRef.current = { calendarId, startDate: start, endDate: end, timestamp: now };
+
+      // Main query using values from refs
+      let query = supabase
+        .from("pld_sdv_requests")
+        .select(
+          `
+          *,
+          member:members (
+            id,
+            pin_number,
+            first_name,
+            last_name
+          )
+        `
+        )
+        .eq("calendar_id", calendarId)
+        .gte("request_date", start) // Use ref value
+        .lte("request_date", end); // Use ref value
+
+      // Apply member filter using ref value
+      if (member && search.length > 0) {
+        query = query.eq("member_id", member.id);
+      }
+
+      console.log("[PldSdvManager] Executing main query with ref params:", {
+        calendarId,
+        startDate: start,
+        endDate: end,
+        memberId: member?.id,
+      });
+      const { data, error } = await query;
+
+      if (error) throw error;
+
+      console.log(`[PldSdvManager] Fetched ${data?.length || 0} requests successfully (refs).`);
+      setRequests(data || []);
+    } catch (error) {
+      console.error("[PldSdvManager] Error in fetchRequests (refs):", error);
+      setError(error instanceof Error ? error.message : "Failed to fetch requests");
+      setRequests([]);
+    } finally {
+      setIsLoading(false);
+    }
+    // Dependencies: Include functions called inside and static values.
+    // The refs themselves don't need to be dependencies.
+    // selectedDivision is included for logging consistency.
+  }, [selectedDivision, calendars]);
 
   // Search members
   const searchMembers = useCallback(
     async (query: string) => {
-      if (!localSelectedCalendarId || query.length < 3) {
+      if (!propSelectedCalendarId || query.length < 3) {
         setSearchResults([]);
         return;
       }
-
+      // ... (rest of searchMembers implementation) ...
       try {
         setIsLoading(true);
         const searchTerm = query.toLowerCase();
-        const calendarMembers = membersByCalendar[localSelectedCalendarId] || [];
+        const calendarMembers = membersByCalendar[propSelectedCalendarId] || [];
 
         // Filter members locally since we already have them in the store
         const results = calendarMembers
@@ -367,96 +442,8 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
         setIsLoading(false);
       }
     },
-    [localSelectedCalendarId, membersByCalendar]
+    [propSelectedCalendarId, membersByCalendar]
   );
-
-  // Effect to fetch members when calendar changes
-  useEffect(() => {
-    if (localSelectedCalendarId) {
-      fetchMembersByCalendarId(localSelectedCalendarId);
-    }
-  }, [localSelectedCalendarId, fetchMembersByCalendarId]);
-
-  // Fetch requests
-  const fetchRequests = useCallback(async () => {
-    if (!localSelectedCalendarId) return;
-
-    try {
-      setIsLoading(true);
-      setError(null);
-
-      console.log("[PldSdvManager] Fetching requests with params:", {
-        calendarId: localSelectedCalendarId,
-        startDate,
-        endDate,
-        selectedMember: selectedMember?.id,
-      });
-
-      let query = supabase
-        .from("pld_sdv_requests")
-        .select(
-          `
-          *,
-          member:members (
-            id,
-            pin_number,
-            first_name,
-            last_name
-          )
-        `
-        )
-        .eq("calendar_id", localSelectedCalendarId)
-        .gte("request_date", startDate)
-        .lte("request_date", endDate);
-
-      // Only add member filter if explicitly selected by user
-      if (selectedMember && searchQuery.length > 0) {
-        query = query.eq("member_id", selectedMember.id);
-      }
-
-      // Log the raw query (only in development)
-      if (process.env.NODE_ENV === "development") {
-        console.log("[PldSdvManager] Raw query details:", {
-          table: "pld_sdv_requests",
-          calendar_id: localSelectedCalendarId,
-          date_range: `${startDate} to ${endDate}`,
-        });
-      }
-
-      const { data, error } = await query;
-
-      if (error) throw error;
-
-      console.log("[PldSdvManager] Fetched requests:", {
-        count: data?.length || 0,
-        data: data,
-      });
-
-      // If no results, perform a debug query to find closest dates
-      if (data?.length === 0 && process.env.NODE_ENV === "development") {
-        const { data: dateDebugData } = await supabase
-          .from("pld_sdv_requests")
-          .select("id, request_date, leave_type, status")
-          .eq("calendar_id", localSelectedCalendarId)
-          .order("request_date", { ascending: false })
-          .limit(5);
-
-        console.log("[PldSdvManager] Debug - closest dates found:", dateDebugData);
-      }
-
-      setRequests(data || []);
-    } catch (error) {
-      console.error("[PldSdvManager] Error fetching requests:", error);
-      setError(error instanceof Error ? error.message : "Failed to fetch requests");
-    } finally {
-      setIsLoading(false);
-    }
-  }, [localSelectedCalendarId, startDate, endDate, selectedMember, searchQuery]);
-
-  // Effect to fetch requests when dependencies change
-  useEffect(() => {
-    fetchRequests();
-  }, [fetchRequests]);
 
   // Handle search input changes
   const handleSearchChange = useCallback(
@@ -466,9 +453,14 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
         searchMembers(text);
       } else {
         setSearchResults([]);
+        // Trigger fetch if search is cleared and a member was selected
+        if (selectedMember) {
+          setSelectedMember(null); // Clear selected member too
+          // Fetch will be triggered by the main effect watching selectedMember
+        }
       }
     },
-    [searchMembers]
+    [searchMembers, selectedMember] // Added selectedMember dependency
   );
 
   // Handle member selection
@@ -476,14 +468,7 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
     setSelectedMember(member);
     setSearchQuery(member ? member.display : "");
     setSearchResults([]);
-  }, []);
-
-  // Handle calendar change
-  const handleCalendarChange = useCallback((calendarId: string | null) => {
-    setLocalSelectedCalendarId(calendarId);
-    setSelectedMember(null);
-    setSearchQuery("");
-    setSearchResults([]);
+    // Fetch will be triggered by the main effect watching selectedMember
   }, []);
 
   // Handle request selection
@@ -492,36 +477,20 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
     setIsDetailsModalVisible(true);
   }, []);
 
-  // Subscribe to real-time updates
-  useEffect(() => {
-    if (!localSelectedCalendarId) return;
-
-    const channel = supabase
-      .channel(`pld-sdv-requests-${localSelectedCalendarId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "pld_sdv_requests",
-          filter: `calendar_id=eq.${localSelectedCalendarId}`,
-        },
-        async (payload) => {
-          // Highlight the changed row
-          if (payload.new && typeof payload.new === "object" && "id" in payload.new) {
-            setHighlightedRequestId(payload.new.id as string);
-            setTimeout(() => setHighlightedRequestId(null), 3000);
-          }
-          // Refresh the requests
-          await fetchRequests();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      channel.unsubscribe();
-    };
-  }, [localSelectedCalendarId, fetchRequests]);
+  // Handle calendar change - This should now just inform the parent/store
+  // The actual state update comes via the propSelectedCalendarId prop change.
+  // We might need an action passed down from the parent to trigger the change.
+  // For now, let's assume the parent handles the Picker's onValueChange.
+  // If not, we need to adjust the parent component (e.g., CalendarManager).
+  // Let's stub it out for now, expecting the parent to handle the Picker/select change.
+  const handleCalendarChange = useCallback((calendarId: string | null) => {
+    console.warn(
+      "[PldSdvManager] handleCalendarChange called, but parent should handle the actual state update via prop.",
+      calendarId
+    );
+    // In a typical setup, you'd call a function passed via props, e.g.:
+    // onCalendarChange(calendarId);
+  }, []);
 
   // Handle sort change
   const handleSortChange = (field: keyof PldSdvRequest) => {
@@ -533,6 +502,194 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
     }
   };
 
+  // --- EFFECTS ---
+
+  // Effect for Division Change
+  useEffect(() => {
+    if (selectedDivision === processedDivisionRef.current) {
+      return;
+    }
+    console.log(`[PldSdvManager] Division changed effect running for: ${selectedDivision}`);
+    setIsDivisionReady(false); // Mark as not ready immediately
+    processedDivisionRef.current = selectedDivision;
+
+    // --- Reset State ---
+    setDatePreset("alltime");
+    setSelectedMember(null);
+    setSearchQuery("");
+    setSearchResults([]);
+    setRequests([]);
+    setStatusFilter("all");
+    setTypeFilter("all");
+    lastFetchRef.current = { calendarId: null, startDate: "", endDate: "", timestamp: 0 };
+    console.log("[PldSdvManager] State reset complete for division change.");
+
+    // --- Fetch Settings ---
+    const loadDivisionSettings = async () => {
+      try {
+        setIsLoading(true);
+        setError(null);
+        console.log(`[PldSdvManager] Fetching division settings for ${selectedDivision}...`);
+        await fetchDivisionSettings(selectedDivision);
+        console.log(`[PldSdvManager] Division settings fetch complete for: ${selectedDivision}.`);
+        // NOW mark as ready after settings are fetched (and store should have updated props)
+        setIsDivisionReady(true);
+        console.log(`[PldSdvManager] Division ${selectedDivision} marked as READY.`);
+      } catch (err) {
+        console.error("[PldSdvManager] Error loading division settings:", err);
+        setError(err instanceof Error ? err.message : "Failed to load division settings");
+        setIsLoading(false); // Allow UI to show error
+        setIsDivisionReady(true); // Mark as ready even on error to unblock potential UI messages
+      }
+      // Do not set isLoading false here, let main fetch control it
+    };
+
+    loadDivisionSettings();
+  }, [selectedDivision, fetchDivisionSettings]);
+
+  // Effect for Date Preset Changes (Non-Custom)
+  useEffect(() => {
+    // This effect only handles NON-custom presets.
+    // Changes to startDate/endDate (e.g., from custom inputs or this effect)
+    // will trigger the main fetch effect.
+    if (datePreset === "custom") return;
+
+    console.log("[PldSdvManager] Date Preset changed effect running for:", datePreset);
+
+    const now = new Date();
+    let start: Date;
+    let end: Date;
+
+    switch (datePreset) {
+      case "3days":
+        start = subDays(now, 30);
+        end = add(now, { days: 30 });
+        break;
+      case "7days":
+        start = subDays(now, 60);
+        end = add(now, { days: 60 });
+        break;
+      case "30days":
+        start = subDays(now, 180);
+        end = add(now, { days: 180 });
+        break;
+      case "6months":
+        start = subMonths(now, 12);
+        end = add(now, { years: 1 });
+        break;
+      case "alltime":
+        start = new Date(2000, 0, 1);
+        end = new Date(2050, 11, 31);
+        break;
+      default:
+        // Should not happen if datePreset is not 'custom'
+        console.warn("[PldSdvManager] Unexpected datePreset in effect:", datePreset);
+        return;
+    }
+
+    const formattedStart = format(start, "yyyy-MM-dd");
+    const formattedEnd = format(end, "yyyy-MM-dd");
+
+    // Update state only if dates actually changed to prevent infinite loops
+    if (formattedStart !== startDate || formattedEnd !== endDate) {
+      console.log("[PldSdvManager] Setting date range from preset:", { start: formattedStart, end: formattedEnd });
+      setStartDate(formattedStart);
+      setEndDate(formattedEnd);
+      // The main fetch effect will catch this state change.
+    }
+  }, [datePreset, startDate, endDate]); // Depend on current dates to avoid loops
+
+  // Effect to fetch members when calendar changes
+  useEffect(() => {
+    if (propSelectedCalendarId) {
+      console.log("[PldSdvManager] Fetching members for calendar:", propSelectedCalendarId);
+      fetchMembersByCalendarId(propSelectedCalendarId);
+    }
+  }, [propSelectedCalendarId, fetchMembersByCalendarId]);
+
+  // Main Effect to Trigger Fetch Requests
+  useEffect(() => {
+    console.log("[PldSdvManager] Main Fetch trigger effect checking...", {
+      isDivisionReady,
+      calendar: propSelectedCalendarId,
+      start: startDate,
+      end: endDate,
+      member: currentSelectedMemberRef.current?.id, // Read from ref
+      search: currentSearchQueryRef.current, // Read from ref
+    });
+
+    // Only fetch if the division is ready AND a calendar is selected AND dates are set
+    if (isDivisionReady && propSelectedCalendarId && startDate && endDate) {
+      // Use a small delay to allow state propagation and debounce rapid changes
+      const timerId = setTimeout(() => {
+        console.log("[PldSdvManager] Triggering fetch from main effect timeout (Division Ready)");
+        fetchRequests(); // This now reads from refs
+      }, 300); // Adjusted delay
+
+      return () => clearTimeout(timerId);
+    } else {
+      // Log why fetch is being skipped
+      console.log("[PldSdvManager] Skipping fetch:", {
+        isDivisionReady,
+        hasCalendar: !!propSelectedCalendarId,
+        hasStartDate: !!startDate,
+        hasEndDate: !!endDate,
+      });
+      // No calendar or dates selected, or division not ready, ensure requests are cleared
+      // Check specific conditions for clarity
+      if (!isDivisionReady) {
+        console.log("[PldSdvManager] ... division not ready yet.");
+        // Keep loading true if division change is in progress
+      } else if (!propSelectedCalendarId) {
+        console.log("[PldSdvManager] ... no calendar selected.");
+        setRequests([]);
+        setIsLoading(false); // Division is ready, but no calendar
+      } else if (!startDate || !endDate) {
+        console.log("[PldSdvManager] ... dates not set yet.");
+        setRequests([]);
+        setIsLoading(false); // Division/calendar ready, but dates missing
+      }
+    }
+    // Watch the original state props/variables that indicate a fetch might be needed.
+    // Add isDivisionReady to dependencies.
+  }, [isDivisionReady, propSelectedCalendarId, startDate, endDate, selectedMember, searchQuery, fetchRequests]); // Keep original deps + isDivisionReady
+
+  // Effect for Real-time Updates (Commented out for debugging)
+  // useEffect(() => {
+  //   if (!propSelectedCalendarId) return;
+  //   console.log("[PldSdvManager] Setting up realtime subscription for calendar:", propSelectedCalendarId);
+  //   const channel = supabase
+  //     .channel(`pld-sdv-requests-${propSelectedCalendarId}`)
+  //     .on(...)
+  //     .subscribe();
+  //   return () => { /* unsubscribe */ };
+  // }, [propSelectedCalendarId, fetchRequests]);
+
+  // Effect for Component Unmount Cleanup
+  useEffect(() => {
+    return () => {
+      console.log("[PldSdvManager] Component unmounting, cleaning up all subscriptions");
+      supabase.removeAllChannels();
+    };
+  }, []);
+
+  // Update refs whenever the corresponding state/prop changes
+  useEffect(() => {
+    currentCalendarIdRef.current = propSelectedCalendarId;
+  }, [propSelectedCalendarId]);
+  useEffect(() => {
+    currentStartDateRef.current = startDate;
+  }, [startDate]);
+  useEffect(() => {
+    currentEndDateRef.current = endDate;
+  }, [endDate]);
+  useEffect(() => {
+    currentSelectedMemberRef.current = selectedMember;
+  }, [selectedMember]);
+  useEffect(() => {
+    currentSearchQueryRef.current = searchQuery;
+  }, [searchQuery]);
+
   // Render date preset selector
   const renderDatePresetSelector = () => (
     <View style={styles.selectorContainer}>
@@ -543,10 +700,11 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
           onChange={(e) => setDatePreset(e.target.value as DatePreset)}
           style={dynamicStyles.webSelect as React.CSSProperties}
         >
-          <option value="3days">Next 7 Days</option>
-          <option value="7days">Next 14 Days</option>
-          <option value="30days">Next 60 Days</option>
-          <option value="6months">Next 6 Months</option>
+          <option value="3days">Past & Next 30 Days</option>
+          <option value="7days">Past & Next 60 Days</option>
+          <option value="30days">Past & Next 180 Days</option>
+          <option value="6months">Past & Next Year</option>
+          <option value="alltime">All Time (Maximum Range)</option>
           <option value="custom">Custom Range</option>
         </select>
       ) : (
@@ -556,10 +714,11 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
           style={dynamicStyles.picker as unknown as StyleProp<TextStyle>}
           dropdownIconColor={Colors[colorScheme].tint}
         >
-          <Picker.Item label="Next 7 Days" value="3days" />
-          <Picker.Item label="Next 14 Days" value="7days" />
-          <Picker.Item label="Next 60 Days" value="30days" />
-          <Picker.Item label="Next 6 Months" value="6months" />
+          <Picker.Item label="Past & Next 30 Days" value="3days" />
+          <Picker.Item label="Past & Next 60 Days" value="7days" />
+          <Picker.Item label="Past & Next 180 Days" value="30days" />
+          <Picker.Item label="Past & Next Year" value="6months" />
+          <Picker.Item label="All Time (Maximum Range)" value="alltime" />
           <Picker.Item label="Custom Range" value="custom" />
         </Picker>
       )}
@@ -836,7 +995,7 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
           <ThemedText style={styles.label}>Calendar:</ThemedText>
           {Platform.OS === "web" ? (
             <select
-              value={localSelectedCalendarId || ""}
+              value={propSelectedCalendarId || ""}
               onChange={(e) => handleCalendarChange(e.target.value || null)}
               style={dynamicStyles.webSelect as React.CSSProperties}
               disabled={currentDivisionCalendars.length === 0}
@@ -850,7 +1009,7 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
             </select>
           ) : (
             <Picker
-              selectedValue={localSelectedCalendarId}
+              selectedValue={propSelectedCalendarId}
               onValueChange={(itemValue) => handleCalendarChange(itemValue)}
               style={dynamicStyles.picker as unknown as StyleProp<TextStyle>}
               enabled={currentDivisionCalendars.length > 0}

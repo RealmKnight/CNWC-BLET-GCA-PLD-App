@@ -21,6 +21,9 @@ import {
   calculatePLDs,
 } from "@/store/adminCalendarManagementStore";
 import type { Member } from "@/store/adminCalendarManagementStore";
+import type { Calendar } from "@/types/calendar";
+import { CalendarFilter } from "./CalendarFilter";
+import { supabase } from "@/utils/supabase";
 
 interface TimeOffManagerProps {
   selectedDivision: string;
@@ -33,11 +36,15 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const { width } = useWindowDimensions();
   const isMobile = Platform.OS !== "web" || width < 768;
-  const { member } = useUserStore();
+  const { member, userRole } = useUserStore();
 
   // Local state
   const [searchQuery, setSearchQuery] = useState("");
   const [isSaving, setIsSaving] = useState<Record<number, boolean>>({});
+  const [selectedFilterCalendarId, setSelectedFilterCalendarId] = useState<string | null>(null);
+  const [availableCalendars, setAvailableCalendars] = useState<Calendar[]>([]);
+  const [isCalendarsLoading, setIsCalendarsLoading] = useState(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
   // Use store state and actions
   const {
@@ -58,14 +65,111 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
   // Calculated state
   const hasChanges = useMemo(() => Object.keys(timeOffChanges).length > 0, [timeOffChanges]);
 
+  // Effect to track unsaved changes
+  useEffect(() => {
+    setHasUnsavedChanges(hasChanges);
+  }, [hasChanges]);
+
+  // Effect to handle division changes
+  useEffect(() => {
+    if (selectedDivision) {
+      const loadDivisionData = async () => {
+        try {
+          // Get division_id from the database
+          const { data: divisionData, error: divisionError } = await supabase
+            .from("divisions")
+            .select("id")
+            .eq("name", selectedDivision)
+            .single();
+
+          if (divisionError) throw divisionError;
+          if (!divisionData) {
+            console.error("Division not found:", selectedDivision);
+            return;
+          }
+
+          // If there are unsaved changes, confirm before switching
+          if (hasUnsavedChanges) {
+            const confirmSwitch = window.confirm(
+              "You have unsaved changes. Are you sure you want to switch divisions? All unsaved changes will be lost."
+            );
+            if (!confirmSwitch) {
+              return;
+            }
+          }
+
+          // Reset any existing changes
+          resetTimeOffChanges();
+
+          // Fetch member data for the new division
+          await fetchMemberTimeOffData(divisionData.id);
+
+          // Reset calendar filter when switching divisions
+          setSelectedFilterCalendarId(null);
+        } catch (err) {
+          console.error("Error loading division data:", err);
+        }
+      };
+
+      loadDivisionData();
+    }
+  }, [selectedDivision, hasUnsavedChanges, resetTimeOffChanges, fetchMemberTimeOffData]);
+
+  // Effect to handle calendar changes
+  useEffect(() => {
+    if (selectedDivision) {
+      const fetchCalendars = async () => {
+        setIsCalendarsLoading(true);
+        try {
+          // First get the division ID
+          const { data: divisionData, error: divisionError } = await supabase
+            .from("divisions")
+            .select("id")
+            .eq("name", selectedDivision)
+            .single();
+
+          if (divisionError) throw divisionError;
+          if (!divisionData) {
+            console.error("Division not found:", selectedDivision);
+            return;
+          }
+
+          // Then fetch calendars for this division
+          const { data: calendars, error: calendarsError } = await supabase
+            .from("calendars")
+            .select("*")
+            .eq("division_id", divisionData.id)
+            .eq("is_active", true)
+            .order("name");
+
+          if (calendarsError) throw calendarsError;
+
+          console.log("Fetched calendars:", calendars);
+          setAvailableCalendars(calendars || []);
+
+          // If user is division_admin, automatically select their calendar
+          if (userRole === "division_admin" && member?.calendar_id) {
+            setSelectedFilterCalendarId(member.calendar_id);
+          }
+        } catch (err) {
+          console.error("Error fetching calendars:", err);
+          setAvailableCalendars([]);
+        } finally {
+          setIsCalendarsLoading(false);
+        }
+      };
+
+      fetchCalendars();
+    }
+  }, [selectedDivision, userRole, member?.calendar_id]);
+
   // Add a debug log to check if changes are detected
   useEffect(() => {
     console.log("Time off changes:", timeOffChanges);
     console.log("Has changes:", hasChanges);
   }, [timeOffChanges, hasChanges]);
 
-  // Instead of using Object.values which sorts by PIN numbers (object keys),
-  // we'll preserve the order from the backend
+  // Update membersList type
   const membersList = useMemo(() => {
     // Get the raw data array from the store if available
     const storeData = useAdminCalendarManagementStore.getState().memberTimeOffDataArray || [];
@@ -132,16 +236,6 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
     // Also include setTimeOffChange in dependency array as per linting rules.
   }, [membersList, selectedTimeOffYear, setTimeOffChange, timeOffChanges]);
 
-  // Load division members when selectedDivision changes
-  useEffect(() => {
-    if (selectedDivision) {
-      // Get division_id from member or from a divisionMapping if available
-      const divisionId = member?.division_id || 0; // This should be replaced with actual division ID matching
-
-      fetchMemberTimeOffData(divisionId);
-    }
-  }, [selectedDivision, fetchMemberTimeOffData]);
-
   // Add console log to check member order
   useEffect(() => {
     if (membersList.length > 0) {
@@ -156,25 +250,16 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
     }
   }, [membersList]);
 
-  // Handle year selection change
-  const handleYearChange = (year: YearType) => {
-    setSelectedTimeOffYear(year);
-  };
-
-  // Filter members based on search query
-  const filteredMembers = useMemo(() => {
-    if (!searchQuery.trim()) {
-      return membersList;
-    }
-
-    const query = searchQuery.toLowerCase().trim();
-    return membersList.filter(
-      (member: Member) =>
-        member.first_name.toLowerCase().includes(query) ||
-        member.last_name.toLowerCase().includes(query) ||
-        member.pin_number.toString().includes(query)
-    );
-  }, [membersList, searchQuery]);
+  // Add debug logging when calendar selection changes
+  useEffect(() => {
+    console.log("Calendar selection changed:", {
+      selectedCalendarId: selectedFilterCalendarId,
+      availableCalendars: availableCalendars.map((cal) => ({
+        id: cal.id,
+        name: cal.name,
+      })),
+    });
+  }, [selectedFilterCalendarId, availableCalendars]);
 
   // Calculate weeks to bid
   const calculateWeeksToBid = (vacationWeeks: number, vacationSplit: number) => {
@@ -231,29 +316,53 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
 
     return (
       <View style={styles.yearSelectorContainer}>
-        <ThemedText style={styles.yearSelectorLabel}>View/Edit Time Off for:</ThemedText>
-        <View style={styles.yearButtonsContainer}>
+        <View style={styles.yearSelectorAndButtonContainer}>
+          <View style={styles.yearSelectorContent}>
+            <ThemedText style={styles.yearSelectorLabel}>View/Edit Time Off for:</ThemedText>
+            <View style={styles.yearButtonsContainer}>
+              <TouchableOpacity
+                style={[styles.yearButton, selectedTimeOffYear === "current" && styles.selectedYearButton]}
+                onPress={() => handleYearChange("current")}
+                disabled={isTimeOffLoading}
+              >
+                <ThemedText
+                  style={[styles.yearButtonText, selectedTimeOffYear === "current" && styles.selectedYearButtonText]}
+                >
+                  {currentYear} (Current)
+                </ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.yearButton, selectedTimeOffYear === "next" && styles.selectedYearButton]}
+                onPress={() => handleYearChange("next")}
+                disabled={isTimeOffLoading}
+              >
+                <ThemedText
+                  style={[styles.yearButtonText, selectedTimeOffYear === "next" && styles.selectedYearButtonText]}
+                >
+                  {currentYear + 1} (Next)
+                </ThemedText>
+              </TouchableOpacity>
+            </View>
+          </View>
           <TouchableOpacity
-            style={[styles.yearButton, selectedTimeOffYear === "current" && styles.selectedYearButton]}
-            onPress={() => handleYearChange("current")}
-            disabled={isTimeOffLoading}
+            style={[styles.saveAllButton, !hasChanges && styles.saveAllButtonDisabled]}
+            disabled={!hasChanges || isTimeOffLoading}
+            onPress={handleSaveAllChanges}
           >
-            <ThemedText
-              style={[styles.yearButtonText, selectedTimeOffYear === "current" && styles.selectedYearButtonText]}
-            >
-              {currentYear} (Current)
-            </ThemedText>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.yearButton, selectedTimeOffYear === "next" && styles.selectedYearButton]}
-            onPress={() => handleYearChange("next")}
-            disabled={isTimeOffLoading}
-          >
-            <ThemedText
-              style={[styles.yearButtonText, selectedTimeOffYear === "next" && styles.selectedYearButtonText]}
-            >
-              {currentYear + 1} (Next)
-            </ThemedText>
+            {isTimeOffLoading ? (
+              <ActivityIndicator size="small" color={Colors.light.background} />
+            ) : (
+              <>
+                <Ionicons
+                  name="save-outline"
+                  size={18}
+                  color={hasChanges ? Colors.light.background : Colors[colorScheme].textDim}
+                />
+                <ThemedText style={[styles.saveAllButtonText, !hasChanges && styles.saveAllButtonTextDisabled]}>
+                  Save All
+                </ThemedText>
+              </>
+            )}
           </TouchableOpacity>
         </View>
       </View>
@@ -475,9 +584,99 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
     });
   };
 
+  // Add this new handler function before the return statement
+  const handleSaveAllChanges = async () => {
+    if (!hasChanges) return;
+
+    try {
+      // Convert timeOffChanges to array format expected by updateMemberTimeOff
+      const changes = Object.entries(timeOffChanges).map(([pinNumber, fields]) => ({
+        pin_number: parseInt(pinNumber, 10),
+        ...fields,
+      }));
+
+      const success = await updateMemberTimeOff(changes, selectedTimeOffYear);
+
+      if (success) {
+        // Changes saved successfully
+        console.log("All changes saved successfully");
+      } else {
+        // Handle save failure
+        console.error("Failed to save all changes");
+      }
+    } catch (error) {
+      console.error("Error saving all changes:", error);
+    }
+  };
+
+  // Filter members based on search query and selected calendar
+  const filteredMembers = useMemo(() => {
+    let filtered = membersList;
+
+    // Debug log for initial state
+    console.log("Filtering members:", {
+      totalMembers: membersList.length,
+      selectedCalendarId: selectedFilterCalendarId,
+      sampleMember: membersList[0]
+        ? {
+            name: `${membersList[0].first_name} ${membersList[0].last_name}`,
+            calendar_id: membersList[0].calendar_id,
+          }
+        : null,
+    });
+
+    // Apply calendar filter if selected
+    if (selectedFilterCalendarId) {
+      filtered = filtered.filter((member: Member) => {
+        const matches = member.calendar_id === selectedFilterCalendarId;
+        // Debug log for each member that doesn't match
+        if (!matches) {
+          console.log("Member calendar mismatch:", {
+            memberName: `${member.first_name} ${member.last_name}`,
+            memberCalendarId: member.calendar_id,
+            selectedCalendarId: selectedFilterCalendarId,
+            typeMemberCalendarId: typeof member.calendar_id,
+            typeSelectedCalendarId: typeof selectedFilterCalendarId,
+          });
+        }
+        return matches;
+      });
+      // Debug log after calendar filtering
+      console.log("After calendar filter:", {
+        remainingMembers: filtered.length,
+        selectedCalendarId: selectedFilterCalendarId,
+      });
+    }
+
+    // Apply search filter if there's a search query
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase().trim();
+      filtered = filtered.filter(
+        (member: Member) =>
+          member.first_name.toLowerCase().includes(query) ||
+          member.last_name.toLowerCase().includes(query) ||
+          member.pin_number.toString().includes(query)
+      );
+    }
+
+    return filtered;
+  }, [membersList, selectedFilterCalendarId, searchQuery]);
+
+  // Handle year selection change
+  const handleYearChange = (year: YearType) => {
+    setSelectedTimeOffYear(year);
+  };
+
   return (
     <ThemedView style={styles.container}>
       <View style={styles.header}>
+        <CalendarFilter
+          calendars={availableCalendars}
+          selectedCalendarId={selectedFilterCalendarId}
+          onSelectCalendar={setSelectedFilterCalendarId}
+          style={styles.calendarFilter}
+          isLoading={isCalendarsLoading}
+        />
         {renderYearSelector()}
         {renderSearchBar()}
       </View>
@@ -488,9 +687,8 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
           <TouchableOpacity
             style={styles.retryButton}
             onPress={() => {
-              // Reload data on retry
               if (selectedDivision) {
-                const divisionId = member?.division_id || 0; // Replace with actual division ID
+                const divisionId = member?.division_id || 0;
                 fetchMemberTimeOffData(divisionId);
               }
             }}
@@ -500,23 +698,38 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
         </View>
       ) : (
         <>
-          {/* Main content in a relative container - no more need for the saveButtonContainer */}
           <View style={styles.contentWithSaveButton}>
-            {/* Table area - Wrap ScrollView in View with flex: 1 */}
             <View style={styles.tableContainer}>
               {renderTableHeader()}
-              {/* This View allows the ScrollView to flex correctly */}
               <View style={{ flex: 1 }}>
-                <ScrollView
-                  style={styles.tableScrollView} // Style might just need basic layout, not flex: 1
-                  nestedScrollEnabled={true} // Ensure nested scrolling is enabled
-                  scrollEnabled={true}
-                >
+                <ScrollView style={styles.tableScrollView} nestedScrollEnabled={true} scrollEnabled={true}>
                   {renderTableRows()}
-                  {/* Add some padding at the bottom if needed */}
-                  <View style={{ height: 20 }} />
+                  {/* Add some padding at the bottom if needed 
+                  <View style={{ height: 20 }} />*/}
                 </ScrollView>
               </View>
+            </View>
+            <View style={styles.bottomSaveButtonContainer}>
+              <TouchableOpacity
+                style={[styles.saveAllButton, !hasChanges && styles.saveAllButtonDisabled]}
+                disabled={!hasChanges || isTimeOffLoading}
+                onPress={handleSaveAllChanges}
+              >
+                {isTimeOffLoading ? (
+                  <ActivityIndicator size="small" color={Colors.light.background} />
+                ) : (
+                  <>
+                    <Ionicons
+                      name="save-outline"
+                      size={18}
+                      color={hasChanges ? Colors.light.background : Colors[colorScheme].textDim}
+                    />
+                    <ThemedText style={[styles.saveAllButtonText, !hasChanges && styles.saveAllButtonTextDisabled]}>
+                      Save All
+                    </ThemedText>
+                  </>
+                )}
+              </TouchableOpacity>
             </View>
           </View>
         </>
@@ -543,6 +756,17 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     flexWrap: "wrap",
   },
+  yearSelectorAndButtonContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    width: "100%",
+  } as const,
+  yearSelectorContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+  } as const,
   yearSelectorLabel: {
     fontSize: 16,
     fontWeight: "500",
@@ -591,13 +815,13 @@ const styles = StyleSheet.create({
     }),
   },
   tableContainer: {
-    flex: 1, // Let table container take available space
+    flex: 1,
     borderWidth: 1,
     borderColor: Colors.light.border,
     borderRadius: 8,
-    overflow: "hidden", // Important for containing the scrolling
-    display: "flex", // Ensure flex properties apply
-    flexDirection: "column", // Stack header and scroll view vertically
+    overflow: "hidden",
+    display: "flex",
+    flexDirection: "column",
   },
   tableHeader: {
     flexDirection: "row",
@@ -606,17 +830,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     borderBottomWidth: 1,
     borderBottomColor: Colors.light.border,
-    // Header should not flex, size based on content
   },
   headerCell: {
     flex: 1,
     fontWeight: "600",
     fontSize: 14,
   },
-  tableScrollView: {
-    // ScrollView itself doesn't need flex: 1 when wrapped
-    // flex: 1, // Removed flex: 1 here
-  },
+  tableScrollView: {},
   tableRow: {
     flexDirection: "row",
     paddingVertical: 12,
@@ -696,4 +916,33 @@ const styles = StyleSheet.create({
   rowSaveButtonDisabled: {
     backgroundColor: Colors.light.border,
   },
+  calendarFilter: {
+    marginBottom: 16,
+  },
+  saveAllButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: Colors.light.tint,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginLeft: 16,
+  } as const,
+  saveAllButtonDisabled: {
+    backgroundColor: Colors.light.border,
+  } as const,
+  saveAllButtonText: {
+    color: Colors.light.background,
+    marginLeft: 8,
+    fontSize: 14,
+    fontWeight: "500",
+  } as const,
+  saveAllButtonTextDisabled: {
+    color: Colors.light.textDim,
+  } as const,
+  bottomSaveButtonContainer: {
+    position: "relative",
+    alignItems: "flex-end",
+    paddingTop: 16,
+  } as const,
 });

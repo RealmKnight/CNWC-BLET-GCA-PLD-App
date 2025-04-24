@@ -311,16 +311,6 @@ export function CalendarManager() {
             <RequestEntry selectedDivision={selectedDivision} selectedCalendarId={selectedCalendarId} />
           </ScrollView>
         );
-      case "managePldSdv":
-        return (
-          <ScrollView
-            style={[styles.contentScroll, Platform.OS === "android" && styles.androidContentScroll]}
-            contentContainerStyle={styles.contentContainer}
-            nestedScrollEnabled={true}
-          >
-            <PldSdvManager selectedDivision={selectedDivision} selectedCalendarId={selectedCalendarId || undefined} />
-          </ScrollView>
-        );
       case "manageTimeOff":
         return (
           <ScrollView
@@ -329,6 +319,16 @@ export function CalendarManager() {
             nestedScrollEnabled={true}
           >
             <TimeOffManager selectedDivision={selectedDivision} selectedCalendarId={selectedCalendarId} />
+          </ScrollView>
+        );
+      case "managePldSdv":
+        return (
+          <ScrollView
+            style={[styles.contentScroll, Platform.OS === "android" && styles.androidContentScroll]}
+            contentContainerStyle={styles.contentContainer}
+            nestedScrollEnabled={true}
+          >
+            <PldSdvManager selectedDivision={selectedDivision} selectedCalendarId={selectedCalendarId || undefined} />
           </ScrollView>
         );
       default:
@@ -353,8 +353,8 @@ export function CalendarManager() {
           <View style={styles.actionButtons}>
             {renderActionButton("calendarManagement", "settings-outline", "Manage Calendars")}
             {renderActionButton("enterRequests", "calendar-outline", "Enter Vacation")}
+            {renderActionButton("manageTimeOff", "airplane-outline", "Manage Time Off")}
             {renderActionButton("managePldSdv", "today-outline", "Mange PLD/SDV")}
-            {renderActionButton("manageTimeOff", "time-outline", "Manage Time Off")}
           </View>
         </View>
         <View style={styles.divisionContainer}>

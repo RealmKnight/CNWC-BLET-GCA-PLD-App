@@ -209,11 +209,13 @@ function RequestRow({ request, onCancel, onCancelSixMonth }: RequestRowProps) {
             <Feather name="x-circle" size={24} color={Colors[colorScheme ?? "light"].error} />
           </ThemedTouchableOpacity>
         )}
-      {isWithin48Hours && (request.status === "pending" || request.status === "approved") && (
-        <ThemedView style={styles.infoContainer}>
-          <ThemedText style={styles.infoText}>Cannot cancel within 48 hours</ThemedText>
-        </ThemedView>
-      )}
+      {isWithin48Hours &&
+        (request.status === "pending" || request.status === "approved") &&
+        parseISO(request.request_date) > new Date() && (
+          <ThemedView style={styles.infoContainer}>
+            <ThemedText style={styles.infoText}>Cannot cancel within 48 hours</ThemedText>
+          </ThemedView>
+        )}
     </ThemedView>
   );
 }
