@@ -61,8 +61,8 @@ interface Member {
     first_name: string;
     last_name: string;
     company_hire_date: string;
-    curr_vacation_weeks: number;
-    next_vacation_weeks: number;
+    curr_vacation_weeks: number | null;
+    next_vacation_weeks: number | null;
     curr_vacation_split: number;
     next_vacation_split: number;
     sdv_entitlement: number;
@@ -1674,24 +1674,24 @@ export const useAdminCalendarManagementStore = create<
                     continue;
                 }
 
-                // Calculate vacation weeks based on company hire date if not already set
-                const currVacationWeeks = member.curr_vacation_weeks !== null &&
-                        member.curr_vacation_weeks !== undefined
-                    ? member.curr_vacation_weeks
-                    : calculateVacationWeeks(
-                        member.company_hire_date,
-                        currentDate,
-                    );
+                // Preserve null from DB, calculate only if necessary (e.g., if undefined, though Supabase likely returns null)
+                const currVacationWeeks =
+                    member.curr_vacation_weeks === undefined
+                        ? calculateVacationWeeks(
+                            member.company_hire_date,
+                            currentDate,
+                        )
+                        : member.curr_vacation_weeks; // Keep null if DB has null
 
-                const nextVacationWeeks = member.next_vacation_weeks !== null &&
-                        member.next_vacation_weeks !== undefined
-                    ? member.next_vacation_weeks
-                    : calculateVacationWeeks(
-                        member.company_hire_date,
-                        nextYearDate,
-                    );
+                const nextVacationWeeks =
+                    member.next_vacation_weeks === undefined
+                        ? calculateVacationWeeks(
+                            member.company_hire_date,
+                            nextYearDate,
+                        )
+                        : member.next_vacation_weeks; // Keep null if DB has null
 
-                // Calculate max_plds if not already set
+                // Calculate max_plds if not already set (or if null/undefined)
                 const maxPlds =
                     member.max_plds !== null && member.max_plds !== undefined
                         ? member.max_plds

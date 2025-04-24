@@ -88,18 +88,9 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
             return;
           }
 
-          // If there are unsaved changes, confirm before switching
-          if (hasUnsavedChanges) {
-            const confirmSwitch = window.confirm(
-              "You have unsaved changes. Are you sure you want to switch divisions? All unsaved changes will be lost."
-            );
-            if (!confirmSwitch) {
-              return;
-            }
-          }
-
-          // Reset any existing changes
+          // Reset any existing changes before fetching new data
           resetTimeOffChanges();
+          setHasUnsavedChanges(false); // Ensure the flag is reset
 
           // Fetch member data for the new division
           await fetchMemberTimeOffData(divisionData.id);
@@ -113,7 +104,7 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
 
       loadDivisionData();
     }
-  }, [selectedDivision, hasUnsavedChanges, resetTimeOffChanges, fetchMemberTimeOffData]);
+  }, [selectedDivision, resetTimeOffChanges, fetchMemberTimeOffData]);
 
   // Effect to handle calendar changes
   useEffect(() => {
@@ -171,6 +162,7 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
 
   // Update membersList type
   const membersList = useMemo(() => {
+    console.log("[TimeOffManager Debug] Recalculating membersList...");
     // Get the raw data array from the store if available
     const storeData = useAdminCalendarManagementStore.getState().memberTimeOffDataArray || [];
 
@@ -184,8 +176,16 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
   }, [memberTimeOffData]);
 
   // Effect to automatically stage changes if calculated values differ from stored ones
+  const prevMembersListRef = React.useRef<Member[]>();
   useEffect(() => {
-    console.log("[TimeOffManager] Checking for calculated changes...");
+    console.log("[TimeOffManager] Running effect to check calculated changes...");
+    if (prevMembersListRef.current && prevMembersListRef.current === membersList) {
+      console.log("[TimeOffManager Debug] membersList reference HAS NOT changed.");
+    } else {
+      console.log("[TimeOffManager Debug] membersList reference HAS changed.");
+    }
+    prevMembersListRef.current = membersList;
+
     // Access the original, potentially unmodified data directly from the store state
     const originalMemberData = useAdminCalendarManagementStore.getState().memberTimeOffData;
 
@@ -209,17 +209,27 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
       const originalVacationField = isCurrentYear ? "curr_vacation_weeks" : "next_vacation_weeks";
       const originalVacationValue = originalData[originalVacationField];
 
+      // ---- Add Detailed Logging ----
+      const isFieldManuallyChanged = existingChanges[originalVacationField] !== undefined;
+      const valuesDiffer = calculatedVacationWeeks !== originalVacationValue;
+      console.log(
+        `[TimeOffManager Debug - ${pinNumber} (${originalVacationField})] Calculated: ${calculatedVacationWeeks} (Type: ${typeof calculatedVacationWeeks}), Original: ${originalVacationValue} (Type: ${typeof originalVacationValue}), Differs: ${valuesDiffer}, Manually Changed: ${isFieldManuallyChanged}`
+      );
+      // ---- End Detailed Logging ----
+
       // If calculated value differs from original AND user hasn't already changed it
-      if (
-        calculatedVacationWeeks !== originalVacationValue &&
-        existingChanges[originalVacationField] === undefined // Check if user hasn't manually changed this field
-      ) {
+      if (valuesDiffer && !isFieldManuallyChanged) {
         console.log(
           `[TimeOffManager] Staging calculated ${originalVacationField} change for ${pinNumber}: ${originalVacationValue} -> ${calculatedVacationWeeks}`
         );
         // Use a timeout to avoid triggering state updates during render cycle if possible
         // and prevent potential infinite loops if calculateVacationWeeks had side effects (it shouldn't)
         setTimeout(() => {
+          // ---- Add Logging inside setTimeout ----
+          console.log(
+            `[TimeOffManager Debug - ${pinNumber}] Calling setTimeOffChange for ${originalVacationField} with value ${calculatedVacationWeeks} inside setTimeout`
+          );
+          // ---- End Logging inside setTimeout ----
           setTimeOffChange(pinNumber, originalVacationField, calculatedVacationWeeks);
         }, 0);
       }
@@ -234,7 +244,7 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
     });
     // Depend on membersList and selectedTimeOffYear to re-run checks when they change.
     // Also include setTimeOffChange in dependency array as per linting rules.
-  }, [membersList, selectedTimeOffYear, setTimeOffChange, timeOffChanges]);
+  }, [membersList, selectedTimeOffYear, setTimeOffChange]);
 
   // Add console log to check member order
   useEffect(() => {
@@ -704,8 +714,6 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
               <View style={{ flex: 1 }}>
                 <ScrollView style={styles.tableScrollView} nestedScrollEnabled={true} scrollEnabled={true}>
                   {renderTableRows()}
-                  {/* Add some padding at the bottom if needed 
-                  <View style={{ height: 20 }} />*/}
                 </ScrollView>
               </View>
             </View>

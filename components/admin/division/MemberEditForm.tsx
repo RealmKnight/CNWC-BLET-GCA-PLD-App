@@ -1198,6 +1198,21 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
 
         {/* Vacation Section */}
         {renderSectionHeader("Vacation Settings")}
+        <View
+          style={{
+            marginBottom: 16,
+            padding: 12,
+            borderWidth: 1,
+            borderRadius: 8,
+            backgroundColor: "rgba(255, 200, 200, 0.1)",
+            borderColor: Colors[colorScheme].error + "50",
+          }}
+        >
+          <ThemedText style={{ color: Colors.dark.error, fontSize: 14, fontWeight: "500" }}>
+            This is for MANUAL adjustment Only! Please use the Calendar(s) - Manage Time Off section to do regular
+            updates as this is where all the calculations occur. This section is just to manually fix any errors.
+          </ThemedText>
+        </View>
         <View style={isMobileView ? styles.formColumnMobile : styles.formColumnsDesktop}>
           <View style={isMobileView ? styles.fullWidth : styles.formColumn}>
             {/* Current Year Vacation */}

@@ -686,12 +686,6 @@ function BulkActions({ division, onDivisionChange }: BulkActionsProps) {
             <ThemedText>Vacation Seniority management coming soon...</ThemedText>
           </ThemedView>
         );
-      case "sdv":
-        return (
-          <ThemedView style={styles.tabContent}>
-            <ThemedText>SDV Updates management coming soon...</ThemedText>
-          </ThemedView>
-        );
       case "zone":
         return renderZoneContent();
       default:
@@ -724,12 +718,6 @@ function BulkActions({ division, onDivisionChange }: BulkActionsProps) {
           onPress={() => setActiveTab("seniority")}
         >
           <ThemedText>Vacation Seniority</ThemedText>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tab, activeTab === "sdv" && styles.activeTab]}
-          onPress={() => setActiveTab("sdv")}
-        >
-          <ThemedText>SDV Updates</ThemedText>
         </TouchableOpacity>
       </ThemedView>
       {isLoading ? (
@@ -862,12 +850,6 @@ export function MemberManagement() {
             )}
           </View>
         )}
-
-        {currentAction === "transfer" && (
-          <View style={{ display: currentAction === "transfer" ? "flex" : "none", flex: 1 }}>
-            <ThemedText type="subtitle">Transfer Member</ThemedText>
-          </View>
-        )}
       </ThemedView>
     );
   }, [currentAction, lastLoadedDivision, memberListUI, selectedMember, handleCloseEditForm]);
@@ -903,7 +885,6 @@ export function MemberManagement() {
       <ThemedView style={styles.actionButtons}>
         {renderActionButton("list", "list", "Member List")}
         {isAdmin && renderActionButton("bulk", "people", "Bulk Actions")}
-        {isAdmin && renderActionButton("transfer", "swap-horizontal", "Transfer Member")}
       </ThemedView>
     ),
     [renderActionButton, isAdmin]
