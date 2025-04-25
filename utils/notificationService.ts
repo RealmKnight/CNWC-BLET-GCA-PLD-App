@@ -363,58 +363,33 @@ export async function testEmailFunction(to: string): Promise<boolean> {
   try {
     console.log("Testing email function with recipient:", to);
 
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session?.access_token) {
-      console.error("No access token available");
-      return false;
-    }
-
-    const functionUrl =
-      "https://ymkihdiegkqbeegfebse.supabase.co/functions/v1/send-email";
-
-    const response = await fetch(functionUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${session.access_token}`,
-      },
-      body: JSON.stringify({
+    // Use the Edge Function with the SMTP configuration
+    const { data, error } = await supabase.functions.invoke("send-email", {
+      body: {
         to,
         subject: "Test Email with Logo",
         content: `
           <div style="text-align: center; padding: 20px;">
             <h1 style="color: #003366;">Email System Test</h1>
             <p style="font-size: 16px; line-height: 1.5;">
-              This is a test email to verify that our email system is working correctly with the new logo integration.
-            </p>
-            <p style="font-size: 16px; line-height: 1.5;">
-              If you're seeing this message and the BLET logo above, everything is working perfectly!
+              This is a test email to verify that our email system is working correctly.
             </p>
             <p style="font-style: italic; color: #666; margin-top: 20px;">
               This is an automated test message. No action is required.
             </p>
           </div>
         `,
-      }),
+      },
     });
 
-    console.log("Response status:", response.status);
-    const data = await response.json();
-    console.log("Response data:", data);
-
-    if (!response.ok) {
-      console.error("Email function error response:", data);
+    if (error) {
+      console.error("Error sending test email:", error);
       return false;
     }
 
     return data?.success || false;
-  } catch (err: unknown) {
-    const error = err as Error;
-    console.error("Unexpected error in testEmailFunction:", {
-      message: error.message,
-      name: error.name,
-      stack: error.stack,
-    });
+  } catch (error) {
+    console.error("Unexpected error in testEmailFunction:", error);
     return false;
   }
 }
@@ -424,12 +399,18 @@ export async function sendPasswordResetEmail(email: string): Promise<boolean> {
   try {
     console.log("[Auth] Sending password reset email to:", email);
 
-    // First try the standard Supabase method
-    const { data, error: resetError } = await supabase.auth
-      .resetPasswordForEmail(email, {
-        redirectTo:
-          `${process.env.EXPO_PUBLIC_WEBSITE_URL}/(auth)/change-password`,
-      });
+    // Format the redirect URL without parentheses
+    const redirectUrl =
+      `${process.env.EXPO_PUBLIC_WEBSITE_URL}/auth/change-password`;
+    console.log("[Auth] Using redirect URL:", redirectUrl);
+
+    // Primary method: Use Supabase Auth
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(
+      email,
+      {
+        redirectTo: redirectUrl,
+      },
+    );
 
     // If there's no error, we're done
     if (!resetError) {
@@ -439,127 +420,36 @@ export async function sendPasswordResetEmail(email: string): Promise<boolean> {
       return true;
     }
 
-    // If we got an error other than email delivery issues, return false
-    if (!resetError.message.includes("Error sending recovery email")) {
-      console.error("[Auth] Error generating reset token:", resetError);
-      return false;
-    }
-
-    // If we're here, we had an email delivery issue but got a valid token
     console.log(
-      "[Auth] Supabase email delivery failed, trying Edge Function fallback",
+      "[Auth] Supabase auth email failed with error:",
+      resetError.message,
+    );
+    console.log(
+      "[Auth] Supabase auth email failed, using Edge Function fallback",
     );
 
-    // Attempt to get the current session
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session?.access_token) {
-      console.log(
-        "[Auth] No active session, trying anonymous request to Edge Function",
-      );
-      // For anonymous requests, we'll send a generic reset email
-      return await sendGenericResetEmail(email);
-    }
-
-    console.log(
-      "[Auth] Active session found, attempting to send custom reset email",
-    );
-    // For authenticated requests, try to get a reset link via admin API
-    try {
-      // Try to generate a reset link for the user
-      const response = await fetch(
-        "https://ymkihdiegkqbeegfebse.supabase.co/functions/v1/send-email",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify({
-            to: email,
-            subject: "Reset Your Password - BLET CN/WC GCA PLD App",
-            content: `
-            <div style="text-align: center; padding: 20px;">
-              <img src="https://ymkihdiegkqbeegfebse.supabase.co/storage/v1/object/public/public_assets/logo/BLETblackgold.png" 
-                   alt="BLET Logo" 
-                   style="max-width: 200px; height: auto;">
-              <h1 style="color: #003366;">Reset Your Password</h1>
-              <p style="font-size: 16px; line-height: 1.5;">
-                We received a request to reset your password for the BLET CN/WC GCA PLD App.
-              </p>
-              <p style="font-size: 16px; line-height: 1.5;">
-                Please click the button below to reset your password:
-              </p>
-              <p style="text-align: center;">
-                <a href="${process.env.EXPO_PUBLIC_WEBSITE_URL}/(auth)/change-password" 
-                   style="background-color: #003366; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; display: inline-block; font-weight: bold;">
-                  Reset Password
-                </a>
-              </p>
-              <p style="font-style: italic; color: #666; margin-top: 20px;">
-                If you did not request a password reset, you can ignore this email.
-              </p>
-              <p style="font-style: italic; color: #666;">
-                This is an automated message from the BLET CN/WC GCA PLD App.
-              </p>
-            </div>
-          `,
-          }),
-        },
-      );
-
-      if (!response.ok) {
-        console.error(
-          "[Auth] Error sending custom reset email via Edge Function:",
-          response.status,
-        );
-        return false;
-      }
-
-      const result = await response.json();
-      return result?.success || false;
-    } catch (error) {
-      console.error("[Auth] Error in custom reset email:", error);
-      return false;
-    }
+    // Fallback: Use Edge Function directly
+    return await sendPasswordResetEmailViaEdgeFunction(email);
   } catch (error) {
     console.error("[Auth] Error in sendPasswordResetEmail:", error);
     return false;
   }
 }
 
-// Helper function to send a generic reset instruction email
-async function sendGenericResetEmail(email: string): Promise<boolean> {
+// Helper function to send password reset email via Edge Function
+async function sendPasswordResetEmailViaEdgeFunction(
+  email: string,
+): Promise<boolean> {
   try {
-    // For unauthenticated requests, we'll try to get a service role token
-    // or use another auth method that doesn't require user login
+    // Format the redirect URL without parentheses
+    const redirectUrl =
+      `${process.env.EXPO_PUBLIC_WEBSITE_URL}/auth/change-password`;
 
-    // First try to get a service role token if possible (requires proper config)
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: process.env.EXPO_PUBLIC_SERVICE_EMAIL || "service@example.com",
-      password: process.env.EXPO_PUBLIC_SERVICE_PASSWORD || "password",
-    });
-
-    if (error || !data.session) {
-      console.error("[Auth] Could not get service credentials:", error);
-      // Fall back to direct Supabase method as last resort
-      return false;
-    }
-
-    const token = data.session.access_token;
-
-    // Now use the token to call the Edge Function
-    const response = await fetch(
-      "https://ymkihdiegkqbeegfebse.supabase.co/functions/v1/send-email",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          to: email,
-          subject: "Reset Your Password - BLET CN/WC GCA PLD App",
-          content: `
+    const { data, error } = await supabase.functions.invoke("send-email", {
+      body: {
+        to: email,
+        subject: "Reset Your Password - BLET CN/WC GCA PLD App",
+        content: `
           <div style="text-align: center; padding: 20px;">
             <img src="https://ymkihdiegkqbeegfebse.supabase.co/storage/v1/object/public/public_assets/logo/BLETblackgold.png" 
                  alt="BLET Logo" 
@@ -569,8 +459,13 @@ async function sendGenericResetEmail(email: string): Promise<boolean> {
               We received a request to reset your password for the BLET CN/WC GCA PLD App.
             </p>
             <p style="font-size: 16px; line-height: 1.5;">
-              Please go to the app and use the "Forgot Password" option on the sign-in screen.
-              You'll need to enter this email address to receive a reset link.
+              Please click the button below to reset your password:
+            </p>
+            <p style="text-align: center;">
+              <a href="${redirectUrl}" 
+                 style="background-color: #003366; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; display: inline-block; font-weight: bold;">
+                Reset Password
+              </a>
             </p>
             <p style="font-style: italic; color: #666; margin-top: 20px;">
               If you did not request a password reset, you can ignore this email.
@@ -580,22 +475,23 @@ async function sendGenericResetEmail(email: string): Promise<boolean> {
             </p>
           </div>
         `,
-        }),
       },
-    );
+    });
 
-    if (!response.ok) {
+    if (error) {
       console.error(
-        "[Auth] Error sending generic reset email via Edge Function:",
-        response.status,
+        "[Auth] Error sending password reset email via Edge Function:",
+        error,
       );
       return false;
     }
 
-    const result = await response.json();
-    return result?.success || false;
+    return data?.success || false;
   } catch (error) {
-    console.error("[Auth] Error in sendGenericResetEmail:", error);
+    console.error(
+      "[Auth] Error in sendPasswordResetEmailViaEdgeFunction:",
+      error,
+    );
     return false;
   }
 }

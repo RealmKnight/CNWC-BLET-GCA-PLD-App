@@ -33,12 +33,11 @@ export default function ForgotPasswordScreen() {
 
       console.log("[Auth] Sending password reset email to:", email);
 
-      // Use our enhanced function with fallbacks instead of the standard Supabase method
+      // Use the simplified email service
       const success = await sendPasswordResetEmail(email);
 
       if (!success) {
-        // If all fallbacks failed, show a more comprehensive error
-        console.error("[Auth] Error sending reset email with all fallback methods");
+        console.error("[Auth] Error sending reset email");
         setError(
           "We're having trouble sending emails right now. Please try again later or contact support if the issue persists."
         );

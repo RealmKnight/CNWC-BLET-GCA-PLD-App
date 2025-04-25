@@ -420,6 +420,7 @@ export default function ProfileScreen() {
   const [isDateOfBirthModalVisible, setIsDateOfBirthModalVisible] = useState(false);
   const [divisionName, setDivisionName] = useState<string | null>(null);
   const [zoneName, setZoneName] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
   const isOwnProfile = user?.id === profileID;
   // Users can only edit their own phone number and date of birth
@@ -647,27 +648,81 @@ export default function ProfileScreen() {
     });
   };
 
-  const handleUpdatePassword = async () => {
+  const handleEmailTest = async () => {
     try {
       if (!user?.email) {
-        Alert.alert("Error", "No email address found for your account");
+        Toast.show({
+          type: "error",
+          text1: "Email Required",
+          text2: "No email address found for this user.",
+        });
         return;
       }
 
-      // Use our enhanced function with fallbacks
+      setIsLoading(true);
+      const success = await testEmailFunction(user.email);
+
+      if (success) {
+        Toast.show({
+          type: "success",
+          text1: "Email Sent",
+          text2: "Test email was sent successfully.",
+        });
+      } else {
+        Toast.show({
+          type: "error",
+          text1: "Email Error",
+          text2: "Failed to send test email. Please try again later.",
+        });
+      }
+    } catch (error) {
+      console.error("Error sending test email:", error);
+      Toast.show({
+        type: "error",
+        text1: "Email Error",
+        text2: "An unexpected error occurred. Please try again.",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleUpdatePassword = async () => {
+    try {
+      if (!user?.email) {
+        Toast.show({
+          type: "error",
+          text1: "Email Required",
+          text2: "No email address found for this user.",
+        });
+        return;
+      }
+
+      setIsLoading(true);
       const success = await sendPasswordResetEmail(user.email);
 
       if (success) {
-        Alert.alert("Success", "Password reset email sent! Please check your inbox.");
+        Toast.show({
+          type: "success",
+          text1: "Email Sent",
+          text2: "Password reset instructions have been sent to your email.",
+        });
       } else {
-        Alert.alert(
-          "Email Delivery Issue",
-          "We're having difficulty sending emails right now. Please try again later or contact support."
-        );
+        Toast.show({
+          type: "error",
+          text1: "Password Reset Error",
+          text2: "Failed to send password reset email. Please try again later.",
+        });
       }
     } catch (error) {
-      console.error("Error sending reset password email:", error);
-      Alert.alert("Error", "Failed to send reset password email. Please try again.");
+      console.error("Error sending password reset:", error);
+      Toast.show({
+        type: "error",
+        text1: "Password Reset Error",
+        text2: "An unexpected error occurred. Please try again.",
+      });
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -801,21 +856,7 @@ export default function ProfileScreen() {
               <ThemedText style={styles.settingButtonText}>Change Password</ThemedText>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              onPress={async () => {
-                try {
-                  const success = await testEmailFunction(user?.email || "");
-                  Alert.alert(
-                    success ? "Success" : "Error",
-                    success ? "Test email sent successfully!" : "Failed to send test email"
-                  );
-                } catch (error) {
-                  console.error("Error testing email:", error);
-                  Alert.alert("Error", "Failed to send test email");
-                }
-              }}
-              style={styles.settingButton}
-            >
+            <TouchableOpacity onPress={handleEmailTest} style={styles.settingButton}>
               <ThemedText style={styles.settingButtonText}>Test Email Function</ThemedText>
             </TouchableOpacity>
           </ThemedView>
