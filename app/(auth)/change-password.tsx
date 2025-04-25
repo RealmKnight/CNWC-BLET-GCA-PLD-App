@@ -7,6 +7,16 @@ import { ThemedText } from "@/components/ThemedText";
 import { Colors } from "@/constants/Colors";
 import * as Linking from "expo-linking";
 import { useAuth } from "@/hooks/useAuth";
+import { AuthParams } from "@/utils/authRedirects";
+
+// Extend Window interface to include our custom properties
+declare global {
+  interface Window {
+    __passwordResetInProgress?: boolean;
+    __passwordResetParams?: AuthParams | Record<string, any>;
+    __isProcessingPasswordReset?: () => boolean;
+  }
+}
 
 // Helper to extract auth params from both query and hash
 function getAuthParamsFromUrl(): {
@@ -120,6 +130,24 @@ export default function ChangePasswordScreen() {
   useEffect(() => {
     // Log presence of URL parameters for debugging
     if (Platform.OS === "web" && typeof window !== "undefined") {
+      // Check for stored password reset parameters from authRedirects.ts
+      if (window.__passwordResetParams) {
+        console.log("[Auth] Found stored password reset parameters", window.__passwordResetParams);
+
+        // Extract and use the parameters
+        const storedParams = window.__passwordResetParams;
+
+        // Update state or process as needed
+        setDebugInfo({
+          ...debugInfo,
+          storedParams,
+          source: "window.__passwordResetParams",
+        });
+
+        // Keep the password reset flag set
+        window.__passwordResetInProgress = true;
+      }
+
       // Check for reset token indicators in URL
       const isResetFlow =
         window.location.href.includes("type=recovery") ||
@@ -127,11 +155,12 @@ export default function ChangePasswordScreen() {
         window.location.search.includes("type=recovery") ||
         window.location.search.includes("code=") ||
         (window.location.hash &&
-          (window.location.hash.includes("type=recovery") || window.location.hash.includes("code=")));
+          (window.location.hash.includes("type=recovery") || window.location.hash.includes("code="))) ||
+        !!window.__passwordResetParams;
 
       // Flag for preventing redirects during reset
       if (isResetFlow) {
-        console.log("[Auth] Detected reset flow from URL parameters");
+        console.log("[Auth] Detected reset flow from URL parameters or stored params");
         window.__passwordResetInProgress = true;
       }
 

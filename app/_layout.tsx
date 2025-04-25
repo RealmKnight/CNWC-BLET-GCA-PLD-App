@@ -111,9 +111,16 @@ function RootLayoutContent() {
     const isAuthGroup = segments[0] === "(auth)";
     const isRootPath = pathname === "/";
 
+    // Check for password reset flow
+    const isPasswordReset =
+      // Special global flag for password reset
+      (typeof window !== "undefined" && window.__passwordResetInProgress) ||
+      // Special flag in session state for reset flow
+      session === null;
+
     // Don't redirect if user is in a password reset flow
-    if (session === null) {
-      console.log("User is resetting password - skipping navigation guards");
+    if (isPasswordReset) {
+      console.log("Password reset in progress - skipping navigation guards");
       return;
     }
 

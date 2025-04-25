@@ -1,6 +1,14 @@
 import { Platform } from "react-native";
 import { router } from "expo-router";
 
+// Extend Window interface to include our custom properties
+declare global {
+    interface Window {
+        __passwordResetInProgress?: boolean;
+        __passwordResetParams?: AuthParams | Record<string, any>;
+    }
+}
+
 export interface AuthParams {
     accessToken?: string;
     refreshToken?: string;
@@ -102,11 +110,33 @@ export function handlePasswordResetURL(): boolean {
         const code = new URLSearchParams(window.location.search).get("code");
         console.log("[AuthRedirect] Handling special mixed format URL");
 
-        // Navigate to the correct route with the code as a parameter
-        router.replace({
-            pathname: "/(auth)/change-password",
-            params: { code },
-        });
+        // Store the parameters instead of navigating immediately
+        if (typeof window !== "undefined") {
+            window.__passwordResetParams = { code };
+            window.__passwordResetInProgress = true;
+            console.log(
+                "[AuthRedirect] Stored password reset parameters for delayed navigation",
+            );
+
+            // Use setTimeout to delay navigation until after component mounting
+            setTimeout(() => {
+                try {
+                    console.log(
+                        "[AuthRedirect] Attempting delayed navigation to change-password",
+                    );
+                    router.replace({
+                        pathname: "/(auth)/change-password",
+                        params: { code },
+                    });
+                } catch (error) {
+                    console.error(
+                        "[AuthRedirect] Delayed navigation failed:",
+                        error,
+                    );
+                }
+            }, 1000); // Delay for 1 second to ensure components are mounted
+        }
+
         return true;
     }
 
@@ -130,14 +160,29 @@ export function handlePasswordResetURL(): boolean {
                 : `type=${params.type}`;
         }
 
-        // Navigate to change password with the params
-        if (query) {
-            router.replace({
-                pathname: "/(auth)/change-password",
-                params: params as any,
-            });
-        } else {
-            router.replace("/(auth)/change-password");
+        // Use the delayed approach for all redirects
+        if (typeof window !== "undefined") {
+            window.__passwordResetParams = params;
+            window.__passwordResetInProgress = true;
+
+            setTimeout(() => {
+                try {
+                    // Navigate to change password with the params
+                    if (query) {
+                        router.replace({
+                            pathname: "/(auth)/change-password",
+                            params: params as any,
+                        });
+                    } else {
+                        router.replace("/(auth)/change-password");
+                    }
+                } catch (error) {
+                    console.error(
+                        "[AuthRedirect] Delayed navigation failed:",
+                        error,
+                    );
+                }
+            }, 1000);
         }
 
         return true;
