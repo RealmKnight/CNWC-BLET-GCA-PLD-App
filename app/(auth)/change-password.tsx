@@ -23,6 +23,12 @@ function getAuthParamsFromUrl(): {
     const searchParams = new URLSearchParams(window.location.search);
     let hashParams = new URLSearchParams();
 
+    // Special case handling for the mixed format: ?code=xxx#/auth/change-password
+    if (window.location.search.includes("code=") && window.location.hash.includes("/auth/change-password")) {
+      console.log("[Auth] Detected mixed URL format with code in query and hash navigation");
+      // We already have the code in searchParams, no need to do anything special here
+    }
+
     // Safely handle hash fragments
     if (window.location.hash && window.location.hash.length > 1) {
       // Handle hash-based routes like /#/auth/change-password?code=xyz
@@ -112,6 +118,32 @@ export default function ChangePasswordScreen() {
 
   // Handle password reset from Supabase auth link
   useEffect(() => {
+    // Log presence of URL parameters for debugging
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      // Check for reset token indicators in URL
+      const isResetFlow =
+        window.location.href.includes("type=recovery") ||
+        window.location.href.includes("code=") ||
+        window.location.search.includes("type=recovery") ||
+        window.location.search.includes("code=") ||
+        (window.location.hash &&
+          (window.location.hash.includes("type=recovery") || window.location.hash.includes("code=")));
+
+      // Flag for preventing redirects during reset
+      if (isResetFlow) {
+        console.log("[Auth] Detected reset flow from URL parameters");
+        window.__passwordResetInProgress = true;
+      }
+
+      // Debug info
+      setDebugInfo({
+        url: window.location.href,
+        search: window.location.search,
+        hash: window.location.hash,
+        isResetFlow,
+      });
+    }
+
     const processAuthParams = async () => {
       if (authInProgress.current) return;
 

@@ -534,6 +534,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         type: "recovery",
         email: email,
         options: {
+          // Use the direct path without hash navigation to prevent mixed URL formats
           redirectTo: `${process.env.EXPO_PUBLIC_WEBSITE_URL}/(auth)/change-password`,
         },
       });
@@ -600,9 +601,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
         // For web platforms
         (Platform.OS === "web" &&
           typeof window !== "undefined" &&
-          window.location &&
-          window.location.pathname &&
-          window.location.pathname.includes("/change-password")) ||
+          ((window.location && window.location.pathname && window.location.pathname.includes("/change-password")) ||
+            // Check URL parameters that indicate a password reset flow
+            window.location.href.includes("type=recovery") ||
+            window.location.search.includes("type=recovery") ||
+            (window.location.hash && window.location.hash.includes("type=recovery")))) ||
         // For mobile platforms, we'll assume code exchange is for password reset
         // unless we can determine otherwise
         Platform.OS !== "web";
@@ -610,7 +613,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
       if (isPasswordReset) {
         console.log("[Auth] Detected password reset flow during code exchange", {
           platform: Platform.OS,
+          hasCode: !!code,
         });
+
+        // Set the flag early
+        if (Platform.OS === "web" && typeof window !== "undefined") {
+          window.__passwordResetInProgress = true;
+        }
       }
 
       const { data, error } = await supabase.auth.exchangeCodeForSession(code);

@@ -2,9 +2,9 @@ import { Stack, Slot } from "expo-router";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { StyleSheet, Image, TouchableOpacity } from "react-native";
+import { StyleSheet, Image, TouchableOpacity, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter, useSegments } from "expo-router";
+import { useRouter, useSegments, usePathname } from "expo-router";
 import { useEffect, useState } from "react";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -13,6 +13,8 @@ import Toast, { BaseToast, ErrorToast, BaseToastProps } from "react-native-toast
 import { Colors } from "@/constants/Colors";
 import { ThemedToast } from "@/components/ThemedToast";
 import { useNotificationStore } from "@/store/notificationStore";
+import { useUserStore } from "@/store/userStore";
+import { handlePasswordResetURL } from "@/utils/authRedirects";
 
 // Define toast config
 const toastConfig = {
@@ -100,99 +102,35 @@ function RootLayoutContent() {
   }, [session, member]); // Depend on the entire member object to ensure we have complete data
 
   useEffect(() => {
-    console.log("[Router Check] Start", { isLoading, initialRouteHandled, session: !!session, segments });
+    // Early password reset detection for incoming links (especially important for web)
+    handlePasswordResetURL();
 
-    // If loading, reset the handled flag and wait
-    if (isLoading) {
-      setInitialRouteHandled(false);
-      console.log("[Router Check] Waiting: isLoading is true");
+    const shouldBeRedirected = session?.toString() !== "true";
+    const pathname = usePathname();
+    const segments = useSegments();
+    const isAuthGroup = segments[0] === "(auth)";
+    const isRootPath = pathname === "/";
+
+    // Don't redirect if user is in a password reset flow
+    if (session === null) {
+      console.log("User is resetting password - skipping navigation guards");
       return;
     }
 
-    // If already handled initial route after loading, do nothing
-    if (initialRouteHandled) {
-      console.log("[Router Check] Skipping: initialRouteHandled is true");
+    // Allow access to onboarding when not signed in
+    if (pathname.includes("onboarding")) return;
+
+    // Redirect to sign in if not authenticated
+    if (shouldBeRedirected && !isAuthGroup) {
+      router.replace("/sign-in");
       return;
     }
 
-    // ---- Core Routing Logic ----
-    // This block now only runs once after isLoading becomes false
-
-    const inAuthGroup = segments[0] === "(auth)";
-    const isCompanyAdmin = session?.user?.user_metadata?.role === "company_admin";
-    const inMemberAssociation = segments[0] === "(auth)" && segments[1] === "member-association";
-    const isPasswordReset = segments[0] === "(auth)" && segments[1] === "change-password";
-    const isProcessingReset = typeof window !== "undefined" && window.__passwordResetInProgress;
-    const comingFromReset = isPasswordReset || isProcessingReset;
-
-    console.log("[Router Logic] Executing", {
-      segments,
-      isCompanyAdmin,
-      hasSession: !!session,
-      hasMember: !!member,
-      comingFromReset,
-    });
-
-    // 1. No Session Check (Password reset exempt)
-    if (!session && !inAuthGroup && !comingFromReset) {
-      console.log("[Router Logic] No session, redirecting to sign-in");
-      router.replace("/(auth)/sign-in");
-      setInitialRouteHandled(true); // Mark as handled
-      return;
+    // Redirect to home if authenticated and on auth pages
+    if (!shouldBeRedirected && (isAuthGroup || isRootPath)) {
+      router.replace("/(tabs)");
     }
-
-    // 2. Company Admin Check
-    if (session && isCompanyAdmin) {
-      if (segments[0] !== "company-admin") {
-        console.log("[Router Logic] Company admin not on admin page, redirecting");
-        router.replace("/company-admin");
-      } else {
-        console.log("[Router Logic] Company admin already on correct page");
-      }
-      setInitialRouteHandled(true); // Mark as handled
-      return;
-    }
-
-    // 3. Handle non-admin users (Password reset needs special check)
-    if (session && !isCompanyAdmin) {
-      // Special case: If on password reset page, allow it, unless member data exists
-      if (comingFromReset && !member) {
-        console.log("[Router Logic] On password reset without member data, staying");
-        setInitialRouteHandled(true); // Consider handled for now
-        return;
-      }
-
-      // Member Association Check
-      if (!member && !inMemberAssociation && !comingFromReset) {
-        console.log("[Router Logic] Non-admin, no member data, redirecting to association");
-        router.replace("/(auth)/member-association");
-        setInitialRouteHandled(true); // Mark as handled
-        return;
-      }
-
-      // Normal Logged-in Member
-      if (member) {
-        if (inAuthGroup && !inMemberAssociation && !comingFromReset) {
-          console.log("[Router Logic] Member in auth group (not assoc/reset), redirecting to tabs");
-          router.replace("/(tabs)");
-        } else if (segments[0] !== "(tabs)" && !inAuthGroup) {
-          // Redirect to tabs if not already there and not in auth
-          console.log("[Router Logic] Member not in tabs or auth, redirecting to tabs");
-          router.replace("/(tabs)");
-        } else {
-          console.log("[Router Logic] Member already in tabs or auth group (assoc/reset)");
-        }
-        setInitialRouteHandled(true); // Mark as handled
-        return;
-      }
-    }
-
-    // If none of the above conditions met (should be rare), mark as handled anyway
-    console.log("[Router Logic] No specific route action taken, marking handled");
-    setInitialRouteHandled(true);
-
-    // Ensure 'user' is included in the dependencies for role check
-  }, [isLoading, session, user, segments, member, router, initialRouteHandled]);
+  }, [session]);
 
   if (isLoading && !initialRouteHandled) {
     return (

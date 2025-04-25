@@ -399,18 +399,10 @@ export async function sendPasswordResetEmail(email: string): Promise<boolean> {
   try {
     console.log("[Auth] Sending password reset email to:", email);
 
-    // Format the redirect URL differently based on platform
-    let redirectUrl = "";
-
-    if (Platform.OS === "web") {
-      // For web, we need to use hash routing instead of path routing to work properly with Supabase Auth
-      redirectUrl =
-        `${process.env.EXPO_PUBLIC_WEBSITE_URL}/#/auth/change-password`;
-    } else {
-      // For mobile, we use the standard path format with parentheses
-      redirectUrl =
-        `${process.env.EXPO_PUBLIC_WEBSITE_URL}/(auth)/change-password`;
-    }
+    // Format the redirect URL - use the correct format for password reset
+    // For Supabase auth, the URL should directly point to the change-password page
+    const redirectUrl =
+      `${process.env.EXPO_PUBLIC_WEBSITE_URL}/(auth)/change-password`;
 
     console.log("[Auth] Using redirect URL:", redirectUrl);
 
@@ -438,8 +430,8 @@ export async function sendPasswordResetEmail(email: string): Promise<boolean> {
       "[Auth] Supabase auth email failed, using Edge Function fallback",
     );
 
-    // Fallback: Use Edge Function directly
-    return await sendPasswordResetEmailViaEdgeFunction(email, redirectUrl);
+    // Fallback: Use Edge Function directly as a backup
+    return await sendPasswordResetEmailViaEdgeFunction(email);
   } catch (error) {
     console.error("[Auth] Error in sendPasswordResetEmail:", error);
     return false;
@@ -449,7 +441,6 @@ export async function sendPasswordResetEmail(email: string): Promise<boolean> {
 // Helper function to send password reset email via Edge Function
 async function sendPasswordResetEmailViaEdgeFunction(
   email: string,
-  redirectUrl: string,
 ): Promise<boolean> {
   try {
     const { data, error } = await supabase.functions.invoke("send-email", {
@@ -469,7 +460,7 @@ async function sendPasswordResetEmailViaEdgeFunction(
               Please click the button below to reset your password:
             </p>
             <p style="text-align: center;">
-              <a href="${redirectUrl}"
+              <a href="${process.env.EXPO_PUBLIC_WEBSITE_URL}/(auth)/change-password"
                  style="background-color: #003366; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; display: inline-block; font-weight: bold;">
                 Reset Password
               </a>
