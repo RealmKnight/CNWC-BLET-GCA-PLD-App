@@ -43,6 +43,7 @@ function RootLayoutContent() {
   const { isLoading, session, userRole, member, signOut, user } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+  const pathname = usePathname();
   const { fetchMessages, subscribeToMessages } = useNotificationStore();
   const [initialRouteHandled, setInitialRouteHandled] = useState(false);
 
@@ -106,8 +107,6 @@ function RootLayoutContent() {
     handlePasswordResetURL();
 
     const shouldBeRedirected = session?.toString() !== "true";
-    const pathname = usePathname();
-    const segments = useSegments();
     const isAuthGroup = segments[0] === "(auth)";
     const isRootPath = pathname === "/";
 
@@ -137,7 +136,7 @@ function RootLayoutContent() {
     if (!shouldBeRedirected && (isAuthGroup || isRootPath)) {
       router.replace("/(tabs)");
     }
-  }, [session]);
+  }, [session, segments, pathname]);
 
   if (isLoading && !initialRouteHandled) {
     return (

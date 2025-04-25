@@ -535,7 +535,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         email: email,
         options: {
           // Use the direct path without hash navigation to prevent mixed URL formats
-          redirectTo: `${process.env.EXPO_PUBLIC_WEBSITE_URL}/(auth)/change-password`,
+          redirectTo: `${process.env.EXPO_PUBLIC_WEBSITE_URL}/change-password`,
         },
       });
 
