@@ -12,7 +12,7 @@ import { useColorScheme } from "@/hooks/useColorScheme";
 import { Database } from "@/types/supabase";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
-import { testEmailFunction, sendPasswordResetEmail } from "@/utils/notificationService";
+import { sendPasswordResetEmail } from "@/utils/notificationService";
 import Constants from "expo-constants";
 import { DatePicker } from "@/components/DatePicker";
 import { parseISO, format, differenceInYears, isAfter } from "date-fns";
@@ -648,45 +648,6 @@ export default function ProfileScreen() {
     });
   };
 
-  const handleEmailTest = async () => {
-    try {
-      if (!user?.email) {
-        Toast.show({
-          type: "error",
-          text1: "Email Required",
-          text2: "No email address found for this user.",
-        });
-        return;
-      }
-
-      setIsLoading(true);
-      const success = await testEmailFunction(user.email);
-
-      if (success) {
-        Toast.show({
-          type: "success",
-          text1: "Email Sent",
-          text2: "Test email was sent successfully.",
-        });
-      } else {
-        Toast.show({
-          type: "error",
-          text1: "Email Error",
-          text2: "Failed to send test email. Please try again later.",
-        });
-      }
-    } catch (error) {
-      console.error("Error sending test email:", error);
-      Toast.show({
-        type: "error",
-        text1: "Email Error",
-        text2: "An unexpected error occurred. Please try again.",
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   const handleUpdatePassword = async () => {
     try {
       if (!user?.email) {
@@ -854,10 +815,6 @@ export default function ProfileScreen() {
             <ThemedText type="subtitle">Send an email with a reset link to change your password</ThemedText>
             <TouchableOpacity onPress={handleUpdatePassword} style={styles.settingButton}>
               <ThemedText style={styles.settingButtonText}>Change Password</ThemedText>
-            </TouchableOpacity>
-
-            <TouchableOpacity onPress={handleEmailTest} style={styles.settingButton}>
-              <ThemedText style={styles.settingButtonText}>Test Email Function</ThemedText>
             </TouchableOpacity>
           </ThemedView>
 
