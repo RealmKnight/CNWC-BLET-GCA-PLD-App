@@ -25,15 +25,27 @@ function getAuthParamsFromUrl(): {
 
     // Safely handle hash fragments
     if (window.location.hash && window.location.hash.length > 1) {
-      // If the hash starts with #, remove it
-      const hashString = window.location.hash.startsWith("#")
-        ? window.location.hash.substring(1)
-        : window.location.hash;
+      // Handle hash-based routes like /#/auth/change-password?code=xyz
+      const hashContent = window.location.hash;
+      let hashQueryString = "";
 
-      try {
-        hashParams = new URLSearchParams(hashString);
-      } catch (e) {
-        console.error("[Auth] Error parsing hash params:", e);
+      // Check if the hash contains a query string portion
+      if (hashContent.includes("?")) {
+        const hashParts = hashContent.split("?");
+        hashQueryString = hashParts[1];
+      }
+      // Also check for direct token format: #access_token=xxx&refresh_token=yyy
+      else if (hashContent.includes("access_token=") || hashContent.includes("code=")) {
+        // Remove leading # if present
+        hashQueryString = hashContent.startsWith("#") ? hashContent.substring(1) : hashContent;
+      }
+
+      if (hashQueryString) {
+        try {
+          hashParams = new URLSearchParams(hashQueryString);
+        } catch (e) {
+          console.error("[Auth] Error parsing hash query params:", e);
+        }
       }
     }
 
@@ -113,13 +125,26 @@ export default function ChangePasswordScreen() {
           });
         }
 
+        // On web, always extract from URL as well
+        let code, type, accessToken, refreshToken, token;
+
+        if (Platform.OS === "web") {
+          const urlParams = getAuthParamsFromUrl();
+          code = urlParams.code;
+          type = urlParams.type;
+          accessToken = urlParams.accessToken;
+          refreshToken = urlParams.refreshToken;
+          token = urlParams.token;
+        } else {
+          // For mobile, use local search params
+          code = params.code as string | undefined;
+          type = params.type as string | undefined;
+          accessToken = params.access_token as string | undefined;
+          refreshToken = params.refresh_token as string | undefined;
+        }
+
         // Check if we have any auth params to process
-        const hasAuthParams =
-          params.code ||
-          params.type ||
-          params.access_token ||
-          params.refresh_token ||
-          (Platform.OS === "web" && Object.values(getAuthParamsFromUrl()).some(Boolean));
+        const hasAuthParams = code || type || accessToken || refreshToken || token;
 
         // If no auth params and we already have a session, skip processing
         if (!hasAuthParams && session) {
@@ -131,33 +156,41 @@ export default function ChangePasswordScreen() {
         setIsProcessing(true);
         setIsAuthenticating(true);
 
-        let code = params.code as string | undefined;
-        let type = params.type as string | undefined;
-        let accessToken = params.access_token as string | undefined;
-        let refreshToken = params.refresh_token as string | undefined;
-        let token = undefined;
-
-        // On web, always extract from URL as well
-        if (Platform.OS === "web") {
-          const urlParams = getAuthParamsFromUrl();
-          code = code || urlParams.code;
-          type = type || urlParams.type;
-          accessToken = accessToken || urlParams.accessToken;
-          refreshToken = refreshToken || urlParams.refreshToken;
-          token = urlParams.token;
-        }
-
         // Log for debugging
         console.log("[ChangePassword] Extracted params:", { code, type, accessToken, refreshToken, token });
 
-        // Handle direct token from hash for testing
+        // On web, first try to handle code parameter (OTP flow)
+        if (Platform.OS === "web" && code) {
+          try {
+            console.log("[Auth] Attempting to verify OTP with code on web");
+
+            const { error: verifyError } = await supabase.auth.verifyOtp({
+              email: "", // We don't need to specify the email for verification via reset URL
+              type: "recovery",
+              token: code,
+            });
+
+            if (verifyError) {
+              console.error("[Auth] Error verifying OTP with code:", verifyError);
+              setError("Your password reset link is invalid or expired. Please request a new one.");
+              return;
+            }
+
+            console.log("[Auth] OTP verification successful");
+          } catch (error) {
+            console.error("[Auth] Error in web OTP verification:", error);
+            setError("Failed to process password reset. Please request a new reset link.");
+            return;
+          }
+        }
+
+        // Handle direct token from hash for recovery flow
         if (Platform.OS === "web" && window.location.hash && !accessToken && !refreshToken) {
           try {
-            // Sometimes the token is embedded in a specific way in the hash
+            // Extract tokens from hash fragment
             const hash = window.location.hash;
-            console.log("[Auth] Raw hash for manual parsing:", hash);
+            console.log("[Auth] Parsing hash for tokens:", hash);
 
-            // Try to manually extract tokens
             const manualAtMatch = hash.match(/access_token=([^&]+)/);
             const manualRtMatch = hash.match(/refresh_token=([^&]+)/);
             const manualTypeMatch = hash.match(/type=([^&]+)/);
@@ -167,11 +200,7 @@ export default function ChangePasswordScreen() {
               refreshToken = decodeURIComponent(manualRtMatch[1]);
               type = manualTypeMatch ? decodeURIComponent(manualTypeMatch[1]) : "recovery";
 
-              console.log("[Auth] Manually extracted tokens:", {
-                hasAccessToken: !!accessToken,
-                hasRefreshToken: !!refreshToken,
-                type,
-              });
+              console.log("[Auth] Extracted tokens from hash");
             }
           } catch (hashErr) {
             console.error("[Auth] Error manually parsing hash:", hashErr);
@@ -205,23 +234,15 @@ export default function ChangePasswordScreen() {
           } else {
             console.log("[Auth] Session refreshed successfully with token");
           }
-        } else if (code) {
-          // On web, code cannot be exchanged for a session (no PKCE verifier)
-          if (Platform.OS === "web") {
-            console.error("[Auth] Code found but cannot be used on web without PKCE verifier");
-            setError(
-              "Your password reset link is invalid or expired. Please request a new one. " +
-                "(Missing required tokens in the URL.)"
-            );
-            return;
-          }
-          // On mobile, deep link handler will process code
-        } else if (type === "recovery") {
+        } else if (code && Platform.OS !== "web") {
+          // Mobile platforms can process codes via deep link handler
+          console.log("[Auth] Code found for mobile, will be handled by deep link handler");
+        } else if (type === "recovery" && !accessToken && !refreshToken) {
           console.error("[Auth] Recovery type found but missing tokens");
           setError("Incomplete recovery link. Please request a new password reset link.");
           return;
         } else {
-          // No valid params but we have a session
+          // No valid params but we might have a session
           console.log("[Auth] No valid auth params, checking for existing session");
           const { data } = await supabase.auth.getSession();
 
