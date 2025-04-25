@@ -1,10 +1,9 @@
-import { Stack, Slot } from "expo-router";
+import { Stack, Slot, Redirect, useSegments, usePathname, useRouter } from "expo-router";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { StyleSheet, Image, TouchableOpacity, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter, useSegments, usePathname } from "expo-router";
 import { useEffect, useState } from "react";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -102,81 +101,132 @@ function RootLayoutContent() {
     }
   }, [session, member]); // Depend on the entire member object to ensure we have complete data
 
+  // Restore original routing logic structure in useEffect
   useEffect(() => {
-    // Only run navigation logic after initial loading is complete
-    if (isLoading) {
-      console.log("[Layout] Waiting for auth loading to complete before checking navigation...");
-      return;
-    }
+    console.log("[Router Check] Start", { isLoading, initialRouteHandled, session: !!session, segments });
 
-    console.log("[Layout] Auth loading complete, checking navigation...");
-
-    // Early password reset detection for incoming links (especially important for web)
-    // This sets the window flag if needed
+    // Handle password reset URL detection (sets window flag) - Still needed
+    // Run this check regardless of isLoading because it just sets a flag
     handlePasswordResetURL();
 
-    // Check for password reset flow *after* handling the URL
-    const isPasswordReset =
-      // Special global flag for password reset, set by handlePasswordResetURL or change-password component
-      typeof window !== "undefined" && !!window.__passwordResetInProgress;
-
-    // Don't redirect if user is in a password reset flow
-    if (isPasswordReset) {
-      console.log("[Layout] Password reset flag detected - skipping navigation guards");
-      setInitialRouteHandled(true); // Mark as handled even if skipping redirect
+    // If loading, reset the handled flag and wait
+    if (isLoading) {
+      setInitialRouteHandled(false);
+      console.log("[Router Check] Waiting: isLoading is true");
       return;
     }
 
-    // Now perform navigation checks
-    const shouldBeRedirected = !session; // Simplified: redirect if no session
-    const isAuthGroup = segments[0] === "(auth)";
-    const isRootPath = pathname === "/";
-    const isChangePasswordPath = pathname === "/change-password"; // Check for the specific target path
+    // If already handled initial route after loading, do nothing
+    if (initialRouteHandled) {
+      console.log("[Router Check] Skipping: initialRouteHandled is true");
+      return;
+    }
 
-    console.log("[Layout] Navigation check state:", {
-      shouldBeRedirected,
-      isAuthGroup,
-      isRootPath,
-      isChangePasswordPath,
-      session: !!session,
+    // ---- Core Routing Logic (adapted from original) ----
+    const inAuthGroup = segments[0] === "(auth)";
+    const isCompanyAdmin = session?.user?.user_metadata?.role === "company_admin";
+    const isMemberAssociationPath = pathname === "/member-association";
+    const isChangePasswordPath = pathname === "/change-password";
+    const isPasswordResetInProgress = typeof window !== "undefined" && !!window.__passwordResetInProgress;
+    const comingFromReset = isChangePasswordPath || isPasswordResetInProgress;
+
+    console.log("[Router Logic] Executing", {
+      segments,
+      pathname,
+      isCompanyAdmin,
+      hasSession: !!session,
+      hasMember: !!member,
+      comingFromReset,
     });
 
-    // Redirect to sign in if not authenticated AND not already on an auth page or change-password page
-    if (shouldBeRedirected && !isAuthGroup && !isChangePasswordPath) {
-      console.log("[Layout] Redirecting unauthenticated user to sign-in...");
-      // Use the group syntax for redirection to auth routes
-      router.replace("/(auth)/sign-in");
-      setInitialRouteHandled(true);
+    // 1. No Session Check (Password reset exempt)
+    // Redirect to sign-in if no session, not in auth group, and not in password reset flow
+    if (!session && !inAuthGroup && !comingFromReset) {
+      console.log("[Router Logic] No session, redirecting to sign-in");
+      router.replace("/sign-in"); // Use corrected path
+      setInitialRouteHandled(true); // Mark as handled
       return;
     }
 
-    // Redirect to home if authenticated and on auth pages or root path
-    if (!shouldBeRedirected && (isAuthGroup || isRootPath)) {
-      // Exception: If they are on the change-password page *after* authentication (e.g., via link), don't redirect yet.
-      if (isChangePasswordPath) {
-        console.log("[Layout] Authenticated user on change-password page, allowing stay.");
+    // 2. Company Admin Check
+    if (session && isCompanyAdmin) {
+      // Assuming company admin page is at /company-admin (adjust if needed)
+      if (pathname !== "/company-admin") {
+        console.log("[Router Logic] Company admin not on admin page, redirecting");
+        router.replace("/company-admin");
       } else {
-        console.log("[Layout] Redirecting authenticated user to tabs...");
-        router.replace("/(tabs)");
-        setInitialRouteHandled(true);
+        console.log("[Router Logic] Company admin already on correct page");
+      }
+      setInitialRouteHandled(true); // Mark as handled
+      return;
+    }
+
+    // 3. Handle non-admin users
+    if (session && !isCompanyAdmin) {
+      // Special case: If on password reset page, allow it, unless member data exists
+      if (comingFromReset && !member) {
+        console.log("[Router Logic] On password reset without member data, staying");
+        // Don't redirect, allow change-password screen to handle auth
+        setInitialRouteHandled(true); // Mark as handled for this specific check
+        return;
+      }
+
+      // Member Association Check
+      // Redirect if no member, not already on association page, and not coming from reset
+      if (!member && !isMemberAssociationPath && !comingFromReset) {
+        console.log("[Router Logic] Non-admin, no member data, redirecting to association");
+        router.replace("/member-association"); // Use corrected path
+        setInitialRouteHandled(true); // Mark as handled
+        return;
+      }
+
+      // Normal Logged-in Member
+      if (member) {
+        // If in auth group but not association/reset, redirect to tabs
+        if (inAuthGroup && !isMemberAssociationPath && !comingFromReset) {
+          console.log("[Router Logic] Member in auth group (not assoc/reset), redirecting to tabs");
+          router.replace("/(tabs)"); // Keep group syntax for tabs if it's a layout
+        } else if (pathname !== "/" && segments[0] !== "(tabs)" && !inAuthGroup) {
+          // Redirect to tabs if outside tabs and auth groups (e.g., landed on / or an invalid path)
+          // Avoid redirecting if already landing on root ('/') which should be handled by next check if needed
+          console.log("[Router Logic] Member outside tabs/auth, redirecting to tabs");
+          router.replace("/(tabs)"); // Keep group syntax for tabs if it's a layout
+        } else {
+          console.log("[Router Logic] Member already in tabs or allowed auth group page (assoc/reset)");
+        }
+        setInitialRouteHandled(true); // Mark as handled
         return;
       }
     }
 
-    // If no redirect happened, mark as handled
-    console.log("[Layout] No redirect necessary for current state.");
+    // If none of the above conditions met (e.g., logged out, on auth page), mark as handled
+    console.log("[Router Logic] No specific redirect action taken, marking handled");
     setInitialRouteHandled(true);
-  }, [session, isLoading, segments, pathname]); // Add isLoading to dependencies
+  }, [isLoading, session, user, segments, member, router, initialRouteHandled, pathname]); // Added pathname
 
-  // Show loading indicator until the initial route is handled
+  // Show loading indicator overlay while loading OR before initial route handled
   if (isLoading || !initialRouteHandled) {
     return (
-      <ThemedView style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+      <ThemedView
+        style={{
+          flex: 1,
+          justifyContent: "center",
+          alignItems: "center",
+          // Ensure it covers the content if needed, though Stack might not be rendered yet
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 10, // Make sure it's on top
+        }}
+      >
         <ThemedText>Initializing app...</ThemedText>
       </ThemedView>
     );
   }
 
+  // Render the main stack navigator unconditionally (logic above handles redirects)
   return (
     <Stack
       screenOptions={{

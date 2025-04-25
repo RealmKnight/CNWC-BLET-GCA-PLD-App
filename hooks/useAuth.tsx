@@ -504,7 +504,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
       // *** Navigate to sign-in AFTER all state clearing and Supabase calls ***
       try {
-        router.replace("/(auth)/sign-in");
+        router.replace("/sign-in");
         console.log("[Auth] Navigated to sign-in page after sign out.");
       } catch (navError) {
         console.error("[Auth] Navigation error during sign out redirect:", navError);
@@ -513,7 +513,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       console.error("[Auth] Error in signOut function:", error);
       // Fallback navigation attempt in case of error
       try {
-        router.replace("/(auth)/sign-in");
+        router.replace("/sign-in");
       } catch (navError) {
         console.error("[Auth] Navigation error during sign out (in catch block):", navError);
       }
