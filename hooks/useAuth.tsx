@@ -17,13 +17,22 @@ declare global {
 
 type Member = Database["public"]["Tables"]["members"]["Row"];
 
+// Define the possible auth statuses for navigation control
+type AuthStatus =
+  | "loading" // Initial check in progress
+  | "signedOut" // No session, should be on sign-in
+  | "needsAssociation" // Session exists, but no matching member record
+  | "signedInMember" // Session exists, member record found
+  | "signedInAdmin" // Session exists, user is a company admin
+  | "passwordReset"; // Special state for password reset flow
+
 interface AuthContextType {
   user: User | null;
   session: Session | null;
   member: Member | null;
-  isCompanyAdmin: boolean;
-  isLoading: boolean;
+  isCompanyAdmin: boolean; // Keep for potential direct checks elsewhere
   userRole: UserRole | null;
+  authStatus: AuthStatus; // <-- Replace isLoading and isMemberCheckComplete
   signOut: () => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
@@ -44,22 +53,21 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(null);
   const [member, setMember] = useState<Member | null>(null);
   const [userRole, setUserRole] = useState<UserRole | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [authStatus, setAuthStatus] = useState<AuthStatus>("loading"); // <-- Initialize new state
   const [appState, setAppState] = useState(AppState.currentState);
-  const [isCompanyAdmin, setIsCompanyAdmin] = useState(false);
+  const [isCompanyAdmin, setIsCompanyAdmin] = useState(false); // Keep derived state
 
-  // Add refs to track auth state
+  // Refs remain the same
   const isUpdatingAuth = useRef(false);
   const pendingAuthUpdate = useRef<{ session: Session | null; source: string } | null>(null);
   const appStateTimeout = useRef<NodeJS.Timeout | null>(null);
   const initialAuthCompleteRef = useRef(false);
 
-  // Stable fetchMemberData (depends on supabase which is stable)
+  // fetchMemberData remains the same
   const fetchMemberData = useCallback(async (userId: string) => {
     try {
       const { data: memberData, error: memberError } = await supabase
         .from("members")
-        // Select new ID fields and remove old text fields
         .select("*, division_id, current_zone_id, home_zone_id, calendar_id")
         .eq("id", userId)
         .maybeSingle();
@@ -70,115 +78,57 @@ export function AuthProvider({ children }: AuthProviderProps) {
         console.log("[Auth] Member data loaded:", {
           id: memberData.id,
           role: memberData.role,
-          divisionId: memberData.division_id, // Log new ID
-          calendarId: memberData.calendar_id, // Log new ID
+          divisionId: memberData.division_id,
+          calendarId: memberData.calendar_id,
           name: `${memberData.first_name} ${memberData.last_name}`,
         });
+      } else {
+        console.log("[Auth] No member data found for user ID:", userId);
       }
       return memberData;
     } catch (error) {
       console.error("[Auth] Error fetching member data:", error);
-      throw error; // Re-throw error after logging
+      throw error;
     }
-  }, []); // Empty dependency array as supabase is stable
+  }, []);
 
-  // Stable updateAuthState (depends on stable fetchMemberData and state setters)
+  // Rework updateAuthState to set authStatus
   const updateAuthState = useCallback(
     async (newSession: Session | null, source: string) => {
-      // If already updating, queue the update
+      // Prevent concurrent updates
       if (isUpdatingAuth.current) {
         console.log("[Auth] Update already in progress, queueing update from:", source);
         pendingAuthUpdate.current = { session: newSession, source };
         return;
       }
+      isUpdatingAuth.current = true;
 
-      let shouldSetLoading = false;
+      // Always reset to loading if it's the initial call before completion
+      if (source === "initial" && !initialAuthCompleteRef.current) {
+        setAuthStatus("loading");
+        console.log("[Auth] Setting authStatus=loading for initial check");
+      }
+
+      let finalStatus: AuthStatus = "loading"; // Default status while processing
+      let fetchedMemberData: Member | null = null; // Store fetched data locally
+      let localIsCompanyAdmin = false; // Store admin status locally
 
       try {
-        isUpdatingAuth.current = true;
-        console.log(`[Auth] Updating auth state from ${source}`);
-
-        const newUser = newSession?.user ?? null;
-        // Get current user from state directly for comparison
-        const currentUserId = user?.id; // Get ID from state
-        const currentAccessToken = session?.access_token; // Get token from state
-
-        // Special handling for password reset flow
-        // Check if we're currently on the change-password route
-        const isInPasswordResetFlow =
-          // For web platforms
-          (Platform.OS === "web" &&
-            typeof window !== "undefined" &&
-            window.location &&
-            window.location.pathname &&
-            window.location.pathname.includes("/change-password")) ||
-          source === "exchangeCodeForSession" ||
-          // For mobile platforms, check the source
-          (Platform.OS !== "web" && (source === "exchangeCodeForSession" || source.includes("recovery")));
-
-        if (isInPasswordResetFlow) {
-          console.log("[Auth] In password reset flow, setting minimal auth state", {
-            source,
-            hasSession: !!newSession,
-            platform: Platform.OS,
-          });
-          // Just update the basic auth state without redirecting
-          setSession(newSession);
-          setUser(newUser);
-
-          // If we were in loading state, exit it
-          if (isLoading) {
-            setIsLoading(false);
-          }
-
-          // Don't proceed with the rest of the auth flow that might trigger redirects
-          isUpdatingAuth.current = false;
-          return;
-        }
-
-        // Skip update if user ID and access token are the same AND it's a background/refresh event
-        if (
-          newUser?.id === currentUserId &&
-          newSession?.access_token === currentAccessToken &&
-          (source.includes("APP_STATE") || source.includes("state_change_SIGNED_IN"))
-        ) {
-          console.log("[Auth] Skipping redundant auth update (user ID and access token match)");
-          isUpdatingAuth.current = false; // Reset flag
-          // Process pending updates if any
-          if (pendingAuthUpdate.current) {
-            const { session: pendingSession, source: pendingSource } = pendingAuthUpdate.current;
-            pendingAuthUpdate.current = null;
-            await updateAuthState(pendingSession, pendingSource); // Recursive call needs await
-          }
-          return;
-        }
-
-        // Simplified loading logic
-        shouldSetLoading =
-          newUser?.id !== currentUserId ||
-          (source === "initial" && !initialAuthCompleteRef.current) ||
-          source === "signIn" ||
-          source === "signUp";
-
-        if (shouldSetLoading) {
-          // Only set loading to true if it's currently false
-          setIsLoading(true); // Explicitly set loading true here
-          console.log("[Auth] Setting isLoading=true for auth update:", source);
-        } else {
-          console.log("[Auth] Skipping isLoading=true for this auth update:", source);
-        }
-
-        console.log("[Auth] Setting session and user:", {
-          hasSession: !!newSession,
-          userId: newUser?.id,
-          email: newUser?.email,
-        });
-
+        // Basic state updates
         setSession(newSession);
-        setUser(newUser);
+        setUser(newSession?.user ?? null);
+        setMember(null); // Reset member initially
+        setUserRole(null);
+        setIsCompanyAdmin(false); // Reset derived state
 
-        if (newUser) {
-          // Explicitly fetch the user again to ensure metadata is loaded
+        // Determine final status based on the new session
+        if (typeof window !== "undefined" && window.__passwordResetInProgress) {
+          console.log("[Auth] Password reset in progress, setting status.");
+          finalStatus = "passwordReset";
+          // Also update base state for consistency if needed by UI during reset
+          setIsCompanyAdmin(false);
+        } else if (newSession) {
+          // Fetch fresh user data to check metadata reliably
           const {
             data: { user: refreshedUser },
             error: refreshError,
@@ -186,105 +136,82 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
           if (refreshError) {
             console.error("[Auth] Error refreshing user data:", refreshError);
-            // Handle error appropriately, maybe clear state?
-            setMember(null);
-            setUserRole(null);
+            finalStatus = "signedOut"; // Treat as signed out if user refresh fails
             useUserStore.getState().reset();
-            // Potentially throw or return
           } else if (refreshedUser) {
             console.log(
               "[Auth] Refreshed user data obtained, checking role:",
               refreshedUser.email,
               refreshedUser.user_metadata
             );
-            // *** Use refreshedUser for role check ***
-            const isCompanyAdmin = refreshedUser.user_metadata?.role === "company_admin";
-            setIsCompanyAdmin(isCompanyAdmin); // Set the derived state
+            localIsCompanyAdmin = refreshedUser.user_metadata?.role === "company_admin";
+            setIsCompanyAdmin(localIsCompanyAdmin); // Update derived state
 
-            if (isCompanyAdmin) {
-              console.log("[Auth] User is a company admin, skipping member data fetch");
-              setMember(null);
-              setUserRole(null);
-              useUserStore.getState().reset();
-              // Return early AFTER setting state but BEFORE resetting loading potentially
-              // The finally block will handle isLoading
-              return;
-            }
-
-            console.log("[Auth] User is not a company admin, proceeding with member data fetch");
-            try {
-              const currentMemberId = member?.id; // Get from state
-              // Use refreshedUser.id for checks
-              const shouldSkipMemberFetch =
-                source.includes("USER_UPDATED") ||
-                source.includes("APP_STATE") ||
-                (source.includes("state_change_SIGNED_IN") && currentMemberId === refreshedUser.id) ||
-                (source === "initial" && currentMemberId === refreshedUser.id) ||
-                (initialAuthCompleteRef.current && currentMemberId === refreshedUser.id);
-
-              if (!shouldSkipMemberFetch) {
-                console.log("[Auth] Fetching member data for non-admin user:", refreshedUser.id);
-                const memberData = await fetchMemberData(refreshedUser.id); // Use memoized version
-                if (memberData) {
-                  console.log("[Auth] Setting member data and role:", {
-                    id: memberData.id,
-                    role: memberData.role,
-                    divisionId: memberData.division_id, // Log new ID
-                    calendarId: memberData.calendar_id, // Log new ID
-                  });
-                  setMember(memberData);
-                  setUserRole(memberData.role as UserRole);
-                  useUserStore.getState().setMember(memberData);
-                  useUserStore.getState().setUserRole(memberData.role as UserRole);
+            if (localIsCompanyAdmin) {
+              console.log("[Auth] User is company admin.");
+              finalStatus = "signedInAdmin";
+              useUserStore.getState().reset(); // Reset member store for admin
+            } else {
+              console.log("[Auth] User is not company admin, fetching member data:", refreshedUser.id);
+              try {
+                fetchedMemberData = await fetchMemberData(refreshedUser.id);
+                if (fetchedMemberData) {
+                  console.log("[Auth] Member data found.");
+                  // Set member state *after* determining status
+                  setMember(fetchedMemberData);
+                  setUserRole(fetchedMemberData.role as UserRole);
+                  useUserStore.getState().setMember(fetchedMemberData); // Update zustand store
+                  useUserStore.getState().setUserRole(fetchedMemberData.role as UserRole);
+                  finalStatus = "signedInMember";
                 } else {
-                  console.warn("[Auth] No member data found for user:", refreshedUser.id);
-                  setMember(null);
-                  setUserRole(null);
-                  useUserStore.getState().reset();
+                  console.log("[Auth] No member data found after fetch.");
+                  finalStatus = "needsAssociation";
+                  useUserStore.getState().reset(); // Reset member store if no association
                 }
-              } else {
-                console.log("[Auth] Skipping member fetch for:", source);
+              } catch (error) {
+                console.error("[Auth] Error during member data fetch:", error);
+                finalStatus = "signedOut"; // Or handle error state differently?
+                useUserStore.getState().reset();
               }
-            } catch (error) {
-              console.error("[Auth] Error during member data fetch:", error);
-              setMember(null);
-              setUserRole(null);
-              useUserStore.getState().reset();
             }
           } else {
-            // Handle case where refreshedUser is unexpectedly null
-            console.warn("[Auth] Refreshed user data was null, clearing state.");
-            setMember(null);
-            setUserRole(null);
+            console.warn("[Auth] Refreshed user data was null.");
+            finalStatus = "signedOut"; // Treat as signed out
             useUserStore.getState().reset();
+            setIsCompanyAdmin(false);
           }
         } else {
-          console.log("[Auth] No user, clearing member data and role");
-          setIsCompanyAdmin(false); // Ensure derived state is false
-          setMember(null);
-          setUserRole(null);
+          console.log("[Auth] No session.");
+          finalStatus = "signedOut";
           useUserStore.getState().reset();
+          setIsCompanyAdmin(false);
         }
       } finally {
-        // Always set loading false if it was set true, or if initial load completes
-        if (shouldSetLoading || (source === "initial" && !initialAuthCompleteRef.current)) {
-          console.log("[Auth] Finished auth update, setting isLoading false");
-          setIsLoading(false); // Set loading false here
-        }
-        isUpdatingAuth.current = false;
+        console.log(`[Auth] Final authStatus determined: ${finalStatus} (source: ${source})`);
+        setAuthStatus(finalStatus); // Set the final determined status
 
-        // Process any pending updates AFTER resetting the flag and loading state
+        // Mark initial auth as complete if this was the initial call
+        if (source === "initial") {
+          initialAuthCompleteRef.current = true;
+          console.log("[Auth] Initial auth processing complete flag set.");
+        }
+
+        isUpdatingAuth.current = false;
+        // Process pending updates if any
         if (pendingAuthUpdate.current) {
           console.log("[Auth] Processing pending auth update");
           const { session: pendingSession, source: pendingSource } = pendingAuthUpdate.current;
           pendingAuthUpdate.current = null;
-          await updateAuthState(pendingSession, pendingSource); // Ensure this completes
+          // Use `queueMicrotask` to avoid deep recursion/stack issues if updates happen rapidly
+          queueMicrotask(() => {
+            void updateAuthState(pendingSession, pendingSource);
+          });
         }
       }
-      // eslint-disable-next-line react-hooks/exhaustive-deps
     },
-    [fetchMemberData, user?.id, session?.access_token, member?.id]
-  ); // Add state values used in checks
+    // Keep dependency array minimal, relies on internal logic and stable fetchMemberData/setters
+    [fetchMemberData]
+  );
 
   // Effect for initial load and auth state changes
   useEffect(() => {
@@ -292,261 +219,210 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     async function initAuth() {
       if (!mounted) return;
-      // ... (rest of initAuth, uses updateAuthState)
+      console.log("[Auth] Starting initial auth check...");
       try {
-        console.log("[Auth] Starting initial auth check...");
-        if (Platform.OS === "web" && typeof window === "undefined") return;
-
+        // Small delay for web to allow potential redirects/URL changes to settle
         if (Platform.OS === "web") {
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 150));
+        }
+
+        // Set password reset flag based on URL *before* getSession
+        if (Platform.OS === "web" && typeof window !== "undefined") {
+          const urlParams = new URLSearchParams(window.location.hash.substring(1)); // Check hash for Supabase params
+          if (urlParams.get("type") === "recovery") {
+            console.log("[Auth Init] Detected password recovery type in URL hash.");
+            window.__passwordResetInProgress = true;
+          }
         }
 
         const {
           data: { session: initialSession },
           error,
         } = await supabase.auth.getSession();
+        if (error) console.error("[Auth] Session error:", error);
 
-        if (error) {
-          console.error("[Auth] Session error:", error);
-          // Don't throw here, let updateAuthState handle null session
-        }
-
-        console.log("[Auth] Initial session check:", {
-          status: initialSession ? "active" : "none",
-          userId: initialSession?.user?.id,
-        });
-
+        console.log("[Auth] Initial session check result:", { hasSession: !!initialSession });
         if (mounted) {
-          // Await the initial update to ensure loading state is handled correctly
           await updateAuthState(initialSession, "initial");
-          initialAuthCompleteRef.current = true; // Mark complete AFTER first update
-          console.log("[Auth] Initial auth processing complete.");
         }
       } catch (error) {
         console.error("[Auth] Initial auth error:", error);
         if (mounted) {
           await updateAuthState(null, "error"); // Ensure state is cleared on error
-          initialAuthCompleteRef.current = true; // Mark complete even on error
         }
       }
+      // No need to set initialAuthCompleteRef here, updateAuthState handles it
     }
 
-    // App state listener (uses updateAuthState)
-    const subscription = AppState.addEventListener("change", async (nextAppState) => {
-      console.log("[Auth] App state changed:", { from: appState, to: nextAppState });
-
-      if (appStateTimeout.current) {
-        clearTimeout(appStateTimeout.current);
-      }
-
-      appStateTimeout.current = setTimeout(async () => {
-        if (appState.match(/inactive|background/) && nextAppState === "active" && mounted) {
-          console.log("[Auth] App came to foreground, checking session");
-          try {
-            const {
-              data: { session: currentSession },
-              error,
-            } = await supabase.auth.getSession();
-            if (error) {
-              console.error("[Auth] Error getting session on foreground:", error);
-            } else if (currentSession && mounted) {
-              await updateAuthState(currentSession, "APP_STATE");
-
-              // Add notification refresh when returning to foreground
-              try {
-                if (currentSession?.user?.id) {
-                  const member = useUserStore.getState().member;
-                  if (member?.pin_number && member?.id) {
-                    console.log("[Notifications] Refreshing notifications on app foreground");
-                    const notificationStore = useNotificationStore.getState();
-
-                    // Only refresh if already initialized
-                    if (notificationStore.isInitialized) {
-                      notificationStore.fetchMessages(member.pin_number, member.id);
-                    }
-                  }
-                }
-              } catch (notificationError) {
-                console.error("[Auth] Error refreshing notifications on foreground:", notificationError);
-              }
-            }
-          } catch (error) {
-            console.error("[Auth] Exception getting session on foreground:", error);
+    // App state listener
+    const appStateSubscription = AppState.addEventListener("change", async (nextAppState) => {
+      if (mounted && appState.match(/inactive|background/) && nextAppState === "active") {
+        console.log("[Auth] App came to foreground, re-checking auth state.");
+        try {
+          const {
+            data: { session: foregroundSession },
+            error: fgError,
+          } = await supabase.auth.getSession();
+          if (fgError) {
+            console.error("[Auth AppState] Error getting session on foreground:", fgError);
+            // Decide how to handle error - maybe trigger update with null?
+            // await updateAuthState(null, "APP_STATE_ERROR");
+            return;
           }
+
+          // Compare fetched session with the *current* state session
+          const currentStateSession = session; // Capture current state session
+          const currentStateUser = user; // Capture current state user
+
+          const sessionPresenceChanged = !!foregroundSession !== !!currentStateSession;
+          const userIdChanged = foregroundSession?.user?.id !== currentStateUser?.id;
+          // Optional: Check if access token changed for refresh scenarios
+          // const tokenChanged = foregroundSession?.access_token !== currentStateSession?.access_token;
+
+          if (mounted && (sessionPresenceChanged || userIdChanged) /* || tokenChanged */) {
+            console.log("[Auth] Session changed on foreground, updating state.");
+            await updateAuthState(foregroundSession, "APP_STATE");
+          } else if (mounted) {
+            console.log("[Auth] Session unchanged on foreground.");
+          }
+        } catch (error) {
+          console.error("[Auth AppState] Exception getting session on foreground:", error);
         }
-        if (mounted) {
-          setAppState(nextAppState);
-        }
-      }, 300); // Increased debounce slightly
+      }
+      if (mounted) {
+        setAppState(nextAppState);
+      }
     });
 
-    console.log("[Auth] Starting initialization");
-    initAuth(); // Call async init function
-
-    // Auth state change listener (uses updateAuthState)
+    // Auth state change listener
     const {
       data: { subscription: authSubscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log("[Auth] Auth state change event:", {
-        event,
-        userId: session?.user?.id,
-        hasSession: !!session,
-        initialAuthComplete: initialAuthCompleteRef.current,
-      });
-
       if (!mounted) return;
+      console.log(`[Auth] onAuthStateChange event: ${event}`, { hasSession: !!session });
 
-      if (!initialAuthCompleteRef.current) {
-        console.log("[Auth] Auth state change ignored, initial auth not complete.");
+      // Only process events *after* initial check is complete to avoid races
+      if (!initialAuthCompleteRef.current && event !== "INITIAL_SESSION") {
+        console.log("[Auth] Ignoring event before initial auth complete:", event);
         return;
       }
+      // Special handling for password recovery event
+      if (event === "PASSWORD_RECOVERY") {
+        console.log("[Auth] Password recovery event received.");
+        if (Platform.OS === "web" && typeof window !== "undefined") {
+          window.__passwordResetInProgress = true;
+        }
+        setAuthStatus("passwordReset"); // Directly set status
+        return; // Don't run full updateAuthState for this event
+      }
 
+      // Run the full update process for relevant events
       await updateAuthState(session, `state_change_${event}`);
     });
 
+    // Initial call
+    initAuth();
+
     return () => {
       mounted = false;
-      if (appStateTimeout.current) {
-        clearTimeout(appStateTimeout.current);
-      }
-      subscription.remove();
+      appStateSubscription.remove();
       authSubscription.unsubscribe();
       console.log("[Auth] AuthProvider unmounted, cleaned up listeners.");
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [updateAuthState]); // Depend only on the stable updateAuthState
+  }, [updateAuthState]); // *** REMOVED session and user?.id dependencies ***
 
   // --- Memoized Functions ---
   const signIn = useCallback(async (email: string, password: string) => {
-    try {
-      console.log("[Auth] Sign in attempt:", email);
-      // updateAuthState will be triggered by onAuthStateChange
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-      if (error) throw error;
-      console.log("[Auth] Sign in successful trigger:", email);
-    } catch (error) {
+    console.log("[Auth] Sign in attempt:", email);
+    // updateAuthState triggered by onAuthStateChange
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
       console.error("[Auth] Sign in error:", error);
-      throw error; // Re-throw
+      setAuthStatus("signedOut"); // Reset status on error
+      throw error;
     }
+    // Don't set status here, wait for onAuthStateChange -> updateAuthState
+    console.log("[Auth] Sign in successful trigger:", email);
   }, []);
 
   const signUp = useCallback(async (email: string, password: string) => {
-    try {
-      // updateAuthState will be triggered by onAuthStateChange
-      const { error } = await supabase.auth.signUp({ email, password });
-      if (error) throw error;
-    } catch (error) {
+    console.log("[Auth] Sign up attempt:", email);
+    // updateAuthState triggered by onAuthStateChange
+    const { error } = await supabase.auth.signUp({ email, password });
+    if (error) {
       console.error("[Auth] Sign up error:", error);
-      throw error; // Re-throw
+      setAuthStatus("signedOut"); // Reset status on error
+      throw error;
     }
+    // Don't set status here, wait for onAuthStateChange -> updateAuthState
+    console.log("[Auth] Sign up successful trigger:", email);
   }, []);
 
   const signOut = useCallback(async () => {
+    console.log("[Auth] Attempting sign out");
+    setAuthStatus("loading"); // Show loading briefly during sign out
     try {
-      console.log("[Auth] Attempting to sign out");
-
-      // Reset application state first
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        console.warn("[Auth] Supabase sign out error:", error);
+        // Still proceed to clear state locally
+      }
+      // Clear local state *after* Supabase call (success or fail)
       setSession(null);
       setUser(null);
       setMember(null);
       setUserRole(null);
       setIsCompanyAdmin(false);
+      useUserStore.getState().reset();
 
-      // If on Web, clear ALL Supabase-related localStorage items
+      // Clear password reset flag on sign out
       if (Platform.OS === "web" && typeof window !== "undefined") {
+        delete window.__passwordResetInProgress;
+      }
+
+      console.log("[Auth] Local state cleared, setting status to signedOut");
+      setAuthStatus("signedOut"); // Explicitly set final status
+
+      // Navigate via router AFTER state is cleared and status is set
+      // Use queueMicrotask to ensure navigation happens after state updates settle
+      queueMicrotask(() => {
         try {
-          // Create a list of all keys that might contain Supabase auth data
-          const supabaseKeys = [];
-
-          // Scan for all supabase-related keys in localStorage
-          for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
-            if (
-              key &&
-              (key.includes("supabase") ||
-                key.includes("sb-") ||
-                key.includes("auth") ||
-                key.startsWith("ymkihdiegkqbeegfebse"))
-            ) {
-              supabaseKeys.push(key);
-            }
-          }
-
-          // Remove all found keys
-          supabaseKeys.forEach((key) => {
-            localStorage.removeItem(key);
-            console.log(`[Auth] Cleared localStorage item: ${key}`);
-          });
-
-          console.log(`[Auth] Cleared ${supabaseKeys.length} localStorage items related to auth`);
-        } catch (storageError) {
-          console.warn("[Auth] Error clearing local storage:", storageError);
+          router.replace("/sign-in");
+          console.log("[Auth] Navigation to /sign-in initiated after sign out.");
+        } catch (navError) {
+          console.error("[Auth] Navigation error during sign out redirect:", navError);
         }
-      }
-
-      // Try to sign out with Supabase (after clearing state)
-      try {
-        const { error } = await supabase.auth.signOut();
-        if (error) {
-          console.warn("[Auth] Sign out API call error, but continuing:", error);
-        } else {
-          console.log("[Auth] Sign out successful trigger");
-        }
-      } catch (error: any) {
-        // Log but continue - don't break the signout flow
-        console.warn("[Auth] Sign out API call exception, but continuing:", error?.message || error);
-      }
-
-      console.log("[Auth] Application state reset after signout");
-
-      // *** Navigate to sign-in AFTER all state clearing and Supabase calls ***
-      try {
-        router.replace("/sign-in");
-        console.log("[Auth] Navigated to sign-in page after sign out.");
-      } catch (navError) {
-        console.error("[Auth] Navigation error during sign out redirect:", navError);
-      }
+      });
     } catch (error) {
-      console.error("[Auth] Error in signOut function:", error);
-      // Fallback navigation attempt in case of error
-      try {
-        router.replace("/sign-in");
-      } catch (navError) {
-        console.error("[Auth] Navigation error during sign out (in catch block):", navError);
-      }
+      console.error("[Auth] Error during signOut process:", error);
+      setAuthStatus("signedOut"); // Ensure signed out state on error
+      // Attempt navigation even on error
+      queueMicrotask(() => {
+        try {
+          router.replace("/sign-in");
+        } catch (navError) {
+          console.error("[Auth] Navigation error during sign out fallback:", navError);
+        }
+      });
     }
   }, []);
 
   const resetPassword = async (email: string) => {
+    console.log("[Auth] Sending password reset email to:", email);
+    setAuthStatus("loading"); // Indicate loading
     try {
-      console.log("[Auth] Sending password reset email to:", email);
-
-      // Get current session for auth token
       const {
         data: { session },
       } = await supabase.auth.getSession();
-
-      // Generate a password reset token through Supabase Auth
       const { data, error: resetError } = await supabase.auth.admin.generateLink({
         type: "recovery",
         email: email,
         options: {
-          // Use the direct path without hash navigation to prevent mixed URL formats
           redirectTo: `${process.env.EXPO_PUBLIC_WEBSITE_URL}/change-password`,
         },
       });
-
-      if (resetError || !data?.properties?.action_link) {
-        console.error("[Auth] Error generating reset token:", resetError);
-        throw resetError || new Error("No reset link generated");
-      }
-
-      // Send our custom formatted email using the edge function
+      if (resetError || !data?.properties?.action_link) throw resetError || new Error("Link generation failed");
       const functionUrl = "https://ymkihdiegkqbeegfebse.supabase.co/functions/v1/send-email";
-
       const response = await fetch(functionUrl, {
         method: "POST",
         headers: {
@@ -558,8 +434,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
           subject: "Reset Your Password - BLET CN/WC GCA PLD App",
           content: `
             <div style="text-align: center; padding: 20px;">
-              <img src="https://ymkihdiegkqbeegfebse.supabase.co/storage/v1/object/public/public_assets/logo/BLETblackgold.png" 
-                   alt="BLET Logo" 
+              <img src="https://ymkihdiegkqbeegfebse.supabase.co/storage/v1/object/public/public_assets/logo/BLETblackgold.png"
+                   alt="BLET Logo"
                    style="max-width: 200px; height: auto;">
               <h1 style="color: #003366;">Reset Your Password</h1>
               <p style="font-size: 16px; line-height: 1.5;">
@@ -580,216 +456,110 @@ export function AuthProvider({ children }: AuthProviderProps) {
           `,
         }),
       });
-
-      if (!response.ok) {
-        throw new Error("Failed to send custom email");
-      }
-
+      if (!response.ok) throw new Error("Failed to send custom email");
       console.log("[Auth] Password reset email sent successfully");
+      const {
+        data: { session: currentSession },
+      } = await supabase.auth.getSession();
+      await updateAuthState(currentSession, "resetPasswordComplete");
     } catch (error) {
       console.error("[Auth] Error sending password reset email:", error);
+      const {
+        data: { session: currentSession },
+      } = await supabase.auth.getSession();
+      await updateAuthState(currentSession, "resetPasswordError");
       throw error;
     }
   };
 
-  const exchangeCodeForSession = async (code: string) => {
+  const exchangeCodeForSession = useCallback(async (code: string) => {
+    console.log("[Auth] Exchanging code for session");
+    setAuthStatus("loading"); // Show loading
     try {
-      console.log("[Auth] Exchanging code for session");
-
-      // Special flag to prevent redirects during password reset
-      const isPasswordReset =
-        // For web platforms
-        (Platform.OS === "web" &&
-          typeof window !== "undefined" &&
-          ((window.location && window.location.pathname && window.location.pathname.includes("/change-password")) ||
-            // Check URL parameters that indicate a password reset flow
-            window.location.href.includes("type=recovery") ||
-            window.location.search.includes("type=recovery") ||
-            (window.location.hash && window.location.hash.includes("type=recovery")))) ||
-        // For mobile platforms, we'll assume code exchange is for password reset
-        // unless we can determine otherwise
-        Platform.OS !== "web";
-
-      if (isPasswordReset) {
-        console.log("[Auth] Detected password reset flow during code exchange", {
-          platform: Platform.OS,
-          hasCode: !!code,
-        });
-
-        // Set the flag early
-        if (Platform.OS === "web" && typeof window !== "undefined") {
-          window.__passwordResetInProgress = true;
-        }
-      }
-
       const { data, error } = await supabase.auth.exchangeCodeForSession(code);
-
-      if (error) {
-        console.error("[Auth] Error exchanging code for session:", error);
-        throw error;
-      }
-
-      console.log("[Auth] Successfully exchanged code for session:", {
-        hasSession: !!data.session,
-        hasUser: !!data.session?.user,
-        userEmail: data.session?.user?.email,
-        isPasswordReset,
-      });
-
-      // Use the session data if needed but don't return it
-      if (data.session) {
-        // Set a flag to prevent redirects before calling updateAuthState
-        if (isPasswordReset && Platform.OS === "web" && typeof window !== "undefined") {
-          window.__passwordResetInProgress = true;
-        }
-
-        await updateAuthState(data.session, "exchangeCodeForSession");
-
-        // For password reset flow, explicitly fetch member data to prevent redirect to member-association
-        if (isPasswordReset && data.session.user) {
-          try {
-            console.log("[Auth] Explicitly fetching member data during password reset flow");
-            const memberData = await fetchMemberData(data.session.user.id);
-
-            if (memberData) {
-              console.log("[Auth] Found member data during password reset flow:", {
-                id: memberData.id,
-                role: memberData.role,
-              });
-              // Update our local state directly
-              setMember(memberData);
-              setUserRole(memberData.role as UserRole);
-            } else {
-              console.log("[Auth] No member data found during password reset flow");
-            }
-          } catch (error) {
-            console.error("[Auth] Error fetching member data during password reset:", error);
-          }
-        }
-
-        // For password reset flow, we want to stay on the change-password page
-        if (isPasswordReset && Platform.OS === "web" && typeof window !== "undefined") {
-          // Add a small delay to ensure state is updated
-          setTimeout(() => {
-            // Don't automatically clear the flag - let the component handle this
-            // when the user explicitly chooses to navigate away
-            // window.__passwordResetInProgress = false;
-          }, 1000);
-        }
-      } else {
-        console.warn("[Auth] No session data returned from code exchange");
-      }
+      if (error) throw error;
+      console.log("[Auth] Code exchanged successfully", { hasSession: !!data.session });
+      // Let onAuthStateChange handle the session update via updateAuthState
+      // No need to call updateAuthState directly here if onAuthStateChange is reliable
     } catch (error) {
-      console.error("[Auth] Error exchanging code for session:", error);
+      console.error("[Auth] Error exchanging code:", error);
+      setAuthStatus("signedOut"); // Fallback to signed out on error
       throw error;
     }
-  };
+  }, []); // No dependencies needed
 
   const updateProfile = useCallback(
     async (updates: Partial<UserProfile>) => {
       if (!user?.id) throw new Error("No user logged in");
-      const userId = user.id; // Capture stable userId
+      const userId = user.id;
+      console.log("[Auth] Updating profile for user:", userId);
       try {
         const { error: memberError } = await supabase.from("members").update(updates).eq("id", userId);
         if (memberError) throw memberError;
-
-        // Refresh member data by re-fetching session which triggers updateAuthState
+        console.log("[Auth] Profile update successful, refreshing auth state.");
+        // Refresh auth state to reflect potential changes
         const {
           data: { session: currentSession },
         } = await supabase.auth.getSession();
-        await updateAuthState(currentSession, "updateProfile"); // Use stable updateAuthState
+        await updateAuthState(currentSession, "updateProfile");
       } catch (error) {
         console.error("[Auth] Error updating profile:", error);
-        throw error; // Re-throw
+        throw error;
       }
     },
     [user?.id, updateAuthState]
-  ); // Depend on user ID and stable updateAuthState
+  );
 
   const associateMemberWithPin = useCallback(
     async (pin: string) => {
-      if (!user?.id) throw new Error("No user logged in");
+      if (!user?.id) {
+        setAuthStatus("signedOut"); // Ensure state reflects reality
+        throw new Error("No user logged in for association");
+      }
       const userId = user.id;
+      console.log("[Auth] Attempting association for user:", userId, "with PIN:", pin);
+      setAuthStatus("loading"); // Show loading during association attempt
       try {
-        // Convert pin to bigint by removing any non-numeric characters and parsing
+        // ... (PIN validation and check logic remains the same)
         const numericPin = parseInt(pin.replace(/\D/g, ""), 10);
         if (isNaN(numericPin)) throw new Error("Invalid PIN format");
-
-        // First verify the PIN exists and isn't already associated
         const { data: members, error: checkError } = await supabase
           .from("members")
           .select("id, pin_number")
           .eq("pin_number", numericPin)
           .maybeSingle();
-
         if (checkError) throw checkError;
         if (!members) throw new Error("No member found with that PIN");
+        if (members.id && members.id !== userId) throw new Error("This PIN is already associated with another user");
 
-        // If member already has an ID and it's not this user's ID, it's taken
-        if (members.id && members.id !== userId) {
-          throw new Error("This PIN is already associated with another user");
-        }
-
-        // Update the member record with the user's ID
+        // Update the member record
         const { data: updatedMember, error: updateError } = await supabase
           .from("members")
           .update({ id: userId })
           .eq("pin_number", numericPin)
-          .select()
-          .maybeSingle();
+          .select("*, division_id, current_zone_id, home_zone_id, calendar_id") // Select all needed fields
+          .single(); // Use single() as we expect one row updated
 
-        if (updateError) {
-          console.error("[Auth] Update error:", updateError);
-          throw updateError;
-        }
-        if (!updatedMember) {
-          // If update succeeded but returned no data, fetch the member data directly
-          const { data: fetchedMember, error: fetchError } = await supabase
-            .from("members")
-            // Select new fields
-            .select("*, division_id, current_zone_id, home_zone_id, calendar_id")
-            .eq("id", userId)
-            .maybeSingle();
+        if (updateError) throw updateError;
+        if (!updatedMember) throw new Error("Failed to associate member or retrieve updated record");
 
-          if (fetchError) throw fetchError;
-          if (!fetchedMember) throw new Error("Failed to associate member");
+        console.log("[Auth] Association successful:", { userId, pin: numericPin, memberId: updatedMember.id });
+        // Update state directly AND trigger full auth state refresh
+        setMember(updatedMember);
+        setUserRole(updatedMember.role as UserRole);
+        useUserStore.getState().setMember(updatedMember);
+        useUserStore.getState().setUserRole(updatedMember.role as UserRole);
+        setAuthStatus("signedInMember"); // Set status immediately
 
-          console.log("[Auth] Successfully associated member (fetched after update):", {
-            userId,
-            pin: numericPin,
-            memberId: fetchedMember.id,
-            role: fetchedMember.role,
-            divisionId: fetchedMember.division_id,
-            calendarId: fetchedMember.calendar_id,
-          });
-
-          // Update local state with fetched data
-          setMember(fetchedMember);
-          setUserRole(fetchedMember.role as UserRole);
-          useUserStore.getState().setMember(fetchedMember);
-          useUserStore.getState().setUserRole(fetchedMember.role as UserRole);
-        } else {
-          console.log("[Auth] Successfully associated member:", {
-            userId,
-            pin: numericPin,
-            memberId: updatedMember.id,
-            role: updatedMember.role,
-          });
-
-          // Update local state with returned data
-          setMember(updatedMember);
-          setUserRole(updatedMember.role as UserRole);
-          useUserStore.getState().setMember(updatedMember);
-          useUserStore.getState().setUserRole(updatedMember.role as UserRole);
-        }
-
-        // Refresh session to trigger auth state update
+        // Trigger a full refresh via updateAuthState to ensure consistency
         const {
           data: { session: currentSession },
         } = await supabase.auth.getSession();
         await updateAuthState(currentSession, "associateMemberWithPin");
       } catch (error) {
         console.error("[Auth] Error associating member with PIN:", error);
+        // Determine status based on error (maybe stay needsAssociation?)
+        setAuthStatus("needsAssociation"); // Revert status on error
         throw error;
       }
     },
@@ -802,10 +572,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
       user,
       session,
       member,
-      // Calculate derived state directly in the memoized value
-      isCompanyAdmin: user?.user_metadata.role === "company_admin",
-      isLoading,
+      isCompanyAdmin, // Keep derived state
       userRole,
+      authStatus, // Expose new status
       // Pass memoized functions
       signOut,
       signIn,
@@ -819,9 +588,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
       user,
       session,
       member,
-      isLoading,
+      isCompanyAdmin,
       userRole,
-      // Function dependencies (already stable via useCallback)
+      authStatus, // Add authStatus dependency
+      // Function dependencies (stable via useCallback)
       signOut,
       signIn,
       signUp,
@@ -835,6 +605,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
+// useAuth hook remains the same
 export function useAuth() {
   const context = useContext(AuthContext);
   if (context === undefined) {

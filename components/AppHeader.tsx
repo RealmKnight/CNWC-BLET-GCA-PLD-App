@@ -60,20 +60,17 @@ export function AppHeader() {
   };
 
   const handleProfilePress = () => {
-    // Use the pin number for profile navigation if available
-    if (member?.pin_number) {
-      const profileId = member.pin_number.toString();
-      console.log("[AppHeader] Navigating to profile with pin:", profileId);
+    // Use the member ID for profile navigation - should be the UUID, not the pin number
+    if (member?.id) {
+      console.log("[AppHeader] Navigating to profile with member ID:", member.id);
 
-      // Use a simple string path - this works better with expo-router's file-based routing
-      router.push(`/(profile)/${profileId}`);
+      // Use a simple string path with the member ID (not pin number)
+      router.push(`/(profile)/${member.id}`);
     } else if (user?.id) {
       console.log("[AppHeader] Navigating to profile with user ID:", user.id);
-
-      // Use a simple string path for user ID as well
       router.push(`/(profile)/${user.id}`);
     } else {
-      console.log("[AppHeader] Profile pressed but no user ID or member pin available");
+      console.log("[AppHeader] Profile pressed but no user ID or member ID available");
     }
   };
 
