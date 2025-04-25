@@ -103,42 +103,73 @@ function RootLayoutContent() {
   }, [session, member]); // Depend on the entire member object to ensure we have complete data
 
   useEffect(() => {
+    // Only run navigation logic after initial loading is complete
+    if (isLoading) {
+      console.log("[Layout] Waiting for auth loading to complete before checking navigation...");
+      return;
+    }
+
+    console.log("[Layout] Auth loading complete, checking navigation...");
+
     // Early password reset detection for incoming links (especially important for web)
+    // This sets the window flag if needed
     handlePasswordResetURL();
 
-    const shouldBeRedirected = session?.toString() !== "true";
-    const isAuthGroup = segments[0] === "(auth)";
-    const isRootPath = pathname === "/";
-
-    // Check for password reset flow
+    // Check for password reset flow *after* handling the URL
     const isPasswordReset =
-      // Special global flag for password reset
-      (typeof window !== "undefined" && window.__passwordResetInProgress) ||
-      // Special flag in session state for reset flow
-      session === null;
+      // Special global flag for password reset, set by handlePasswordResetURL or change-password component
+      typeof window !== "undefined" && !!window.__passwordResetInProgress;
 
     // Don't redirect if user is in a password reset flow
     if (isPasswordReset) {
-      console.log("Password reset in progress - skipping navigation guards");
+      console.log("[Layout] Password reset flag detected - skipping navigation guards");
+      setInitialRouteHandled(true); // Mark as handled even if skipping redirect
       return;
     }
 
-    // Allow access to onboarding when not signed in
-    if (pathname.includes("onboarding")) return;
+    // Now perform navigation checks
+    const shouldBeRedirected = !session; // Simplified: redirect if no session
+    const isAuthGroup = segments[0] === "(auth)";
+    const isRootPath = pathname === "/";
+    const isChangePasswordPath = pathname === "/change-password"; // Check for the specific target path
 
-    // Redirect to sign in if not authenticated
-    if (shouldBeRedirected && !isAuthGroup) {
-      router.replace("/sign-in");
+    console.log("[Layout] Navigation check state:", {
+      shouldBeRedirected,
+      isAuthGroup,
+      isRootPath,
+      isChangePasswordPath,
+      session: !!session,
+    });
+
+    // Redirect to sign in if not authenticated AND not already on an auth page or change-password page
+    if (shouldBeRedirected && !isAuthGroup && !isChangePasswordPath) {
+      console.log("[Layout] Redirecting unauthenticated user to sign-in...");
+      // Use the group syntax for redirection to auth routes
+      router.replace("/(auth)/sign-in");
+      setInitialRouteHandled(true);
       return;
     }
 
-    // Redirect to home if authenticated and on auth pages
+    // Redirect to home if authenticated and on auth pages or root path
     if (!shouldBeRedirected && (isAuthGroup || isRootPath)) {
-      router.replace("/(tabs)");
+      // Exception: If they are on the change-password page *after* authentication (e.g., via link), don't redirect yet.
+      if (isChangePasswordPath) {
+        console.log("[Layout] Authenticated user on change-password page, allowing stay.");
+      } else {
+        console.log("[Layout] Redirecting authenticated user to tabs...");
+        router.replace("/(tabs)");
+        setInitialRouteHandled(true);
+        return;
+      }
     }
-  }, [session, segments, pathname]);
 
-  if (isLoading && !initialRouteHandled) {
+    // If no redirect happened, mark as handled
+    console.log("[Layout] No redirect necessary for current state.");
+    setInitialRouteHandled(true);
+  }, [session, isLoading, segments, pathname]); // Add isLoading to dependencies
+
+  // Show loading indicator until the initial route is handled
+  if (isLoading || !initialRouteHandled) {
     return (
       <ThemedView style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
         <ThemedText>Initializing app...</ThemedText>
