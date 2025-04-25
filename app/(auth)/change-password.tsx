@@ -14,6 +14,7 @@ declare global {
   interface Window {
     __passwordResetInProgress?: boolean;
     __passwordResetParams?: AuthParams | Record<string, any>;
+    __passwordResetSource?: string;
     __isProcessingPasswordReset?: () => boolean;
   }
 }
@@ -113,6 +114,31 @@ function getAuthParamsFromUrl(): {
   }
 }
 
+// Helper function to handle direct URL access for password resets
+function handleDirectURLAccess() {
+  if (Platform.OS !== "web" || typeof window === "undefined") return null;
+
+  try {
+    // For the problematic URL format: ?code=xxx#/auth/change-password
+    if (window.location.search.includes("code=") && window.location.hash.includes("/auth/change-password")) {
+      console.log("[Auth] Handling direct URL access with code in query string");
+      const code = new URLSearchParams(window.location.search).get("code");
+
+      // If we're on the root path with this special URL format,
+      // automatically process the code parameter
+      if (window.location.pathname === "/" || window.location.pathname === "") {
+        return { code };
+      }
+    }
+
+    // Return null if we don't need special handling
+    return null;
+  } catch (error) {
+    console.error("[Auth] Error handling direct URL access:", error);
+    return null;
+  }
+}
+
 export default function ChangePasswordScreen() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -130,22 +156,71 @@ export default function ChangePasswordScreen() {
   useEffect(() => {
     // Log presence of URL parameters for debugging
     if (Platform.OS === "web" && typeof window !== "undefined") {
-      // Check for stored password reset parameters from authRedirects.ts
-      if (window.__passwordResetParams) {
+      // Process URL parameters directly on this screen
+      // This avoids the need for complex redirections
+
+      // First check for direct URL access (e.g., ?code=xxx#/auth/change-password)
+      const directParams = handleDirectURLAccess();
+      if (directParams) {
+        console.log("[Auth] Processing direct URL access parameters:", directParams);
+        setDebugInfo({
+          ...debugInfo,
+          directParams,
+          source: "direct_url_access",
+        });
+
+        // Process the code parameter if present
+        if (directParams.code) {
+          // Keep the password reset flag set
+          window.__passwordResetInProgress = true;
+
+          // Attempt to exchange the code for a session
+          // We'll do this after component is fully mounted
+          setTimeout(() => {
+            try {
+              const code = directParams.code;
+              if (code) {
+                exchangeCodeForSession(code);
+              }
+            } catch (error) {
+              console.error("[Auth] Error exchanging code from direct URL:", error);
+              setError("Failed to process password reset link. Please try again.");
+            }
+          }, 500);
+        }
+      }
+
+      // Check for stored password reset parameters
+      else if (window.__passwordResetParams) {
         console.log("[Auth] Found stored password reset parameters", window.__passwordResetParams);
 
         // Extract and use the parameters
         const storedParams = window.__passwordResetParams;
 
-        // Update state or process as needed
+        // Update state
         setDebugInfo({
           ...debugInfo,
           storedParams,
-          source: "window.__passwordResetParams",
+          source: window.__passwordResetSource || "stored_params",
         });
 
         // Keep the password reset flag set
         window.__passwordResetInProgress = true;
+
+        // Process the code parameter if present
+        if (storedParams.code) {
+          setTimeout(() => {
+            try {
+              const code = storedParams.code;
+              if (code) {
+                exchangeCodeForSession(code);
+              }
+            } catch (error) {
+              console.error("[Auth] Error exchanging code from stored params:", error);
+              setError("Failed to process password reset link. Please try again.");
+            }
+          }, 500);
+        }
       }
 
       // Check for reset token indicators in URL

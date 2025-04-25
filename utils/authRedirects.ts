@@ -6,6 +6,7 @@ declare global {
     interface Window {
         __passwordResetInProgress?: boolean;
         __passwordResetParams?: AuthParams | Record<string, any>;
+        __passwordResetSource?: string;
     }
 }
 
@@ -96,7 +97,7 @@ export function detectPasswordResetParams(): AuthParams | null {
 
 /**
  * Handle password reset URL
- * Will redirect to the correct page if necessary
+ * Will store parameters for later use instead of trying to redirect immediately
  */
 export function handlePasswordResetURL(): boolean {
     if (Platform.OS !== "web" || typeof window === "undefined") {
@@ -110,31 +111,14 @@ export function handlePasswordResetURL(): boolean {
         const code = new URLSearchParams(window.location.search).get("code");
         console.log("[AuthRedirect] Handling special mixed format URL");
 
-        // Store the parameters instead of navigating immediately
+        // Just store the parameters without attempting navigation
         if (typeof window !== "undefined") {
             window.__passwordResetParams = { code };
             window.__passwordResetInProgress = true;
+            window.__passwordResetSource = "mixed_format";
             console.log(
-                "[AuthRedirect] Stored password reset parameters for delayed navigation",
+                "[AuthRedirect] Stored password reset parameters for manual handling",
             );
-
-            // Use setTimeout to delay navigation until after component mounting
-            setTimeout(() => {
-                try {
-                    console.log(
-                        "[AuthRedirect] Attempting delayed navigation to change-password",
-                    );
-                    router.replace({
-                        pathname: "/(auth)/change-password",
-                        params: { code },
-                    });
-                } catch (error) {
-                    console.error(
-                        "[AuthRedirect] Delayed navigation failed:",
-                        error,
-                    );
-                }
-            }, 1000); // Delay for 1 second to ensure components are mounted
         }
 
         return true;
@@ -143,46 +127,22 @@ export function handlePasswordResetURL(): boolean {
     const params = detectPasswordResetParams();
     if (!params) return false;
 
-    // If on sign-in page with password reset params, redirect to change-password
-    if (
-        url.includes("/sign-in") && (params.code || params.type === "recovery")
-    ) {
+    const isOnSignInPage = url.includes("/sign-in");
+    const hasResetParams = params.code || params.type === "recovery";
+
+    // If on sign-in page or any page with reset params, just store them
+    if (hasResetParams) {
         console.log(
-            "[AuthRedirect] Redirecting from sign-in to change-password",
+            "[AuthRedirect] Detected password reset parameters, storing for later use",
         );
 
-        // Construct query string for the redirect
-        let query = "";
-        if (params.code) query += `code=${params.code}`;
-        if (params.type) {
-            query = query
-                ? `${query}&type=${params.type}`
-                : `type=${params.type}`;
-        }
-
-        // Use the delayed approach for all redirects
         if (typeof window !== "undefined") {
             window.__passwordResetParams = params;
             window.__passwordResetInProgress = true;
-
-            setTimeout(() => {
-                try {
-                    // Navigate to change password with the params
-                    if (query) {
-                        router.replace({
-                            pathname: "/(auth)/change-password",
-                            params: params as any,
-                        });
-                    } else {
-                        router.replace("/(auth)/change-password");
-                    }
-                } catch (error) {
-                    console.error(
-                        "[AuthRedirect] Delayed navigation failed:",
-                        error,
-                    );
-                }
-            }, 1000);
+            window.__passwordResetSource = isOnSignInPage
+                ? "sign_in_page"
+                : "other_page";
+            console.log("[AuthRedirect] Stored reset parameters:", params);
         }
 
         return true;
