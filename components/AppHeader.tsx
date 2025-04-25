@@ -11,7 +11,7 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 export function AppHeader() {
   const pathname = usePathname();
   const segments = useSegments();
-  const { user, userRole, signOut } = useAuth();
+  const { user, userRole, member, signOut } = useAuth();
   const router = useRouter();
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const isAdminRoute = segments[0] === "(admin)";
@@ -25,30 +25,60 @@ export function AppHeader() {
     isAdminRoute,
     isAdmin,
     userRole,
+    userId: user?.id,
+    memberPinNumber: member?.pin_number,
   });
 
   const handleHomePress = () => {
-    router.replace("/(tabs)");
+    console.log("[AppHeader] Going to home tab");
+    router.push("/(tabs)");
   };
 
   const handleSettingsPress = () => {
     if (isAdminRoute) {
       // If we're in admin route, go to home
-      router.replace("/(tabs)");
-    } else if (isAdmin) {
+      console.log("[AppHeader] Admin in admin route, going home");
+      router.push("/(tabs)");
+    } else if (isAdmin && typeof userRole === "string") {
       // If we're not in admin route but user is admin, go to their admin page
-      router.replace(`/(admin)/${userRole}`);
+      console.log("[AppHeader] Going to admin page with role:", userRole);
+
+      // Navigate based on role
+      if (userRole === "division_admin") {
+        router.push("/(admin)/division_admin");
+      } else if (userRole === "union_admin") {
+        router.push("/(admin)/union_admin");
+      } else if (userRole === "application_admin") {
+        router.push("/(admin)/application_admin");
+      } else {
+        // Default admin page
+        router.push("/(admin)");
+      }
+    } else {
+      console.log("[AppHeader] Settings pressed but user is not admin");
     }
   };
 
   const handleProfilePress = () => {
-    if (user?.id) {
+    // Use the pin number for profile navigation if available
+    if (member?.pin_number) {
+      const profileId = member.pin_number.toString();
+      console.log("[AppHeader] Navigating to profile with pin:", profileId);
+
+      // Use a simple string path - this works better with expo-router's file-based routing
+      router.push(`/(profile)/${profileId}`);
+    } else if (user?.id) {
+      console.log("[AppHeader] Navigating to profile with user ID:", user.id);
+
+      // Use a simple string path for user ID as well
       router.push(`/(profile)/${user.id}`);
-      console.log("Profile pressed");
+    } else {
+      console.log("[AppHeader] Profile pressed but no user ID or member pin available");
     }
   };
 
   const handleLogoutPress = () => {
+    console.log("[AppHeader] Logging out");
     signOut();
   };
 

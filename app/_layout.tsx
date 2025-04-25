@@ -1,298 +1,250 @@
-import { Stack, Slot, Redirect, useSegments, usePathname, useRouter } from "expo-router";
-import { ThemeProvider } from "@/components/ThemeProvider";
-import { AuthProvider, useAuth } from "@/hooks/useAuth";
+import React, { useEffect, useRef, useState } from "react";
+import { Redirect, Stack, usePathname, useRouter, useSegments } from "expo-router";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { StyleSheet, Image, TouchableOpacity, Platform } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
-import { useEffect, useState } from "react";
+import { StyleSheet, Image } from "react-native";
+import { Colors } from "@/constants/Colors";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
-import { configureNotifications, setupNotificationListeners } from "@/utils/notificationConfig";
-import Toast, { BaseToast, ErrorToast, BaseToastProps } from "react-native-toast-message";
-import { Colors } from "@/constants/Colors";
 import { ThemedToast } from "@/components/ThemedToast";
+import { configureNotifications, setupNotificationListeners } from "@/utils/notificationConfig";
+import { handlePasswordResetURL } from "@/utils/authRedirects";
+import { ThemeProvider } from "@/components/ThemeProvider";
+import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { useNotificationStore } from "@/store/notificationStore";
 import { useUserStore } from "@/store/userStore";
-import { handlePasswordResetURL } from "@/utils/authRedirects";
 
-// Define toast config
-const toastConfig = {
-  info: (props: BaseToastProps) => (
-    <BaseToast
-      {...props}
-      style={{
-        borderLeftColor: Colors.light.tint,
-        backgroundColor: Colors.light.background,
-      }}
-      contentContainerStyle={{ paddingHorizontal: 15 }}
-      text1Style={{
-        fontSize: 16,
-        fontWeight: "600",
-        color: Colors.light.text,
-      }}
-      text2Style={{
-        fontSize: 14,
-        color: Colors.light.text,
-      }}
-    />
-  ),
-};
+// Separate loading screen component
+function LoadingScreen() {
+  return (
+    <ThemedView style={styles.loadingContainer}>
+      <ThemedText>Initializing app...</ThemedText>
+    </ThemedView>
+  );
+}
 
-function RootLayoutContent() {
-  const { isLoading, session, userRole, member, signOut, user } = useAuth();
+// Navigation handler as a component that uses hooks
+function NavigationHandler() {
+  const { isLoading, session, userRole, member } = useAuth();
   const segments = useSegments();
-  const router = useRouter();
   const pathname = usePathname();
-  const { fetchMessages, subscribeToMessages } = useNotificationStore();
-  const [initialRouteHandled, setInitialRouteHandled] = useState(false);
+  const [isRouterReady, setIsRouterReady] = useState(false);
+  const hasRedirectedRef = useRef(false);
+  const isNavigating = useRef(false);
+  const router = useRouter();
+
+  // Handle password reset URL detection first
+  useEffect(() => {
+    handlePasswordResetURL();
+  }, []);
+
+  // Mark router as ready after a short delay to ensure all routes are registered
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setIsRouterReady(true);
+      console.log("[Router] Marked as ready for navigation");
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, []);
 
   // Configure basic notifications at app startup (independent of auth)
   useEffect(() => {
-    // Configure notifications when the app starts
     configureNotifications();
-
-    // Set up notification listeners (NOT subscriptions yet)
     const cleanupNotifications = setupNotificationListeners();
-
     console.log("[Notifications] Basic notification configuration complete");
 
     return () => {
-      // Clean up notification listeners when component unmounts
       cleanupNotifications();
     };
   }, []);
 
-  // Initialize user-specific notifications only after auth is complete and member data is available
-  useEffect(() => {
-    // Only proceed if we have a complete member object with all required fields
-    if (!session || !member?.pin_number || !member?.id) {
-      console.log("[Notifications] Skipping initialization, incomplete member data:", {
-        hasSession: !!session,
-        pinNumber: member?.pin_number,
-        memberId: member?.id,
-      });
-      return;
-    }
-
-    // Check if notifications are already initialized to avoid duplicate subscriptions
-    if (useNotificationStore.getState().isInitialized) {
-      console.log("[Notifications] Notifications already initialized, skipping");
-      return;
-    }
-
-    console.log("[Notifications] Initializing notifications for user:", {
-      pinNumber: member.pin_number,
-      memberId: member.id,
-    });
-
-    try {
-      // Fetch initial messages with both required parameters
-      useNotificationStore.getState().fetchMessages(member.pin_number, member.id);
-
-      // Subscribe to real-time updates
-      const unsubscribe = useNotificationStore.getState().subscribeToMessages(member.pin_number);
-
-      return () => {
-        console.log("[Notifications] Cleaning up notifications subscription");
-        unsubscribe();
-      };
-    } catch (error) {
-      console.error("[Notifications] Error initializing notifications:", error);
-    }
-  }, [session, member]); // Depend on the entire member object to ensure we have complete data
-
-  // Restore original routing logic structure in useEffect
-  useEffect(() => {
-    console.log("[Router Check] Start", { isLoading, initialRouteHandled, session: !!session, segments });
-
-    // Handle password reset URL detection (sets window flag) - Still needed
-    // Run this check regardless of isLoading because it just sets a flag
-    handlePasswordResetURL();
-
-    // If loading, reset the handled flag and wait
-    if (isLoading) {
-      setInitialRouteHandled(false);
-      console.log("[Router Check] Waiting: isLoading is true");
-      return;
-    }
-
-    // If already handled initial route after loading, do nothing
-    if (initialRouteHandled) {
-      console.log("[Router Check] Skipping: initialRouteHandled is true");
-      return;
-    }
-
-    // ---- Core Routing Logic (adapted from original) ----
-    const inAuthGroup = segments[0] === "(auth)";
-    const isCompanyAdmin = session?.user?.user_metadata?.role === "company_admin";
-    const isMemberAssociationPath = pathname === "/member-association";
-    const isChangePasswordPath = pathname === "/change-password";
-    const isPasswordResetInProgress = typeof window !== "undefined" && !!window.__passwordResetInProgress;
-    const comingFromReset = isChangePasswordPath || isPasswordResetInProgress;
-
-    console.log("[Router Logic] Executing", {
-      segments,
-      pathname,
-      isCompanyAdmin,
-      hasSession: !!session,
-      hasMember: !!member,
-      comingFromReset,
-    });
-
-    // 1. No Session Check (Password reset exempt)
-    // Redirect to sign-in if no session, not in auth group, and not in password reset flow
-    if (!session && !inAuthGroup && !comingFromReset) {
-      console.log("[Router Logic] No session, redirecting to sign-in");
-      router.replace("/sign-in"); // Use corrected path
-      setInitialRouteHandled(true); // Mark as handled
-      return;
-    }
-
-    // 2. Company Admin Check
-    if (session && isCompanyAdmin) {
-      // Assuming company admin page is at /company-admin (adjust if needed)
-      if (pathname !== "/company-admin") {
-        console.log("[Router Logic] Company admin not on admin page, redirecting");
-        router.replace("/company-admin");
-      } else {
-        console.log("[Router Logic] Company admin already on correct page");
-      }
-      setInitialRouteHandled(true); // Mark as handled
-      return;
-    }
-
-    // 3. Handle non-admin users
-    if (session && !isCompanyAdmin) {
-      // Special case: If on password reset page, allow it, unless member data exists
-      if (comingFromReset && !member) {
-        console.log("[Router Logic] On password reset without member data, staying");
-        // Don't redirect, allow change-password screen to handle auth
-        setInitialRouteHandled(true); // Mark as handled for this specific check
-        return;
-      }
-
-      // Member Association Check
-      // Redirect if no member, not already on association page, and not coming from reset
-      if (!member && !isMemberAssociationPath && !comingFromReset) {
-        console.log("[Router Logic] Non-admin, no member data, redirecting to association");
-        router.replace("/member-association"); // Use corrected path
-        setInitialRouteHandled(true); // Mark as handled
-        return;
-      }
-
-      // Normal Logged-in Member
-      if (member) {
-        // If in auth group but not association/reset, redirect to tabs
-        if (inAuthGroup && !isMemberAssociationPath && !comingFromReset) {
-          console.log("[Router Logic] Member in auth group (not assoc/reset), redirecting to tabs");
-          router.replace("/(tabs)"); // Keep group syntax for tabs if it's a layout
-        } else if (pathname !== "/" && segments[0] !== "(tabs)" && !inAuthGroup) {
-          // Redirect to tabs if outside tabs and auth groups (e.g., landed on / or an invalid path)
-          // Avoid redirecting if already landing on root ('/') which should be handled by next check if needed
-          console.log("[Router Logic] Member outside tabs/auth, redirecting to tabs");
-          router.replace("/(tabs)"); // Keep group syntax for tabs if it's a layout
-        } else {
-          console.log("[Router Logic] Member already in tabs or allowed auth group page (assoc/reset)");
-        }
-        setInitialRouteHandled(true); // Mark as handled
-        return;
-      }
-    }
-
-    // If none of the above conditions met (e.g., logged out, on auth page), mark as handled
-    console.log("[Router Logic] No specific redirect action taken, marking handled");
-    setInitialRouteHandled(true);
-  }, [isLoading, session, user, segments, member, router, initialRouteHandled, pathname]); // Added pathname
-
-  // Show loading indicator overlay while loading OR before initial route handled
-  if (isLoading || !initialRouteHandled) {
-    return (
-      <ThemedView
-        style={{
-          flex: 1,
-          justifyContent: "center",
-          alignItems: "center",
-          // Ensure it covers the content if needed, though Stack might not be rendered yet
-          position: "absolute",
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          zIndex: 10, // Make sure it's on top
-        }}
-      >
-        <ThemedText>Initializing app...</ThemedText>
-      </ThemedView>
-    );
+  // Don't render redirects until loading is complete
+  if (isLoading || !isRouterReady) {
+    console.log("[Router] Not ready for navigation yet, loading:", isLoading, "router ready:", isRouterReady);
+    return null;
   }
 
-  // Render the main stack navigator unconditionally (logic above handles redirects)
+  // If we're already navigating, don't trigger another navigation
+  if (isNavigating.current) {
+    console.log("[Router] Already navigating, skipping redirect check");
+    return null;
+  }
+
+  console.log("[Router] Ready to render navigation");
+
+  // Reset redirect tracking on each render when ready
+  if (hasRedirectedRef.current) {
+    hasRedirectedRef.current = false;
+  }
+
+  // Check navigation conditions
+  const inAuthGroup = segments[0] === "(auth)";
+  const isSignInPath = pathname === "/sign-in" || pathname.includes("sign-in");
+  const isCompanyAdmin = session?.user?.user_metadata?.role === "company_admin";
+  const isMemberAssociationPath = pathname === "/member-association";
+  const isChangePasswordPath = pathname === "/change-password";
+  const isPasswordResetInProgress = typeof window !== "undefined" && !!window.__passwordResetInProgress;
+  const comingFromReset = isChangePasswordPath || isPasswordResetInProgress;
+  const isRootPath = pathname === "/";
+  const inTabsGroup = segments[0] === "(tabs)";
+
+  console.log("[Router] Navigation status:", {
+    pathname,
+    segments,
+    inAuthGroup,
+    isCompanyAdmin,
+    hasSession: !!session,
+    hasMember: !!member,
+    comingFromReset,
+    inTabsGroup,
+  });
+
+  const performRedirect = (path: string, reason: string) => {
+    if (isNavigating.current) return null;
+
+    console.log(`[Router] Redirecting to ${path}: ${reason}`);
+    isNavigating.current = true;
+    hasRedirectedRef.current = true;
+
+    // Reset the navigation flag after a short delay
+    setTimeout(() => {
+      isNavigating.current = false;
+    }, 1000);
+
+    // Use TypeScript-safe path conversion
+    return <Redirect href={path as any} />;
+  };
+
+  // 1. Handle password reset specially - highest priority
+  if (comingFromReset) {
+    console.log("[Router] In password reset flow, no redirect needed");
+    return null;
+  }
+
+  // 2. No Session Check - if not logged in, redirect to sign in
+  if (!session && !isSignInPath) {
+    return performRedirect("/sign-in", "No session, redirecting to sign-in");
+  }
+
+  // 3. Already on sign in page with session
+  if (session && isSignInPath) {
+    if (isCompanyAdmin) {
+      return performRedirect("/company-admin", "Admin on sign-in page, redirecting to admin page");
+    }
+
+    if (!member) {
+      return performRedirect("/member-association", "Signed in but no member data, redirecting to association");
+    }
+
+    return performRedirect("/(tabs)", "Signed in regular member on sign-in page, redirecting to tabs");
+  }
+
+  // 4. Company Admin Check
+  if (session && isCompanyAdmin && pathname !== "/company-admin") {
+    return performRedirect("/company-admin", "Company admin, redirecting to admin page");
+  }
+
+  // 5. Member Association Check for non-admins
+  if (session && !isCompanyAdmin && !member && !isMemberAssociationPath) {
+    return performRedirect("/member-association", "No member data, redirecting to association");
+  }
+
+  // 6. Regular member navigation
+  if (session && !isCompanyAdmin && member) {
+    // If in auth group but signed in with member data
+    if (inAuthGroup) {
+      return performRedirect("/(tabs)", "Member in auth group, redirecting to tabs");
+    }
+
+    // If at root path, redirect to tabs
+    if (isRootPath) {
+      return performRedirect("/(tabs)", "Member at root path, redirecting to tabs");
+    }
+  }
+
+  console.log("[Router] No redirect needed");
+  return null;
+}
+
+// Main app layout - define this outside the main default export
+function AppLayout() {
+  const { isLoading } = useAuth();
+
   return (
-    <Stack
-      screenOptions={{
-        headerShown: false,
-      }}
-    >
-      <Stack.Screen name="index" />
-      <Stack.Screen name="(tabs)" />
-      <Stack.Screen name="(auth)" />
-      <Stack.Screen name="(admin)" />
-      <Stack.Screen name="(division)" />
-      <Stack.Screen name="(rosters)" />
-      <Stack.Screen name="(agreements)" />
-      <Stack.Screen name="(claims)" />
-      <Stack.Screen name="(gca)" />
-      <Stack.Screen name="(tools)" />
-      <Stack.Screen name="(safety)" />
-      <Stack.Screen name="(training)" />
-      <Stack.Screen
-        name="assign-officer"
-        options={{
-          presentation: "modal",
-          animation: "slide_from_bottom",
-          gestureEnabled: false,
+    <>
+      {/* Always render the Stack navigator unconditionally first */}
+      <Stack
+        screenOptions={{
+          headerShown: false,
         }}
-      />
-      <Stack.Screen
-        name="company-admin"
-        options={{
-          headerShown: true,
-          title: "CN/WC BLET PLD/SDV App - CN Admin",
-          headerBackVisible: false,
-          headerTitleStyle: {
-            fontFamily: "Inter",
-            fontSize: 16,
-            color: Colors.light.text,
-          },
-          headerStyle: {
-            backgroundColor: Colors.light.background,
-          },
-          headerShadowVisible: false,
-          headerTitleAlign: "center",
-          headerLeft: () => (
-            <Image
-              source={require("../assets/images/BLETblackgold.png")}
-              style={{
-                width: 50,
-                height: 50,
-                marginLeft: 16,
-                resizeMode: "contain",
-              }}
-            />
-          ),
-          headerRight: undefined,
-        }}
-      />
-    </Stack>
+      >
+        <Stack.Screen name="index" />
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="(auth)" />
+        <Stack.Screen name="sign-in" />
+        <Stack.Screen name="(admin)" />
+        <Stack.Screen name="(profile)" />
+        <Stack.Screen name="(division)" />
+        <Stack.Screen name="(rosters)" />
+        <Stack.Screen name="(agreements)" />
+        <Stack.Screen name="(claims)" />
+        <Stack.Screen name="(gca)" />
+        <Stack.Screen name="(tools)" />
+        <Stack.Screen name="(safety)" />
+        <Stack.Screen name="(training)" />
+        <Stack.Screen
+          name="assign-officer"
+          options={{
+            presentation: "modal",
+            animation: "slide_from_bottom",
+            gestureEnabled: false,
+          }}
+        />
+        <Stack.Screen
+          name="company-admin"
+          options={{
+            headerShown: true,
+            title: "CN/WC BLET PLD/SDV App - CN Admin",
+            headerBackVisible: false,
+            headerTitleStyle: {
+              fontFamily: "Inter",
+              fontSize: 16,
+              color: Colors.light.text,
+            },
+            headerStyle: {
+              backgroundColor: Colors.light.background,
+            },
+            headerShadowVisible: false,
+            headerTitleAlign: "center",
+            headerLeft: () => (
+              <Image
+                source={require("../assets/images/BLETblackgold.png")}
+                style={{
+                  width: 50,
+                  height: 50,
+                  marginLeft: 16,
+                  resizeMode: "contain",
+                }}
+              />
+            ),
+            headerRight: undefined,
+          }}
+        />
+      </Stack>
+
+      {/* Show loading screen overlay if we're loading */}
+      {isLoading ? <LoadingScreen /> : <NavigationHandler />}
+    </>
   );
 }
 
+// Export a stable component tree for the root
 export default function RootLayout() {
   return (
     <GestureHandlerRootView style={styles.container}>
       <ThemeProvider>
         <AuthProvider>
-          <RootLayoutContent key="stableRootLayoutContent" />
+          <AppLayout />
           <ThemedToast />
         </AuthProvider>
       </ThemeProvider>
@@ -303,5 +255,12 @@ export default function RootLayout() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  loadingContainer: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: Colors.light.background,
+    zIndex: 9999,
   },
 });
