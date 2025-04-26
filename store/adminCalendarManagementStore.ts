@@ -272,6 +272,20 @@ interface AdminCalendarManagementState {
         fields: Record<string, any>,
         year: TimeOffYearType,
     ) => Promise<boolean>;
+
+    // New methods for calendar allocations adjustment
+    updateDailyAllotment: (
+        calendarId: string,
+        date: string,
+        maxAllotment: number,
+        userId: string,
+    ) => Promise<void>;
+    updateWeeklyAllotment: (
+        calendarId: string,
+        date: string,
+        maxAllotment: number,
+        userId: string,
+    ) => Promise<void>;
 }
 
 // Keep track of ongoing fetches outside the store state
@@ -1071,6 +1085,7 @@ export const useAdminCalendarManagementStore = create<
         }
     },
 
+    // Vacation yearly allotment update function
     updateVacationAllotment: async (
         calendarId,
         weekStartDate,
@@ -1166,6 +1181,135 @@ export const useAdminCalendarManagementStore = create<
                 : "Failed to update vacation allotment";
             set({ error: message });
             throw error; // Rethrow to signal failure
+        } finally {
+            set({ isLoading: false });
+        }
+    },
+
+    // New methods for calendar allocations adjustment
+    updateDailyAllotment: async (calendarId, date, maxAllotment, userId) => {
+        set({ isLoading: true, error: null });
+        try {
+            console.log("[AdminStore] Updating daily PLD/SDV allotment:", {
+                calendarId,
+                date,
+                maxAllotment,
+            });
+
+            // Validate input
+            if (!calendarId) throw new Error("Calendar ID is required");
+            if (!date) throw new Error("Date is required");
+            if (maxAllotment < 0) {
+                throw new Error("Max allotment must be non-negative");
+            }
+            if (!userId) throw new Error("User ID is required");
+
+            // Format to ensure consistent date format
+            const formattedDate = new Date(date).toISOString().split("T")[0];
+
+            const { data, error } = await supabase
+                .from("pld_sdv_allotments")
+                .upsert(
+                    {
+                        calendar_id: calendarId,
+                        date: formattedDate,
+                        max_allotment: maxAllotment,
+                        is_override: true,
+                        override_by: userId,
+                        override_at: new Date().toISOString(),
+                    },
+                    {
+                        onConflict: "calendar_id,date",
+                        ignoreDuplicates: false,
+                    },
+                )
+                .select();
+
+            if (error) throw error;
+
+            // The update was successful, update the UI state
+            console.log(
+                "[AdminStore] Successfully updated daily PLD/SDV allotment",
+            );
+
+            // We don't need to refresh the whole year, just this specific date
+            // The realtime subscription in calendarStore will handle updating the displayed data
+        } catch (error) {
+            console.error("[updateDailyAllotment] Error:", error);
+            const message = error instanceof Error
+                ? error.message
+                : "Failed to update daily allotment";
+            set({ error: message });
+            throw error;
+        } finally {
+            set({ isLoading: false });
+        }
+    },
+
+    updateWeeklyAllotment: async (calendarId, date, maxAllotment, userId) => {
+        set({ isLoading: true, error: null });
+        try {
+            console.log("[AdminStore] Updating weekly vacation allotment:", {
+                calendarId,
+                date,
+                maxAllotment,
+            });
+
+            // Validate input
+            if (!calendarId) throw new Error("Calendar ID is required");
+            if (!date) throw new Error("Date is required");
+            if (maxAllotment < 0) {
+                throw new Error("Max allotment must be non-negative");
+            }
+            if (!userId) throw new Error("User ID is required");
+
+            // First, determine the Monday start date for the given date
+            const dateObj = new Date(date);
+            const day = dateObj.getDay(); // 0 = Sunday, 1 = Monday, ...
+            // Calculate days to subtract to get to Monday (handle Sunday specially)
+            const daysToSubtract = day === 0 ? 6 : day - 1;
+            const mondayDate = new Date(dateObj);
+            mondayDate.setDate(dateObj.getDate() - daysToSubtract);
+
+            // Format to ensure consistent date format
+            const formattedMondayDate = mondayDate.toISOString().split("T")[0];
+            const vacYear = mondayDate.getFullYear();
+
+            const { data, error } = await supabase
+                .from("vacation_allotments")
+                .upsert(
+                    {
+                        calendar_id: calendarId,
+                        week_start_date: formattedMondayDate,
+                        vac_year: vacYear,
+                        max_allotment: maxAllotment,
+                        is_override: true,
+                        override_by: userId,
+                        override_at: new Date().toISOString(),
+                    },
+                    {
+                        onConflict: "calendar_id,week_start_date",
+                        ignoreDuplicates: false,
+                    },
+                )
+                .select();
+
+            if (error) throw error;
+
+            // The update was successful, update the UI state
+            console.log(
+                "[AdminStore] Successfully updated weekly vacation allotment",
+            );
+
+            // We don't need to refresh the whole year, just this specific week
+            // The realtime subscription in vacationCalendarStore will handle updating the displayed data
+        } catch (error) {
+            console.error("[updateWeeklyAllotment] Error:", error);
+            const message = error instanceof Error
+                ? error.message
+                : "Failed to update weekly allotment";
+            set({ error: message });
+            throw error;
         } finally {
             set({ isLoading: false });
         }

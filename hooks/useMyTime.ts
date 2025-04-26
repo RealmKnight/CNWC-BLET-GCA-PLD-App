@@ -211,7 +211,7 @@ export function useMyTime() {
     }
 
     try {
-      console.log("[MyTime] Fetching stats for member:", member.id);
+      // console.log("[MyTime] Fetching stats for member:", member.id);
       setError(null);
 
       const currentYear = new Date().getFullYear();
@@ -227,7 +227,7 @@ export function useMyTime() {
 
       if (memberError) throw memberError;
 
-      console.log("[MyTime] Member data:", memberData);
+      // console.log("[MyTime] Member data:", memberData);
 
       // Get max PLDs from database function
       const { data: maxPldsResult, error: maxPldsError } = await supabase
@@ -320,19 +320,19 @@ export function useMyTime() {
         throw sixMonthError;
       }
 
-      console.log("[MyTime] Current year requests:", currentRequests);
-      console.log("[MyTime] Six-month requests:", sixMonthRequests);
+      // console.log("[MyTime] Current year requests:", currentRequests);
+      // console.log("[MyTime] Six-month requests:", sixMonthRequests);
 
       // Update stats based on current year requests
       currentRequests?.forEach((request) => {
         const type = request.leave_type.toLowerCase() as "pld" | "sdv";
 
-        console.log("[MyTime] Processing request for stats:", {
-          id: request.id,
-          type,
-          status: request.status,
-          paid_in_lieu: request.paid_in_lieu,
-        });
+        // console.log("[MyTime] Processing request for stats:", {
+        //   id: request.id,
+        //   type,
+        //   status: request.status,
+        //   paid_in_lieu: request.paid_in_lieu,
+        // });
 
         if (request.paid_in_lieu) {
           if (request.status === "pending") {
@@ -342,18 +342,18 @@ export function useMyTime() {
           }
         } else {
           if (request.status === "pending") {
-            console.log(`[MyTime] Adding pending ${type} request to stats`);
+            // console.log(`[MyTime] Adding pending ${type} request to stats`);
             baseStats.requested[type]++;
           } else if (request.status === "cancellation_pending") {
-            console.log(
-              `[MyTime] Adding cancellation pending ${type} request to stats`,
-            );
+            // console.log(
+            //   `[MyTime] Adding cancellation pending ${type} request to stats`,
+            // );
             baseStats.requested[type]++;
           } else if (request.status === "waitlisted") {
-            console.log(`[MyTime] Adding waitlisted ${type} request to stats`);
+            // console.log(`[MyTime] Adding waitlisted ${type} request to stats`);
             baseStats.waitlisted[type]++;
           } else if (request.status === "approved") {
-            console.log(`[MyTime] Adding approved ${type} request to stats`);
+            // console.log(`[MyTime] Adding approved ${type} request to stats`);
             baseStats.approved[type]++;
           }
         }
@@ -375,7 +375,7 @@ export function useMyTime() {
         baseStats.requested.sdv + baseStats.waitlisted.sdv +
         baseStats.paidInLieu.sdv;
 
-      console.log("[MyTime] Calculated stats:", baseStats);
+      // console.log("[MyTime] Calculated stats:", baseStats);
 
       // Combine and transform six-month requests into TimeOffRequest format
       const transformedSixMonthRequests = (sixMonthRequests || []).map((
@@ -880,7 +880,7 @@ export function useMyTime() {
 
       setIsInitialized(true);
       lastRefreshTimeRef.current = now;
-      console.log("[MyTime] Data refreshed successfully");
+      // console.log("[MyTime] Data refreshed successfully");
     } catch (error) {
       console.error("[MyTime] Error refreshing data:", error);
       setError(

@@ -3,7 +3,10 @@ import { supabase } from "@/utils/supabase";
 import { addDays, isAfter, isBefore, parseISO, startOfDay } from "date-fns";
 import { format } from "date-fns-tz";
 import { useUserStore } from "@/store/userStore";
-import { useAdminCalendarManagementStore } from "@/store/adminCalendarManagementStore";
+import {
+  PldSdvAllotment,
+  useAdminCalendarManagementStore,
+} from "@/store/adminCalendarManagementStore";
 import { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import { Database, TablesInsert } from "@/types/supabase";
 
@@ -99,6 +102,9 @@ interface CalendarState {
     endDate: string,
     calendarId: string,
   ) => Promise<void>;
+
+  // New action to refresh requests for a specific date
+  refreshRequestsForDate: (date: string, calendarId: string) => Promise<void>;
 
   cancelRequest: (requestId: string, requestDate: string) => Promise<boolean>;
 
@@ -197,7 +203,7 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
     // For six-month requests, we allow selection even if the date is full
     // because they are processed by seniority and waitlisted if needed
     if (isSixMonthRequest) {
-      console.log("[CalendarStore] Date selectable - six month request:", date);
+      // console.log("[CalendarStore] Date selectable - six month request:", date);
       return true;
     }
 
@@ -215,7 +221,7 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       !isBefore(dateObj, fortyEightHoursFromNow) &&
       !isAfter(dateObj, sixMonthsFromNow)
     ) {
-      console.log("[CalendarStore] Date selectable - regular request:", date);
+      // console.log("[CalendarStore] Date selectable - regular request:", date);
       return true;
     }
 
@@ -427,6 +433,52 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       });
       // Propagate the error if needed
       // throw error;
+    }
+  },
+
+  // Implement the new refresh action
+  refreshRequestsForDate: async (date, calendarId) => {
+    if (!calendarId || !date) {
+      console.warn(
+        "[CalendarStore] refreshRequestsForDate called without calendarId or date.",
+      );
+      return;
+    }
+    console.log(
+      `[CalendarStore] Refreshing requests specifically for date: ${date}, calendar: ${calendarId}`,
+    );
+    try {
+      // Fetch requests just for this date
+      const { data: requestsData, error } = await supabase
+        .from("pld_sdv_requests")
+        .select(`
+          id, member_id, calendar_id, request_date, leave_type, status, requested_at, waitlist_position,
+          member:members!inner (
+            id, first_name, last_name, pin_number
+          )
+        `)
+        .eq("calendar_id", calendarId)
+        .eq("request_date", date);
+
+      if (error) throw error;
+
+      // Update the store state for this specific date
+      set((state) => ({
+        requests: {
+          ...state.requests,
+          [date]: (requestsData || []) as unknown as DayRequest[], // Use type assertion
+        },
+      }));
+      console.log(
+        `[CalendarStore] Refreshed requests for ${date}:`,
+        requestsData?.length || 0,
+      );
+    } catch (error) {
+      console.error(
+        `[CalendarStore] Error refreshing requests for date ${date}:`,
+        error,
+      );
+      // Optionally set an error state specific to this action if needed
     }
   },
 
@@ -942,17 +994,27 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
 }));
 
 export function setupCalendarSubscriptions() {
+  // **** ADDED DEBUG LOG ****
+  console.log(
+    "[setupCalendarSubscriptions] Attempting to set up subscriptions...",
+  );
   const { member } = useUserStore.getState();
   const calendarId = member?.calendar_id;
 
+  // **** ADDED DEBUG LOG ****
+  console.log(
+    `[setupCalendarSubscriptions] Retrieved member/calendarId: ${calendarId}`,
+  );
+
   if (!calendarId) {
-    console.log("[CalendarStore] No calendar_id found, skipping subscriptions");
+    console.log(
+      "[CalendarStore] No calendar_id found, skipping subscriptions setup.",
+    );
     return { unsubscribe: () => {} };
   }
 
   console.log(
-    "[CalendarStore] Setting up subscriptions for calendar:",
-    calendarId,
+    `[CalendarStore] Setting up subscriptions for calendar: ${calendarId}`,
   );
 
   let isSubscribed = true;
@@ -963,6 +1025,11 @@ export function setupCalendarSubscriptions() {
   const allotmentsChannel = supabase.channel(`allotments-${calendarId}`);
   const requestsChannel = supabase.channel(`requests-${calendarId}`);
 
+  // **** ADDED DEBUG LOG ****
+  console.log(
+    `[setupCalendarSubscriptions] Created channels: allotments-${calendarId}, requests-${calendarId}`,
+  );
+
   const handleSubscriptionError = async (error: any, channelName: string) => {
     console.error(`[CalendarStore] ${channelName} subscription error:`, error);
     reconnectAttempts++;
@@ -972,6 +1039,7 @@ export function setupCalendarSubscriptions() {
         `[CalendarStore] Attempting to reconnect ${channelName} (attempt ${reconnectAttempts})`,
       );
       await new Promise((resolve) => setTimeout(resolve, RECONNECT_DELAY));
+      // Return true to indicate a retry should happen
       return true;
     }
 
@@ -981,152 +1049,401 @@ export function setupCalendarSubscriptions() {
     return false;
   };
 
+  // --- Allotments Subscription ---
   allotmentsChannel
     .on(
       "postgres_changes",
       {
-        event: "*",
+        event: "*", // Listen to all events
         schema: "public",
         table: "pld_sdv_allotments",
-        filter: `calendar_id=eq.${calendarId!}`,
+        filter: `calendar_id=eq.${calendarId}`,
       },
-      async (payload) => {
-        try {
-          const newRecord = payload.new as any;
-          if (
-            newRecord && typeof newRecord === "object" && "date" in newRecord
-          ) {
-            console.log("[CalendarStore] Processing allotment change:", {
-              date: newRecord.date,
-              max_allotment: newRecord.max_allotment,
-            });
+      (payload: RealtimePostgresChangesPayload<PldSdvAllotment>) => {
+        console.log(
+          "[CalendarStore Sub Entry Point] Allotment change handler triggered.",
+        );
+        console.log(
+          "[CalendarStore Sub] === Received ALLOTMENT change ===",
+          payload.eventType,
+          (payload.new as Partial<PldSdvAllotment>)?.date ||
+            (payload.old as Partial<PldSdvAllotment>)?.date,
+        );
+        const { eventType, new: newRecordPartial, old: oldRecordPartial } =
+          payload;
+        // Explicitly type as Partial and get store state
+        const newRecord = newRecordPartial as Partial<PldSdvAllotment>;
+        const oldRecord = oldRecordPartial as Partial<PldSdvAllotment>;
+        const store = useCalendarStore.getState();
 
-            const store = useCalendarStore.getState();
-            if (newRecord.date === `${newRecord.year}-01-01`) {
-              store.setAllotments({
-                ...newRecord,
-                current_requests: newRecord.current_requests || 0,
-              });
-            } else {
-              store.setAllotments({
-                ...newRecord,
-                current_requests: newRecord.current_requests || 0,
-              });
+        // Determine the key (date or year) and value
+        let dateKey: string | null = null;
+        let yearKey: number | null = null;
+        let newAllotmentValue: number | undefined = undefined;
+        let recordToProcess: Partial<PldSdvAllotment> | null = null; // Use Partial here too
+
+        if (eventType === "INSERT" || eventType === "UPDATE") {
+          recordToProcess = newRecord;
+          newAllotmentValue = newRecord.max_allotment;
+        } else if (eventType === "DELETE") {
+          recordToProcess = oldRecord;
+        } else {
+          return;
+        }
+
+        if (!recordToProcess) return;
+
+        // Check for necessary fields before processing
+        const processYear = recordToProcess.year;
+        const processDate = recordToProcess.date;
+        const processMaxAllotment = recordToProcess.max_allotment;
+
+        // Distinguish between yearly default and daily override
+        // Use type guards
+        if (
+          processDate && processYear && processDate === `${processYear}-01-01`
+        ) {
+          yearKey = processYear;
+          dateKey = null;
+        } else if (processDate) {
+          dateKey = processDate;
+          yearKey = new Date(dateKey).getFullYear();
+        } else if (processYear) {
+          yearKey = processYear;
+          dateKey = null;
+        }
+
+        // Update state based on event type and key
+        if (dateKey && yearKey) { // Daily override change (ensure yearKey is derived)
+          const currentAllotments = store.allotments;
+          const updatedAllotments = { ...currentAllotments };
+          if (eventType === "DELETE") {
+            delete updatedAllotments[dateKey];
+            console.log(
+              `[CalendarStore] Removed daily allotment override for ${dateKey}`,
+            );
+            // Re-apply yearly default if it exists
+            const yearlyDefault = store.yearlyAllotments[yearKey];
+            if (yearlyDefault !== undefined) {
+              updatedAllotments[dateKey] = yearlyDefault;
+              console.log(
+                `[CalendarStore] Re-applied yearly default (${yearlyDefault}) to ${dateKey}`,
+              );
             }
+          } else if (newAllotmentValue !== undefined) {
+            updatedAllotments[dateKey] = newAllotmentValue;
+            console.log(
+              `[CalendarStore] Updated daily allotment for ${dateKey} to ${newAllotmentValue}`,
+            );
           }
-        } catch (error) {
-          if (await handleSubscriptionError(error, "allotments")) {
-            allotmentsChannel.subscribe();
+
+          // Update allotments state immediately
+          store.setAllotments(updatedAllotments);
+
+          // ENHANCEMENT: Fetch the latest requests for this date to reflect waitlist changes
+          // This ensures the Calendar correctly shows any requests that were promoted from waitlist
+          if (dateKey) {
+            (async () => {
+              try {
+                console.log(
+                  `[CalendarStore] Fetching latest requests for date ${dateKey} after allocation change`,
+                );
+
+                const { data: requestsData, error } = await supabase
+                  .from("pld_sdv_requests")
+                  .select(`
+                    id, member_id, calendar_id, request_date, leave_type, status, requested_at, waitlist_position,
+                    member:members!inner (
+                      id, first_name, last_name, pin_number
+                    )
+                  `)
+                  .eq("calendar_id", calendarId)
+                  .eq("request_date", dateKey);
+
+                if (error) {
+                  console.error(
+                    `[CalendarStore] Error fetching requests for date ${dateKey}:`,
+                    error,
+                  );
+                  return;
+                }
+
+                if (requestsData) {
+                  // Update the specific date in the requests state
+                  const storeState = useCalendarStore.getState();
+                  const updatedRequests = {
+                    ...storeState.requests,
+                    [dateKey]: requestsData as unknown as DayRequest[],
+                  };
+
+                  storeState.setRequests(updatedRequests);
+                  console.log(
+                    `[CalendarStore] Updated requests for date ${dateKey} after allocation change: ${requestsData.length} requests`,
+                  );
+                }
+              } catch (error) {
+                console.error(
+                  `[CalendarStore] Error in async fetch after allocation change:`,
+                  error,
+                );
+              }
+            })();
           }
+        }
+
+        if (yearKey && !dateKey) { // Yearly default change (only if dateKey is null)
+          const currentYearly = store.yearlyAllotments;
+          const updatedYearly = { ...currentYearly };
+          if (eventType === "DELETE") {
+            delete updatedYearly[yearKey];
+            console.log(
+              `[CalendarStore] Removed yearly allotment default for ${yearKey}`,
+            );
+            // Trigger a refetch for the affected year
+            console.log(
+              `[CalendarStore] Yearly default ${yearKey} deleted, triggering refetch for year's daily data.`,
+            );
+            setTimeout(
+              () =>
+                store.fetchAllotments(
+                  store.selectedDate || format(new Date(), "yyyy-MM-dd"),
+                  store.selectedDate || format(new Date(), "yyyy-MM-dd"),
+                  calendarId,
+                ),
+              0,
+            );
+          } else if (newAllotmentValue !== undefined) {
+            updatedYearly[yearKey] = newAllotmentValue;
+            console.log(
+              `[CalendarStore] Updated yearly allotment default for ${yearKey} to ${newAllotmentValue}`,
+            );
+            // Trigger a refetch for the affected year
+            console.log(
+              `[CalendarStore] Yearly default ${yearKey} updated, triggering refetch for year's daily data.`,
+            );
+            setTimeout(
+              () =>
+                store.fetchAllotments(
+                  store.selectedDate || format(new Date(), "yyyy-MM-dd"),
+                  store.selectedDate || format(new Date(), "yyyy-MM-dd"),
+                  calendarId,
+                ),
+              0,
+            );
+          }
+          store.setYearlyAllotments(updatedYearly); // Directly set the updated object
         }
       },
     )
-    .subscribe();
+    .subscribe(async (status) => {
+      console.log(
+        "[CalendarStore Sub] === Allotments Subscription Status ===",
+        status,
+      );
+      if (status === "SUBSCRIBED") {
+        reconnectAttempts = 0; // Reset on successful connection
+      } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+        // Attempt reconnect on specific error statuses
+        if (await handleSubscriptionError(status, "allotments")) {
+          allotmentsChannel.subscribe();
+        }
+      }
+    });
 
+  // --- Requests Subscription (Corrected Types) ---
   requestsChannel
     .on(
       "postgres_changes",
       {
-        event: "*",
+        event: "*", // Listen to all events
         schema: "public",
         table: "pld_sdv_requests",
-        filter: `calendar_id=eq.${calendarId!}`,
+        filter: `calendar_id=eq.${calendarId}`,
       },
-      async (payload) => {
-        try {
-          const newRecord = payload.new as any;
-          const oldRecord = payload.old as any;
-          const eventType = payload.eventType;
+      async (payload: RealtimePostgresChangesPayload<DayRequest>) => {
+        const { eventType, new: newRecordPartial, old: oldRecordPartial } =
+          payload;
+        const newRecord = newRecordPartial as Partial<DayRequest>;
+        const oldRecord = oldRecordPartial as Partial<DayRequest>;
+        console.log(
+          "[CalendarStore Sub] === Received REQUEST change ===",
+          eventType,
+          newRecord?.id || oldRecord?.id,
+          "Status:",
+          newRecord?.status,
+        );
+        const requestDate = newRecord?.request_date || oldRecord?.request_date;
 
-          const requestDate = newRecord?.request_date ||
-            oldRecord?.request_date;
+        if (!requestDate) {
+          console.warn(
+            "[CalendarStore] Request change received without date info:",
+            payload,
+          );
+          return; // Skip if no date context
+        }
 
-          if (requestDate) {
-            console.log("[CalendarStore] Processing request change:", {
-              eventType,
-              requestDate,
-              newStatus: newRecord?.status,
-              oldStatus: oldRecord?.status,
-              requestId: newRecord?.id || oldRecord?.id,
-            });
+        // --- Helper to fetch member details ---
+        const fetchMemberDetails = async (
+          memberId: string | undefined,
+        ): Promise<RequestMember | null> => { // Handle undefined memberId
+          if (!memberId) return null;
+          try {
+            const { data: memberData, error } = await supabase
+              .from("members")
+              .select("id, first_name, last_name, pin_number")
+              .eq("id", memberId)
+              .single();
+            if (error) throw error;
+            return {
+              id: memberData.id,
+              first_name: memberData.first_name,
+              last_name: memberData.last_name,
+              pin_number: memberData.pin_number ?? 0,
+            };
+          } catch (error) {
+            console.error(
+              "[CalendarStore] Error fetching member details:",
+              error,
+            );
+            return null;
+          }
+        };
 
-            const store = useCalendarStore.getState();
-            const currentRequests = store.requests[requestDate] || [];
+        // Update state based on event type
+        const processRecord = async () => {
+          const store = useCalendarStore.getState(); // Get current state inside async function
+          const currentRequests = store.requests[requestDate] || [];
+          let updatedDateRequests = [...currentRequests];
+          let memberInfo: RequestMember | null = null;
+          let requestModified = false;
 
-            if (eventType === "INSERT" && newRecord) {
-              try {
-                const { data: memberData, error: memberError } = await supabase
-                  .from("members")
-                  .select("id, first_name, last_name, pin_number")
-                  .eq("id", newRecord.member_id)
-                  .single();
+          // Helper to ensure object conforms to DayRequest structure
+          const ensureDayRequest = (
+            record: Partial<DayRequest>,
+            member: RequestMember | null,
+          ): DayRequest => {
+            return {
+              id: record.id || "", // Provide default
+              member_id: record.member_id || "", // Provide default
+              calendar_id: record.calendar_id || null,
+              request_date: record.request_date || "", // Provide default
+              leave_type: record.leave_type || "PLD", // Provide default
+              status: record.status || "pending", // Provide default
+              requested_at: record.requested_at || new Date().toISOString(), // Provide default
+              created_at: record.created_at || new Date().toISOString(), // Provide default
+              updated_at: record.updated_at || new Date().toISOString(), // Provide default
+              responded_at: record.responded_at || null,
+              responded_by: record.responded_by || null,
+              paid_in_lieu: record.paid_in_lieu || false, // Provide default
+              denial_reason_id: record.denial_reason_id || null,
+              denial_comment: record.denial_comment || null,
+              actioned_by: record.actioned_by || null,
+              actioned_at: record.actioned_at || null,
+              metadata: record.metadata || null,
+              waitlist_position: record.waitlist_position === undefined
+                ? null
+                : record.waitlist_position, // Handle undefined
+              is_rollover_pld: record.is_rollover_pld || false, // Provide default
+              override_by: record.override_by || null,
+              member: member ||
+                { id: "", first_name: null, last_name: null, pin_number: 0 }, // Provide default member
+              ...record, // Spread the partial record last to override defaults
+            };
+          };
 
-                if (!memberError && memberData) {
-                  const requestWithMember = {
-                    ...newRecord,
-                    member: {
-                      id: memberData.id,
-                      first_name: memberData.first_name || null,
-                      last_name: memberData.last_name || null,
-                      pin_number: memberData.pin_number,
-                    },
-                  };
-                  store.setRequests({
-                    ...store.requests,
-                    [requestDate]: [...currentRequests, requestWithMember],
-                  });
+          if (
+            eventType === "INSERT" && newRecord && newRecord.id &&
+            newRecord.member_id
+          ) {
+            memberInfo = await fetchMemberDetails(newRecord.member_id);
+            // Ensure memberInfo is not null before proceeding
+            if (memberInfo) {
+              const completeRecord = ensureDayRequest(newRecord, memberInfo);
+              if (
+                !updatedDateRequests.some((req) => req.id === completeRecord.id)
+              ) {
+                updatedDateRequests.push(completeRecord);
+                requestModified = true;
+              }
+            }
+          } else if (eventType === "UPDATE" && newRecord && newRecord.id) {
+            const index = updatedDateRequests.findIndex((req) =>
+              req.id === newRecord.id
+            );
+            if (index !== -1) {
+              const existingRequest = updatedDateRequests[index];
+              memberInfo = existingRequest.member ||
+                await fetchMemberDetails(
+                  newRecord.member_id || existingRequest.member_id,
+                );
+              // Ensure memberInfo is not null before proceeding
+              if (memberInfo) {
+                const mergedRecord = ensureDayRequest({
+                  ...existingRequest,
+                  ...newRecord, // Spread newRecord over existing
+                }, memberInfo); // Pass memberInfo separately
+                updatedDateRequests[index] = mergedRecord;
+                requestModified = true;
+              }
+            } else { // Treat as INSERT if not found
+              if (newRecord.member_id) {
+                memberInfo = await fetchMemberDetails(newRecord.member_id);
+                // Ensure memberInfo is not null before proceeding
+                if (memberInfo) {
+                  const completeRecord = ensureDayRequest(
+                    newRecord,
+                    memberInfo,
+                  );
+                  updatedDateRequests.push(completeRecord);
+                  requestModified = true;
                 }
-              } catch (error) {
-                console.error(
-                  "[CalendarStore] Error processing INSERT:",
-                  error,
+              } else {
+                console.warn(
+                  "[CalendarStore] UPDATE as INSERT: Missing member_id in newRecord:",
+                  newRecord,
                 );
               }
-            } else if (eventType === "UPDATE" && newRecord) {
-              const updatedRequests = currentRequests.map((req) =>
-                req.id === newRecord.id
-                  ? { ...newRecord, member: req.member }
-                  : req
-              );
-              store.setRequests({
-                ...store.requests,
-                [requestDate]: updatedRequests,
-              });
-            } else if (eventType === "DELETE" && oldRecord) {
-              const filteredRequests = currentRequests.filter((req) =>
-                req.id !== oldRecord.id
-              );
-              store.setRequests({
-                ...store.requests,
-                [requestDate]: filteredRequests,
-              });
             }
+          } else if (eventType === "DELETE" && oldRecord && oldRecord.id) {
+            const initialLength = updatedDateRequests.length;
+            updatedDateRequests = updatedDateRequests.filter((req) =>
+              req.id !== oldRecord.id
+            );
+            if (updatedDateRequests.length < initialLength) {
+              requestModified = true;
+            }
+          }
 
-            try {
-              const dateRange = {
-                start: requestDate,
-                end: requestDate,
-              };
-              await store.fetchAllotments(
-                dateRange.start,
-                dateRange.end,
-                calendarId,
-              );
-            } catch (error) {
-              console.error(
-                "[CalendarStore] Error refreshing allotments:",
-                error,
-              );
-            }
+          if (requestModified) {
+            console.log(
+              `[CalendarStore] Updating requests state for date: ${requestDate}`,
+            );
+            useCalendarStore.setState((prevState) => ({
+              requests: {
+                ...prevState.requests,
+                [requestDate]: updatedDateRequests,
+              },
+            }));
           }
-        } catch (error) {
-          if (await handleSubscriptionError(error, "requests")) {
-            requestsChannel.subscribe();
-          }
-        }
+        };
+
+        processRecord(); // Fire and forget async processing
       },
     )
-    .subscribe();
+    .subscribe(async (status) => {
+      console.log(
+        "[CalendarStore Sub] === Requests Subscription Status ===",
+        status,
+      );
+      if (status === "SUBSCRIBED") {
+        reconnectAttempts = 0; // Reset on successful connection
+      } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+        // Attempt reconnect
+        if (await handleSubscriptionError(status, "requests")) {
+          requestsChannel.subscribe();
+        }
+      }
+    });
 
   return {
     unsubscribe: () => {

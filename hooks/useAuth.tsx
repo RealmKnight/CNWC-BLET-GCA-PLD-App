@@ -391,7 +391,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
 
       // Clear the password reset flag if event is not recovery
-      if (typeof window !== "undefined" && event !== "PASSWORD_RECOVERY") {
+      // Explicitly check against the specific string to satisfy linter
+      if (typeof window !== "undefined" && String(event) !== "PASSWORD_RECOVERY") {
         delete window.__passwordResetInProgress;
       }
 

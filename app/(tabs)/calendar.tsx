@@ -13,21 +13,22 @@ import {
   AppState,
   Animated,
   Button,
+  TextInput,
+  KeyboardAvoidingView,
 } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { Calendar } from "@/components/Calendar";
 import { VacationCalendar } from "@/components/VacationCalendar";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
-import { useCalendarStore, DayRequest } from "@/store/calendarStore";
-import { useVacationCalendarStore } from "@/store/vacationCalendarStore";
+import { useCalendarStore, DayRequest, setupCalendarSubscriptions } from "@/store/calendarStore";
+import { useVacationCalendarStore, WeekRequest } from "@/store/vacationCalendarStore";
 import { useAuth } from "@/hooks/useAuth";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { format } from "date-fns-tz";
-import { parseISO, isBefore } from "date-fns";
+import { parseISO, isBefore, isAfter, addDays, isLastDayOfMonth } from "date-fns";
 import { isSameDayWithFormat, getSixMonthDate } from "@/utils/date-utils";
-import { isLastDayOfMonth } from "date-fns";
 import { supabase } from "@/utils/supabase";
 import { useUserStore } from "@/store/userStore";
 import { useFocusEffect } from "@react-navigation/native";
@@ -37,6 +38,8 @@ import Toast from "react-native-toast-message";
 import { TouchableOpacityComponent } from "@/components/TouchableOpacityComponent";
 import { RealtimePostgresChangesPayload, RealtimeChannel } from "@supabase/supabase-js";
 import { Ionicons } from "@expo/vector-icons";
+import { useAdminCalendarManagementStore } from "@/store/adminCalendarManagementStore";
+import { Calendar as RNCalendar } from "react-native-calendars";
 
 type ColorScheme = keyof typeof Colors;
 type CalendarType = "PLD/SDV" | "Vacation";
@@ -51,6 +54,9 @@ interface RequestDialogProps {
     current: number;
   };
   requests: DayRequest[];
+  calendarType: CalendarType; // Add calendar type
+  calendarId: string; // Add calendar ID
+  onAdjustmentComplete: () => void; // Add new prop for reopening after adjustment
 }
 
 function RequestDialog({
@@ -60,12 +66,19 @@ function RequestDialog({
   selectedDate,
   allotments,
   requests: allRequests,
+  calendarType,
+  calendarId,
+  onAdjustmentComplete,
 }: RequestDialogProps) {
   const theme = (useColorScheme() ?? "light") as ColorScheme;
   const { stats, initialize: refreshMyTimeStats, cancelSixMonthRequest } = useMyTime();
   const { member } = useUserStore();
+  const userRole = useUserStore((state) => state.userRole);
   const checkSixMonthRequest = useCalendarStore((state) => state.checkSixMonthRequest);
   const cancelRequest = useCalendarStore((state) => state.cancelRequest);
+  const updateDailyAllotment = useAdminCalendarManagementStore((state) => state.updateDailyAllotment);
+  const updateWeeklyAllotment = useAdminCalendarManagementStore((state) => state.updateWeeklyAllotment);
+
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasSixMonthRequest, setHasSixMonthRequest] = useState(false);
   const [totalSixMonthRequests, setTotalSixMonthRequests] = useState(0);
@@ -76,10 +89,23 @@ function RequestDialog({
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelType, setCancelType] = useState<"regular" | "six-month">("regular");
 
-  // Initialize local requests with the ones passed as props
+  // New state for allocation adjustment
+  const [showAdjustmentModal, setShowAdjustmentModal] = useState(false);
+  const [newAllotment, setNewAllotment] = useState("");
+  const [isAdjusting, setIsAdjusting] = useState(false);
+  const [adjustmentError, setAdjustmentError] = useState<string | null>(null);
+
+  // Add state for local tracking of allotments that can be updated by real-time events
+  const [localAllotments, setLocalAllotments] = useState(allotments);
+
+  // Admin check
+  const isAdmin = userRole === "application_admin" || userRole === "union_admin" || userRole === "division_admin";
+
+  // Initialize local state from props
   useEffect(() => {
     setLocalRequests(allRequests);
-  }, [allRequests]);
+    setLocalAllotments(allotments);
+  }, [allRequests, allotments]);
 
   // Set up real-time subscription to handle active requests
   useEffect(() => {
@@ -155,14 +181,81 @@ function RequestDialog({
               return prev; // Return the previous state while async fetch happens
             });
           } else if (eventType === "UPDATE") {
-            setLocalRequests((prev) => prev.map((req) => (req.id === newRecord.id ? { ...req, ...newRecord } : req)));
+            // Carefully merge updates, preserving the existing member object
+            setLocalRequests((prev) =>
+              prev.map((req) => {
+                if (req.id === newRecord.id) {
+                  // Preserve existing member data if not present in newRecord
+                  const updatedMember = newRecord.member || req.member;
+                  return {
+                    ...req,
+                    ...newRecord,
+                    member: updatedMember, // Ensure member data is preserved/updated
+                  };
+                }
+                return req;
+              })
+            );
           } else if (eventType === "DELETE") {
             setLocalRequests((prev) => prev.filter((req) => req.id !== oldRecord.id));
           }
         }
       )
+      // Add subscription to pld_sdv_allotments to handle allocation changes
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "pld_sdv_allotments",
+          filter: `date=eq.${selectedDate}`,
+        },
+        async (payload: RealtimePostgresChangesPayload<any>) => {
+          console.log("[RequestDialog] Received allotment update:", payload);
+          const { new: newRecord } = payload;
+
+          // Update the allotments state in the dialog
+          if (newRecord && typeof newRecord === "object" && "max_allotment" in newRecord) {
+            // Fetch the updated allotments and requests to ensure UI is in sync
+            try {
+              // Update local allotment state for immediate feedback
+              const newAllotmentValue = {
+                max: newRecord.max_allotment,
+                current: newRecord.current_requests || localAllotments.current,
+              };
+
+              console.log("[RequestDialog] Updating allotment:", newAllotmentValue);
+
+              // Update the dialog's local allotment state
+              setLocalAllotments(newAllotmentValue);
+
+              // Now, fetch the latest requests to show any waitlist changes
+              const { data, error } = await supabase
+                .from("pld_sdv_requests")
+                .select(
+                  `
+                  id, member_id, calendar_id, request_date, leave_type, status, requested_at, waitlist_position,
+                  member:members!inner (
+                    id, first_name, last_name, pin_number
+                  )
+                `
+                )
+                .eq("calendar_id", calendarId)
+                .eq("request_date", selectedDate);
+
+              if (!error && data) {
+                // Update local requests
+                setLocalRequests(data as unknown as DayRequest[]);
+                console.log(`[RequestDialog] Updated requests after allotment change: ${data.length} requests`);
+              }
+            } catch (error) {
+              console.error("[RequestDialog] Error refreshing after allotment update:", error);
+            }
+          }
+        }
+      )
       .subscribe((status) => {
-        console.log("[RequestDialog] Subscription status:", status);
+        console.log("[RequestDialog] Subscription status (Requests Only Now):", status);
       });
 
     realtimeChannelRef.current = channel;
@@ -175,7 +268,7 @@ function RequestDialog({
         realtimeChannelRef.current = null;
       }
     };
-  }, [selectedDate, member?.calendar_id, isVisible]);
+  }, [selectedDate, member?.calendar_id, isVisible, calendarId]);
 
   // Refresh stats whenever the dialog becomes visible
   useEffect(() => {
@@ -513,11 +606,9 @@ function RequestDialog({
   }, [userRequest, isSixMonthRequest, hasSixMonthRequest]);
 
   // Handler for cancelling a request
-  const handleCancelRequest = useCallback(async () => {
-    if (!userRequest || !selectedDate) {
-      Toast.show({ type: "error", text1: "Cannot find request to cancel" });
-      return;
-    }
+  const handleCancelRequest = useCallback(() => {
+    if (!userRequest || !selectedDate) return;
+    console.log("[RequestDialog] Initiating request cancellation for:", userRequest.id);
 
     // Show confirmation dialog instead of immediately canceling
     setCancelType("regular");
@@ -586,7 +677,7 @@ function RequestDialog({
   // But we do want to show the total count of six-month requests
   const currentAllotment = useMemo(() => {
     const result = {
-      max: allotments.max,
+      max: localAllotments.max,
       current: isSixMonthRequest
         ? totalSixMonthRequests // Show total six-month requests instead of just the user's request
         : activeRequests.length,
@@ -602,7 +693,7 @@ function RequestDialog({
     }
 
     return result;
-  }, [allotments.max, activeRequests.length, isSixMonthRequest, totalSixMonthRequests, selectedDate]);
+  }, [localAllotments.max, activeRequests.length, isSixMonthRequest, totalSixMonthRequests, selectedDate]);
 
   const isFull = currentAllotment.current >= currentAllotment.max;
 
@@ -787,11 +878,9 @@ function RequestDialog({
   }, [userRequest]);
 
   // Handler for cancelling a six-month request
-  const handleCancelSixMonthRequest = useCallback(async () => {
-    if (!sixMonthRequestId) {
-      Toast.show({ type: "error", text1: "Cannot find six-month request to cancel" });
-      return;
-    }
+  const handleCancelSixMonthRequest = useCallback(() => {
+    if (!sixMonthRequestId) return;
+    console.log("[RequestDialog] Initiating six-month request cancellation");
 
     // Show confirmation dialog instead of immediately canceling
     setCancelType("six-month");
@@ -803,6 +892,94 @@ function RequestDialog({
     return hasSixMonthRequest && sixMonthRequestId; // Can cancel if it exists
   }, [hasSixMonthRequest, sixMonthRequestId]);
 
+  // Add new function to handle allocation adjustment
+  const handleAdjustAllocation = () => {
+    setNewAllotment(localAllotments.max.toString());
+    setAdjustmentError(null);
+    setShowAdjustmentModal(true);
+  };
+
+  // Add function to save allocation adjustment
+  const handleSaveAdjustment = async () => {
+    if (!member?.id) return;
+
+    // Validate input
+    const allotmentValue = parseInt(newAllotment, 10);
+    if (isNaN(allotmentValue) || allotmentValue < 0) {
+      setAdjustmentError("Please enter a valid non-negative number");
+      return;
+    }
+
+    // Check if trying to reduce below approved requests
+    const currentApprovedCount = activeRequests.filter((r) => r.status === "approved").length;
+    if (allotmentValue < currentApprovedCount) {
+      // Use current approved count for validation
+      setAdjustmentError(
+        `Cannot reduce allocation below the current number of approved requests (${currentApprovedCount}).`
+      );
+      return;
+    }
+
+    setIsAdjusting(true);
+    setAdjustmentError(null);
+
+    try {
+      // Call the appropriate store function based on calendar type
+      if (calendarType === "PLD/SDV") {
+        await updateDailyAllotment(calendarId, selectedDate, allotmentValue, member.id);
+        Toast.show({
+          type: "success",
+          text1: `Daily allocation updated to ${allotmentValue}`,
+          position: "bottom",
+        });
+      } else {
+        await updateWeeklyAllotment(calendarId, selectedDate, allotmentValue, member.id);
+        Toast.show({
+          type: "success",
+          text1: `Weekly allocation updated to ${allotmentValue}`,
+          position: "bottom",
+        });
+      }
+
+      // Close the adjustment modal first
+      setShowAdjustmentModal(false);
+
+      // ** TEMP: Keep main dialog open, do not close/reopen **
+      // onClose();
+      // setTimeout(() => {
+      //   console.log("[RequestDialog] Triggering reopen after adjustment");
+      //   onAdjustmentComplete();
+      // }, 1000);
+
+      // Optional: Maybe trigger a manual refresh of local state ONLY if needed
+      // setLastAdjustmentTime(Date.now()); // If we still need this fallback
+    } catch (error) {
+      console.error("Error adjusting allocation:", error);
+
+      let errorMessage = "An error occurred updating the allocation";
+      if (error instanceof Error) {
+        // Check for specific Supabase error codes if possible (e.g., from validation trigger)
+        if (error.message.includes("check constraint violation")) {
+          // Example check
+          errorMessage = "Cannot reduce allocation below approved requests.";
+        } else {
+          errorMessage = error.message;
+        }
+      }
+      setAdjustmentError(errorMessage);
+
+      // Show toast at bottom of screen
+      Toast.show({
+        type: "error",
+        text1: "Failed to update allocation",
+        text2: errorMessage,
+        position: "bottom",
+      });
+    } finally {
+      setIsAdjusting(false);
+    }
+  };
+
   return (
     <Modal visible={isVisible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={dialogStyles.modalOverlay}>
@@ -812,8 +989,9 @@ function RequestDialog({
           <View style={dialogStyles.allotmentContainer}>
             <ThemedText style={dialogStyles.allotmentInfo}>
               {isSixMonthRequest
-                ? `${currentAllotment.current} six-month requests` // Only show total count for six-month
-                : `${filledSpotsCapped}/${currentAllotment.max} spots filled`}
+                ? `${localAllotments.current} six-month requests` // Use localAllotments here
+                : `${filledSpotsCapped}/${localAllotments.max} spots filled`}{" "}
+              // Use localAllotments here
             </ThemedText>
             {waitlistCount > 0 && !isSixMonthRequest && (
               <ThemedText style={dialogStyles.waitlistInfo}>Waitlist: {waitlistCount}</ThemedText>
@@ -1233,8 +1411,96 @@ function RequestDialog({
               </>
             )}
           </View>
+
+          {/* Add the Adjust Allocation button for admins */}
+          {isAdmin && (
+            <View style={dialogStyles.adminButtonContainer}>
+              <TouchableOpacity
+                style={[dialogStyles.modalButton, dialogStyles.adjustButton]}
+                onPress={handleAdjustAllocation}
+                activeOpacity={0.7}
+              >
+                <ThemedText style={dialogStyles.modalButtonText}>Adjust Allocation</ThemedText>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       </View>
+
+      {/* Allocation Adjustment Modal */}
+      <Modal
+        visible={showAdjustmentModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowAdjustmentModal(false)}
+      >
+        <View style={dialogStyles.modalOverlay}>
+          <View style={dialogStyles.modalContent}>
+            <ThemedText style={dialogStyles.modalTitle}>Adjust {calendarType} Allocation</ThemedText>
+
+            <ThemedText style={dialogStyles.modalDescription}>
+              {calendarType === "PLD/SDV"
+                ? `Adjust available spots for ${selectedDate}`
+                : `Adjust available spots for the week of ${selectedDate}`}
+            </ThemedText>
+
+            <ThemedText style={dialogStyles.infoText}>
+              Current allocation: {localAllotments.max} spots, {localAllotments.current} spots used
+            </ThemedText>
+
+            <ThemedText style={dialogStyles.infoText}>
+              Note: You cannot reduce allocation below the current number of approved requests.
+            </ThemedText>
+
+            <TextInput
+              style={{
+                width: "40%",
+                padding: 10,
+                borderRadius: 8,
+                borderWidth: 1,
+                borderColor: Colors[theme].border,
+                color: Colors[theme].text,
+                marginBottom: 16,
+                alignSelf: "center",
+                textAlign: "center",
+              }}
+              keyboardType="numeric"
+              value={newAllotment}
+              onChangeText={setNewAllotment}
+              placeholder="Enter new allocation"
+              placeholderTextColor={Colors[theme].textDim}
+            />
+
+            {adjustmentError && <ThemedText style={dialogStyles.errorText}>{adjustmentError}</ThemedText>}
+
+            <View style={dialogStyles.modalButtons}>
+              <TouchableOpacity
+                style={[dialogStyles.modalButton, dialogStyles.cancelButton]}
+                onPress={() => setShowAdjustmentModal(false)}
+                disabled={isAdjusting}
+              >
+                <ThemedText style={dialogStyles.closeButtonText}>Cancel</ThemedText>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  dialogStyles.modalButton,
+                  dialogStyles.submitButton,
+                  isAdjusting && dialogStyles.disabledButton,
+                ]}
+                onPress={handleSaveAdjustment}
+                disabled={isAdjusting}
+              >
+                {isAdjusting ? (
+                  <ActivityIndicator color={Colors[theme].background} />
+                ) : (
+                  <ThemedText style={dialogStyles.modalButtonText}>Save</ThemedText>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Cancel Request Confirmation Modal */}
       <Modal
@@ -1619,6 +1885,23 @@ export default function CalendarScreen() {
     fetchCalendarName();
   }, [member?.calendar_id]);
 
+  // Effect to set up real-time subscriptions for calendar updates
+  useEffect(() => {
+    if (!member?.calendar_id || !isPldInitialized) {
+      console.log("[CalendarScreen] Not setting up subscriptions - missing calendar_id or store not initialized");
+      return;
+    }
+
+    console.log("[CalendarScreen] Setting up persistent calendar subscriptions");
+    const subscription = setupCalendarSubscriptions();
+
+    // Return cleanup function
+    return () => {
+      console.log("[CalendarScreen] Cleaning up calendar subscriptions");
+      subscription.unsubscribe();
+    };
+  }, [member?.calendar_id, isPldInitialized]);
+
   // --- Handlers ---
 
   // *** MODIFIED: Combine setCurrentDate and setCalendarKey ***
@@ -1693,6 +1976,19 @@ export default function CalendarScreen() {
       setSelectedWeek(null);
     }
     // calendarKey update is now handled by updateCurrentCalendarView
+  };
+
+  // Callback to reopen the dialog after adjustment
+  const handleAdjustmentComplete = async () => {
+    console.log("[CalendarScreen] Adjustment complete. Reopening dialog.");
+
+    // We no longer need to refresh the store data manually
+    // The CalendarStore real-time subscription now handles this automatically
+    // Just force a re-render of the Calendar component to ensure it picks up changes
+    setCalendarKey(Number(Date.now()));
+
+    // Now reopen the dialog
+    setRequestDialogVisible(true);
   };
 
   // --- Conditional Rendering ---
@@ -1798,15 +2094,27 @@ export default function CalendarScreen() {
           <ThemedText style={styles.requestButtonText}>Request Day / View Requests</ThemedText>
         </TouchableOpacity>
       )}
-      {/* Show message if date selected but not requestable */}
+
+      {/* Request Button - Only for Vacation if a week is selected */}
+      {activeCalendar === "Vacation" && selectedWeek && (
+        <TouchableOpacity
+          style={styles.requestButton}
+          onPress={() => setRequestDialogVisible(true)}
+          disabled={!isVacationInitialized} // Disable if Vacation store isn't ready
+        >
+          <ThemedText style={styles.requestButtonText}>View Week Details</ThemedText>
+        </TouchableOpacity>
+      )}
+
+      {/* Show message if date selected but not requestable - PLD/SDV */}
       {activeCalendar === "PLD/SDV" && selectedDate && !isDateSelectable(selectedDate) && (
         <ThemedView style={styles.notAvailableBanner}>
           <ThemedText style={styles.notAvailableText}>This date is not available for requests.</ThemedText>
         </ThemedView>
       )}
 
-      {/* Request Dialog - Render conditionally */}
-      {requestDialogVisible && selectedDate && (
+      {/* Request Dialog for PLD/SDV - Render conditionally */}
+      {requestDialogVisible && activeCalendar === "PLD/SDV" && selectedDate && (
         <RequestDialog
           isVisible={requestDialogVisible}
           onClose={() => setRequestDialogVisible(false)}
@@ -1819,6 +2127,31 @@ export default function CalendarScreen() {
               pldRequests[selectedDate]?.filter((r) => r.status === "approved" || r.status === "pending").length || 0,
           }}
           requests={pldRequests[selectedDate] || []}
+          calendarType="PLD/SDV"
+          calendarId={member?.calendar_id || ""}
+          onAdjustmentComplete={handleAdjustmentComplete} // Pass the callback
+        />
+      )}
+
+      {/* Request Dialog for Vacation - Render conditionally */}
+      {requestDialogVisible && activeCalendar === "Vacation" && selectedWeek && (
+        <RequestDialog
+          isVisible={requestDialogVisible}
+          onClose={() => setRequestDialogVisible(false)}
+          onSubmit={() => {
+            /* Implement vacation request handling */
+          }}
+          selectedDate={selectedWeek}
+          // Access vacation allotments for the selected week
+          allotments={{
+            max: vacationAllotments[selectedWeek]?.max_allotment || 0,
+            current: vacationAllotments[selectedWeek]?.current_requests || 0,
+          }}
+          // TypeScript needs explicit conversion between incompatible types
+          requests={(vacationRequests[selectedWeek] || []) as unknown as DayRequest[]}
+          calendarType="Vacation"
+          calendarId={member?.calendar_id || ""}
+          onAdjustmentComplete={handleAdjustmentComplete} // Pass the callback
         />
       )}
     </ThemedView>
@@ -2031,6 +2364,10 @@ const dialogStyles = StyleSheet.create({
     opacity: 0.8,
     transform: [{ scale: 0.98 }],
   } as ViewStyle,
+  disabledButton: {
+    opacity: 0.5,
+    backgroundColor: Colors.dark.border,
+  } as ViewStyle,
   requestList: {
     width: "100%",
     maxHeight: Platform.OS === "web" ? "50%" : 300,
@@ -2116,10 +2453,6 @@ const dialogStyles = StyleSheet.create({
     fontWeight: "500",
     textAlign: "center",
   } as TextStyle,
-  disabledButton: {
-    opacity: 0.5,
-    backgroundColor: Colors.dark.border,
-  } as ViewStyle,
   messageContainer: {
     width: "100%",
     alignItems: "center",
@@ -2151,5 +2484,48 @@ const dialogStyles = StyleSheet.create({
     marginVertical: 16,
     textAlign: "center",
     paddingHorizontal: 8,
+  } as TextStyle,
+  statusDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginRight: 8,
+  } as ViewStyle,
+  // Admin adjustment button styles
+  adminButtonContainer: {
+    marginTop: 16,
+    width: "100%",
+    alignItems: "center",
+  } as ViewStyle,
+  adjustButton: {
+    backgroundColor: Colors.light.primary,
+    marginTop: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 8,
+    width: "100%",
+    alignItems: "center",
+  } as ViewStyle,
+  infoText: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: Colors.dark.textDim,
+    marginBottom: 8,
+    textAlign: "center",
+  } as TextStyle,
+  textInput: {
+    width: "100%",
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    color: Colors.dark.text,
+    marginBottom: 16,
+  } as TextStyle,
+  errorText: {
+    color: Colors.light.error,
+    fontWeight: "600",
+    textAlign: "center",
+    marginBottom: 16,
   } as TextStyle,
 });

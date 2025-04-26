@@ -277,6 +277,31 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
     });
   }, [markedDates, zoneId, isInitialized]);
 
+  // Generate a unique key for the calendar that changes when data changes
+  const calendarDataKey = useMemo(() => {
+    // Create a string that changes when any relevant data changes
+    const allotmentsLength = Object.keys(allotments).length;
+    const yearlyAllotmentsLength = Object.keys(yearlyAllotments).length;
+    const requestsLength = Object.keys(requests).length;
+
+    // Count requests by status for more detailed tracking
+    let approvedCount = 0;
+    let pendingCount = 0;
+    let waitlistedCount = 0;
+
+    // Create a hash of the data that will change when the data changes
+    Object.values(requests).forEach((dateRequests) => {
+      dateRequests.forEach((req) => {
+        if (req.status === "approved") approvedCount++;
+        else if (req.status === "pending") pendingCount++;
+        else if (req.status === "waitlisted") waitlistedCount++;
+      });
+    });
+
+    // Return a unique key based on data counts
+    return `calendar-${zoneId}-${isInitialized}-${calendarDate}-${allotmentsLength}-${yearlyAllotmentsLength}-${requestsLength}-${approvedCount}-${pendingCount}-${waitlistedCount}`;
+  }, [zoneId, isInitialized, calendarDate, allotments, yearlyAllotments, requests]);
+
   const handleDayPress = async (day: DateData) => {
     const now = new Date();
     const dateObj = parseISO(day.dateString);
@@ -372,7 +397,7 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
   return (
     <ThemedView style={styles.container}>
       <RNCalendar
-        key={`calendar-${zoneId}-${isInitialized}-${calendarDate}`}
+        key={calendarDataKey}
         theme={CALENDAR_THEME[theme]}
         markingType="custom"
         markedDates={markedDates}
