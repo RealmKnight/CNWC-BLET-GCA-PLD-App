@@ -625,15 +625,46 @@ function RequestDialog({
           return;
         }
 
+        // Always use the regular cancellation function which uses the database function
+        // that handles all request types correctly, including waitlisted requests
+        console.log(
+          "[RequestDialog] Cancelling request using database function:",
+          userRequest.id,
+          "status:",
+          userRequest.status
+        );
         const success = await cancelRequest(userRequest.id, selectedDate);
+
         if (success) {
-          Toast.show({ type: "success", text1: "Request cancellation initiated" });
+          // Show different messages based on the request status
+          if (userRequest.status === "waitlisted") {
+            Toast.show({
+              type: "success",
+              text1: "Request cancelled",
+              text2: "Your waitlisted request has been cancelled",
+            });
+          } else if (userRequest.status === "approved") {
+            Toast.show({
+              type: "success",
+              text1: "Request cancellation initiated",
+              text2: "Your approved request is now pending cancellation",
+            });
+          } else {
+            Toast.show({
+              type: "success",
+              text1: "Request cancelled",
+            });
+          }
+
           await refreshMyTimeStats(true); // Refresh stats after cancellation
-          onClose(); // Close the dialog
+
+          // Use the safe close helper to prevent calendar reset
+          onClose();
         } else {
           Toast.show({ type: "error", text1: "Failed to cancel request" });
         }
       } else if (cancelType === "six-month") {
+        // Six-month cancellation logic remains unchanged
         if (!sixMonthRequestId) {
           Toast.show({ type: "error", text1: "Cannot find six-month request to cancel" });
           return;
@@ -645,7 +676,9 @@ function RequestDialog({
           await refreshMyTimeStats(true); // Refresh stats
           setHasSixMonthRequest(false); // Update local state
           setSixMonthRequestId(null);
-          onClose(); // Close the dialog
+
+          // Use the safe close helper to prevent calendar reset
+          onClose();
         } else {
           Toast.show({ type: "error", text1: "Failed to cancel six-month request" });
         }
@@ -1754,6 +1787,9 @@ export default function CalendarScreen() {
   const REFRESH_COOLDOWN = 2000; // 2 seconds
   const [calendarKey, setCalendarKey] = useState(Date.now()); // For forcing calendar re-render
 
+  // NEW: Flag to prevent calendar reset when dialog closes
+  const preventCalendarResetRef = useRef(false);
+
   // Refs
   const isLoadingRef = useRef(false); // Ref for internal load logic coordination
   const mountTimeRef = useRef(Date.now());
@@ -1902,6 +1938,15 @@ export default function CalendarScreen() {
     };
   }, [member?.calendar_id, isPldInitialized]);
 
+  // Effect to prevent calendar reset when dialog closes due to submission
+  useEffect(() => {
+    if (!requestDialogVisible && preventCalendarResetRef.current) {
+      console.log("[CalendarScreen] Preventing calendar reset after dialog close");
+      // Don't do anything that would reset the calendar position
+      preventCalendarResetRef.current = false;
+    }
+  }, [requestDialogVisible]);
+
   // --- Handlers ---
 
   // *** MODIFIED: Combine setCurrentDate and setCalendarKey ***
@@ -1913,6 +1958,19 @@ export default function CalendarScreen() {
     },
     [calendarKey]
   ); // Include calendarKey in dependency array if needed, though Date.now() makes it unique
+
+  // NEW: Helper function to safely close the request dialog without resetting calendar
+  const safelyCloseRequestDialog = useCallback(() => {
+    console.log("[CalendarScreen] Safely closing request dialog (preventing calendar reset)");
+    preventCalendarResetRef.current = true;
+    setTimeout(() => {
+      setRequestDialogVisible(false);
+      // Reset the flag after a short delay to allow state updates to complete
+      setTimeout(() => {
+        preventCalendarResetRef.current = false;
+      }, 500);
+    }, 300);
+  }, []);
 
   // Handler for submitting PLD/SDV requests
   const handleRequestSubmit = async (leaveType: "PLD" | "SDV") => {
@@ -1948,10 +2006,13 @@ export default function CalendarScreen() {
           position: "bottom",
           visibilityTime: 3000,
         });
-        await refreshMyTimeStats(true); // Refresh stats after successful submission
-        setRequestDialogVisible(false); // Close dialog
+
+        // Refresh MyTime stats without affecting calendar position
+        await refreshMyTimeStats(true);
+
+        // Use the safe close helper to prevent calendar reset
+        safelyCloseRequestDialog();
       }
-      // No explicit success handling needed here if Toast shows?
     } catch (err) {
       console.error("[CalendarScreen] Error submitting request:", err);
       Toast.show({
@@ -1961,8 +2022,6 @@ export default function CalendarScreen() {
         position: "bottom",
         visibilityTime: 4000,
       });
-    } finally {
-      // No loading state to reset here
     }
   };
 
@@ -2117,41 +2176,52 @@ export default function CalendarScreen() {
       {requestDialogVisible && activeCalendar === "PLD/SDV" && selectedDate && (
         <RequestDialog
           isVisible={requestDialogVisible}
-          onClose={() => setRequestDialogVisible(false)}
+          onClose={safelyCloseRequestDialog}
           onSubmit={handleRequestSubmit}
-          selectedDate={selectedDate} // Guaranteed non-null by conditional render
+          selectedDate={selectedDate || ""}
           // Safely access allotments and requests for the selected date
           allotments={{
-            max: pldAllotments[selectedDate] || yearlyAllotments[parseISO(selectedDate).getFullYear()] || 0,
-            current:
-              pldRequests[selectedDate]?.filter((r) => r.status === "approved" || r.status === "pending").length || 0,
+            max: selectedDate
+              ? pldAllotments[selectedDate] ?? yearlyAllotments[new Date(selectedDate).getFullYear()] ?? 0
+              : 0,
+            current: selectedDate && pldRequests[selectedDate] ? pldRequests[selectedDate].length : 0,
           }}
-          requests={pldRequests[selectedDate] || []}
+          requests={selectedDate && pldRequests[selectedDate] ? pldRequests[selectedDate] : []}
           calendarType="PLD/SDV"
           calendarId={member?.calendar_id || ""}
           onAdjustmentComplete={handleAdjustmentComplete} // Pass the callback
         />
       )}
 
-      {/* Request Dialog for Vacation - Render conditionally */}
-      {requestDialogVisible && activeCalendar === "Vacation" && selectedWeek && (
+      {/* Request Dialog - Vacation */}
+      {activeCalendar === "Vacation" && (
         <RequestDialog
           isVisible={requestDialogVisible}
-          onClose={() => setRequestDialogVisible(false)}
+          onClose={safelyCloseRequestDialog}
           onSubmit={() => {
-            /* Implement vacation request handling */
+            // No direct submission from dialog for vacation
+            setTimeout(() => {
+              setRequestDialogVisible(false);
+            }, 100);
           }}
-          selectedDate={selectedWeek}
+          selectedDate={selectedWeek || ""}
           // Access vacation allotments for the selected week
           allotments={{
-            max: vacationAllotments[selectedWeek]?.max_allotment || 0,
-            current: vacationAllotments[selectedWeek]?.current_requests || 0,
+            max: selectedWeek && vacationAllotments[selectedWeek] ? vacationAllotments[selectedWeek].max_allotment : 0,
+            current:
+              selectedWeek && vacationAllotments[selectedWeek]
+                ? vacationAllotments[selectedWeek].current_requests || 0
+                : 0,
           }}
-          // TypeScript needs explicit conversion between incompatible types
-          requests={(vacationRequests[selectedWeek] || []) as unknown as DayRequest[]}
+          // TypeScript needs explicit type assertion to handle the different request types
+          requests={
+            selectedWeek && vacationRequests[selectedWeek]
+              ? (vacationRequests[selectedWeek] as any as DayRequest[])
+              : []
+          }
           calendarType="Vacation"
           calendarId={member?.calendar_id || ""}
-          onAdjustmentComplete={handleAdjustmentComplete} // Pass the callback
+          onAdjustmentComplete={handleAdjustmentComplete}
         />
       )}
     </ThemedView>

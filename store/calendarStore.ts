@@ -501,24 +501,44 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
         throw new Error("Request not found for the specified date");
       }
 
-      const newStatus: DayRequest["status"] =
-        foundRequest.status === "approved" ||
-          foundRequest.status === "cancellation_pending"
-          ? "cancellation_pending"
-          : "cancelled";
+      // Always use the database function which properly handles all types of requests
+      console.log(
+        `[CalendarStore] Cancelling request using database function: ${requestId}, status: ${foundRequest.status}`,
+      );
 
-      const { error } = await supabase
-        .from("pld_sdv_requests")
-        .update({
-          status: newStatus,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", requestId);
+      // Call the database function to handle cancellation logic consistently
+      const { data, error } = await supabase.rpc("cancel_leave_request", {
+        p_request_id: requestId,
+        p_member_id: member.id,
+      });
 
       if (error) throw error;
 
+      // Determine the new status based on the result and current status
+      let newStatus: DayRequest["status"];
+
+      if (foundRequest.status === "waitlisted") {
+        // Waitlisted requests are immediately cancelled
+        newStatus = "cancelled";
+      } else if (foundRequest.status === "approved") {
+        // Approved requests go to cancellation_pending
+        newStatus = "cancellation_pending";
+      } else {
+        // All other statuses go to cancelled
+        newStatus = "cancelled";
+      }
+
+      // Update local state
       const updatedRequests: DayRequest[] = requestsForDate.map((request) =>
-        request.id === requestId ? { ...request, status: newStatus } : request
+        request.id === requestId
+          ? {
+            ...request,
+            status: newStatus,
+            waitlist_position: foundRequest.status === "waitlisted"
+              ? null
+              : request.waitlist_position,
+          }
+          : request
       );
 
       set((prevState) => ({
@@ -528,9 +548,16 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
         },
       }));
 
+      // Ensure we have the latest data after cancellation
+      setTimeout(() => {
+        if (member.calendar_id) {
+          get().refreshRequestsForDate(requestDate, member.calendar_id);
+        }
+      }, 1000);
+
       return true;
     } catch (error) {
-      console.error("Error cancelling request:", error);
+      console.error("[CalendarStore] Error cancelling request:", error);
       set({
         error: error instanceof Error
           ? error.message
