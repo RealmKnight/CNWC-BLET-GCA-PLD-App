@@ -75,6 +75,7 @@ _Reviewed previous notification plan (`notifications_update.md`) and incorporate
   - Verify `switch (authStatus)` handles all states correctly (including `MUST_ACKNOWLEDGE_CRITICAL`).
   - Ensure robustness against focus changes (no premature redirects from protected routes).
   - Ensure `useAuth` sets final `authStatus` only after _all_ checks (auth, member, critical notifications) complete.
+  - **Explicitly remove** any imperative navigation calls (e.g., `router.replace('/sign-in')`) from the `signOut` function in `useAuth.tsx`. Navigation must be handled declaratively in `_layout.tsx` based on `authStatus`.
 
 ## Proposed Execution Order
 

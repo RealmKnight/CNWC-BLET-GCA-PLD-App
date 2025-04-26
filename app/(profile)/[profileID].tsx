@@ -410,111 +410,143 @@ function PhoneUpdateModal({
 
 export default function ProfileScreen() {
   const params = useLocalSearchParams();
-  const profileID = Array.isArray(params.profileID) ? params.profileID[0] : params.profileID;
-  const { user, member, session } = useAuth();
+  const profileID = params.profileID as string | undefined;
+  const { user, session, member: loggedInMember } = useAuth(); // Use loggedInMember to avoid confusion
   const theme = (useColorScheme() ?? "light") as ColorScheme;
+
+  // State for the profile being viewed
+  const [profile, setProfile] = useState<Member | null>(null);
   const [userPreferences, setUserPreferences] = useState<UserPreferences | null>(null);
-  const [phoneNumber, setPhoneNumber] = useState("");
-  const [isPhoneModalVisible, setIsPhoneModalVisible] = useState(false);
-  const [isDeviceMobile] = useState(Platform.OS !== "web");
-  const [isDateOfBirthModalVisible, setIsDateOfBirthModalVisible] = useState(false);
+  const [phoneNumber, setPhoneNumber] = useState(""); // Phone number state
   const [divisionName, setDivisionName] = useState<string | null>(null);
   const [zoneName, setZoneName] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
 
-  const isOwnProfile = user?.id === profileID;
-  // Users can only edit their own phone number and date of birth
-  const canEdit = isOwnProfile;
+  // UI State
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [isPhoneModalVisible, setIsPhoneModalVisible] = useState(false);
+  const [isDateOfBirthModalVisible, setIsDateOfBirthModalVisible] = useState(false);
+  const [isDeviceMobile] = useState(Platform.OS !== "web");
 
-  // Fetch user data including phone number from metadata
+  // Determine if the logged-in user is viewing their own profile
+  const isOwnProfile = session?.user?.id === profile?.id;
+  // Permissions: can edit basic info only if it's their own profile
+  const canEditProfileDetails = isOwnProfile;
+
+  // --- Data Fetching Effect ---
   useEffect(() => {
-    if (user && isOwnProfile) {
-      // Get phone from session metadata if available
-      const phoneFromMetadata = session?.user?.user_metadata?.phone_number;
-      if (phoneFromMetadata) {
-        // Remove any non-numeric characters and set the phone number
-        const cleanedPhone = phoneFromMetadata.replace(/\D/g, "");
-        setPhoneNumber(cleanedPhone);
-      } else {
-        // Fallback to user.phone if metadata is not available
-        setPhoneNumber(user.phone?.replace(/\D/g, "") || "");
-      }
-    }
-  }, [user, isOwnProfile, session?.user?.user_metadata]);
-
-  // Add debug effect for session changes
-  useEffect(() => {
-    if (session) {
-      console.log("Session user metadata:", session.user.user_metadata);
-    }
-  }, [session]);
-
-  // Fetch user preferences
-  useEffect(() => {
-    if (member?.pin_number) {
-      supabase
-        .from("user_preferences")
-        .select("*")
-        .eq("pin_number", member.pin_number)
-        .single()
-        .then(({ data, error }) => {
-          if (error) {
-            if (error.code === "PGRST116") {
-              // No preferences found, create default preferences
-              createDefaultPreferences();
-            } else {
-              console.error("Error fetching preferences:", error);
-            }
-          } else {
-            setUserPreferences(data as UserPreferences);
-          }
-        });
-    }
-  }, [member?.pin_number]);
-
-  // Add effect to fetch division and zone names
-  useEffect(() => {
-    async function fetchDivisionAndZone() {
-      if (!member?.division_id || !member?.current_zone_id) return;
+    const fetchProfileData = async () => {
+      setIsLoading(true);
+      setError(null);
+      // Reset state variables at the beginning
+      setProfile(null);
+      setDivisionName(null);
+      setZoneName(null);
+      setUserPreferences(null);
+      setPhoneNumber(""); // Reset phone number
 
       try {
-        // Fetch division name
-        const { data: divisionData, error: divisionError } = await supabase
-          .from("divisions")
-          .select("name")
-          .eq("id", member.division_id)
+        // Enhanced validation for profileID
+        if (!profileID || profileID.trim() === "" || profileID === "index") {
+          console.error("Invalid or missing profileID:", profileID);
+          throw new Error("Invalid Profile ID provided.");
+        }
+
+        // 1. Fetch member data using the validated profileID
+        console.log(`[ProfileScreen] Fetching profile data for ID: ${profileID}`);
+        const { data: memberData, error: memberError } = await supabase
+          .from("members")
+          .select("*") // Select all member fields
+          .eq("id", profileID)
           .single();
 
-        if (divisionError) throw divisionError;
-        setDivisionName(divisionData?.name || null);
+        if (memberError) throw memberError;
+        if (!memberData) throw new Error("Profile not found.");
 
-        // Fetch zone name
-        const { data: zoneData, error: zoneError } = await supabase
-          .from("zones")
-          .select("name")
-          .eq("id", member.current_zone_id)
-          .single();
+        setProfile(memberData);
+        // If viewing own profile, update phone number state from metadata/user record
+        if (session?.user?.id === memberData.id) {
+          const phoneFromMetadata = session?.user?.user_metadata?.phone_number;
+          if (phoneFromMetadata) {
+            const cleanedPhone = phoneFromMetadata.replace(/\D/g, "");
+            setPhoneNumber(cleanedPhone);
+          } else {
+            setPhoneNumber(session?.user?.phone?.replace(/\D/g, "") || "");
+          }
+        }
 
-        if (zoneError) throw zoneError;
-        setZoneName(zoneData?.name || null);
-      } catch (error) {
-        console.error("Error fetching division/zone names:", error);
+        // 2. Fetch user preferences using the fetched member's user_id (which is memberData.id)
+        const { data: preferencesData, error: preferencesError } = await supabase
+          .from("user_preferences")
+          .select("*")
+          .eq("user_id", memberData.id) // Use memberData.id which is the auth user ID
+          .maybeSingle(); // Use maybeSingle as preferences might not exist yet
+
+        if (preferencesError && preferencesError.code !== "PGRST116") {
+          // Ignore 'No rows found'
+          console.warn("Error fetching preferences:", preferencesError);
+        } else if (!preferencesData && memberData.id === session?.user?.id) {
+          // If viewing own profile and no prefs found, create defaults
+          await createDefaultPreferences(memberData.id, memberData.pin_number);
+        } else {
+          setUserPreferences(preferencesData as UserPreferences | null);
+        }
+
+        // 3. Fetch division name using memberData.division_id
+        if (memberData.division_id) {
+          const { data: divisionData, error: divisionError } = await supabase
+            .from("divisions")
+            .select("name")
+            .eq("id", memberData.division_id)
+            .single();
+          if (divisionError) {
+            console.error("Error fetching division name:", divisionError);
+          } else {
+            setDivisionName(divisionData?.name || null);
+          }
+        } else {
+          setDivisionName(null);
+        }
+
+        // 4. Fetch zone name using memberData.current_zone_id
+        if (memberData.current_zone_id) {
+          const { data: zoneData, error: zoneError } = await supabase
+            .from("zones")
+            .select("name")
+            .eq("id", memberData.current_zone_id)
+            .single();
+          if (zoneError) {
+            console.error("Error fetching zone name:", zoneError);
+          } else {
+            setZoneName(zoneData?.name || null);
+          }
+        } else {
+          setZoneName(null);
+        }
+      } catch (err: any) {
+        console.error("Error fetching profile data:", err);
+        setError(err.message || "An error occurred while loading the profile.");
+      } finally {
+        setIsLoading(false);
+        console.log("[ProfileScreen] Finished fetching profile data attempt.");
       }
-    }
+    };
 
-    fetchDivisionAndZone();
-  }, [member?.division_id, member?.current_zone_id]);
+    fetchProfileData();
+  }, [profileID, session?.user?.id]); // Re-fetch if profileID changes or session potentially changes
 
-  const createDefaultPreferences = async () => {
-    if (!member?.pin_number || !user?.id) return;
+  // --- Helper Functions ---
 
+  const createDefaultPreferences = async (userId: string, pinNumber: number | null) => {
+    if (!pinNumber || !userId) return;
+    console.log("[ProfileScreen] Creating default preferences for user:", userId);
     try {
       const { data, error } = await supabase
         .from("user_preferences")
         .insert({
-          user_id: user.id,
-          pin_number: member.pin_number,
-          contact_preference: "email",
+          user_id: userId,
+          pin_number: pinNumber,
+          contact_preference: "email", // Default preference
           push_token: null,
         })
         .select()
@@ -522,111 +554,58 @@ export default function ProfileScreen() {
 
       if (error) throw error;
       setUserPreferences(data as UserPreferences);
+      console.log("[ProfileScreen] Default preferences created.");
     } catch (error) {
       console.error("Error creating default preferences:", error);
-      Alert.alert("Error", "Failed to set up contact preferences");
+      // Don't alert here, handle silently or show subtle error
     }
   };
 
   const handleUpdatePreference = async (preference: ContactPreference) => {
-    try {
-      if (!session || !member?.pin_number) throw new Error("No active session");
-      if (!user?.id) throw new Error("No user ID available");
+    if (!isOwnProfile || !profile || !profile.pin_number || !session?.user?.id) return;
+    const userId = session.user.id;
+    const pinNumber = profile.pin_number;
+    let updatedToken: string | null = userPreferences?.push_token || null;
 
+    console.log(`[ProfileScreen] Updating preference to ${preference} for user ${userId}`);
+
+    try {
       if (preference === "push") {
         if (!isDeviceMobile) {
           Alert.alert("Error", "Push notifications are only available on mobile devices");
           return;
         }
-
         const token = await registerForPushNotificationsAsync();
         if (!token) {
-          Alert.alert("Error", "Failed to setup push notifications. Please check your device settings.");
+          Alert.alert("Error", "Failed to setup push notifications. Please check settings.");
           return;
         }
-
-        // First try to update existing preference
-        const { data: existingPref, error: fetchError } = await supabase
-          .from("user_preferences")
-          .select()
-          .eq("user_id", user.id)
-          .single();
-
-        if (fetchError && fetchError.code !== "PGRST116") {
-          // PGRST116 means no rows returned
-          throw fetchError;
-        }
-
-        if (existingPref) {
-          // Update existing preference
-          const { error: updateError } = await supabase
-            .from("user_preferences")
-            .update({
-              push_token: token,
-              contact_preference: preference,
-              updated_at: new Date().toISOString(),
-            })
-            .eq("user_id", user.id);
-
-          if (updateError) throw updateError;
-        } else {
-          // Insert new preference
-          const { error: insertError } = await supabase.from("user_preferences").insert({
-            user_id: user.id,
-            pin_number: member.pin_number,
-            push_token: token,
-            contact_preference: preference,
-          });
-
-          if (insertError) throw insertError;
-        }
+        updatedToken = token;
       } else {
-        // Handle non-push preferences (email, text, etc.)
-        const { data: existingPref, error: fetchError } = await supabase
-          .from("user_preferences")
-          .select()
-          .eq("user_id", user.id)
-          .single();
-
-        if (fetchError && fetchError.code !== "PGRST116") {
-          throw fetchError;
-        }
-
-        if (existingPref) {
-          // Update existing preference
-          const { error: updateError } = await supabase
-            .from("user_preferences")
-            .update({
-              push_token: null,
-              contact_preference: preference,
-              updated_at: new Date().toISOString(),
-            })
-            .eq("user_id", user.id);
-
-          if (updateError) throw updateError;
-        } else {
-          // Insert new preference
-          const { error: insertError } = await supabase.from("user_preferences").insert({
-            user_id: user.id,
-            pin_number: member.pin_number,
-            push_token: null,
-            contact_preference: preference,
-          });
-
-          if (insertError) throw insertError;
-        }
+        updatedToken = null; // Clear push token for non-push preferences
       }
 
-      // Refresh preferences after update
-      const { data: updatedPrefs, error: refreshError } = await supabase
+      // Upsert preferences
+      const { data, error } = await supabase
         .from("user_preferences")
-        .select("*")
-        .eq("user_id", user.id)
+        .upsert(
+          {
+            // Use upsert to handle both create and update
+            user_id: userId,
+            pin_number: pinNumber,
+            contact_preference: preference,
+            push_token: updatedToken,
+            updated_at: new Date().toISOString(),
+            // id and created_at are handled by DB/RLS/Defaults
+          },
+          { onConflict: "user_id" }
+        )
+        .select()
         .single();
 
-      if (refreshError) throw refreshError;
-      setUserPreferences(updatedPrefs as UserPreferences);
+      if (error) throw error;
 
+      setUserPreferences(data as UserPreferences);
       Alert.alert("Success", "Contact preference updated successfully!");
     } catch (error: any) {
       console.error("Error updating preference:", error);
@@ -640,7 +619,10 @@ export default function ProfileScreen() {
   };
 
   const handleDateOfBirthUpdateSuccess = (newDateOfBirth: string) => {
-    // The member object will be updated on the next render via the useAuth hook
+    // Update local profile state immediately for better UX
+    if (profile) {
+      setProfile({ ...profile, date_of_birth: newDateOfBirth });
+    }
     Toast.show({
       type: "success",
       text1: "Success",
@@ -649,85 +631,91 @@ export default function ProfileScreen() {
   };
 
   const handleUpdatePassword = async () => {
+    if (!user?.email) {
+      Toast.show({ type: "error", text1: "Email Required", text2: "No email found." });
+      return;
+    }
+    setIsLoading(true);
     try {
-      if (!user?.email) {
-        Toast.show({
-          type: "error",
-          text1: "Email Required",
-          text2: "No email address found for this user.",
-        });
-        return;
-      }
-
-      setIsLoading(true);
       const success = await sendPasswordResetEmail(user.email);
-
       if (success) {
-        Toast.show({
-          type: "success",
-          text1: "Email Sent",
-          text2: "Password reset instructions have been sent to your email.",
-        });
+        Toast.show({ type: "success", text1: "Email Sent", text2: "Password reset instructions sent." });
       } else {
-        Toast.show({
-          type: "error",
-          text1: "Password Reset Error",
-          text2: "Failed to send password reset email. Please try again later.",
-        });
+        Toast.show({ type: "error", text1: "Error", text2: "Failed to send reset email." });
       }
     } catch (error) {
       console.error("Error sending password reset:", error);
-      Toast.show({
-        type: "error",
-        text1: "Password Reset Error",
-        text2: "An unexpected error occurred. Please try again.",
-      });
+      Toast.show({ type: "error", text1: "Error", text2: "An unexpected error occurred." });
     } finally {
       setIsLoading(false);
     }
   };
 
-  if (!member || !user) {
+  // --- Conditional Renders ---
+  if (isLoading) {
     return (
-      <ThemedView style={styles.container}>
+      <ThemedView style={styles.loadingContainer}>
         <ThemedText>Loading profile...</ThemedText>
       </ThemedView>
     );
   }
 
+  if (error) {
+    return (
+      <ThemedView style={styles.loadingContainer}>
+        <ThemedText style={styles.errorText}>Error: {error}</ThemedText>
+      </ThemedView>
+    );
+  }
+
+  if (!profile) {
+    return (
+      <ThemedView style={styles.loadingContainer}>
+        <ThemedText>Profile not found.</ThemedText>
+      </ThemedView>
+    );
+  }
+
+  // --- Main Render ---
   return (
     <ScrollView style={styles.container}>
-      <PhoneUpdateModal
-        visible={isPhoneModalVisible}
-        onClose={() => setIsPhoneModalVisible(false)}
-        onSuccess={handlePhoneUpdateSuccess}
-        currentPhone={phoneNumber}
-        targetUserId={profileID as string}
-      />
+      {/* Modals - only allow opening if it's own profile AND profile ID exists */}
+      {profile?.id && (
+        <PhoneUpdateModal
+          visible={isPhoneModalVisible && isOwnProfile}
+          onClose={() => setIsPhoneModalVisible(false)}
+          onSuccess={handlePhoneUpdateSuccess}
+          currentPhone={phoneNumber}
+          targetUserId={profile.id} // Safe to use profile.id here
+        />
+      )}
 
-      <DateOfBirthModal
-        visible={isDateOfBirthModalVisible}
-        onClose={() => setIsDateOfBirthModalVisible(false)}
-        onSuccess={handleDateOfBirthUpdateSuccess}
-        currentDateOfBirth={member?.date_of_birth || null}
-        targetUserId={profileID as string}
-      />
+      {profile?.id && (
+        <DateOfBirthModal
+          visible={isDateOfBirthModalVisible && isOwnProfile}
+          onClose={() => setIsDateOfBirthModalVisible(false)}
+          onSuccess={handleDateOfBirthUpdateSuccess}
+          currentDateOfBirth={profile.date_of_birth || null}
+          targetUserId={profile.id} // Safe to use profile.id here
+        />
+      )}
 
+      {/* Personal Info Section */}
       <ThemedView style={styles.section}>
         <ThemedText type="title">Personal Information</ThemedText>
         <ThemedView style={styles.infoRow}>
           <ThemedText type="subtitle">Name:</ThemedText>
-          <ThemedText>{`${member?.first_name} ${member?.last_name}`}</ThemedText>
+          <ThemedText>{`${profile.first_name} ${profile.last_name}`}</ThemedText>
         </ThemedView>
         <ThemedView style={styles.infoRow}>
           <ThemedText type="subtitle">Email:</ThemedText>
-          <ThemedText>{user?.email}</ThemedText>
+          <ThemedText>{user?.email || "Not set"}</ThemedText>
         </ThemedView>
         <ThemedView style={styles.infoRow}>
           <ThemedText type="subtitle">Phone:</ThemedText>
           <ThemedView style={styles.editRow}>
             <ThemedText>{phoneNumber ? formatPhoneNumber(phoneNumber) : "Not set"}</ThemedText>
-            {canEdit && (
+            {canEditProfileDetails && (
               <TouchableOpacity onPress={() => setIsPhoneModalVisible(true)} style={styles.iconButton}>
                 <Ionicons name="pencil" size={24} color={Colors[theme].tint} />
               </TouchableOpacity>
@@ -737,8 +725,10 @@ export default function ProfileScreen() {
         <ThemedView style={styles.infoRow}>
           <ThemedText type="subtitle">Date of Birth:</ThemedText>
           <ThemedView style={styles.editRow}>
-            <ThemedText>{member?.date_of_birth || "Not set"}</ThemedText>
-            {canEdit && (
+            <ThemedText>
+              {profile.date_of_birth ? format(parseISO(profile.date_of_birth), "MM/dd/yyyy") : "Not set"}
+            </ThemedText>
+            {canEditProfileDetails && (
               <TouchableOpacity onPress={() => setIsDateOfBirthModalVisible(true)} style={styles.iconButton}>
                 <Ionicons name="pencil" size={24} color={Colors[theme].tint} />
               </TouchableOpacity>
@@ -746,104 +736,111 @@ export default function ProfileScreen() {
           </ThemedView>
         </ThemedView>
       </ThemedView>
-
+      {/* Contact Preferences (Only for own profile) */}
       {isOwnProfile && (
-        <>
-          <ThemedView style={styles.section}>
-            <ThemedText type="title">Contact Preferences</ThemedText>
-            <ThemedView style={styles.preferenceContainer}>
-              <ThemedView style={styles.preferenceButtons}>
+        <ThemedView style={styles.section}>
+          <ThemedText type="title">Contact Preferences</ThemedText>
+          <ThemedView style={styles.preferenceContainer}>
+            <ThemedView style={styles.preferenceButtons}>
+              {/* Text Preference Button */}
+              <TouchableOpacity
+                style={[
+                  styles.preferenceButton,
+                  userPreferences?.contact_preference === "text" && styles.preferenceButtonActive,
+                ]}
+                onPress={() => handleUpdatePreference("text")}
+              >
+                <ThemedText
+                  style={[
+                    styles.preferenceButtonText,
+                    userPreferences?.contact_preference === "text" && styles.preferenceButtonTextActive,
+                  ]}
+                >
+                  Text Message
+                </ThemedText>
+              </TouchableOpacity>
+              {/* Email Preference Button */}
+              <TouchableOpacity
+                style={[
+                  styles.preferenceButton,
+                  userPreferences?.contact_preference === "email" && styles.preferenceButtonActive,
+                ]}
+                onPress={() => handleUpdatePreference("email")}
+              >
+                <ThemedText
+                  style={[
+                    styles.preferenceButtonText,
+                    userPreferences?.contact_preference === "email" && styles.preferenceButtonTextActive,
+                  ]}
+                >
+                  Email
+                </ThemedText>
+              </TouchableOpacity>
+            </ThemedView>
+            {/* Push Notification Button (Mobile Only) */}
+            {isDeviceMobile && (
+              <ThemedView style={styles.pushNotificationContainer}>
                 <TouchableOpacity
                   style={[
                     styles.preferenceButton,
-                    userPreferences?.contact_preference === "text" && styles.preferenceButtonActive,
+                    styles.pushNotificationButton,
+                    userPreferences?.contact_preference === "push" && styles.preferenceButtonActive,
                   ]}
-                  onPress={() => handleUpdatePreference("text")}
+                  onPress={() => handleUpdatePreference("push")}
                 >
                   <ThemedText
                     style={[
                       styles.preferenceButtonText,
-                      userPreferences?.contact_preference === "text" && styles.preferenceButtonTextActive,
+                      userPreferences?.contact_preference === "push" && styles.preferenceButtonTextActive,
                     ]}
                   >
-                    Text Message
-                  </ThemedText>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.preferenceButton,
-                    userPreferences?.contact_preference === "email" && styles.preferenceButtonActive,
-                  ]}
-                  onPress={() => handleUpdatePreference("email")}
-                >
-                  <ThemedText
-                    style={[
-                      styles.preferenceButtonText,
-                      userPreferences?.contact_preference === "email" && styles.preferenceButtonTextActive,
-                    ]}
-                  >
-                    Email
+                    Push Notifications
                   </ThemedText>
                 </TouchableOpacity>
               </ThemedView>
-              {isDeviceMobile && (
-                <ThemedView style={styles.pushNotificationContainer}>
-                  <TouchableOpacity
-                    style={[
-                      styles.preferenceButton,
-                      styles.pushNotificationButton,
-                      userPreferences?.contact_preference === "push" && styles.preferenceButtonActive,
-                    ]}
-                    onPress={() => handleUpdatePreference("push")}
-                  >
-                    <ThemedText
-                      style={[
-                        styles.preferenceButtonText,
-                        userPreferences?.contact_preference === "push" && styles.preferenceButtonTextActive,
-                      ]}
-                    >
-                      Push Notifications
-                    </ThemedText>
-                  </TouchableOpacity>
-                </ThemedView>
-              )}
-            </ThemedView>
+            )}
           </ThemedView>
-
-          <ThemedView style={styles.section}>
-            <ThemedText type="title">Account Settings</ThemedText>
-            <ThemedText type="subtitle">Send an email with a reset link to change your password</ThemedText>
-            <TouchableOpacity onPress={handleUpdatePassword} style={styles.settingButton}>
-              <ThemedText style={styles.settingButtonText}>Change Password</ThemedText>
-            </TouchableOpacity>
-          </ThemedView>
-
-          <ThemedView style={styles.section}>
-            <ThemedText type="title">Union Information</ThemedText>
-            <ThemedText type="subtitle">Contact your division admin to change any of this information</ThemedText>
-            <ThemedView style={styles.infoRow}>
-              <ThemedText type="subtitle">PIN:</ThemedText>
-              <ThemedText>{member.pin_number}</ThemedText>
-            </ThemedView>
-            <ThemedView style={styles.infoRow}>
-              <ThemedText type="subtitle">Division:</ThemedText>
-              <ThemedText>{divisionName || "Not assigned"}</ThemedText>
-            </ThemedView>
-            <ThemedView style={styles.infoRow}>
-              <ThemedText type="subtitle">Zone:</ThemedText>
-              <ThemedText>{zoneName || "Not assigned"}</ThemedText>
-            </ThemedView>
-            <ThemedView style={styles.infoRow}>
-              <ThemedText type="subtitle">Engineer Date:</ThemedText>
-              <ThemedText>{member.engineer_date}</ThemedText>
-            </ThemedView>
-            <ThemedView style={styles.infoRow}>
-              <ThemedText type="subtitle">Company Hire Date:</ThemedText>
-              <ThemedText>{member.company_hire_date}</ThemedText>
-            </ThemedView>
-          </ThemedView>
-        </>
+        </ThemedView>
       )}
+      {/* Account Settings (Only for own profile) */}
+      {isOwnProfile && (
+        <ThemedView style={styles.section}>
+          <ThemedText type="title">Account Settings</ThemedText>
+          <ThemedText type="subtitle">Send an email with a reset link to change your password</ThemedText>
+          <TouchableOpacity onPress={handleUpdatePassword} style={styles.settingButton} disabled={isLoading}>
+            <ThemedText style={styles.settingButtonText}>{isLoading ? "Sending..." : "Change Password"}</ThemedText>
+          </TouchableOpacity>
+        </ThemedView>
+      )}
+      {/* Union Information Section */}
+      <ThemedView style={styles.section}>
+        <ThemedText type="title">Union Information</ThemedText>
+        {!isOwnProfile && <ThemedText type="subtitle">Contact division admin to change this information</ThemedText>}
+        <ThemedView style={styles.infoRow}>
+          <ThemedText type="subtitle">PIN:</ThemedText>
+          <ThemedText>{profile.pin_number}</ThemedText>
+        </ThemedView>
+        <ThemedView style={styles.infoRow}>
+          <ThemedText type="subtitle">Division:</ThemedText>
+          <ThemedText>{divisionName || "Not assigned"}</ThemedText>
+        </ThemedView>
+        <ThemedView style={styles.infoRow}>
+          <ThemedText type="subtitle">Zone:</ThemedText>
+          <ThemedText>{zoneName || "Not assigned"}</ThemedText>
+        </ThemedView>
+        <ThemedView style={styles.infoRow}>
+          <ThemedText type="subtitle">Engineer Date:</ThemedText>
+          <ThemedText>
+            {profile.engineer_date ? format(parseISO(profile.engineer_date), "MM/dd/yyyy") : "Not set"}
+          </ThemedText>
+        </ThemedView>
+        <ThemedView style={styles.infoRow}>
+          <ThemedText type="subtitle">Company Hire Date:</ThemedText>
+          <ThemedText>
+            {profile.company_hire_date ? format(parseISO(profile.company_hire_date), "MM/dd/yyyy") : "Not set"}
+          </ThemedText>
+        </ThemedView>
+      </ThemedView>
     </ScrollView>
   );
 }
@@ -975,4 +972,9 @@ const styles = StyleSheet.create({
   buttonDisabled: {
     opacity: 0.5,
   } as any,
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
 });

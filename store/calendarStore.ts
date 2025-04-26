@@ -94,7 +94,11 @@ interface CalendarState {
     endDate: string,
     calendarId: string,
   ) => Promise<Record<string, DayRequest[]>>;
-  loadInitialData: (startDate: string, endDate: string) => Promise<void>;
+  loadInitialData: (
+    startDate: string,
+    endDate: string,
+    calendarId: string,
+  ) => Promise<void>;
 
   cancelRequest: (requestId: string, requestDate: string) => Promise<boolean>;
 
@@ -271,10 +275,11 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       const currentYear = new Date(startDate).getFullYear();
       const nextYear = currentYear + 1;
 
+      // Fetch specific date allotments within range OR yearly allotments for current/next year
       const { data: allotmentsData, error } = await supabase
-        .from("pld_sdv_allotments")
+        .from("pld_sdv_allotments") // Correct table name
         .select("date, max_allotment, year")
-        .eq("calendar_id", calendarId!)
+        .eq("calendar_id", calendarId)
         .or(
           `year.eq.${currentYear},year.eq.${nextYear},date.gte.${startDate},date.lte.${endDate}`,
         );
@@ -284,20 +289,30 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       const allotmentsByDate: Record<string, number> = {};
       const yearlyAllotmentsByYear: Record<number, number> = {};
 
+      // Process fetched data: Separate yearly defaults from specific dates
       allotmentsData?.forEach((allotment) => {
         const allotmentYear = allotment.year ??
-          new Date(allotment.date).getFullYear();
+          (allotment.date ? new Date(allotment.date).getFullYear() : null);
         const dateKey = allotment.date;
         const yearKey = allotmentYear;
 
+        // Store yearly defaults (identified by having a year OR being Jan 1st of a year)
         if (
-          allotment.year !== null || allotment.date === `${allotmentYear}-01-01`
+          yearKey &&
+          (allotment.year !== null ||
+            allotment.date === `${allotmentYear}-01-01`)
         ) {
-          yearlyAllotmentsByYear[yearKey] = allotment.max_allotment;
+          if (allotment.max_allotment !== null) {
+            yearlyAllotmentsByYear[yearKey] = allotment.max_allotment;
+          }
         }
-        allotmentsByDate[dateKey] = allotment.max_allotment;
+        // Store specific date allotments
+        if (dateKey && allotment.max_allotment !== null) {
+          allotmentsByDate[dateKey] = allotment.max_allotment;
+        }
       });
 
+      // Backfill: Apply yearly defaults to dates without specific entries within the requested range
       const startDateObj = parseISO(startDate);
       const endDateObj = parseISO(endDate);
       for (
@@ -307,6 +322,7 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       ) {
         const dateStr = format(date, "yyyy-MM-dd");
         const currentYearLoop = date.getFullYear();
+        // If no specific allotment exists for this date, apply the yearly default if available
         if (
           allotmentsByDate[dateStr] === undefined &&
           yearlyAllotmentsByYear[currentYearLoop] !== undefined
@@ -314,6 +330,10 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
           allotmentsByDate[dateStr] = yearlyAllotmentsByYear[currentYearLoop];
         }
       }
+      console.log("[CalendarStore] Processed allotments data:", {
+        dateCount: Object.keys(allotmentsByDate).length,
+        yearCount: Object.keys(yearlyAllotmentsByYear).length,
+      });
 
       return {
         allotments: allotmentsByDate,
@@ -325,86 +345,43 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
     }
   },
 
-  fetchRequests: async (
-    startDate: string,
-    endDate: string,
-    calendarId: string,
-  ) => {
+  fetchRequests: async (startDate, endDate, calendarId) => {
+    console.log(
+      `[CalendarStore] Fetching requests for calendar ${calendarId} from ${startDate} to ${endDate}`,
+    );
     if (!calendarId) {
-      console.warn("[CalendarStore] fetchRequests: No calendarId provided.");
+      console.error("[CalendarStore] fetchRequests called without calendarId.");
       return {};
     }
 
     try {
-      // Only fetch regular requests, not six month requests
-      // Six month requests are stored in a separate table and should not be
-      // displayed on the calendar or count against daily allotments
       const { data: requestsData, error } = await supabase
         .from("pld_sdv_requests")
         .select(`
-          id, member_id, calendar_id, request_date, leave_type, status,
-          requested_at, waitlist_position, responded_at, responded_by, paid_in_lieu,
-          denial_reason_id, denial_comment, actioned_by, actioned_at, created_at, updated_at, metadata,
-          member:members!inner ( id, first_name, last_name, pin_number )
+          id, member_id, calendar_id, request_date, leave_type, status, requested_at, waitlist_position,
+          member:members!inner (
+            id, first_name, last_name, pin_number
+          )
         `)
-        .eq("calendar_id", calendarId!)
+        .eq("calendar_id", calendarId)
         .gte("request_date", startDate)
         .lte("request_date", endDate);
 
-      if (error) {
-        console.error("[CalendarStore] Error fetching requests:", error);
-        throw error;
-      }
+      if (error) throw error;
 
       const requestsByDate: Record<string, DayRequest[]> = {};
-
-      if (requestsData) {
-        for (const rawRequest of requestsData) {
-          const dateKey = rawRequest.request_date;
-
-          if (!requestsByDate[dateKey]) {
-            requestsByDate[dateKey] = [];
-          }
-
-          const memberInfo = (rawRequest as any).member;
-          const memberData = memberInfo && typeof memberInfo === "object"
-            ? {
-              id: memberInfo.id as string ?? "",
-              first_name: memberInfo.first_name as string | null,
-              last_name: memberInfo.last_name as string | null,
-              pin_number: memberInfo.pin_number as number ?? 0,
-            }
-            : {
-              id: "",
-              first_name: "Unknown",
-              last_name: "Member",
-              pin_number: 0,
-            };
-
-          const dayRequest: DayRequest = {
-            id: rawRequest.id,
-            member_id: rawRequest.member_id,
-            calendar_id: rawRequest.calendar_id,
-            request_date: rawRequest.request_date,
-            leave_type: rawRequest.leave_type,
-            status: rawRequest.status,
-            requested_at: rawRequest.requested_at,
-            waitlist_position: rawRequest.waitlist_position,
-            responded_at: rawRequest.responded_at,
-            responded_by: rawRequest.responded_by,
-            paid_in_lieu: rawRequest.paid_in_lieu,
-            denial_reason_id: rawRequest.denial_reason_id,
-            denial_comment: rawRequest.denial_comment,
-            actioned_by: rawRequest.actioned_by,
-            actioned_at: rawRequest.actioned_at,
-            created_at: rawRequest.created_at,
-            updated_at: rawRequest.updated_at,
-            metadata: rawRequest.metadata,
-            member: memberData,
-          } as DayRequest;
-          requestsByDate[dateKey].push(dayRequest);
+      requestsData?.forEach((request) => {
+        const dateKey = request.request_date;
+        if (!requestsByDate[dateKey]) {
+          requestsByDate[dateKey] = [];
         }
-      }
+        // Type assertion needed because the join result might not perfectly match DayRequest initially
+        requestsByDate[dateKey].push(request as unknown as DayRequest);
+      });
+
+      console.log("[CalendarStore] Fetched requests data:", {
+        dateCount: Object.keys(requestsByDate).length,
+      });
       return requestsByDate;
     } catch (error) {
       console.error("[CalendarStore] Error fetching requests:", error);
@@ -412,54 +389,44 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
     }
   },
 
-  loadInitialData: async (startDate: string, endDate: string) => {
-    const { member } = useUserStore.getState();
-    const calendarId = member?.calendar_id;
-
-    if (!member || !calendarId) {
-      console.log(
-        "[CalendarStore] No member or calendar_id found for initialization",
+  loadInitialData: async (startDate, endDate, calendarId) => {
+    if (!calendarId) {
+      console.error(
+        "[CalendarStore] loadInitialData called without calendarId.",
       );
-      set({
-        error: "User or assigned calendar not found",
-        isLoading: false,
-        isInitialized: true,
-      });
+      set({ isLoading: false, error: "User or assigned calendar not found" });
       return;
     }
-
-    set({ error: null, isLoading: true });
-
+    set({ isLoading: true, error: null }); // Clear previous data? Maybe not needed if stores overwrite
+    console.log(
+      `[CalendarStore] Loading initial data for calendar ${calendarId}...`,
+    );
     try {
-      console.log(
-        `[CalendarStore] Fetching data for calendarId: ${calendarId}`,
-      );
-      const [allotmentsResult, requestsResult] = await Promise.all([
+      const [allotmentData, requestData] = await Promise.all([
         get().fetchAllotments(startDate, endDate, calendarId),
         get().fetchRequests(startDate, endDate, calendarId),
       ]);
 
       set({
+        allotments: allotmentData.allotments,
+        yearlyAllotments: allotmentData.yearlyAllotments,
+        requests: requestData,
         isLoading: false,
-        isInitialized: true,
         error: null,
-        allotments: allotmentsResult.allotments,
-        yearlyAllotments: allotmentsResult.yearlyAllotments,
-        requests: requestsResult,
+        // DO NOT set isInitialized here - let the caller (useAuth) handle it
       });
-      console.log("[CalendarStore] Data load complete and state updated.");
+      console.log("[CalendarStore] Initial data loaded successfully.");
     } catch (error) {
-      console.error("[CalendarStore] Error loading data:", error);
+      console.error("[CalendarStore] Failed to load initial data:", error);
       set({
         isLoading: false,
         error: error instanceof Error
           ? error.message
           : "Failed to load calendar data",
-        isInitialized: true,
-        allotments: {},
-        yearlyAllotments: {},
-        requests: {},
+        // DO NOT set isInitialized here
       });
+      // Propagate the error if needed
+      // throw error;
     }
   },
 
@@ -961,14 +928,15 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
   },
 
   cleanupCalendarState: () => {
-    console.log("[CalendarStore] Cleaning up calendar state");
+    console.log("[CalendarStore] Cleaning up calendar state...");
     set({
+      selectedDate: null,
       allotments: {},
       yearlyAllotments: {},
       requests: {},
-      selectedDate: null,
+      isLoading: false,
       error: null,
-      isInitialized: false,
+      isInitialized: false, // Reset initialized flag on cleanup
     });
   },
 }));

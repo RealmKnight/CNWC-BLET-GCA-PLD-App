@@ -37,9 +37,22 @@ export default function DivisionDetailsScreen() {
       try {
         setIsLoading(true);
         setError(null);
+        setDivision(null); // Reset division state at the start
 
-        // Always treat divisionName as a string for lookup
-        const divisionNameString = String(divisionName).trim();
+        // --- Enhanced Validation ---
+        if (
+          !divisionName ||
+          typeof divisionName !== "string" ||
+          divisionName.trim() === "" ||
+          divisionName === "index"
+        ) {
+          console.error("[DivisionDetails] Invalid or missing divisionName parameter:", divisionName);
+          throw new Error("Invalid division name provided.");
+        }
+        // Always treat divisionName as a string for lookup AFTER validation
+        const divisionNameString = divisionName.trim();
+        // ---------------------------
+
         console.log("[DivisionDetails] Looking up division by name:", divisionNameString);
 
         // First get division details
@@ -51,13 +64,14 @@ export default function DivisionDetailsScreen() {
           .maybeSingle();
 
         if (divisionError) {
-          console.error("[DivisionDetails] Supabase error:", divisionError);
-          throw new Error(divisionError.message);
+          console.error("[DivisionDetails] Supabase error fetching division:", divisionError);
+          // Use a more specific error message if possible
+          throw new Error(`Failed to load division details: ${divisionError.message}`);
         }
 
         if (!divisionData) {
           console.error("[DivisionDetails] Division not found:", divisionNameString);
-          throw new Error(`Division ${divisionNameString} not found`);
+          throw new Error(`Division '${divisionNameString}' not found`);
         }
 
         // Then get member count
@@ -67,21 +81,24 @@ export default function DivisionDetailsScreen() {
           .eq("division_id", divisionData.id);
 
         if (countError) {
-          console.error("[DivisionDetails] Error counting members:", countError);
-          // Don't throw here, just set count to 0
+          console.warn("[DivisionDetails] Error counting members:", countError);
+          // Non-fatal, just log and proceed with count as 0
         }
 
-        console.log("[DivisionDetails] Found division:", { ...divisionData, memberCount });
+        console.log("[DivisionDetails] Found division:", { ...divisionData, member_count: memberCount || 0 });
         setDivision({
           ...divisionData,
           member_count: memberCount || 0,
         });
       } catch (err) {
-        console.error("[DivisionDetails] Error fetching division details:", err);
-        setError(err instanceof Error ? err.message : "Failed to load division details");
-        // Redirect back to home after a delay if there's an error
+        console.error("[DivisionDetails] Error in fetchDivisionDetails:", err);
+        setError(err instanceof Error ? err.message : "An unexpected error occurred");
+        // Keep the redirect logic for now, seems intentional
         setTimeout(() => {
-          router.replace("/(tabs)");
+          if (router) {
+            // Check if router is available
+            router.replace("/(tabs)");
+          }
         }, 2000);
       } finally {
         setIsLoading(false);

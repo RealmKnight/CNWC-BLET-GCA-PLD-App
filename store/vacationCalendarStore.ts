@@ -22,7 +22,6 @@ export interface WeekRequest extends VacationRequest {
         first_name: string | null;
         last_name: string | null;
         pin_number: number;
-        spot_number: number;
     };
 }
 
@@ -64,7 +63,11 @@ interface VacationCalendarState {
         endDate: string,
         calendarId: string,
     ) => Promise<Record<string, WeekRequest[]>>;
-    loadInitialData: (startDate: string, endDate: string) => Promise<void>;
+    loadInitialData: (
+        startDate: string,
+        endDate: string,
+        calendarId: string,
+    ) => Promise<void>;
     checkNextYearAllotments: (
         calendarId: string,
         year: number,
@@ -115,18 +118,15 @@ export const useVacationCalendarStore = create<VacationCalendarState>((
         }
 
         try {
-            const currentYear = new Date().getFullYear();
-            const currentYearStartDate = `${currentYear}-01-01`;
-
             console.log(
-                `[VacationCalendarStore] Fetching allotments from ${currentYearStartDate} onwards for calendarId: ${calendarId}`,
+                `[VacationCalendarStore] Fetching allotments from ${startDate} onwards for calendarId: ${calendarId}`,
             );
 
             const { data: allotmentsData, error } = await supabase
                 .from("vacation_allotments")
                 .select("*")
                 .eq("calendar_id", calendarId)
-                .gte("week_start_date", currentYearStartDate);
+                .gte("week_start_date", startDate);
 
             if (error) throw error;
 
@@ -190,10 +190,9 @@ export const useVacationCalendarStore = create<VacationCalendarState>((
             console.log("[VacationCalendarStore] Fetching requests:", {
                 startDate,
                 endDate,
+                calendarId,
             });
 
-            // Get all approved requests for this calendar regardless of date range first
-            // This ensures we don't miss any requests due to date range issues
             const { data: requestsData, error } = await supabase
                 .from("vacation_requests")
                 .select(`
@@ -203,7 +202,9 @@ export const useVacationCalendarStore = create<VacationCalendarState>((
           )
         `)
                 .eq("calendar_id", calendarId)
-                .eq("status", "approved");
+                .eq("status", "approved")
+                .gte("start_date", startDate)
+                .lte("start_date", endDate);
 
             if (error) throw error;
 
@@ -214,56 +215,25 @@ export const useVacationCalendarStore = create<VacationCalendarState>((
             });
 
             if (requestsData) {
-                // First filter requests to only include those within our date range
-                const startDateObj = new Date(startDate);
-                const endDateObj = new Date(endDate);
-                const filteredRequests = requestsData.filter((req) => {
-                    const reqDate = new Date(req.start_date);
-                    return reqDate >= startDateObj && reqDate <= endDateObj;
-                });
-
-                console.log("[VacationCalendarStore] Filtered requests:", {
-                    total: requestsData.length,
-                    inRange: filteredRequests.length,
-                });
-
-                // Process the filtered requests
-                filteredRequests.forEach((rawRequest, index) => {
-                    // Calculate week start date from request date
+                requestsData.forEach((rawRequest) => {
                     const requestDate = parseISO(rawRequest.start_date);
                     const weekStart = startOfWeek(requestDate, {
                         weekStartsOn: 1,
                     });
                     const weekStartDate = format(weekStart, "yyyy-MM-dd");
 
-                    // For debugging problematic weeks
-                    if (
-                        weekStartDate === "2024-05-12" ||
-                        weekStartDate === "2024-05-19"
-                    ) {
-                        console.log(
-                            `[VacationCalendarStore] Request mapping for ${rawRequest.start_date}:`,
-                            {
-                                weekStartDate,
-                                requestId: rawRequest.id,
-                            },
-                        );
-                    }
-
                     if (!requestsByWeek[weekStartDate]) {
                         requestsByWeek[weekStartDate] = [];
                     }
 
-                    const memberInfo = (rawRequest as any).member;
+                    const memberData = (rawRequest as any).member;
                     const weekRequest: WeekRequest = {
                         ...rawRequest,
                         member: {
-                            id: memberInfo.id,
-                            first_name: memberInfo.first_name,
-                            last_name: memberInfo.last_name,
-                            pin_number: memberInfo.pin_number,
-                            spot_number: requestsByWeek[weekStartDate].length +
-                                1,
+                            id: memberData?.id ?? "",
+                            first_name: memberData?.first_name ?? null,
+                            last_name: memberData?.last_name ?? null,
+                            pin_number: memberData?.pin_number ?? 0,
                         },
                     };
 
@@ -271,13 +241,8 @@ export const useVacationCalendarStore = create<VacationCalendarState>((
                 });
             }
 
-            // Count by week for debugging
-            Object.keys(requestsByWeek).forEach((week) => {
-                console.log(
-                    `[VacationCalendarStore] Week ${week} has ${
-                        requestsByWeek[week].length
-                    } requests`,
-                );
+            console.log("[VacationCalendarStore] Processed requests by week:", {
+                weekKeys: Object.keys(requestsByWeek),
             });
 
             return requestsByWeek;
@@ -290,126 +255,69 @@ export const useVacationCalendarStore = create<VacationCalendarState>((
         }
     },
 
-    loadInitialData: async (startDate, endDate) => {
-        const { member } = useUserStore.getState();
-        const calendarId = member?.calendar_id;
-
-        if (!member || !calendarId) {
-            console.log(
-                "[VacationCalendarStore] No member or calendar_id found for initialization",
+    loadInitialData: async (startDate, endDate, calendarId) => {
+        if (!calendarId) {
+            console.error(
+                "[VacationStore] loadInitialData called without calendarId.",
             );
             set({
-                error: "User or assigned calendar not found",
                 isLoading: false,
-                isInitialized: true,
+                error: "User or assigned calendar not found",
             });
             return;
         }
 
-        set({ error: null, isLoading: true });
-
+        set({ isLoading: true, error: null });
+        console.log(
+            `[VacationStore] Loading initial data for calendar ${calendarId}...`,
+        );
         try {
-            console.log(
-                `[VacationCalendarStore] Fetching data for calendarId: ${calendarId}`,
-            );
-
-            // Calculate the correct date range for vacation year
-            const today = new Date();
-            const currentYear = today.getFullYear();
-            const nextYear = currentYear + 1;
-
-            // If we're in December and looking at next year's vacation schedule
-            const isDecember = today.getMonth() === 11;
-            const vacationYear = isDecember ? nextYear : currentYear;
-
-            // First Monday of the vacation year
-            const firstMonday = startOfWeek(new Date(vacationYear, 0, 1), {
-                weekStartsOn: 1,
-            });
-            if (firstMonday.getDate() === 1) {
-                firstMonday.setDate(firstMonday.getDate() + 7);
-            }
-
-            // Last Sunday of the vacation year (actually first Sunday of next year)
-            const lastSunday = endOfWeek(new Date(vacationYear, 11, 31), {
-                weekStartsOn: 1,
-            });
-
-            console.log(
-                "[VacationCalendarStore] Date range for vacation year:",
-                {
-                    firstMonday: format(firstMonday, "yyyy-MM-dd"),
-                    lastSunday: format(lastSunday, "yyyy-MM-dd"),
-                    vacationYear,
-                },
-            );
-
-            const [allotmentsResult, requestsResult] = await Promise.all([
-                get().fetchAllotments(
-                    format(firstMonday, "yyyy-MM-dd"),
-                    format(lastSunday, "yyyy-MM-dd"),
-                    calendarId,
-                ),
-                get().fetchRequests(
-                    format(firstMonday, "yyyy-MM-dd"),
-                    format(lastSunday, "yyyy-MM-dd"),
-                    calendarId,
-                ),
-            ]);
-
-            const hasNextYear = await get().checkNextYearAllotments(
-                calendarId,
-                vacationYear + 1,
-            );
+            const [allotmentsResult, requestsResult, hasNextYear] =
+                await Promise.all([
+                    get().fetchAllotments(startDate, endDate, calendarId),
+                    get().fetchRequests(startDate, endDate, calendarId),
+                    get().checkNextYearAllotments(
+                        calendarId,
+                        new Date().getFullYear() + 1,
+                    ),
+                ]);
 
             set({
-                isLoading: false,
-                isInitialized: true,
-                error: null,
                 allotments: allotmentsResult,
                 requests: requestsResult,
                 hasNextYearAllotments: hasNextYear,
+                isLoading: false,
+                error: null,
             });
-
-            console.log(
-                "[VacationCalendarStore] Data load complete and state updated.",
-            );
-
-            // After loading all data, sync all allotments with their actual request counts
-            Object.keys(requestsResult).forEach((weekStartDate) => {
-                syncAllotmentWithRequestCount(weekStartDate, calendarId);
-            });
-
-            console.log(
-                "[VacationCalendarStore] Synced all allotment request counts",
-            );
+            console.log("[VacationStore] Initial data loaded successfully.");
         } catch (error) {
-            console.error("[VacationCalendarStore] Error loading data:", error);
+            console.error(
+                "[VacationStore] Failed to load initial data:",
+                error,
+            );
             set({
                 isLoading: false,
                 error: error instanceof Error
                     ? error.message
-                    : "Failed to load calendar data",
-                isInitialized: true,
-                allotments: {},
-                requests: {},
-                hasNextYearAllotments: false,
+                    : "Failed to load vacation data",
             });
         }
     },
 
     checkNextYearAllotments: async (calendarId, year) => {
+        if (!calendarId) return false;
         try {
-            const { count } = await supabase
+            const { count, error } = await supabase
                 .from("vacation_allotments")
-                .select("id", { count: "exact", head: true })
+                .select("*", { count: "exact", head: true })
                 .eq("calendar_id", calendarId)
                 .eq("vac_year", year);
 
+            if (error) throw error;
             return (count ?? 0) > 0;
         } catch (error) {
             console.error(
-                "[VacationCalendarStore] Error checking next year allotments:",
+                "[VacationStore] Error checking next year allotments:",
                 error,
             );
             return false;
@@ -468,11 +376,12 @@ export const useVacationCalendarStore = create<VacationCalendarState>((
     },
 
     cleanupCalendarState: () => {
-        console.log("[VacationCalendarStore] Cleaning up calendar state");
+        console.log("[VacationStore] Cleaning up vacation calendar state...");
         set({
+            selectedWeek: null,
             allotments: {},
             requests: {},
-            selectedWeek: null,
+            isLoading: false,
             error: null,
             isInitialized: false,
             hasNextYearAllotments: false,
@@ -633,8 +542,6 @@ export function setupVacationCalendarSubscriptions() {
                                             ...newRecord,
                                             member: {
                                                 ...memberData,
-                                                spot_number:
-                                                    currentRequests.length + 1,
                                             },
                                         };
                                         store.setRequests({
@@ -708,9 +615,6 @@ export function setupVacationCalendarSubscriptions() {
                                                 ...newRecord,
                                                 member: {
                                                     ...memberData,
-                                                    spot_number:
-                                                        currentRequests.length +
-                                                        1,
                                                 },
                                             };
                                             store.setRequests({

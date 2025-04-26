@@ -456,9 +456,14 @@ export default function MyTimeScreen() {
         return;
       }
 
-      console.log("[MyTimeScreen] Screen focused, attempting refresh");
-      initialize(true);
-    }, [member?.id])
+      // Only refresh if the hook is initialized
+      if (isInitialized) {
+        console.log("[MyTimeScreen] Screen focused, attempting refresh");
+        initialize(true); // Pass true to indicate it's a refresh
+      } else {
+        console.log("[MyTimeScreen] Screen focused, but hook not initialized. Skipping refresh.");
+      }
+    }, [member?.id, initialize, isInitialized]) // Add initialize and isInitialized to dependencies
   );
 
   // Memoize the filtered and sorted requests
