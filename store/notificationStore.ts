@@ -3,6 +3,7 @@ import { supabase } from "@/utils/supabase";
 import { StateCreator } from "zustand";
 import { Platform } from "react-native";
 import { useUserStore } from "@/store/userStore";
+import * as Notifications from "expo-notifications";
 
 interface Message {
   id: string;
@@ -67,6 +68,12 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
       messages,
       unreadCount: messages.filter((msg) => !msg.is_read).length,
     });
+
+    // Update the badge count when messages are set
+    if (Platform.OS !== "web") {
+      const unreadCount = messages.filter((msg) => !msg.is_read).length;
+      updateBadgeCount(unreadCount);
+    }
   },
 
   fetchMessages: async (pinNumber: number, userId: string) => {
@@ -217,6 +224,14 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
         messages: updatedMessages,
         unreadCount: updatedMessages.filter((msg) => !msg.is_read).length,
       });
+
+      // Update badge count
+      if (Platform.OS !== "web") {
+        const unreadCount = updatedMessages.filter((msg) =>
+          !msg.is_read
+        ).length;
+        updateBadgeCount(unreadCount);
+      }
     } catch (error) {
       console.error("Error marking message as read:", error);
     }
@@ -301,6 +316,14 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
         unreadCount: updatedMessages.filter((msg) => !msg.is_read).length,
       });
       console.log("[NotificationStore] Local state updated successfully");
+
+      // Update badge count after deleting a message
+      if (Platform.OS !== "web") {
+        const unreadCount = updatedMessages.filter((msg) =>
+          !msg.is_read
+        ).length;
+        updateBadgeCount(unreadCount);
+      }
     } catch (error) {
       console.error("[NotificationStore] Error in deleteMessage:", error);
       throw error;
@@ -338,12 +361,101 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
         },
         async (payload) => {
           console.log("[NotificationStore] Received realtime update:", payload);
-          const { fetchMessages: refetch, messages: currentMessages } = get();
+          const eventType = payload.eventType;
+          const newMessage = payload.new as Message;
+          const oldMessage = payload.old as Message;
+          const { messages: currentMessages } = get();
           const user = useUserStore.getState().member;
 
           if (!user?.id || !user?.pin_number) return;
 
-          await refetch(user.pin_number, user.id);
+          // Handle different event types separately for better performance
+          switch (eventType) {
+            case "INSERT":
+              // For INSERT, add the new message to the state without refetching everything
+              if (newMessage && !newMessage.is_deleted) {
+                const updatedMessages = [newMessage, ...currentMessages];
+                set({
+                  messages: updatedMessages,
+                  unreadCount: updatedMessages.filter((msg) =>
+                    !msg.is_read
+                  ).length,
+                });
+
+                // Update badge on app/device if on a native platform
+                if (Platform.OS !== "web") {
+                  const unreadCount = updatedMessages.filter((msg) =>
+                    !msg.is_read
+                  ).length;
+                  updateBadgeCount(unreadCount);
+                }
+              }
+              break;
+
+            case "UPDATE":
+              // For UPDATE, update the specific message in the state
+              if (newMessage) {
+                const messageIndex = currentMessages.findIndex((msg) =>
+                  msg.id === newMessage.id
+                );
+                if (messageIndex >= 0) {
+                  const updatedMessages = [...currentMessages];
+                  updatedMessages[messageIndex] = {
+                    ...updatedMessages[messageIndex],
+                    ...newMessage,
+                  };
+
+                  set({
+                    messages: updatedMessages,
+                    unreadCount: updatedMessages.filter((msg) =>
+                      !msg.is_read
+                    ).length,
+                  });
+
+                  // Update badge count if read status changed
+                  if (
+                    oldMessage && oldMessage.is_read !== newMessage.is_read &&
+                    Platform.OS !== "web"
+                  ) {
+                    const unreadCount = updatedMessages.filter((msg) =>
+                      !msg.is_read
+                    ).length;
+                    updateBadgeCount(unreadCount);
+                  }
+                }
+              }
+              break;
+
+            case "DELETE":
+              // For DELETE or logical deletion (is_deleted = true), remove from state
+              if (oldMessage) {
+                const updatedMessages = currentMessages.filter((msg) =>
+                  msg.id !== oldMessage.id
+                );
+                set({
+                  messages: updatedMessages,
+                  unreadCount: updatedMessages.filter((msg) =>
+                    !msg.is_read
+                  ).length,
+                });
+
+                // Update badge count if a message was deleted and it was unread
+                if (!oldMessage.is_read && Platform.OS !== "web") {
+                  const unreadCount = updatedMessages.filter((msg) =>
+                    !msg.is_read
+                  ).length;
+                  updateBadgeCount(unreadCount);
+                }
+              }
+              break;
+
+            default:
+              // For unknown events or if payload structure changed, do a full refetch
+              console.log(
+                "[NotificationStore] Unknown event type or payload format changed, doing a full refetch",
+              );
+              await get().fetchMessages(user.pin_number, user.id);
+          }
         },
       )
       .subscribe((status) => {
@@ -353,10 +465,37 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
         );
       });
 
-    // Set up push notification deliveries subscription async
+    // Add another subscription for messages with recipient_id (for direct messages)
     getUserId().then((userId) => {
       if (userId) {
-        // Subscribe to push notification deliveries with a separate channel
+        // Create a different channel for recipient_id based messages
+        const recipientIdChannelId = `messages-id-${userId}-${Date.now()}`;
+        const recipientIdSubscription = supabase
+          .channel(recipientIdChannelId)
+          .on(
+            "postgres_changes",
+            {
+              event: "*",
+              schema: "public",
+              table: "messages",
+              filter: `recipient_id=eq.${userId}`,
+            },
+            async (payload) => {
+              console.log(
+                "[NotificationStore] Received realtime update for recipient_id:",
+                payload,
+              );
+              // Just do a full refresh when we get updates to recipient_id messages
+              // Could optimize this later to handle specific events like the above
+              const user = useUserStore.getState().member;
+              if (user?.id && user?.pin_number) {
+                await get().fetchMessages(user.pin_number, user.id);
+              }
+            },
+          )
+          .subscribe();
+
+        // Set up push notification deliveries subscription with a separate channel
         const deliveriesChannelId = `deliveries-${pinNumber}-${Date.now()}`;
         const deliveriesSubscription = supabase
           .channel(deliveriesChannelId)
@@ -370,7 +509,10 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
             },
             async () => {
               // Refetch messages when there's a delivery status change
-              await get().fetchMessages(pinNumber, userId);
+              const user = useUserStore.getState().member;
+              if (user?.id && user?.pin_number) {
+                await get().fetchMessages(user.pin_number, user.id);
+              }
             },
           )
           .subscribe((status) => {
@@ -380,12 +522,13 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
             );
           });
 
-        // Update the original cleanup function to include the deliveries subscription
+        // Update the original cleanup function to include all subscriptions
         const originalUnsubscribe = messagesSubscription.unsubscribe;
         messagesSubscription.unsubscribe = function (timeout?: number) {
           // Call the original unsubscribe method
           const result = originalUnsubscribe.call(this, timeout);
-          // Also unsubscribe from the deliveries subscription
+          // Also unsubscribe from the other subscriptions
+          recipientIdSubscription.unsubscribe();
           deliveriesSubscription.unsubscribe();
           // Return the original promise
           return result;
@@ -437,12 +580,32 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
       set({
         messages: updatedMessages,
       });
+
+      // Update badge count if an unread message was archived
+      if (Platform.OS !== "web" && !message.is_read) {
+        const unreadCount = updatedMessages.filter((msg) =>
+          !msg.is_read
+        ).length;
+        updateBadgeCount(unreadCount);
+      }
     } catch (error) {
       console.error("[NotificationStore] Error archiving message:", error);
       throw error;
     }
   },
 }));
+
+// Helper function to update badge count
+function updateBadgeCount(count: number) {
+  if (Platform.OS !== "web") {
+    try {
+      console.log(`[NotificationStore] Updating badge count to: ${count}`);
+      Notifications.setBadgeCountAsync(count);
+    } catch (error) {
+      console.error("[NotificationStore] Error updating badge count:", error);
+    }
+  }
+}
 
 export { useNotificationStore };
 export type { Message };
