@@ -659,7 +659,7 @@ function RequestDialog({
           await refreshMyTimeStats(true); // Refresh stats after cancellation
 
           // Use the safe close helper to prevent calendar reset
-          onClose();
+          setTimeout(() => onClose(), 100);
         } else {
           Toast.show({ type: "error", text1: "Failed to cancel request" });
         }
@@ -678,7 +678,7 @@ function RequestDialog({
           setSixMonthRequestId(null);
 
           // Use the safe close helper to prevent calendar reset
-          onClose();
+          setTimeout(() => onClose(), 100);
         } else {
           Toast.show({ type: "error", text1: "Failed to cancel six-month request" });
         }
@@ -1014,7 +1014,7 @@ function RequestDialog({
   };
 
   return (
-    <Modal visible={isVisible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={isVisible} transparent animationType="fade" onRequestClose={() => setTimeout(() => onClose(), 100)}>
       <View style={dialogStyles.modalOverlay}>
         <View style={dialogStyles.modalContent}>
           <ThemedText style={dialogStyles.modalTitle}>Request Day Off - {selectedDate}</ThemedText>
@@ -1122,7 +1122,7 @@ function RequestDialog({
             {Platform.OS === "web" ? (
               <TouchableOpacity
                 style={[dialogStyles.modalButton, dialogStyles.cancelButton]}
-                onPress={onClose}
+                onPress={() => setTimeout(() => onClose(), 100)}
                 activeOpacity={0.7}
               >
                 <ThemedText style={dialogStyles.closeButtonText}>Close</ThemedText>
@@ -1130,7 +1130,7 @@ function RequestDialog({
             ) : (
               <TouchableOpacity
                 style={[dialogStyles.modalButton, dialogStyles.cancelButton]}
-                onPress={onClose}
+                onPress={() => setTimeout(() => onClose(), 100)}
                 activeOpacity={0.7}
               >
                 <ThemedText style={dialogStyles.closeButtonText}>Close</ThemedText>
