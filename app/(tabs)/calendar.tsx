@@ -943,12 +943,11 @@ function RequestDialog({
       return;
     }
 
-    // Check if trying to reduce below approved requests
-    const currentApprovedCount = activeRequests.filter((r) => r.status === "approved").length;
-    if (allotmentValue < currentApprovedCount) {
-      // Use current approved count for validation
+    // Check if trying to reduce below approved+pending requests
+    const pendingAndApprovedCount = approvedPendingRequests.length;
+    if (allotmentValue < pendingAndApprovedCount) {
       setAdjustmentError(
-        `Cannot reduce allocation below the current number of approved requests (${currentApprovedCount}).`
+        `Cannot reduce allocation below the current number of approved and pending requests (${pendingAndApprovedCount}).`
       );
       return;
     }
@@ -1022,9 +1021,8 @@ function RequestDialog({
           <View style={dialogStyles.allotmentContainer}>
             <ThemedText style={dialogStyles.allotmentInfo}>
               {isSixMonthRequest
-                ? `${localAllotments.current} six-month requests` // Use localAllotments here
+                ? `${totalSixMonthRequests} six-month requests`
                 : `${filledSpotsCapped}/${localAllotments.max} spots filled`}{" "}
-              // Use localAllotments here
             </ThemedText>
             {waitlistCount > 0 && !isSixMonthRequest && (
               <ThemedText style={dialogStyles.waitlistInfo}>Waitlist: {waitlistCount}</ThemedText>
@@ -1478,11 +1476,12 @@ function RequestDialog({
             </ThemedText>
 
             <ThemedText style={dialogStyles.infoText}>
-              Current allocation: {localAllotments.max} spots, {localAllotments.current} spots used
+              Current allocation: {localAllotments.max} spots,{" "}
+              {isSixMonthRequest ? totalSixMonthRequests : approvedPendingRequests.length} spots used
             </ThemedText>
 
             <ThemedText style={dialogStyles.infoText}>
-              Note: You cannot reduce allocation below the current number of approved requests.
+              Note: You cannot reduce allocation below the current number of approved and pending requests.
             </ThemedText>
 
             <TextInput
