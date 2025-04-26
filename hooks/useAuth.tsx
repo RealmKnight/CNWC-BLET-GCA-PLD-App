@@ -258,35 +258,19 @@ export function AuthProvider({ children }: AuthProviderProps) {
     const appStateSubscription = AppState.addEventListener("change", async (nextAppState) => {
       if (mounted && appState.match(/inactive|background/) && nextAppState === "active") {
         console.log("[Auth] App came to foreground, re-checking auth state.");
-        try {
-          const {
-            data: { session: foregroundSession },
-            error: fgError,
-          } = await supabase.auth.getSession();
-          if (fgError) {
-            console.error("[Auth AppState] Error getting session on foreground:", fgError);
-            // Decide how to handle error - maybe trigger update with null?
-            // await updateAuthState(null, "APP_STATE_ERROR");
-            return;
-          }
-
-          // Compare fetched session with the *current* state session
-          const currentStateSession = session; // Capture current state session
-          const currentStateUser = user; // Capture current state user
-
-          const sessionPresenceChanged = !!foregroundSession !== !!currentStateSession;
-          const userIdChanged = foregroundSession?.user?.id !== currentStateUser?.id;
-          // Optional: Check if access token changed for refresh scenarios
-          // const tokenChanged = foregroundSession?.access_token !== currentStateSession?.access_token;
-
-          if (mounted && (sessionPresenceChanged || userIdChanged) /* || tokenChanged */) {
-            console.log("[Auth] Session changed on foreground, updating state.");
-            await updateAuthState(foregroundSession, "APP_STATE");
-          } else if (mounted) {
-            console.log("[Auth] Session unchanged on foreground.");
-          }
-        } catch (error) {
-          console.error("[Auth AppState] Exception getting session on foreground:", error);
+        // Fetch the current session and trigger an update
+        // updateAuthState has internal checks to prevent redundant processing if tokens match
+        const {
+          data: { session: foregroundSession },
+          error: fgError,
+        } = await supabase.auth.getSession();
+        if (fgError) {
+          console.error("[Auth AppState] Error getting session on foreground:", fgError);
+          // Optionally handle error, e.g., by updating with null session
+          // await updateAuthState(null, "APP_STATE_ERROR");
+        } else if (mounted) {
+          console.log("[Auth AppState] Calling updateAuthState on foreground event.");
+          await updateAuthState(foregroundSession, "APP_STATE");
         }
       }
       if (mounted) {
@@ -329,7 +313,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       authSubscription.unsubscribe();
       console.log("[Auth] AuthProvider unmounted, cleaned up listeners.");
     };
-  }, [updateAuthState]); // *** REMOVED session and user?.id dependencies ***
+  }, [updateAuthState]); // Dependency array remains simplified
 
   // --- Memoized Functions ---
   const signIn = useCallback(async (email: string, password: string) => {
