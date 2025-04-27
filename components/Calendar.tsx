@@ -57,9 +57,10 @@ interface CalendarProps {
   current?: string;
   zoneId?: number;
   isZoneSpecific?: boolean;
+  onDayActuallyPressed?: (date: string) => void;
 }
 
-export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarProps) {
+export function Calendar({ current, zoneId, isZoneSpecific = false, onDayActuallyPressed }: CalendarProps) {
   const theme = (useColorScheme() ?? "light") as ColorScheme;
   const division = useUserStore((state) => state.division);
   const member = useUserStore((state) => state.member);
@@ -337,6 +338,7 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
 
     if (isDateSelectable(day.dateString)) {
       setSelectedDate(day.dateString);
+      onDayActuallyPressed?.(day.dateString);
 
       // Check if the selected date has a six-month request after selection
       if (day.dateString) {

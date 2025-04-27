@@ -305,9 +305,6 @@ function RequestDialog({
       // Call the original onSubmit passed from props
       await onSubmit(leaveType);
 
-      // Force refresh stats after submitting a request
-      await refreshMyTimeStats(true);
-
       // Allow some time for the database to process the request before re-enabling real-time
       setTimeout(() => {
         // Restart the real-time subscription if the dialog is still open
@@ -656,8 +653,6 @@ function RequestDialog({
             });
           }
 
-          await refreshMyTimeStats(true); // Refresh stats after cancellation
-
           // Remove the setTimeout
           onClose();
         } else {
@@ -673,7 +668,6 @@ function RequestDialog({
         const success = await cancelSixMonthRequest(sixMonthRequestId);
         if (success) {
           Toast.show({ type: "success", text1: "Six-month request cancelled" });
-          await refreshMyTimeStats(true); // Refresh stats
           setHasSixMonthRequest(false); // Update local state
           setSixMonthRequestId(null);
 
@@ -695,16 +689,7 @@ function RequestDialog({
       setIsSubmitting(false);
       setShowCancelModal(false);
     }
-  }, [
-    cancelType,
-    userRequest,
-    selectedDate,
-    cancelRequest,
-    refreshMyTimeStats,
-    onClose,
-    sixMonthRequestId,
-    cancelSixMonthRequest,
-  ]);
+  }, [cancelType, userRequest, selectedDate, cancelRequest, onClose, sixMonthRequestId, cancelSixMonthRequest]);
 
   // For six month dates, don't count other users' requests against the allotment
   // But we do want to show the total count of six-month requests
@@ -1786,9 +1771,6 @@ export default function CalendarScreen() {
   const REFRESH_COOLDOWN = 2000; // 2 seconds
   const [calendarKey, setCalendarKey] = useState(Date.now()); // For forcing calendar re-render
 
-  // NEW: Flag to prevent calendar reset when dialog closes
-  const preventCalendarResetRef = useRef(false);
-
   // Refs
   const isLoadingRef = useRef(false); // Ref for internal load logic coordination
   const mountTimeRef = useRef(Date.now());
@@ -1937,15 +1919,6 @@ export default function CalendarScreen() {
     };
   }, [member?.calendar_id, isPldInitialized]);
 
-  // Effect to prevent calendar reset when dialog closes due to submission
-  useEffect(() => {
-    if (!requestDialogVisible && preventCalendarResetRef.current) {
-      console.log("[CalendarScreen] Preventing calendar reset after dialog close");
-      // Don't do anything that would reset the calendar position
-      preventCalendarResetRef.current = false;
-    }
-  }, [requestDialogVisible]);
-
   // --- Handlers ---
 
   // Create a stable key for calendar type switching
@@ -1993,9 +1966,6 @@ export default function CalendarScreen() {
           position: "bottom",
           visibilityTime: 3000,
         });
-
-        // Refresh MyTime stats
-        await refreshMyTimeStats(true);
 
         // Simply close the dialog
         setRequestDialogVisible(false);
@@ -2109,6 +2079,7 @@ export default function CalendarScreen() {
           <Calendar
             key={calendarTypeKey}
             current={currentDate}
+            onDayActuallyPressed={updateCurrentCalendarView} // ADDED PROP
             // Pass relevant PLD/SDV props from useCalendarStore
           />
         ) : (
