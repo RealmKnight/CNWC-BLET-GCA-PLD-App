@@ -428,6 +428,11 @@ function RequestDialog({
 
   // Determine if the selected date is a six month request date
   const isSixMonthRequest = useMemo(() => {
+    // *** ADDED CHECK: If calendarType is Vacation, it's never a six-month request date ***
+    if (calendarType === "Vacation") {
+      return false;
+    }
+
     const isSixMonthDate = isSameDayWithFormat(selectedDate, getSixMonthDate(), "yyyy-MM-dd");
     const isEndOfMonth = isLastDayOfMonth(new Date());
     const sixMonthDate = getSixMonthDate();
@@ -453,7 +458,7 @@ function RequestDialog({
     });
 
     return result;
-  }, [selectedDate]);
+  }, [selectedDate, calendarType]); // *** ADDED calendarType dependency ***
 
   // Fetch the total count of six-month requests for this date when dialog is shown
   useEffect(() => {

@@ -26,7 +26,28 @@
     "web": {
       "bundler": "metro",
       "output": "server",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/favicon.png",
+      "name": "BLET PLD App", // Add your app name
+      "shortName": "PLD App", // Add a short name
+      "description": "CN/WC GCA BLET PLD App for members of GCA 910", // Add a description
+      "themeColor": "#000000", // Set a theme color
+      "backgroundColor": "#000000", // Set a background color
+      "display": "standalone", // This is the key property
+      "orientation": "portrait", // Or 'landscape', or 'default'
+      "preferRelatedApplications": true, // Suggests native apps if available
+      "icons": [
+        // Define icons for the home screen shortcut
+        {
+          "src": "./assets/images/pwa-icon-192.png", // Example path, create this icon
+          "sizes": "192x192",
+          "type": "image/png"
+        },
+        {
+          "src": "./assets/images/pwa-icon-512.png", // Example path, create this icon
+          "sizes": "512x512",
+          "type": "image/png"
+        }
+      ]
     },
     "plugins": [
       "expo-router",
