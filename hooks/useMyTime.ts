@@ -1099,15 +1099,12 @@ export function useMyTime() {
   useEffect(() => {
     return () => {
       console.log("[MyTime] Cleaning up on unmount");
-      setIsLoading(true);
+      // Don't set isLoading to true on cleanup as it triggers unnecessary resets
       setIsRefreshing(false);
-      setIsInitialized(false);
+      // Keep the initialized state and stats to prevent UI flicker
       setError(null);
-      setStats(null);
-      setRequests([]);
-      setVacationRequests([]);
+      // Don't clear requests/stats on unmount as they may be needed by other components
       lastRefreshTimeRef.current = null;
-      initialAuthLoadCompleteRef.current = false;
     };
   }, []);
 

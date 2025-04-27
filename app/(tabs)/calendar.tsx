@@ -658,8 +658,8 @@ function RequestDialog({
 
           await refreshMyTimeStats(true); // Refresh stats after cancellation
 
-          // Use the safe close helper to prevent calendar reset
-          setTimeout(() => onClose(), 100);
+          // Remove the setTimeout
+          onClose();
         } else {
           Toast.show({ type: "error", text1: "Failed to cancel request" });
         }
@@ -677,8 +677,8 @@ function RequestDialog({
           setHasSixMonthRequest(false); // Update local state
           setSixMonthRequestId(null);
 
-          // Use the safe close helper to prevent calendar reset
-          setTimeout(() => onClose(), 100);
+          // Remove the setTimeout
+          onClose();
         } else {
           Toast.show({ type: "error", text1: "Failed to cancel six-month request" });
         }
@@ -1120,7 +1120,7 @@ function RequestDialog({
             {Platform.OS === "web" ? (
               <TouchableOpacity
                 style={[dialogStyles.modalButton, dialogStyles.cancelButton]}
-                onPress={() => setTimeout(() => onClose(), 100)}
+                onPress={onClose}
                 activeOpacity={0.7}
               >
                 <ThemedText style={dialogStyles.closeButtonText}>Close</ThemedText>
@@ -1128,7 +1128,7 @@ function RequestDialog({
             ) : (
               <TouchableOpacity
                 style={[dialogStyles.modalButton, dialogStyles.cancelButton]}
-                onPress={() => setTimeout(() => onClose(), 100)}
+                onPress={onClose}
                 activeOpacity={0.7}
               >
                 <ThemedText style={dialogStyles.closeButtonText}>Close</ThemedText>
@@ -1948,34 +1948,22 @@ export default function CalendarScreen() {
 
   // --- Handlers ---
 
-  // *** MODIFIED: Combine setCurrentDate and setCalendarKey ***
-  const updateCurrentCalendarView = useCallback(
-    (newDate: string) => {
-      setCurrentDate(newDate);
-      setCalendarKey(Date.now()); // Force re-render
-      console.log(`[CalendarScreen] Updating current view to: ${newDate}, new key: ${calendarKey}`);
-    },
-    [calendarKey]
-  ); // Include calendarKey in dependency array if needed, though Date.now() makes it unique
+  // Create a stable key for calendar type switching
+  const calendarTypeKey = useMemo(
+    () => `${activeCalendar}-calendar-${member?.calendar_id}`,
+    [activeCalendar, member?.calendar_id]
+  );
 
-  // NEW: Helper function to safely close the request dialog without resetting calendar
-  const safelyCloseRequestDialog = useCallback(() => {
-    console.log("[CalendarScreen] Safely closing request dialog (preventing calendar reset)");
-    preventCalendarResetRef.current = true;
-    setTimeout(() => {
-      setRequestDialogVisible(false);
-      // Reset the flag after a short delay to allow state updates to complete
-      setTimeout(() => {
-        preventCalendarResetRef.current = false;
-      }, 500);
-    }, 300);
+  // Modify updateCurrentCalendarView to not force re-renders
+  const updateCurrentCalendarView = useCallback((newDate: string) => {
+    setCurrentDate(newDate);
+    console.log(`[CalendarScreen] Updating current view to: ${newDate}`);
   }, []);
 
   // Handler for submitting PLD/SDV requests
   const handleRequestSubmit = async (leaveType: "PLD" | "SDV") => {
-    if (!selectedDate) return; // Should not happen if dialog is open
+    if (!selectedDate) return;
 
-    // Don't use local isLoading state
     try {
       console.log(`[CalendarScreen] Submitting ${leaveType} request for ${selectedDate}`);
 
@@ -2006,11 +1994,11 @@ export default function CalendarScreen() {
           visibilityTime: 3000,
         });
 
-        // Refresh MyTime stats without affecting calendar position
+        // Refresh MyTime stats
         await refreshMyTimeStats(true);
 
-        // Use the safe close helper to prevent calendar reset
-        safelyCloseRequestDialog();
+        // Simply close the dialog
+        setRequestDialogVisible(false);
       }
     } catch (err) {
       console.error("[CalendarScreen] Error submitting request:", err);
@@ -2039,13 +2027,7 @@ export default function CalendarScreen() {
   // Callback to reopen the dialog after adjustment
   const handleAdjustmentComplete = async () => {
     console.log("[CalendarScreen] Adjustment complete. Reopening dialog.");
-
-    // We no longer need to refresh the store data manually
-    // The CalendarStore real-time subscription now handles this automatically
-    // Just force a re-render of the Calendar component to ensure it picks up changes
     setCalendarKey(Number(Date.now()));
-
-    // Now reopen the dialog
     setRequestDialogVisible(true);
   };
 
@@ -2122,20 +2104,16 @@ export default function CalendarScreen() {
 
       {/* Main Calendar Area */}
       <ScrollView style={styles.scrollView}>
-        {/* Display derived loading state */}
         {isLoading && <ActivityIndicator style={{ marginTop: 20 }} size="small" color={Colors[theme].textDim} />}
-        {/* Render the active calendar */}
         {activeCalendar === "PLD/SDV" ? (
           <Calendar
-            // *** Ensure key uses the state variable ***
-            key={`pld-calendar-${member?.calendar_id}-${calendarKey}`}
+            key={calendarTypeKey}
             current={currentDate}
             // Pass relevant PLD/SDV props from useCalendarStore
           />
         ) : (
           <VacationCalendar
-            // *** Ensure key uses the state variable ***
-            key={`vacation-calendar-${member?.calendar_id}-${calendarKey}`}
+            key={calendarTypeKey}
             current={currentDate}
             // Pass relevant Vacation props from useVacationCalendarStore
           />
@@ -2175,10 +2153,9 @@ export default function CalendarScreen() {
       {requestDialogVisible && activeCalendar === "PLD/SDV" && selectedDate && (
         <RequestDialog
           isVisible={requestDialogVisible}
-          onClose={safelyCloseRequestDialog}
+          onClose={() => setRequestDialogVisible(false)}
           onSubmit={handleRequestSubmit}
           selectedDate={selectedDate || ""}
-          // Safely access allotments and requests for the selected date
           allotments={{
             max: selectedDate
               ? pldAllotments[selectedDate] ?? yearlyAllotments[new Date(selectedDate).getFullYear()] ?? 0
@@ -2188,7 +2165,7 @@ export default function CalendarScreen() {
           requests={selectedDate && pldRequests[selectedDate] ? pldRequests[selectedDate] : []}
           calendarType="PLD/SDV"
           calendarId={member?.calendar_id || ""}
-          onAdjustmentComplete={handleAdjustmentComplete} // Pass the callback
+          onAdjustmentComplete={handleAdjustmentComplete}
         />
       )}
 
@@ -2196,15 +2173,11 @@ export default function CalendarScreen() {
       {activeCalendar === "Vacation" && (
         <RequestDialog
           isVisible={requestDialogVisible}
-          onClose={safelyCloseRequestDialog}
+          onClose={() => setRequestDialogVisible(false)}
           onSubmit={() => {
-            // No direct submission from dialog for vacation
-            setTimeout(() => {
-              setRequestDialogVisible(false);
-            }, 100);
+            setRequestDialogVisible(false);
           }}
           selectedDate={selectedWeek || ""}
-          // Access vacation allotments for the selected week
           allotments={{
             max: selectedWeek && vacationAllotments[selectedWeek] ? vacationAllotments[selectedWeek].max_allotment : 0,
             current:
@@ -2212,7 +2185,6 @@ export default function CalendarScreen() {
                 ? vacationAllotments[selectedWeek].current_requests || 0
                 : 0,
           }}
-          // TypeScript needs explicit type assertion to handle the different request types
           requests={
             selectedWeek && vacationRequests[selectedWeek]
               ? (vacationRequests[selectedWeek] as any as DayRequest[])
