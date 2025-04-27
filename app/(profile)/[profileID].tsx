@@ -17,6 +17,7 @@ import Constants from "expo-constants";
 import { DatePicker } from "@/components/DatePicker";
 import { parseISO, format, differenceInYears, isAfter } from "date-fns";
 import Toast from "react-native-toast-message";
+import { ChangePasswordModal } from "@/components/ui/ChangePasswordModal";
 
 type Member = Database["public"]["Tables"]["members"]["Row"];
 type ContactPreference = "phone" | "text" | "email" | "push";
@@ -427,6 +428,7 @@ export default function ProfileScreen() {
   const [isPhoneModalVisible, setIsPhoneModalVisible] = useState(false);
   const [isDateOfBirthModalVisible, setIsDateOfBirthModalVisible] = useState(false);
   const [isDeviceMobile] = useState(Platform.OS !== "web");
+  const [isPasswordModalVisible, setIsPasswordModalVisible] = useState(false);
 
   // Determine if the logged-in user is viewing their own profile
   const isOwnProfile = session?.user?.id === profile?.id;
@@ -630,27 +632,6 @@ export default function ProfileScreen() {
     });
   };
 
-  const handleUpdatePassword = async () => {
-    if (!user?.email) {
-      Toast.show({ type: "error", text1: "Email Required", text2: "No email found." });
-      return;
-    }
-    setIsLoading(true);
-    try {
-      const success = await sendPasswordResetEmail(user.email);
-      if (success) {
-        Toast.show({ type: "success", text1: "Email Sent", text2: "Password reset instructions sent." });
-      } else {
-        Toast.show({ type: "error", text1: "Error", text2: "Failed to send reset email." });
-      }
-    } catch (error) {
-      console.error("Error sending password reset:", error);
-      Toast.show({ type: "error", text1: "Error", text2: "An unexpected error occurred." });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   // --- Conditional Renders ---
   if (isLoading) {
     return (
@@ -806,12 +787,13 @@ export default function ProfileScreen() {
       {isOwnProfile && (
         <ThemedView style={styles.section}>
           <ThemedText type="title">Account Settings</ThemedText>
-          <ThemedText type="subtitle">Send an email with a reset link to change your password</ThemedText>
-          <TouchableOpacity onPress={handleUpdatePassword} style={styles.settingButton} disabled={isLoading}>
-            <ThemedText style={styles.settingButtonText}>{isLoading ? "Sending..." : "Change Password"}</ThemedText>
+          <ThemedText type="subtitle">Change your account password</ThemedText>
+          <TouchableOpacity onPress={() => setIsPasswordModalVisible(true)} style={styles.settingButton}>
+            <ThemedText style={styles.settingButtonText}>Change Password</ThemedText>
           </TouchableOpacity>
         </ThemedView>
       )}
+      <ChangePasswordModal visible={isPasswordModalVisible} onClose={() => setIsPasswordModalVisible(false)} />
       {/* Union Information Section */}
       <ThemedView style={styles.section}>
         <ThemedText type="title">Union Information</ThemedText>

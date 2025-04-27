@@ -2333,6 +2333,17 @@ const dialogStyles = StyleSheet.create({
     alignItems: "center",
     borderWidth: 1,
     borderColor: Colors.dark.border,
+    ...Platform.select({
+      ios: {
+        paddingBottom: 26, // Additional padding for iOS
+      },
+      android: {
+        paddingBottom: 26, // Additional padding for Android
+      },
+      default: {
+        paddingBottom: 20, // Keep original padding for web
+      },
+    }),
   } as ViewStyle,
   modalTitle: {
     fontSize: 18,
