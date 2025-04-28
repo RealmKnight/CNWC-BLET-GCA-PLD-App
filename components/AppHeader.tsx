@@ -1,5 +1,5 @@
 import React from "react";
-import { StyleSheet, TouchableOpacity, Image } from "react-native";
+import { StyleSheet, TouchableOpacity, Image, View } from "react-native";
 import { usePathname, useRouter, useSegments } from "expo-router";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -7,6 +7,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { useAdminNotificationStore } from "@/store/adminNotificationStore";
+import { AdminMessageBadge } from "@/components/ui/AdminMessageBadge";
 
 export function AppHeader() {
   const pathname = usePathname();
@@ -19,6 +21,9 @@ export function AppHeader() {
   const isProfileRoute = segments[0] === "(profile)";
   const isTabsRoute = segments[0] === "(tabs)";
 
+  const unreadAdminMessageCount = useAdminNotificationStore((state) => state.unreadCount);
+  const showAdminBadge = isAdmin && !isAdminRoute && unreadAdminMessageCount > 0;
+
   console.log("[AppHeader] State:", {
     pathname,
     segments,
@@ -27,6 +32,8 @@ export function AppHeader() {
     userRole,
     userId: user?.id,
     memberPinNumber: member?.pin_number,
+    unreadAdminMessageCount,
+    showAdminBadge,
   });
 
   const handleHomePress = () => {
@@ -35,36 +42,41 @@ export function AppHeader() {
   };
 
   const handleSettingsPress = () => {
+    // Already in admin? Go home.
     if (isAdminRoute) {
-      // If we're in admin route, go to home
       console.log("[AppHeader] Admin in admin route, going home");
       router.push("/(tabs)");
-    } else if (isAdmin && typeof userRole === "string") {
-      // If we're not in admin route but user is admin, go to their admin page
-      console.log("[AppHeader] Going to admin page with role:", userRole);
+      return; // Exit early
+    }
 
-      // Navigate based on role
-      if (userRole === "division_admin") {
-        router.push("/(admin)/division_admin");
-      } else if (userRole === "union_admin") {
-        router.push("/(admin)/union_admin");
-      } else if (userRole === "application_admin") {
-        router.push("/(admin)/application_admin");
-      } else {
-        // Default admin page
-        router.push("/(admin)");
+    // Not in admin route, check if user IS admin and has a role string
+    if (isAdmin && typeof userRole === "string") {
+      console.log("[AppHeader] Going to admin page with role:", userRole);
+      switch (userRole) {
+        case "division_admin":
+          router.push("/(admin)/division_admin");
+          break;
+        case "union_admin":
+          router.push("/(admin)/union_admin");
+          break;
+        case "application_admin":
+          router.push("/(admin)/application_admin");
+          break;
+        default:
+          console.warn("[AppHeader] Unknown member admin role, cannot navigate:", userRole);
+          // Optional: Navigate to a default admin route or show error
+          // router.push("/(admin)");
+          break;
       }
     } else {
-      console.log("[AppHeader] Settings pressed but user is not admin");
+      // Not an admin or role is not a string
+      console.log("[AppHeader] Settings pressed but user is not an admin or role unknown/invalid");
     }
   };
 
   const handleProfilePress = () => {
-    // Use the member ID for profile navigation - should be the UUID, not the pin number
     if (member?.id) {
       console.log("[AppHeader] Navigating to profile with member ID:", member.id);
-
-      // Use a simple string path with the member ID (not pin number)
       router.push(`/(profile)/${member.id}`);
     } else if (user?.id) {
       console.log("[AppHeader] Navigating to profile with user ID:", user.id);
@@ -81,10 +93,8 @@ export function AppHeader() {
 
   const iconColor = Colors[colorScheme].tint;
 
-  // Get the current tab title
   const getTabTitle = () => {
     if (!isTabsRoute) return "";
-    // On the home page, segments[1] is undefined
     if (segments.length === 1 && segments[0] === "(tabs)") {
       return "CN/WC GCA BLET PLD App";
     }
@@ -110,7 +120,14 @@ export function AppHeader() {
           <ThemedView style={styles.leftIcons}>
             {isAdmin && (
               <TouchableOpacity onPress={handleSettingsPress} style={styles.iconButton}>
-                <Ionicons name="settings-outline" size={28} color={iconColor} />
+                <View style={styles.iconWrapper}>
+                  <Ionicons name="settings-outline" size={28} color={iconColor} />
+                  {showAdminBadge && (
+                    <View style={styles.headerBadgeContainer}>
+                      <AdminMessageBadge />
+                    </View>
+                  )}
+                </View>
               </TouchableOpacity>
             )}
           </ThemedView>
@@ -136,7 +153,14 @@ export function AppHeader() {
           <ThemedView style={styles.leftIcons}>
             {isAdmin && (
               <TouchableOpacity onPress={handleSettingsPress} style={styles.iconButton}>
-                <Ionicons name={isAdminRoute ? "home-outline" : "settings-outline"} size={28} color={iconColor} />
+                <View style={styles.iconWrapper}>
+                  <Ionicons name={isAdminRoute ? "home-outline" : "settings-outline"} size={28} color={iconColor} />
+                  {showAdminBadge && (
+                    <View style={styles.headerBadgeContainer}>
+                      <AdminMessageBadge />
+                    </View>
+                  )}
+                </View>
               </TouchableOpacity>
             )}
             {isProfileRoute && (
@@ -173,7 +197,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    minWidth: 44, // Ensure consistent width whether there's an icon or not
+    minWidth: 44,
   },
   rightIcons: {
     flexDirection: "row",
@@ -182,6 +206,19 @@ const styles = StyleSheet.create({
   },
   iconButton: {
     padding: 8,
+  },
+  iconWrapper: {
+    position: "relative",
+    width: 28,
+    height: 28,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  headerBadgeContainer: {
+    position: "absolute",
+    top: -4,
+    right: -6,
+    zIndex: 1,
   },
   logo: {
     width: 32,

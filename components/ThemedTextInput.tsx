@@ -34,7 +34,25 @@ export function ThemedTextInput({ containerStyle, style, type = "text", ...props
       ...(style && typeof style === "object" ? flattenStyle(style) : {}),
     };
 
-    return <input type={type} className="themed-input" style={webStyle} {...(props as any)} />;
+    // Extract onChangeText and other RN-specific props from props for web
+    const { onChangeText, multiline, numberOfLines, placeholderTextColor, ...restProps } = props;
+
+    // Define the web onChange handler
+    const handleWebChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+      if (onChangeText) {
+        onChangeText(event.target.value);
+      }
+    };
+
+    return (
+      <input
+        type={type}
+        className="themed-input"
+        style={webStyle}
+        onChange={handleWebChange} // Use the translated handler
+        {...(restProps as any)} // Pass the rest of the props
+      />
+    );
   }
 
   return <TextInput style={[inputStyle, style]} placeholderTextColor={isDark ? "#808080" : "#a0a0a0"} {...props} />;

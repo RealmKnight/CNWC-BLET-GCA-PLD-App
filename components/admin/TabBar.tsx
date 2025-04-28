@@ -7,6 +7,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import Animated, { useAnimatedStyle, withSpring } from "react-native-reanimated";
+import { AdminMessageBadge } from "@/components/ui/AdminMessageBadge";
 
 const AnimatedTouchableOpacity = Animated.createAnimatedComponent(TouchableOpacity);
 
@@ -37,6 +38,8 @@ export function TabBar({ tabs, activeTab, onTabChange }: TabBarProps) {
 
   const renderTab = (tab: Tab) => {
     const isActive = activeTab === tab.key;
+    const isMessagesTab = tab.key === "message";
+
     const buttonAnimation = useAnimatedStyle(() => {
       const scale = withSpring(isActive ? 1.1 : 1, {
         damping: 15,
@@ -47,7 +50,6 @@ export function TabBar({ tabs, activeTab, onTabChange }: TabBarProps) {
       };
     });
 
-    // Generate accessibility props based on platform
     const getAccessibilityProps = (): AccessibilityProps => {
       if (Platform.OS === "web") {
         return {
@@ -79,16 +81,23 @@ export function TabBar({ tabs, activeTab, onTabChange }: TabBarProps) {
         onPress={() => onTabChange(tab.key)}
         {...getAccessibilityProps()}
       >
-        <Ionicons
-          name={isActive ? tab.icon : tab.outlineIcon}
-          size={shouldUseMobileLayout ? 28 : 24}
-          color={isActive ? colors.tint : colors.icon}
-        />
-        {!shouldUseMobileLayout && (
-          <ThemedText style={[styles.tabText, isActive && [styles.activeTabText, { color: colors.tint }]]}>
-            {tab.title}
-          </ThemedText>
-        )}
+        <View style={styles.tabContentWrapper}>
+          <Ionicons
+            name={isActive ? tab.icon : tab.outlineIcon}
+            size={shouldUseMobileLayout ? 28 : 24}
+            color={isActive ? colors.tint : colors.icon}
+          />
+          {!shouldUseMobileLayout && (
+            <ThemedText style={[styles.tabText, isActive && [styles.activeTabText, { color: colors.tint }]]}>
+              {tab.title}
+            </ThemedText>
+          )}
+          {isMessagesTab && (
+            <View style={styles.badgeContainer}>
+              <AdminMessageBadge />
+            </View>
+          )}
+        </View>
       </AnimatedTouchableOpacity>
     );
   };
@@ -116,7 +125,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderBottomWidth: 1,
-    zIndex: 1, // Ensure tab bar appears above content
+    zIndex: 1,
   },
   mobileContainer: {
     flexDirection: "row",
@@ -129,36 +138,43 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
-    zIndex: 1, // Ensure tab bar appears above content
+    zIndex: 1,
   },
   webTab: {
-    flexDirection: "row",
-    alignItems: "center",
     padding: 12,
     borderRadius: 8,
-    gap: 12,
     flex: 1,
     justifyContent: "center",
-    minHeight: 48, // Ensure sufficient touch target size
+    alignItems: "center",
+    minHeight: 48,
   },
-  webActiveTab: {
-    // backgroundColor handled in component via colors.tint
-  },
+  webActiveTab: {},
   mobileTab: {
     alignItems: "center",
     justifyContent: "center",
     padding: 8,
     borderRadius: 8,
     minWidth: 48,
-    minHeight: 48, // Ensure sufficient touch target size
+    minHeight: 48,
   },
-  mobileActiveTab: {
-    // backgroundColor handled in component via colors.tint
+  mobileActiveTab: {},
+  tabContentWrapper: {
+    position: "relative",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
   },
   tabText: {
     fontSize: 16,
   },
   activeTabText: {
     fontWeight: "600",
+  },
+  badgeContainer: {
+    position: "absolute",
+    top: -5,
+    right: -10,
+    zIndex: 1,
   },
 });
