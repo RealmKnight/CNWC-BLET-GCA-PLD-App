@@ -14,8 +14,8 @@ import { format } from "date-fns";
 import DateTimePickerModal from "react-native-modal-datetime-picker";
 import Toast from "react-native-toast-message";
 import { supabase } from "@/utils/supabase";
-import DateTimePicker from "@react-native-community/datetimepicker";
 import { Modal } from "@/components/ui/Modal";
+import { DatePicker } from "@/components/DatePicker";
 
 const AnimatedThemedView = Animated.createAnimatedComponent(ThemedView);
 const isWeb = Platform.OS === "web";
@@ -274,23 +274,15 @@ export function DivisionOfficers({ division }: DivisionOfficersProps) {
           title={`Update Start Date - ${selectedPosition}`}
         >
           <View style={styles.webDatePickerContainer}>
-            <input
-              type="date"
-              value={format(selectedDate, "yyyy-MM-dd")}
-              onChange={(e) => {
-                if (e.target.value) {
-                  const newDate = new Date(e.target.value + "T12:00:00Z");
-                  setSelectedDate(newDate);
-                }
+            {/* Use DatePicker for consistent UX */}
+            <DatePicker
+              date={selectedDate}
+              onDateChange={(date) => {
+                if (date) setSelectedDate(date);
               }}
-              style={{
-                fontSize: "16px",
-                padding: "8px 12px",
-                borderRadius: "8px",
-                border: "1px solid #ccc",
-                marginBottom: "20px",
-                width: "200px",
-              }}
+              mode="date"
+              placeholder="Select date"
+              style={{ marginBottom: 20, width: 200 }}
             />
             <View style={styles.webDatePickerButtons}>
               <TouchableOpacityComponent

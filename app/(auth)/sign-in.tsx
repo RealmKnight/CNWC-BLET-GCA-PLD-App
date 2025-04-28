@@ -68,13 +68,17 @@ export default function SignInScreen() {
         <ThemedView style={styles.links}>
           <Link href="/(auth)/sign-up" asChild>
             <TouchableOpacity>
-              <ThemedText style={styles.link}>Don't have an account? Sign Up</ThemedText>
+              <ThemedText style={styles.link}>
+                Don't have an account? <ThemedText style={styles.signuplink}>Sign Up</ThemedText>
+              </ThemedText>
             </TouchableOpacity>
           </Link>
 
           <Link href="/(auth)/forgot-password" asChild>
             <TouchableOpacity>
-              <ThemedText style={styles.link}>Forgot Password?</ThemedText>
+              <ThemedText style={styles.link}>
+                Forgot <ThemedText style={styles.signuplink}>Password</ThemedText>?
+              </ThemedText>
             </TouchableOpacity>
           </Link>
         </ThemedView>
@@ -131,6 +135,12 @@ const styles = StyleSheet.create({
   link: {
     color: Colors.dark.icon,
     marginVertical: 5,
+    fontSize: 20,
+  },
+  signuplink: {
+    color: Colors.dark.icon,
+    fontSize: 20,
+    fontWeight: "bold",
   },
   error: {
     color: Colors.dark.error,
