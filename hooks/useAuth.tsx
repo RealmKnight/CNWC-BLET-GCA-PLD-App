@@ -663,7 +663,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const resetPassword = async (email: string) => {
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: Linking.createURL("/(auth)/change-password"), // Updated path for password reset form
+        redirectTo: Linking.createURL("/change-password"), // Use root path for password reset
       });
       if (error) throw error;
       alert("Password reset email sent! Please check your inbox.");
