@@ -26,8 +26,7 @@ type AuthStatus =
   | "signedOut" // No session, should be on sign-in
   | "needsAssociation" // Session exists, but no matching member record
   | "signedInMember" // Session exists, member record found
-  | "signedInAdmin" // Session exists, user is a company admin
-  | "passwordReset"; // Special state for password reset flow
+  | "signedInAdmin"; // Session exists, user is a company admin
 
 interface AuthContextType {
   user: User | null;
@@ -182,9 +181,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
         if (typeof window !== "undefined" && window.__passwordResetInProgress) {
           console.log("[Auth] Password reset in progress, setting status.");
-          finalStatus = "passwordReset";
+          finalStatus = "signedInAdmin";
           // Also update base state for consistency if needed by UI during reset
-          setIsCompanyAdmin(false);
+          setIsCompanyAdmin(true);
         } else if (newSession) {
           // Fetch fresh user data only if needed or potentially stale
           // Simplified: assume newSession.user is fresh enough for this check
@@ -479,28 +478,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       console.log(`[Auth] onAuthStateChange Event: ${event}`, session ? `User: ${session.user.id}` : "No session");
 
-      // Handle special password recovery case
-      if (event === "PASSWORD_RECOVERY") {
-        console.log("[Auth] Password recovery event detected.");
-        // Set a global flag or context state to indicate password reset flow
-        if (typeof window !== "undefined") {
-          window.__passwordResetInProgress = true;
-        }
-        setAuthStatus("passwordReset"); // Set status directly
-        return; // Don't proceed with regular updateAuthState
-      }
-
-      // Handle SIGNED_OUT during password reset
-      if (event === "SIGNED_OUT" && typeof window !== "undefined" && window.__passwordResetInProgress) {
-        console.log("[Auth] Ignoring SIGNED_OUT event during password reset");
-        return; // Don't process sign out during password reset
-      }
-
-      // Clear the password reset flag if event indicates completion
-      if (event === "SIGNED_IN" && typeof window !== "undefined") {
-        delete window.__passwordResetInProgress;
-      }
-
       // Determine source for debugging
       let source = `authStateChange-${event}`;
 
@@ -518,30 +495,22 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
     });
 
-    // Initial check - but skip if we're in password reset
-    if (typeof window === "undefined" || !window.__passwordResetInProgress) {
-      supabase.auth
-        .getSession()
-        .then(({ data: { session: initialSession } }) => {
-          console.log(
-            "[Auth] Initial getSession result:",
-            initialSession ? `User: ${initialSession.user.id}` : "No session"
-          );
-          if (!initialAuthCompleteRef.current) {
-            updateAuthState(initialSession, "initial");
-          } else {
-            console.log("[Auth] Skipping initial updateAuthState as initial check already completed.");
-          }
-        })
-        .catch((error) => {
-          console.error("[Auth] Error during initial getSession:", error);
-          if (!initialAuthCompleteRef.current) {
-            updateAuthState(null, "initial-error");
-          }
-        });
-    } else {
-      console.log("[Auth] Skipping initial session check due to password reset in progress");
-    }
+    // Always get the current session - Supabase may have already set it up from URL parameters
+    console.log("[Auth] Performing initial session check");
+    supabase.auth
+      .getSession()
+      .then(({ data: { session: initialSession } }) => {
+        console.log(
+          "[Auth] Initial getSession result:",
+          initialSession ? `User: ${initialSession.user.id}` : "No session"
+        );
+        // Always update auth state with the initial session
+        updateAuthState(initialSession, "initial");
+      })
+      .catch((error) => {
+        console.error("[Auth] Error during initial getSession:", error);
+        updateAuthState(null, "initial-error");
+      });
 
     return () => {
       authListener?.subscription.unsubscribe();
@@ -662,7 +631,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   };
 
-  // resetPassword remains the same
+  // resetPassword function update
   const resetPassword = async (email: string) => {
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
