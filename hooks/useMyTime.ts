@@ -11,6 +11,54 @@ import React from "react";
 import { AppState } from "react-native";
 import { Database } from "@/types/supabase";
 
+// Cache configuration
+const CACHE_DURATION = 30000; // 30 seconds
+const MAX_RETRIES = 3;
+const RETRY_BASE_DELAY = 1000; // 1 second base delay
+
+interface StatsCache {
+  data: TimeStats | null;
+  timestamp: number;
+}
+
+interface VacationStatsCache {
+  data: VacationStats | null;
+  timestamp: number;
+}
+
+const statsCache: StatsCache = {
+  data: null,
+  timestamp: 0,
+};
+
+const vacationStatsCache: VacationStatsCache = {
+  data: null,
+  timestamp: 0,
+};
+
+// Retry utility function
+async function retryFetch<T>(
+  fetchFn: () => Promise<T>,
+  context: string,
+  maxRetries = MAX_RETRIES,
+): Promise<T> {
+  let lastError;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fetchFn();
+    } catch (error) {
+      lastError = error;
+      console.warn(`[MyTime] ${context} attempt ${i + 1} failed:`, error);
+      if (i < maxRetries - 1) {
+        const delay = RETRY_BASE_DELAY * Math.pow(2, i);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        console.log(`[MyTime] Retrying ${context} after ${delay}ms delay...`);
+      }
+    }
+  }
+  throw lastError;
+}
+
 export interface TimeStats {
   total: {
     pld: number;
@@ -142,39 +190,51 @@ export function useMyTime() {
       return;
     }
 
+    // Check cache first
+    const now = Date.now();
+    if (
+      vacationStatsCache.data &&
+      now - vacationStatsCache.timestamp < CACHE_DURATION
+    ) {
+      console.log("[MyTime] Using cached vacation stats data");
+      setVacationStats(vacationStatsCache.data);
+      return;
+    }
+
     try {
       console.log(
-        "[MyTime] Fetching vacation statistics for member PIN:",
+        "[MyTime] Fetching fresh vacation statistics for member PIN:",
         member.pin_number,
       );
       setError(null);
 
-      // Get current year's vacation statistics
-      const { data: memberData, error: memberError } = await supabase
-        .from("members")
-        .select("curr_vacation_weeks, curr_vacation_split")
-        .eq("id", member.id)
-        .single();
+      // Batch fetch member data and vacation requests
+      const [memberData, vacationRequestsData] = await retryFetch(
+        async () =>
+          Promise.all([
+            supabase
+              .from("members")
+              .select("curr_vacation_weeks, curr_vacation_split")
+              .eq("id", member.id)
+              .single(),
+            supabase
+              .from("vacation_requests")
+              .select("id")
+              .eq("pin_number", member.pin_number)
+              .eq("status", "approved")
+              .gte("start_date", `${new Date().getFullYear()}-01-01`)
+              .lte("end_date", `${new Date().getFullYear()}-12-31`),
+          ]),
+        "vacation stats data fetch",
+      );
 
-      if (memberError) throw memberError;
+      if (memberData.error) throw memberData.error;
+      if (vacationRequestsData.error) throw vacationRequestsData.error;
 
-      const totalWeeks = memberData?.curr_vacation_weeks || 0;
-      const splitWeeks = memberData?.curr_vacation_split || 0;
+      const totalWeeks = memberData.data?.curr_vacation_weeks || 0;
+      const splitWeeks = memberData.data?.curr_vacation_split || 0;
       const weeksToBid = totalWeeks - splitWeeks;
-
-      // Count approved vacation requests
-      const { data: vacationRequestsData, error: vacationError } =
-        await supabase
-          .from("vacation_requests")
-          .select("id")
-          .eq("pin_number", member.pin_number)
-          .eq("status", "approved")
-          .gte("start_date", `${new Date().getFullYear()}-01-01`)
-          .lte("end_date", `${new Date().getFullYear()}-12-31`);
-
-      if (vacationError) throw vacationError;
-
-      const approvedWeeks = vacationRequestsData?.length || 0;
+      const approvedWeeks = vacationRequestsData.data?.length || 0;
       const remainingWeeks = weeksToBid - approvedWeeks;
 
       const vacStats: VacationStats = {
@@ -184,6 +244,10 @@ export function useMyTime() {
         approvedWeeks,
         remainingWeeks: Math.max(0, remainingWeeks),
       };
+
+      // Update cache
+      vacationStatsCache.data = vacStats;
+      vacationStatsCache.timestamp = now;
 
       console.log("[MyTime] Calculated vacation stats:", vacStats);
       setVacationStats(vacStats);
@@ -210,50 +274,77 @@ export function useMyTime() {
       return;
     }
 
+    // Check cache first
+    const now = Date.now();
+    if (statsCache.data && now - statsCache.timestamp < CACHE_DURATION) {
+      console.log("[MyTime] Using cached stats data");
+      setStats(statsCache.data);
+      return;
+    }
+
     try {
-      // console.log("[MyTime] Fetching stats for member:", member.id);
+      console.log("[MyTime] Fetching fresh stats data");
       setError(null);
 
       const currentYear = new Date().getFullYear();
 
-      // Get member's data including division_id, SDV entitlement, and rolled over PLDs
-      const { data: memberData, error: memberError } = await supabase
-        .from("members")
-        .select(
-          "division_id, sdv_entitlement, pld_rolled_over, company_hire_date",
-        )
-        .eq("id", member.id)
-        .single();
+      // Batch fetch member data and max PLDs
+      const [memberDataResult, maxPldsResult] = await retryFetch(
+        async () =>
+          Promise.all([
+            supabase
+              .from("members")
+              .select(
+                "division_id, sdv_entitlement, pld_rolled_over, company_hire_date",
+              )
+              .eq("id", member.id)
+              .single(),
+            supabase.rpc("update_member_max_plds", { p_member_id: member.id }),
+          ]),
+        "member data and max PLDs fetch",
+      );
 
-      if (memberError) throw memberError;
+      if (memberDataResult.error) throw memberDataResult.error;
+      const memberData = memberDataResult.data;
+      const maxPlds = maxPldsResult.data;
 
-      // console.log("[MyTime] Member data:", memberData);
+      // Batch fetch all requests data
+      const [currentRequests, sixMonthRequests, usedRolledOverPlds] =
+        await retryFetch(
+          async () =>
+            Promise.all([
+              supabase
+                .from("pld_sdv_requests")
+                .select("*")
+                .eq("member_id", member.id)
+                .gte("request_date", `${currentYear}-01-01`)
+                .lte("request_date", `${currentYear}-12-31`),
+              supabase
+                .from("six_month_requests")
+                .select("*")
+                .eq("member_id", member.id)
+                .gte("request_date", `${currentYear}-01-01`)
+                .lte("request_date", `${currentYear}-12-31`),
+              supabase
+                .from("pld_sdv_requests")
+                .select("id")
+                .eq("member_id", member.id)
+                .eq("leave_type", "PLD")
+                .gte("request_date", `${currentYear}-01-01`)
+                .lte("request_date", `${currentYear}-03-31`)
+                .in("status", ["approved", "pending"])
+                .not("paid_in_lieu", "is", true)
+                .eq("is_rollover_pld", true),
+            ]),
+          "requests data fetch",
+        );
 
-      // Get max PLDs from database function
-      const { data: maxPldsResult, error: maxPldsError } = await supabase
-        .rpc("update_member_max_plds", { p_member_id: member.id });
-
-      if (maxPldsError) throw maxPldsError;
-
-      const maxPlds = maxPldsResult;
-
-      // Calculate used rolled over PLDs in Q1
-      const { data: usedRolledOverPlds, error: usedRolledOverError } =
-        await supabase
-          .from("pld_sdv_requests")
-          .select("id")
-          .eq("member_id", member.id)
-          .eq("leave_type", "PLD")
-          .gte("request_date", `${currentYear}-01-01`)
-          .lte("request_date", `${currentYear}-03-31`)
-          .in("status", ["approved", "pending"])
-          .not("paid_in_lieu", "is", true)
-          .eq("is_rollover_pld", true);
-
-      if (usedRolledOverError) throw usedRolledOverError;
+      if (currentRequests.error) throw currentRequests.error;
+      if (sixMonthRequests.error) throw sixMonthRequests.error;
+      if (usedRolledOverPlds.error) throw usedRolledOverPlds.error;
 
       const unusedRolledOverPlds = (memberData.pld_rolled_over || 0) -
-        (usedRolledOverPlds?.length || 0);
+        (usedRolledOverPlds.data?.length || 0);
 
       // Calculate base stats
       const baseStats: TimeStats = {
@@ -287,52 +378,9 @@ export function useMyTime() {
         },
       };
 
-      // Get all regular requests for the member for current year
-      const { data: currentRequests, error: currentRequestsError } =
-        await supabase
-          .from("pld_sdv_requests")
-          .select("*")
-          .eq("member_id", member.id)
-          .gte("request_date", `${currentYear}-01-01`)
-          .lte("request_date", `${currentYear}-12-31`);
-
-      if (currentRequestsError) {
-        console.error(
-          "[MyTime] Error fetching current year requests:",
-          currentRequestsError,
-        );
-        throw currentRequestsError;
-      }
-
-      // Get all six-month requests for the member for current year
-      const { data: sixMonthRequests, error: sixMonthError } = await supabase
-        .from("six_month_requests")
-        .select("*")
-        .eq("member_id", member.id)
-        .gte("request_date", `${currentYear}-01-01`)
-        .lte("request_date", `${currentYear}-12-31`);
-
-      if (sixMonthError) {
-        console.error(
-          "[MyTime] Error fetching six-month requests:",
-          sixMonthError,
-        );
-        throw sixMonthError;
-      }
-
-      // console.log("[MyTime] Current year requests:", currentRequests);
-      // console.log("[MyTime] Six-month requests:", sixMonthRequests);
-
       // Update stats based on current year requests
-      currentRequests?.forEach((request) => {
+      currentRequests.data?.forEach((request) => {
         const type = request.leave_type.toLowerCase() as "pld" | "sdv";
-
-        // console.log("[MyTime] Processing request for stats:", {
-        //   id: request.id,
-        //   type,
-        //   status: request.status,
-        //   paid_in_lieu: request.paid_in_lieu,
-        // });
 
         if (request.paid_in_lieu) {
           if (request.status === "pending") {
@@ -342,25 +390,19 @@ export function useMyTime() {
           }
         } else {
           if (request.status === "pending") {
-            // console.log(`[MyTime] Adding pending ${type} request to stats`);
             baseStats.requested[type]++;
           } else if (request.status === "cancellation_pending") {
-            // console.log(
-            //   `[MyTime] Adding cancellation pending ${type} request to stats`,
-            // );
             baseStats.requested[type]++;
           } else if (request.status === "waitlisted") {
-            // console.log(`[MyTime] Adding waitlisted ${type} request to stats`);
             baseStats.waitlisted[type]++;
           } else if (request.status === "approved") {
-            // console.log(`[MyTime] Adding approved ${type} request to stats`);
             baseStats.approved[type]++;
           }
         }
       });
 
-      // Update stats based on six-month requests - count all unprocessed as pending
-      sixMonthRequests?.forEach((request) => {
+      // Update stats based on six-month requests
+      sixMonthRequests.data?.forEach((request) => {
         const type = request.leave_type.toLowerCase() as "pld" | "sdv";
         if (!request.processed) {
           baseStats.requested[type]++;
@@ -375,10 +417,15 @@ export function useMyTime() {
         baseStats.requested.sdv + baseStats.waitlisted.sdv +
         baseStats.paidInLieu.sdv;
 
-      // console.log("[MyTime] Calculated stats:", baseStats);
+      // Update cache
+      statsCache.data = baseStats;
+      statsCache.timestamp = now;
 
-      // Combine and transform six-month requests into TimeOffRequest format
-      const transformedSixMonthRequests = (sixMonthRequests || []).map((
+      setStats(baseStats);
+      setError(null);
+
+      // Transform and combine requests
+      const transformedSixMonthRequests = (sixMonthRequests.data || []).map((
         request,
       ) => ({
         id: request.id,
@@ -389,9 +436,8 @@ export function useMyTime() {
         is_six_month_request: true,
       }));
 
-      // Combine all requests
       const allRequests: TimeOffRequest[] = [
-        ...(currentRequests || []).map((req) => ({
+        ...(currentRequests.data || []).map((req) => ({
           ...req,
           status: req.status as TimeOffRequest["status"],
           requested_at: req.requested_at ?? "",
@@ -400,9 +446,7 @@ export function useMyTime() {
         ...transformedSixMonthRequests,
       ];
 
-      setStats(baseStats);
       setRequests(allRequests);
-      setError(null);
     } catch (err) {
       console.error("[MyTime] Error in fetchStats:", err);
       setError(
@@ -742,6 +786,10 @@ export function useMyTime() {
           )
         );
 
+        // Invalidate stats cache immediately
+        statsCache.data = null;
+        statsCache.timestamp = 0;
+
         // Call the database function to handle cancellation logic
         const { data, error } = await supabase.rpc("cancel_leave_request", {
           p_request_id: requestId,
@@ -760,7 +808,11 @@ export function useMyTime() {
 
         // If immediate cancellation (data is true), update stats
         if (data) {
-          await fetchStats();
+          // Force refresh stats immediately
+          await retryFetch(
+            () => fetchStats(),
+            "stats refresh after cancellation",
+          );
         }
 
         // Calendar Store Interaction Update
@@ -778,7 +830,7 @@ export function useMyTime() {
 
           calendarStore.setRequests({
             ...calendarStore.requests,
-            [requestToCancel.request_date]: updatedRequests as any, // Type assertion needed due to complex types
+            [requestToCancel.request_date]: updatedRequests as any,
           });
           console.log(
             `[MyTime] Updated calendarStore for date: ${requestToCancel.request_date} with status: ${newStatus}`,
@@ -818,6 +870,10 @@ export function useMyTime() {
           )
         );
 
+        // Invalidate stats cache immediately
+        statsCache.data = null;
+        statsCache.timestamp = 0;
+
         // Delete the request
         const { error: deleteError } = await supabase
           .from("six_month_requests")
@@ -831,8 +887,11 @@ export function useMyTime() {
           throw deleteError;
         }
 
-        // Update stats since a request was removed
-        await fetchStats();
+        // Force refresh stats immediately
+        await retryFetch(
+          () => fetchStats(),
+          "stats refresh after six-month cancellation",
+        );
 
         return true;
       } catch (error) {
@@ -845,7 +904,6 @@ export function useMyTime() {
 
   const refreshData = useCallback(async (force = false) => {
     // Use a local variable to track whether to complete initialization
-    // even if some data fetches fail
     let shouldCompleteInitialization = !isInitialized;
 
     // Guard clauses
@@ -875,41 +933,50 @@ export function useMyTime() {
       setIsRefreshing(true);
       setError(null);
 
-      // Use Promise.allSettled to continue even if some promises reject
-      const results = await Promise.allSettled([
-        fetchStats().catch((err) => {
-          console.error("[MyTime] Error in fetchStats:", err);
-          return null;
-        }),
-        fetchRequests().catch((err) => {
-          console.error("[MyTime] Error in fetchRequests:", err);
-          return null;
-        }),
-        fetchVacationRequests().catch((err) => {
-          console.error("[MyTime] Error in fetchVacationRequests:", err);
-          return null;
-        }),
-        fetchVacationStats().catch((err) => {
-          console.error("[MyTime] Error in fetchVacationStats:", err);
-          return null;
-        }),
-      ]);
+      // Clear caches if force refresh
+      if (force) {
+        console.log("[MyTime] Force refresh - clearing caches");
+        statsCache.data = null;
+        statsCache.timestamp = 0;
+        vacationStatsCache.data = null;
+        vacationStatsCache.timestamp = 0;
+      }
+
+      // Prepare fetch operations based on member state
+      const fetchOperations = [
+        retryFetch(() => fetchStats(), "stats refresh"),
+        retryFetch(() => fetchRequests(), "requests refresh"),
+      ];
+
+      // Only add vacation-related fetches if member has a PIN
+      if (member.pin_number !== null) {
+        fetchOperations.push(
+          retryFetch(
+            () => fetchVacationRequests(),
+            "vacation requests refresh",
+          ),
+          retryFetch(() => fetchVacationStats(), "vacation stats refresh"),
+        );
+      }
+
+      // Execute all fetches concurrently
+      const results = await Promise.allSettled(fetchOperations);
+
+      // Log any rejected promises
+      results.forEach((result, index) => {
+        if (result.status === "rejected") {
+          console.error(
+            `[MyTime] Operation ${index} failed:`,
+            result.reason,
+          );
+        }
+      });
 
       // Check if all promises were rejected
       const allFailed = results.every((result) => result.status === "rejected");
       if (allFailed) {
         throw new Error("Failed to fetch any data");
       }
-
-      // Log any rejected promises
-      results.forEach((result, index) => {
-        if (result.status === "rejected") {
-          console.error(
-            `[MyTime] Promise at index ${index} rejected:`,
-            result.reason,
-          );
-        }
-      });
 
       // Update state even if only some data was fetched
       if (shouldCompleteInitialization) {
@@ -937,6 +1004,7 @@ export function useMyTime() {
     }
   }, [
     member?.id,
+    member?.pin_number,
     fetchStats,
     fetchRequests,
     fetchVacationRequests,
@@ -1244,6 +1312,14 @@ export function useMyTime() {
     }
   };
 
+  // Add this function near the top with other cache-related code
+  function invalidateCache() {
+    statsCache.data = null;
+    statsCache.timestamp = 0;
+    vacationStatsCache.data = null;
+    vacationStatsCache.timestamp = 0;
+  }
+
   return {
     stats,
     vacationStats,
@@ -1258,5 +1334,6 @@ export function useMyTime() {
     cancelRequest,
     cancelSixMonthRequest,
     syncStatus,
+    invalidateCache,
   };
 }

@@ -71,7 +71,7 @@ function RequestDialog({
   onAdjustmentComplete,
 }: RequestDialogProps) {
   const theme = (useColorScheme() ?? "light") as ColorScheme;
-  const { stats, initialize: refreshMyTimeStats, cancelSixMonthRequest } = useMyTime();
+  const { stats, initialize: refreshMyTimeStats, cancelSixMonthRequest, invalidateCache } = useMyTime();
   const { member } = useUserStore();
   const userRole = useUserStore((state) => state.userRole);
   const checkSixMonthRequest = useCalendarStore((state) => state.checkSixMonthRequest);
@@ -638,6 +638,9 @@ function RequestDialog({
         const success = await cancelRequest(userRequest.id, selectedDate);
 
         if (success) {
+          // Force refresh stats immediately after successful cancellation
+          await refreshMyTimeStats(true);
+
           // Show different messages based on the request status
           if (userRequest.status === "waitlisted") {
             Toast.show({
@@ -672,6 +675,9 @@ function RequestDialog({
 
         const success = await cancelSixMonthRequest(sixMonthRequestId);
         if (success) {
+          // Force refresh stats immediately after successful cancellation
+          await refreshMyTimeStats(true);
+
           Toast.show({ type: "success", text1: "Six-month request cancelled" });
           setHasSixMonthRequest(false); // Update local state
           setSixMonthRequestId(null);
@@ -694,7 +700,16 @@ function RequestDialog({
       setIsSubmitting(false);
       setShowCancelModal(false);
     }
-  }, [cancelType, userRequest, selectedDate, cancelRequest, onClose, sixMonthRequestId, cancelSixMonthRequest]);
+  }, [
+    cancelType,
+    userRequest,
+    selectedDate,
+    cancelRequest,
+    onClose,
+    sixMonthRequestId,
+    cancelSixMonthRequest,
+    refreshMyTimeStats,
+  ]);
 
   // For six month dates, don't count other users' requests against the allotment
   // But we do want to show the total count of six-month requests
@@ -1002,12 +1017,71 @@ function RequestDialog({
     }
   };
 
+  // Add new state for dialog loading
+  const [isDialogLoading, setIsDialogLoading] = useState(false);
+
+  // Add a ref to track initial load
+  const initialLoadCompletedRef = useRef(false);
+
+  // Modify the effect that handles dialog visibility
+  useEffect(() => {
+    if (isVisible) {
+      const loadFreshStats = async () => {
+        // Only show loading and force refresh on initial open
+        if (!initialLoadCompletedRef.current) {
+          setIsDialogLoading(true);
+          try {
+            console.log("[RequestDialog] Dialog opened, performing initial stats refresh");
+            invalidateCache(); // Clear any cached stats
+            await refreshMyTimeStats(true); // Force fresh stats
+            initialLoadCompletedRef.current = true;
+          } catch (error) {
+            console.error("[RequestDialog] Error refreshing stats:", error);
+            Toast.show({
+              type: "error",
+              text1: "Error",
+              text2: "Failed to load current statistics",
+              position: "bottom",
+            });
+          } finally {
+            setIsDialogLoading(false);
+          }
+        } else {
+          console.log("[RequestDialog] Dialog reopened, using existing stats");
+        }
+      };
+
+      loadFreshStats();
+    } else {
+      // Reset the initial load flag when dialog closes
+      initialLoadCompletedRef.current = false;
+    }
+  }, [isVisible, refreshMyTimeStats, invalidateCache]);
+
+  // Add effect to handle realtime updates
+  useEffect(() => {
+    if (isVisible && !isDialogLoading) {
+      // Update stats without showing loading state
+      const updateStats = async () => {
+        try {
+          await refreshMyTimeStats(false); // Don't force refresh, use cache if valid
+        } catch (error) {
+          console.error("[RequestDialog] Error updating stats from realtime:", error);
+        }
+      };
+
+      updateStats();
+    }
+  }, [isVisible, localRequests, isDialogLoading, refreshMyTimeStats]);
+
+  // Add loading indicator to the dialog content
   return (
     <Modal visible={isVisible} transparent animationType="fade" onRequestClose={() => setTimeout(() => onClose(), 100)}>
       <View style={dialogStyles.modalOverlay}>
         <View style={dialogStyles.modalContent}>
           <ThemedText style={dialogStyles.modalTitle}>Request Day Off - {selectedDate}</ThemedText>
 
+          {/* Main content is always rendered */}
           <View style={dialogStyles.allotmentContainer}>
             <ThemedText style={dialogStyles.allotmentInfo}>
               {isSixMonthRequest
@@ -1018,6 +1092,7 @@ function RequestDialog({
               <ThemedText style={dialogStyles.waitlistInfo}>Waitlist: {waitlistCount}</ThemedText>
             )}
           </View>
+
           {isFullMessage && (
             <View style={dialogStyles.messageContainer}>
               <ThemedText
@@ -1443,6 +1518,16 @@ function RequestDialog({
               >
                 <ThemedText style={dialogStyles.modalButtonText}>Adjust Allocation</ThemedText>
               </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Loading overlay */}
+          {isDialogLoading && (
+            <View style={dialogStyles.loadingOverlay}>
+              <View style={dialogStyles.loadingContent}>
+                <ActivityIndicator size="large" color={Colors[theme].tint} />
+                <ThemedText style={dialogStyles.loadingText}>Loading current statistics...</ThemedText>
+              </View>
             </View>
           )}
         </View>
@@ -1964,6 +2049,9 @@ export default function CalendarScreen() {
       }
 
       if (result) {
+        // Force refresh stats immediately after successful request
+        await refreshMyTimeStats(true);
+
         Toast.show({
           type: "success",
           text1: "Success",
@@ -2556,4 +2644,35 @@ const dialogStyles = StyleSheet.create({
     textAlign: "center",
     marginBottom: 16,
   } as TextStyle,
+  loadingContainer: {
+    padding: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 200,
+  } as ViewStyle,
+  loadingText: {
+    fontSize: 16,
+    color: Colors.dark.text,
+    marginLeft: 8,
+  } as TextStyle,
+  loadingOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0, 0, 0, 0.7)",
+    justifyContent: "center",
+    alignItems: "center",
+    borderRadius: 10, // Match the modal content border radius
+  } as ViewStyle,
+  loadingContent: {
+    backgroundColor: Colors.dark.card,
+    padding: 20,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 12,
+  } as ViewStyle,
 });
