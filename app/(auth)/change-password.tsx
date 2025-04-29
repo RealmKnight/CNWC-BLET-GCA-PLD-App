@@ -1,46 +1,12 @@
-import React, { useState, useEffect, useRef } from "react";
-import { StyleSheet, TextInput, TouchableOpacity, Image, Platform, Alert } from "react-native";
+import React, { useState, useEffect } from "react";
+import { StyleSheet, TextInput, TouchableOpacity, Image, Platform } from "react-native";
 import { Link, useLocalSearchParams, router } from "expo-router";
 import { supabase } from "@/utils/supabase";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { Colors } from "@/constants/Colors";
-import * as Linking from "expo-linking";
 import { useAuth } from "@/hooks/useAuth";
 import { Redirect } from "expo-router";
-
-// Extend Window interface to include our custom properties
-declare global {
-  interface Window {
-    __passwordResetProcessed?: boolean;
-    __passwordResetHash?: string;
-    __passwordResetSearch?: string;
-  }
-}
-
-// Helper function to properly verify OTP with backward compatibility
-async function verifyRecoveryToken(token: string) {
-  try {
-    // The Supabase SDK type requires an email for recovery tokens
-    // When verifying from a URL, we need to use a different approach
-    // First try using blank email (internal implementation might not require it)
-    const { error } = await supabase.auth.verifyOtp({
-      type: "recovery",
-      token,
-      email: "", // Provide empty email to satisfy type check
-    });
-
-    if (error) {
-      console.error("[ChangePassword] Error verifying token:", error);
-      return { error };
-    }
-
-    return { error: null };
-  } catch (e) {
-    console.error("[ChangePassword] Error in verifyRecoveryToken:", e);
-    return { error: new Error("Failed to verify recovery token") };
-  }
-}
 
 export default function ChangePasswordScreen() {
   const [password, setPassword] = useState("");
@@ -48,174 +14,44 @@ export default function ChangePasswordScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSuccess, setIsSuccess] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const processingRef = useRef(false);
   const { session } = useAuth();
-  const params = useLocalSearchParams();
   const [redirectToSignIn, setRedirectToSignIn] = useState(false);
 
-  // Handle password reset session authentication
+  // Check session and loading state
+  const [sessionChecked, setSessionChecked] = useState(false);
+  const params = useLocalSearchParams();
+
+  // Check if we have a session (could be from password reset link)
   useEffect(() => {
-    const handleAuth = async () => {
-      // Prevent multiple processing attempts
-      if (processingRef.current) return;
-      processingRef.current = true;
+    async function checkSession() {
+      // Get current session
+      const { data } = await supabase.auth.getSession();
+      setSessionChecked(true);
 
-      try {
-        setIsProcessing(true);
-        console.log("[ChangePassword] Starting auth process");
-
-        // Check if we already have a session
-        const { data: sessionData } = await supabase.auth.getSession();
-        if (sessionData?.session) {
-          console.log("[ChangePassword] Already have a valid session");
-          setIsProcessing(false);
-          return;
-        }
-
-        if (Platform.OS === "web") {
-          // Web platform: Check stored hash/search and URL parameters
-
-          // 1. Try access/refresh tokens in hash (common for Supabase email links)
-          let accessToken, refreshToken, type, code;
-
-          // Check stored hash from initial redirect
-          const hashStr = window.__passwordResetHash || window.location.hash;
-
-          if (hashStr && hashStr.includes("access_token=")) {
-            console.log("[ChangePassword] Found tokens in hash");
-
-            // Parse tokens from hash
-            const hashContent = hashStr.substring(1); // Remove leading #
-            const hashParams = new URLSearchParams(hashContent);
-
-            accessToken = hashParams.get("access_token");
-            refreshToken = hashParams.get("refresh_token");
-            type = hashParams.get("type");
-
-            if (accessToken && refreshToken) {
-              console.log("[ChangePassword] Setting session with tokens from hash");
-              const { error: setSessionError } = await supabase.auth.setSession({
-                access_token: accessToken,
-                refresh_token: refreshToken,
-              });
-
-              if (setSessionError) {
-                console.error("[ChangePassword] Error setting session:", setSessionError);
-                setError("Your password reset link is invalid or has expired. Please request a new one.");
-              }
-              setIsProcessing(false);
-              return;
-            }
-          }
-
-          // 2. Try recovery code in query parameters
-          const searchStr = window.__passwordResetSearch || window.location.search;
-
-          if (searchStr && searchStr.includes("code=")) {
-            console.log("[ChangePassword] Found recovery code in search parameters");
-            const searchParams = new URLSearchParams(searchStr);
-            code = searchParams.get("code");
-
-            if (code) {
-              console.log("[ChangePassword] Verifying recovery code");
-              const { error: verifyError } = await verifyRecoveryToken(code);
-
-              if (verifyError) {
-                console.error("[ChangePassword] Error verifying recovery code:", verifyError);
-                setError("Your password reset link is invalid or has expired. Please request a new one.");
-              }
-              setIsProcessing(false);
-              return;
-            }
-          }
-
-          // 3. Check URL parameters from expo-router
-          if (params.code) {
-            console.log("[ChangePassword] Found code in expo-router params");
-            const { error: verifyError } = await verifyRecoveryToken(params.code as string);
-
-            if (verifyError) {
-              console.error("[ChangePassword] Error verifying recovery code from params:", verifyError);
+      if (!data.session) {
+        console.log("[ChangePassword] No active session found");
+        // If we have a code parameter, this might be a recovery link
+        // Supabase should automatically exchange the code for a session
+        if (params.code) {
+          console.log("[ChangePassword] Found code parameter, waiting for session");
+          // Wait a moment for Supabase to process the code
+          setTimeout(async () => {
+            const { data: refreshedData } = await supabase.auth.getSession();
+            if (!refreshedData.session) {
+              console.log("[ChangePassword] Still no session after waiting");
               setError("Your password reset link is invalid or has expired. Please request a new one.");
             }
-            setIsProcessing(false);
-            return;
-          }
-
-          // No valid auth parameters found
-          console.error("[ChangePassword] No valid authentication parameters found");
-          setError("Please use a valid password reset link or sign in to change your password.");
+          }, 1000);
         } else {
-          // Mobile platform: Handle deep linking with Linking API
-
-          // Check for an initial URL (app opened via a link)
-          const initialURL = await Linking.getInitialURL();
-          if (initialURL) {
-            console.log("[ChangePassword] Processing initial deep link:", initialURL);
-
-            // Parse the URL to extract parameters
-            const url = new URL(initialURL);
-            const code = url.searchParams.get("code");
-            const accessToken = url.searchParams.get("access_token");
-            const refreshToken = url.searchParams.get("refresh_token");
-
-            if (code) {
-              console.log("[ChangePassword] Found recovery code in deep link");
-              const { error: verifyError } = await verifyRecoveryToken(code);
-
-              if (verifyError) {
-                console.error("[ChangePassword] Error verifying recovery code:", verifyError);
-                setError("Your password reset link is invalid or has expired. Please request a new one.");
-              }
-            } else if (accessToken && refreshToken) {
-              console.log("[ChangePassword] Found tokens in deep link");
-              const { error: setSessionError } = await supabase.auth.setSession({
-                access_token: accessToken,
-                refresh_token: refreshToken,
-              });
-
-              if (setSessionError) {
-                console.error("[ChangePassword] Error setting session:", setSessionError);
-                setError("Your password reset link is invalid or has expired. Please request a new one.");
-              }
-            }
-          } else if (params.code) {
-            // Use code from expo-router params
-            console.log("[ChangePassword] Using code from expo-router params");
-            const { error: verifyError } = await verifyRecoveryToken(params.code as string);
-
-            if (verifyError) {
-              console.error("[ChangePassword] Error verifying recovery code:", verifyError);
-              setError("Your password reset link is invalid or has expired. Please request a new one.");
-            }
-          } else {
-            console.error("[ChangePassword] No valid auth parameters for mobile");
-            setError("Please use a valid password reset link or sign in to change your password.");
-          }
+          setError("Please use a valid password reset link or sign in to change your password.");
         }
-      } catch (error) {
-        console.error("[ChangePassword] Unexpected error in auth process:", error);
-        setError("An unexpected error occurred. Please try again or request a new reset link.");
-      } finally {
-        setIsProcessing(false);
+      } else {
+        console.log("[ChangePassword] Active session found, ready to change password");
       }
-    };
-
-    handleAuth();
-
-    // Set up deep link listener for mobile
-    if (Platform.OS !== "web") {
-      const subscription = Linking.addEventListener("url", ({ url }) => {
-        console.log("[ChangePassword] Received deep link:", url);
-        // Process the URL and extract parameters if needed
-      });
-
-      return () => {
-        subscription.remove();
-      };
     }
-  }, [params]);
+
+    checkSession();
+  }, [params.code]);
 
   const handleChangePassword = async () => {
     try {
@@ -264,7 +100,6 @@ export default function ChangePasswordScreen() {
   };
 
   const handleReturnToSignIn = () => {
-    // Set redirect state to trigger the Redirect component
     setRedirectToSignIn(true);
   };
 
@@ -283,9 +118,9 @@ export default function ChangePasswordScreen() {
         </ThemedText>
       </ThemedView>
 
-      {isProcessing ? (
+      {!sessionChecked ? (
         <ThemedView style={styles.form}>
-          <ThemedText>Processing your request...</ThemedText>
+          <ThemedText>Checking your session...</ThemedText>
         </ThemedView>
       ) : error ? (
         <ThemedView style={styles.form}>
