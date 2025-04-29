@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   View,
   Modal,
@@ -8,6 +8,7 @@ import {
   ScrollView,
   useWindowDimensions,
   Switch,
+  ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import Toast from "react-native-toast-message"; // Import Toast
@@ -17,17 +18,16 @@ import { ThemedText } from "@/components/ThemedText";
 import { ThemedTextInput } from "@/components/ThemedTextInput";
 import { Button } from "@/components/ui/Button"; // Assuming Button exists
 import { useUserStore } from "@/store/userStore";
-import { sendAdminMessage } from "@/utils/notificationService"; // Import the service function
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { useEffectiveRoles } from "@/hooks/useEffectiveRoles";
 import { useAdminNotificationStore } from "@/store/adminNotificationStore"; // Import the store hook
+import { supabase } from "@/utils/supabase"; // Import supabase client
 
 // Define available admin roles users can contact
 // This list determines who non-admin users can initiate contact with.
 // For admins using this modal, they can potentially see more roles.
-// TODO: Potentially pass available roles as a prop if they differ contextually.
-const CONTACTABLE_ADMIN_ROLES = [
+const ALL_CONTACTABLE_ADMIN_ROLES = [
   { label: "Division Admin", value: "division_admin" },
   { label: "Union Support", value: "union_admin" },
   { label: "Application Support", value: "application_admin" },
@@ -36,6 +36,11 @@ const CONTACTABLE_ADMIN_ROLES = [
 
 // Roles allowed to require acknowledgment
 const ACK_REQUIRING_ROLES = ["application_admin", "union_admin", "division_admin", "company_admin"];
+
+interface DivisionInfo {
+  id: number;
+  name: string;
+}
 
 interface ContactAdminModalProps {
   visible: boolean;
@@ -48,7 +53,22 @@ export function ContactAdminModal({ visible, onClose }: ContactAdminModalProps) 
   const currentUser = useUserStore((state) => state.member); // Get basic user info
   const effectiveRoles = useEffectiveRoles() ?? [];
   const { height: windowHeight } = useWindowDimensions(); // Get window height
-  const { addMessage } = useAdminNotificationStore(); // Destructure addMessage action
+  // const { addMessage } = useAdminNotificationStore(); // REMOVE: Rely on realtime refetch
+
+  // --- Determine Contactable Roles Dynamically ---
+  const contactableRoles = useMemo(() => {
+    const isCurrentUserCompanyAdmin = effectiveRoles.includes("company_admin" as any);
+    const isCurrentUserBasicUser = currentUser?.role === "user";
+
+    if (isCurrentUserCompanyAdmin || isCurrentUserBasicUser) {
+      // Filter out 'Company Admin' if the current user is company admin or basic user
+      return ALL_CONTACTABLE_ADMIN_ROLES.filter((role) => role.value !== "company_admin");
+    } else {
+      // Other admins can see all roles
+      return ALL_CONTACTABLE_ADMIN_ROLES;
+    }
+  }, [effectiveRoles, currentUser?.role]);
+  // --- End Dynamic Role Filtering ---
 
   const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
   const [subject, setSubject] = useState("");
@@ -57,8 +77,49 @@ export function ContactAdminModal({ visible, onClose }: ContactAdminModalProps) 
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // State for division selection
+  const [availableDivisions, setAvailableDivisions] = useState<DivisionInfo[]>([]);
+  const [targetDivisionIds, setTargetDivisionIds] = useState<number[]>([]);
+  const [selectAllDivisions, setSelectAllDivisions] = useState<boolean>(true); // Default to all
+  const [divisionsLoading, setDivisionsLoading] = useState<boolean>(false);
+  const [divisionsError, setDivisionsError] = useState<string | null>(null);
+
   // Check if the current user is authorized to require acknowledgment
   const canRequireAcknowledgement = effectiveRoles.some((role) => ACK_REQUIRING_ROLES.includes(role));
+  const showDivisionSelector = selectedRoles.includes("division_admin");
+
+  // Effect to fetch divisions
+  useEffect(() => {
+    if (showDivisionSelector && availableDivisions.length === 0) {
+      async function fetchDivisions() {
+        setDivisionsLoading(true);
+        setDivisionsError(null);
+        try {
+          const { data, error } = await supabase
+            .from("divisions")
+            .select("id, name")
+            .order("name", { ascending: true });
+
+          if (error) throw error;
+          setAvailableDivisions(data || []);
+        } catch (err: any) {
+          console.error("Error fetching divisions:", err);
+          setDivisionsError("Could not load divisions.");
+        } finally {
+          setDivisionsLoading(false);
+        }
+      }
+      fetchDivisions();
+    }
+  }, [showDivisionSelector]); // Fetch when selector becomes visible and divisions aren't loaded
+
+  // Reset division selection when "Division Admin" role is deselected
+  useEffect(() => {
+    if (!showDivisionSelector) {
+      setTargetDivisionIds([]);
+      setSelectAllDivisions(true);
+    }
+  }, [showDivisionSelector]);
 
   const handleSend = async () => {
     setError(null); // Clear previous errors
@@ -70,6 +131,14 @@ export function ContactAdminModal({ visible, onClose }: ContactAdminModalProps) 
     if (selectedRoles.length === 0) {
       setError("Please select at least one recipient role.");
       Toast.show({ type: "error", text1: "Input Error", text2: "Please select recipient(s)." });
+      return;
+    }
+    if (showDivisionSelector && !selectAllDivisions && targetDivisionIds.length === 0) {
+      Toast.show({
+        type: "error",
+        text1: "Input Error",
+        text2: "Please select specific division(s) or 'All Divisions'.",
+      });
       return;
     }
     if (!subject.trim()) {
@@ -85,32 +154,42 @@ export function ContactAdminModal({ visible, onClose }: ContactAdminModalProps) 
 
     setIsSending(true);
 
+    // Use empty array for 'all divisions' when targeting division_admin
+    const rpcDivisionIds = showDivisionSelector && selectAllDivisions ? [] : targetDivisionIds;
+
     try {
-      // Call sendAdminMessage - sender role is determined internally by the service
-      const result = await sendAdminMessage(
-        currentUser.id,
-        selectedRoles,
-        subject,
-        message,
-        requiresAcknowledgement // Pass the flag state
-      );
+      // Call the RPC function
+      const { data: result, error: rpcError } = await supabase.rpc("create_admin_message", {
+        p_recipient_roles: selectedRoles,
+        p_subject: subject.trim(),
+        p_message: message.trim(),
+        p_requires_acknowledgment: requiresAcknowledgement,
+        // Pass the number[] directly as the RPC now expects integer[]
+        p_recipient_division_ids: rpcDivisionIds,
+      });
 
-      if (result) {
-        console.log("Admin message sent successfully:", result.id);
+      if (rpcError) {
+        console.error("RPC Error sending admin message:", rpcError);
+        throw new Error(rpcError.message || "Failed to send message via RPC.");
+      }
+
+      // The RPC returns the inserted row(s) in data
+      if (result && result.length > 0) {
+        console.log("Admin message sent successfully via RPC:", result[0].id);
         Toast.show({ type: "success", text1: "Success", text2: "Message sent successfully!" });
-
-        // Optimistic Update: Add the new message to the store
-        addMessage(result);
 
         // Reset form and close modal on success
         setSelectedRoles([]);
         setSubject("");
         setMessage("");
         setRequiresAcknowledgement(false); // Reset flag on success
+        setTargetDivisionIds([]); // Reset divisions
+        setSelectAllDivisions(true); // Reset to all
         onClose();
       } else {
-        // Throw error if service returns null without throwing
-        throw new Error("Failed to send message. Service returned null.");
+        // This case might indicate an issue even without an explicit error
+        console.warn("RPC call succeeded but returned no data.");
+        throw new Error("Failed to send message. RPC returned no confirmation.");
       }
     } catch (err: any) {
       console.error("Error sending admin message:", err);
@@ -122,12 +201,29 @@ export function ContactAdminModal({ visible, onClose }: ContactAdminModalProps) 
     }
   };
 
+  // Toggle specific division selection
+  const handleDivisionToggle = (divisionId: number) => {
+    setTargetDivisionIds((prev) =>
+      prev.includes(divisionId) ? prev.filter((id) => id !== divisionId) : [...prev, divisionId]
+    );
+    setSelectAllDivisions(false); // Selecting a specific one disables "All"
+  };
+
+  // Toggle "All Divisions"
+  const handleSelectAllToggle = () => {
+    const nextValue = !selectAllDivisions;
+    setSelectAllDivisions(nextValue);
+    if (nextValue) {
+      setTargetDivisionIds([]); // Clear specific selections if "All" is chosen
+    }
+  };
+
   // Renders checkboxes for selecting recipient admin roles
   const renderRoleSelector = () => {
     return (
       <View style={styles.roleSelectorContainer}>
         <ThemedText style={styles.label}>To:</ThemedText>
-        {CONTACTABLE_ADMIN_ROLES.map((role) => (
+        {contactableRoles.map((role) => (
           <Pressable
             key={role.value}
             style={styles.checkboxContainer}
@@ -152,6 +248,60 @@ export function ContactAdminModal({ visible, onClose }: ContactAdminModalProps) 
     );
   };
 
+  // Renders the division multi-selector
+  const renderDivisionSelector = () => {
+    if (!showDivisionSelector) return null;
+
+    return (
+      <View style={styles.divisionSelectorContainer}>
+        <ThemedText style={styles.label}>Target Division(s):</ThemedText>
+        {divisionsLoading ? (
+          <ActivityIndicator color={colors.tint} style={{ marginVertical: 10 }} />
+        ) : divisionsError ? (
+          <ThemedText style={styles.errorText}>{divisionsError}</ThemedText>
+        ) : (
+          <>
+            {/* "All Divisions" Checkbox */}
+            <Pressable
+              style={styles.checkboxContainer}
+              onPress={handleSelectAllToggle}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: selectAllDivisions }}
+              accessibilityLabel="All Divisions"
+            >
+              <Ionicons name={selectAllDivisions ? "checkbox" : "square-outline"} size={24} color={colors.tint} />
+              <ThemedText style={[styles.checkboxLabel, selectAllDivisions && styles.boldLabel]}>
+                All Divisions
+              </ThemedText>
+            </Pressable>
+
+            {/* Individual Division Checkboxes */}
+            {availableDivisions.map((division) => (
+              <Pressable
+                key={division.id}
+                style={styles.checkboxContainer}
+                onPress={() => handleDivisionToggle(division.id)}
+                disabled={selectAllDivisions} // Disable if "All" is checked
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: targetDivisionIds.includes(division.id) }}
+                accessibilityLabel={division.name}
+              >
+                <Ionicons
+                  name={targetDivisionIds.includes(division.id) ? "checkbox" : "square-outline"}
+                  size={24}
+                  color={selectAllDivisions ? colors.icon : colors.tint} // Dim if disabled
+                />
+                <ThemedText style={[styles.checkboxLabel, selectAllDivisions && styles.disabledLabel]}>
+                  {division.name}
+                </ThemedText>
+              </Pressable>
+            ))}
+          </>
+        )}
+      </View>
+    );
+  };
+
   return (
     <Modal animationType="slide" transparent={true} visible={visible} onRequestClose={onClose}>
       <View style={styles.centeredView}>
@@ -169,6 +319,7 @@ export function ContactAdminModal({ visible, onClose }: ContactAdminModalProps) 
             keyboardShouldPersistTaps="handled"
           >
             {renderRoleSelector()}
+            {renderDivisionSelector()}
 
             {/* Conditionally render the Acknowledgment Toggle */}
             {canRequireAcknowledgement && (
@@ -347,5 +498,19 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     marginRight: 10, // Space between label and switch
+  },
+  divisionSelectorContainer: {
+    marginTop: 15,
+    paddingTop: 15,
+    paddingBottom: 5, // Reduce padding below last item
+    borderTopWidth: 1,
+    borderTopColor: Colors.light.border, // Use theme color
+    backgroundColor: "transparent",
+  },
+  boldLabel: {
+    fontWeight: "bold",
+  },
+  disabledLabel: {
+    color: Colors.light.icon, // Use theme disabled color
   },
 });

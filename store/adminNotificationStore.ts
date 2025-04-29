@@ -1,240 +1,481 @@
 import { create } from "zustand";
 import { supabase } from "@/utils/supabase";
 import type { AdminMessage } from "@/types/adminMessages";
-import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
+import type {
+    RealtimeChannel,
+    RealtimePostgresChangesPayload,
+} from "@supabase/supabase-js";
+import type { UserRole } from "@/types/auth"; // Import UserRole
+// TODO: Create this service if needed, or remove import
+// import { fetchDivisionIdByName, fetchDivisionNameById } from "@/utils/divisionService";
 // Import service functions we'll call
-import { replyToAdminMessage } from "@/utils/notificationService";
-// Potentially import userStore if needed to get user roles client-side
-// import { useUserStore } from "@/store/userStore";
+// Assuming replyToAdminMessage exists and is correctly typed
+// import { replyToAdminMessage } from "@/utils/notificationService";
 
-// Define structure for a grouped thread
-// export interface AdminMessageThread {
-//     parent: AdminMessage;
-//     replies: AdminMessage[];
-// }
-// ^ Keeping grouping logic outside the store state for now
+// Interface for Read Status (can be moved to types if needed)
+interface ReadStatus {
+    message_id: string;
+    user_id: string;
+    read_at: string;
+}
 
 interface AdminNotificationStore {
-    messages: AdminMessage[]; // Flat list of all messages
+    messages: AdminMessage[];
+    readStatusMap: Record<string, boolean>; // Map messageId to read status (true if read)
     unreadCount: number;
     isLoading: boolean;
     error: string | null;
     isInitialized: boolean;
-    setMessages: (messages: AdminMessage[]) => void;
-    addMessage: (message: AdminMessage) => void;
-    fetchMessages: (userId: string) => Promise<void>;
-    markAsRead: (messageId: string, userId: string) => Promise<void>;
-    acknowledgeMessage: (messageId: string, userId: string) => Promise<void>;
-    // Removed archiveMessage, replaced by archiveThread
-    // archiveMessage: (messageId: string) => Promise<void>;
-    subscribeToAdminMessages: (userId: string) => () => void;
-    // Selector function signature (implementation remains the same)
-    getGroupedThreads: () => {
-        parent: AdminMessage;
-        replies: AdminMessage[];
-    }[];
+    viewingDivisionId: number | null; // Track the currently viewed division ID
+    realtimeChannel: RealtimeChannel | null;
+    effectiveRoles: UserRole[]; // <-- Add effective roles
 
-    // --- NEW ACTIONS ---
-    /** Sends a reply as the current user (assumed admin) to a thread */
+    // Internal fetch/set helper
+    _fetchAndSetMessages: (
+        userId: string,
+        divisionFilterId: number | null,
+    ) => Promise<void>;
+    // Initialization action
+    initializeAdminNotifications: (
+        userId: string,
+        userRoles: UserRole[],
+        assignedDivisionId: number | null,
+        isCompanyAdmin: boolean,
+    ) => () => void;
+    // Action to change viewed division
+    setViewDivision: (divisionId: number | null) => Promise<void>;
+    // Action to mark as read (simplified signature)
+    markMessageAsRead: (messageId: string) => Promise<void>;
+    // Cleanup action
+    cleanupAdminNotifications: () => void;
+
+    // Old actions might be removed or adapted if no longer used directly
+    // addMessage: (message: AdminMessage) => void; // Replaced by realtime refetch
+    acknowledgeMessage: (messageId: string, userId: string) => Promise<void>; // Keep for now
     replyAsAdmin: (
         parentMessageId: string,
-        senderUserId: string,
         message: string,
-    ) => Promise<AdminMessage | null>;
-    /** Archives all messages within a thread */
-    archiveThread: (threadId: string) => Promise<void>;
-    /** Marks the latest message in a thread as unread for the specified user */
-    markThreadAsUnread: (threadId: string, userId: string) => Promise<void>;
+    ) => Promise<AdminMessage | null>; // Keep for now
+    archiveThread: (threadId: string) => Promise<void>; // Keep for now
+    markThreadAsUnread: (threadId: string) => Promise<void>; // Needs RPC/adjustment
 }
 
 // Helper to get root ID
 const getRootMessageId = (msg: AdminMessage): string =>
     msg.parent_message_id || msg.id;
 
-// Basic store structure - function implementations will be added next
 const useAdminNotificationStore = create<AdminNotificationStore>((
     set,
     get,
 ) => ({
     messages: [],
-    // Removed threads Map initialization
+    readStatusMap: {}, // Initialize empty map
     unreadCount: 0,
     isLoading: false,
     error: null,
     isInitialized: false,
+    viewingDivisionId: null,
+    realtimeChannel: null,
+    effectiveRoles: [], // <-- Initialize roles state
 
-    setMessages: (messages) => {
-        const unreadCount = messages.filter((msg) => !msg.is_read).length;
-        // Sort messages once here to ensure consistent order for threading
-        const sortedMessages = [...messages].sort((a, b) =>
-            new Date(a.created_at ?? 0).getTime() -
-            new Date(b.created_at ?? 0).getTime()
+    // Internal Helper: Fetches messages and unread count based on filters
+    _fetchAndSetMessages: async (userId, divisionFilterId) => {
+        // Get effective roles from state
+        const effectiveRoles = get().effectiveRoles;
+        console.log(
+            `[_fetchAndSetMessages] Fetching for user ${userId}, roles: [${
+                effectiveRoles.join(", ")
+            }], division filter: ${divisionFilterId}`,
         );
-        set({
-            messages: sortedMessages,
-            unreadCount,
-            isInitialized: true,
-            isLoading: false,
-            error: null,
-        });
-    },
-
-    addMessage: (message) => {
-        set((state) => {
-            // Avoid adding duplicates if subscription already added it
-            if (state.messages.some((m) => m.id === message.id)) {
-                return {}; // No change
-            }
-            const newMessages = [...state.messages, message];
-            const sortedMessages = newMessages.sort((a, b) =>
-                new Date(a.created_at ?? 0).getTime() -
-                new Date(b.created_at ?? 0).getTime()
-            );
-            // Recalculate unread count
-            const newUnreadCount = sortedMessages.filter((msg) =>
-                !msg.is_read && !msg.is_archived
-            ).length;
-            return { messages: sortedMessages, unreadCount: newUnreadCount };
-        });
-    },
-
-    fetchMessages: async (userId) => {
         if (!userId) {
-            console.warn(
-                "[AdminNotificationStore] fetchMessages requires userId.",
-            );
-            set({
-                messages: [],
-                unreadCount: 0,
-                isLoading: false,
-                error: "User ID missing.",
-            });
+            console.error("[_fetchAndSetMessages] User ID is required.");
+            set({ isLoading: false, error: "User ID not provided" });
             return;
         }
-        console.log(
-            `[AdminNotificationStore] fetchMessages called for userId: ${userId}`,
-        );
         set({ isLoading: true, error: null });
 
         try {
-            // RLS ('Allow access based on effective role or sender') ensures we only get relevant messages.
-            // The user ID is implicitly handled by RLS via auth.uid() in the DB function.
-            const { data, error } = await supabase
+            // 1. Fetch Messages based on roles and division filter
+            let messageQuery = supabase
                 .from("admin_messages")
-                .select("*"); // RLS restricts this select
-            // Fetching all and sorting client-side after fetch
+                .select("*")
+                .order("created_at", { ascending: false });
 
-            if (error) {
-                console.error(
-                    "[AdminNotificationStore] Error fetching admin messages:",
-                    error,
+            // --- Filter Logic --- START ---
+            // Base RLS will handle the basic permission check (can the user see *any* message based on their roles).
+            // We add client-side filters for the specific view (division selection).
+
+            // Filter 1: Role Overlap (User must have at least one of the recipient roles)
+            // Note: RLS *should* already enforce this, but being explicit might be safer depending on RLS complexity.
+            // If RLS is robust, this client-side role filter might be redundant.
+            // For now, let's assume RLS handles the fundamental role access.
+            // messageQuery = messageQuery.overlaps('recipient_roles', effectiveRoles);
+
+            // Filter 2: Division Targeting (Specific division OR broadcast)
+            if (divisionFilterId !== null) {
+                // Message is broadcast (recipient_division_ids is empty) OR targets the specific division
+                messageQuery = messageQuery.or(
+                    `recipient_division_ids.eq.{},recipient_division_ids.cs.{${divisionFilterId}}`,
                 );
-                throw error;
+            } else {
+                // If viewing "All" divisions (divisionFilterId is null), no specific division filter is needed.
+                // RLS should ensure the user only sees messages relevant to their roles/assigned divisions.
+            }
+            // --- Filter Logic --- END ---
+
+            console.log("[_fetchAndSetMessages] Executing query...");
+            const { data: messagesData, error: messagesError } =
+                await messageQuery;
+            if (messagesError) throw messagesError;
+            console.log(
+                `[_fetchAndSetMessages] Query returned ${
+                    messagesData?.length ?? 0
+                } messages initially.`,
+            );
+
+            // 2. Fetch Read Statuses for the fetched messages and current user
+            let readStatusMap: Record<string, boolean> = {};
+            let fetchReadStatusError: string | null = null;
+            if (messagesData.length > 0) {
+                const messageIds = messagesData.map((m) => m.id);
+                const { data: readStatuses, error: readStatusError } =
+                    await supabase
+                        .from("admin_message_read_status")
+                        .select("message_id") // Only need the ID to know it exists
+                        .eq("user_id", userId)
+                        .in("message_id", messageIds);
+
+                if (readStatusError) {
+                    console.error(
+                        "[_fetchAndSetMessages] Error fetching read statuses:",
+                        readStatusError,
+                    );
+                    fetchReadStatusError = readStatusError.message;
+                    // Continue without read status, count will be inaccurate
+                } else if (readStatuses) {
+                    readStatuses.forEach((status) => {
+                        readStatusMap[status.message_id] = true; // Mark as read
+                    });
+                }
             }
 
-            get().setMessages(data || []); // Use setMessages to sort and update state
-            set({ isLoading: false, error: null }); // Update loading state
-        } catch (error: any) {
-            console.error(
-                "[AdminNotificationStore] fetchMessages failed:",
-                error,
-            );
-            // Avoid setting error state again if already set in the try block
-            if (!get().error) {
-                set({
-                    isLoading: false,
-                    error: `Fetch failed: ${error.message || "Unknown error"}`,
-                });
+            // 3. Calculate Unread Count based on fetched data and read status map
+            const groupedThreads = messagesData.reduce((acc, msg) => {
+                const rootId = getRootMessageId(msg);
+                if (!acc[rootId]) acc[rootId] = [];
+                acc[rootId].push(msg);
+                return acc;
+            }, {} as Record<string, AdminMessage[]>);
+
+            let calculatedUnreadCount = 0;
+            for (const unknownThread of Object.values(groupedThreads)) {
+                const thread = unknownThread as AdminMessage[];
+                if (thread.length === 0) continue;
+                thread.sort((a, b) =>
+                    new Date(b.created_at ?? 0).getTime() -
+                    new Date(a.created_at ?? 0).getTime()
+                );
+                const latestMessage = thread[0];
+                if (
+                    !latestMessage.is_archived &&
+                    !readStatusMap[latestMessage.id]
+                ) {
+                    calculatedUnreadCount++;
+                }
             }
+
+            console.log(
+                `[_fetchAndSetMessages] Fetched ${messagesData.length} messages, Calculated ${calculatedUnreadCount} unread.`,
+            );
+
+            set({
+                messages: messagesData,
+                readStatusMap: readStatusMap,
+                unreadCount: calculatedUnreadCount,
+                isLoading: false,
+                isInitialized: true,
+                viewingDivisionId: divisionFilterId,
+                error: fetchReadStatusError, // Report read status error if any
+            });
+        } catch (error: any) {
+            console.error("[_fetchAndSetMessages] Error:", error);
+            set({
+                isLoading: false,
+                error: `Fetch failed: ${error.message}`,
+                isInitialized: true, // Mark as initialized even on error to prevent re-init loops
+            });
         }
     },
 
-    markAsRead: async (messageId, userId) => {
-        const { messages } = get();
-        const message = messages.find((m) => m.id === messageId);
-
-        // Check if the specific user has already read it via the read_by array
-        if (!message || message.read_by.includes(userId)) {
-            // If globally marked as read, ensure local state reflects it (edge case)
-            if (message && !message.is_read && message.read_by.length > 0) {
-                set((state) => ({
-                    messages: state.messages.map((msg) =>
-                        msg.id === messageId ? { ...msg, is_read: true } : msg
-                    ),
-                }));
-            }
-            return;
+    // Initialize Store: Set default view, fetch initial data, subscribe
+    initializeAdminNotifications: (
+        userId,
+        userRoles,
+        assignedDivisionId,
+        isCompanyAdmin,
+    ) => {
+        console.log("[initializeAdminNotifications] Initializing store...", {
+            userId,
+            userRoles,
+            assignedDivisionId,
+            isCompanyAdmin,
+        });
+        if (get().isInitialized || !userId) {
+            console.log(
+                "[initializeAdminNotifications] Already initialized or no userId, skipping.",
+            );
+            return () => {}; // Return empty cleanup if skipped
         }
 
-        const originalMessages = [...messages]; // Preserve original state for potential revert
-        const newReadBy = [...message.read_by, userId];
-        // Consider setting is_read = true only if needed by application logic, or let DB handle it?
-        // For simplicity, we set it true here as well.
-        const isNowGloballyRead = true; // Assume marking read makes it globally read for simplicity here
+        // Store the effective roles passed in
+        set({ effectiveRoles: userRoles }); // <-- Store roles
 
-        try {
-            // Optimistic UI update
-            set((state) => {
-                const updatedMessages = state.messages.map((msg) =>
-                    msg.id === messageId
-                        ? {
-                            ...msg,
-                            is_read: isNowGloballyRead,
-                            read_by: newReadBy,
-                        }
-                        : msg
+        let initialDivisionFilterId: number | null = null;
+        const validUserRoles = Array.isArray(userRoles) ? userRoles : [];
+        // Check company admin status FIRST
+        if (isCompanyAdmin) {
+            console.log(
+                `[initializeAdminNotifications] Company admin detected. Initial division filter: All`,
+            );
+            initialDivisionFilterId = null; // Company admins see all divisions by default
+        } else {
+            // Logic for non-company admins (members with roles)
+            const isMemberAdmin =
+                validUserRoles.includes("application_admin") ||
+                validUserRoles.includes("union_admin") ||
+                validUserRoles.includes("division_admin");
+
+            if (isMemberAdmin) {
+                if (validUserRoles.includes("division_admin")) {
+                    initialDivisionFilterId = assignedDivisionId; // Division admin view
+                    console.log(
+                        `[initializeAdminNotifications] Division admin. Division filter: ${initialDivisionFilterId}`,
+                    );
+                    if (initialDivisionFilterId === null) {
+                        console.warn(
+                            `[initializeAdminNotifications] Division admin (${userId}) has null assignedDivisionId! Fetching all.`,
+                        );
+                    }
+                } else { // Higher member admins (App/Union)
+                    initialDivisionFilterId = assignedDivisionId; // Default to assigned, can be null for 'All'
+                    console.log(
+                        `[initializeAdminNotifications] Higher member admin. Initial division filter: ${
+                            initialDivisionFilterId ?? "All"
+                        }`,
+                    );
+                }
+            } else {
+                // User is neither company admin nor member admin - should not init
+                console.warn(
+                    "[initializeAdminNotifications] User is not an admin type that views admin messages. Setting empty.",
                 );
-                // Recalculate unread count based on the potentially updated list
-                const newUnreadCount = updatedMessages.filter((msg) =>
-                    !msg.is_read
-                ).length; // Simple recalculation
-                return {
-                    messages: updatedMessages,
-                    unreadCount: newUnreadCount,
-                };
+                set({
+                    messages: [],
+                    readStatusMap: {},
+                    unreadCount: 0,
+                    isInitialized: true,
+                    viewingDivisionId: null,
+                    isLoading: false,
+                });
+                return () => {};
+            }
+        }
+
+        // Proceed with fetch and subscribe if user is some type of admin
+        set({ isLoading: true });
+        get()._fetchAndSetMessages(userId, initialDivisionFilterId);
+
+        // --- Realtime Subscription ---
+        const handleRealtimeUpdate = (
+            payload: RealtimePostgresChangesPayload<any>,
+        ) => {
+            const record = (payload.new || payload.old) as {
+                id?: string;
+                message_id?: string;
+                [key: string]: any;
+            };
+            // Log the specific table that triggered the update (Keep this one? It's useful)
+            console.log(
+                `[handleRealtimeUpdate] Received ${payload.eventType} on table '${payload.table}' for record:`,
+                record?.id ?? record?.message_id ?? "(no ID)",
+            );
+
+            const currentViewingDivision = get().viewingDivisionId;
+            setTimeout(() => {
+                get()._fetchAndSetMessages(userId, currentViewingDivision);
+            }, 500);
+        };
+
+        // Cleanup previous channel if exists
+        const existingChannel = get().realtimeChannel;
+        if (existingChannel) {
+            supabase.removeChannel(existingChannel).catch((err) =>
+                console.error("Error removing existing channel:", err)
+            );
+        }
+
+        const channel = supabase
+            .channel(`admin-notifications-${userId}`)
+            .on(
+                "postgres_changes",
+                { event: "*", schema: "public", table: "admin_messages" },
+                handleRealtimeUpdate,
+            )
+            .on(
+                "postgres_changes",
+                {
+                    event: "*",
+                    schema: "public",
+                    table: "admin_message_read_status",
+                    filter: `user_id=eq.${userId}`,
+                },
+                handleRealtimeUpdate, // Use the same handler - just refetch
+            )
+            .subscribe((status, err) => {
+                // Log ALL statuses for debugging
+                console.log(
+                    `[initializeAdminNotifications] Realtime channel status: ${status}`,
+                    err ? `Error: ${err.message}` : "",
+                );
+
+                if (status === "SUBSCRIBED") {
+                    console.log(
+                        "[initializeAdminNotifications] Realtime channel successfully subscribed.",
+                    );
+                    // Potentially trigger a final fetch here to catch anything missed during setup
+                    // get()._fetchAndSetMessages(userId, get().viewingDivisionId);
+                } else if (
+                    status === "CHANNEL_ERROR" || status === "TIMED_OUT" || err
+                ) {
+                    console.error(
+                        "[initializeAdminNotifications] Realtime subscription error:",
+                        err ?? status,
+                    );
+                    set({
+                        error: `Subscription failed: ${err?.message ?? status}`,
+                        isLoading: false,
+                    });
+                } else if (status === "CLOSED") {
+                    console.warn(
+                        "[initializeAdminNotifications] Realtime channel closed.",
+                    );
+                    // Optionally handle automatic reconnection or notify user
+                }
             });
 
-            // Actual DB update
-            const { error } = await supabase
-                .from("admin_messages")
-                .update({
-                    // is_read: isNowGloballyRead, // Let DB trigger handle this based on read_by?
-                    read_by: newReadBy,
-                })
-                .eq("id", messageId);
+        set({ realtimeChannel: channel });
 
-            if (error) {
-                console.error(
-                    "[AdminNotificationStore] Error marking message as read in DB:",
-                    error,
-                );
-                // Revert optimistic update on error
-                get().setMessages(originalMessages);
-                throw error;
-            }
+        // Return cleanup function
+        return () => {
             console.log(
-                `[AdminNotificationStore] Marked message ${messageId} as read by ${userId}.`,
+                "[initializeAdminNotifications] Cleanup: Unsubscribing realtime channel.",
             );
-        } catch (error) {
-            console.error("Error in markAsRead:", error);
-            // Ensure state is reverted if not already
-            get().setMessages(originalMessages);
+            const currentChannel = get().realtimeChannel; // Get channel from state
+            if (currentChannel) {
+                supabase.removeChannel(currentChannel).catch((err) =>
+                    console.error("Error removing channel:", err)
+                );
+                set({ realtimeChannel: null }); // Clear channel from state
+            }
+        };
+    },
+
+    // Action to change the division being viewed by higher admins
+    setViewDivision: async (divisionId) => {
+        // Get user ID SYNCHRONOUSLY - don't use async getUser()
+        const session = await supabase.auth.getSession();
+        const userId = session?.data?.session?.user?.id;
+        if (!userId) {
+            console.error(
+                "[setViewDivision] Cannot set view division without user ID.",
+            );
+            set({ error: "User not available" });
+            return;
+        }
+        // Fetch data for the new division
+        get()._fetchAndSetMessages(userId, divisionId);
+    },
+
+    // Action to mark a message as read by calling the RPC
+    markMessageAsRead: async (messageId) => {
+        // console.log(
+        //     `[markMessageAsRead] Attempting RPC call for message ${messageId}.`,
+        // ); // REMOVE/COMMENT OUT
+        let rpcError = null;
+        try {
+            const { error } = await supabase.rpc("mark_admin_message_read", {
+                message_id_to_mark: messageId,
+            });
+            rpcError = error;
+            if (error) throw error;
+            // console.log(
+            //     `[markMessageAsRead] RPC called successfully for ${messageId}.`,
+            // ); // REMOVE/COMMENT OUT
+        } catch (error: any) {
+            console.error("[markMessageAsRead] Error during RPC call:", error);
+            set({
+                error: `Mark read failed: ${error?.message ?? "Unknown error"}`,
+            });
+        } finally {
+            if (rpcError) {
+                console.error(
+                    "[markMessageAsRead] RPC returned error:",
+                    rpcError.message,
+                );
+            }
         }
     },
 
+    // Cleanup Store State and Subscription
+    cleanupAdminNotifications: () => {
+        console.log("[cleanupAdminNotifications] Cleaning up store...");
+        const channel = get().realtimeChannel;
+        if (channel) {
+            supabase.removeChannel(channel).catch((err) =>
+                console.error("Error removing channel on cleanup:", err)
+            );
+        }
+        set({
+            messages: [],
+            readStatusMap: {}, // Reset read status map
+            unreadCount: 0,
+            isLoading: false,
+            error: null,
+            isInitialized: false,
+            viewingDivisionId: null,
+            realtimeChannel: null,
+        });
+    },
+
+    // --- Adapted/Kept old actions ---
+
     acknowledgeMessage: async (messageId, userId) => {
+        // Keep optimistic update for now
         const { messages } = get();
         const message = messages.find((m) => m.id === messageId);
 
-        if (!message || message.acknowledged_by.includes(userId)) {
+        // Check if already acknowledged by this user
+        if (
+            !message ||
+            (Array.isArray(message.acknowledged_by) &&
+                message.acknowledged_by.includes(userId))
+        ) {
+            console.log(
+                `[acknowledgeMessage] Already acknowledged or message not found for ${messageId}`,
+            );
             return;
         }
 
         const now = new Date().toISOString();
-        const newAcknowledgedBy = [...message.acknowledged_by, userId];
+        // Ensure acknowledged_by is an array before spreading
+        const currentAcknowledgedBy = Array.isArray(message.acknowledged_by)
+            ? message.acknowledged_by
+            : [];
+        const newAcknowledgedBy = [...currentAcknowledgedBy, userId];
         const originalMessages = [...messages];
 
         try {
+            // Optimistic
             set((state) => ({
                 messages: state.messages.map((msg) =>
                     msg.id === messageId
@@ -257,439 +498,128 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
 
             if (error) {
                 console.error(
-                    "[AdminNotificationStore] Error acknowledging message in DB:",
+                    "[AdminNotificationStore] Error acknowledging message:",
                     error,
                 );
-                set({ messages: originalMessages }); // Revert
+                set({
+                    messages: originalMessages,
+                    error: "Acknowledge failed",
+                }); // Revert
                 throw error;
             }
-            console.log(
-                `[AdminNotificationStore] Acknowledged message ${messageId} by ${userId}.`,
-            );
-
-            if (!message.read_by.includes(userId)) {
-                await get().markAsRead(messageId, userId);
-            }
+            console.log(`[AcknowledgeMessage] Success for ${messageId}`);
         } catch (error) {
             console.error("Error in acknowledgeMessage:", error);
-            set({ messages: originalMessages }); // Ensure revert
+            set({ messages: originalMessages }); // Revert
         }
     },
 
-    // --- NEW ACTIONS IMPLEMENTATION ---
-
-    replyAsAdmin: async (parentMessageId, senderUserId, message) => {
+    replyAsAdmin: async (parentMessageId, message) => {
+        // senderUserId is no longer needed as RPC uses auth.uid()
         set({ isLoading: true });
         try {
-            // Call the service function (which now determines senderRole internally)
-            const newReply = await replyToAdminMessage(
-                parentMessageId,
-                senderUserId,
-                message,
+            console.log(
+                `[replyAsAdmin] Calling RPC for parent ${parentMessageId}...`,
             );
-            if (!newReply) {
+
+            // Call the RPC function
+            const { data: result, error: rpcError } = await supabase.rpc(
+                "create_admin_reply",
+                {
+                    p_parent_message_id: parentMessageId,
+                    p_message: message.trim(), // Trim the message content
+                },
+            );
+
+            if (rpcError) {
+                console.error("[replyAsAdmin] RPC Error:", rpcError);
                 throw new Error(
-                    "Service function failed to return reply message.",
+                    rpcError.message || "Failed to send reply via RPC.",
                 );
             }
-            // Optimistic Update: Add the new reply directly to the store state
-            get().addMessage(newReply);
+
+            // Rely on realtime to update the UI, no need to manually add to state.
             console.log(
-                "[AdminNotificationStore] replyAsAdmin successful, optimistically updated store.",
+                `[replyAsAdmin] RPC call successful for reply to ${parentMessageId}. Result:`,
+                result,
             );
-            set({ isLoading: false, error: null });
-            return newReply;
+
+            // The RPC returns the inserted row, but we might not need it here
+            // if the UI update is handled purely by realtime.
+            // If you *do* need the returned message, ensure the RPC returns it
+            // and handle it here.
+            return result && result.length > 0 ? result[0] : null;
         } catch (error: any) {
-            console.error(
-                "[AdminNotificationStore] replyAsAdmin failed:",
-                error,
-            );
+            console.error("[replyAsAdmin] Error:", error);
             set({ isLoading: false, error: `Reply failed: ${error.message}` });
             return null;
+        } finally {
+            set({ isLoading: false });
         }
     },
 
     archiveThread: async (threadId) => {
-        const { messages } = get();
-        const originalMessages = [...messages];
-        const messagesToArchive = messages.filter((msg) =>
-            getRootMessageId(msg) === threadId
-        );
-        const messageIdsToArchive = messagesToArchive.map((msg) => msg.id);
-
-        if (messageIdsToArchive.length === 0) {
-            console.warn(
-                `[AdminNotificationStore] No messages found for threadId ${threadId} to archive.`,
-            );
-            return;
-        }
-
-        // Optimistic UI update: Mark messages as archived locally
-        const updatedMessages = messages.map((msg) =>
-            messageIdsToArchive.includes(msg.id)
-                ? { ...msg, is_archived: true }
-                : msg
-        );
-        const newUnreadCount =
-            updatedMessages.filter((msg) => !msg.is_read && !msg.is_archived)
-                .length;
-        set({ messages: updatedMessages, unreadCount: newUnreadCount });
-
+        set({ isLoading: true });
+        console.log(`[archiveThread] Archiving thread ${threadId}.`);
         try {
-            // DB Update
-            const { error } = await supabase
-                .from("admin_messages")
-                .update({
-                    is_archived: true,
-                    updated_at: new Date().toISOString(),
-                })
-                .in("id", messageIdsToArchive); // Update all messages in the thread
-
-            if (error) {
-                console.error(
-                    "[AdminNotificationStore] Error archiving thread in DB:",
-                    error,
-                );
-                set({
-                    messages: originalMessages,
-                    unreadCount: get().messages.filter((msg) =>
-                        !msg.is_read && !msg.is_archived
-                    ).length,
-                }); // Revert and recalculate
-                throw error;
-            }
-            console.log(
-                `[AdminNotificationStore] Archived thread ${threadId} (${messageIdsToArchive.length} messages).`,
-            );
-        } catch (error) {
-            console.error("Error in archiveThread:", error);
-            // Ensure revert if DB call threw non-supabase error
-            set({
-                messages: originalMessages,
-                unreadCount: get().messages.filter((msg) =>
-                    !msg.is_read && !msg.is_archived
-                ).length,
+            // Call the RPC function
+            const { error } = await supabase.rpc("archive_admin_thread", {
+                thread_id_to_archive: threadId,
             });
+            if (error) {
+                console.error("[archiveThread] RPC Error:", error);
+                throw new Error(
+                    error.message || "Failed to archive thread via RPC.",
+                );
+            }
+
+            // Rely on realtime to trigger refetch and update UI
+            console.log(
+                `[archiveThread] Archive RPC successful for ${threadId}.`,
+            );
+        } catch (error: any) {
+            console.error("[archiveThread] Error:", error);
+            set({
+                isLoading: false,
+                error: `Archive failed: ${error.message}`,
+            });
+        } finally {
+            set({ isLoading: false });
         }
     },
 
-    markThreadAsUnread: async (threadId, userId) => {
-        const { messages } = get();
-        const originalMessages = [...messages];
-        const threadMessages = messages.filter((msg) =>
-            getRootMessageId(msg) === threadId
-        );
-
-        if (threadMessages.length === 0) {
-            console.warn(
-                `[AdminNotificationStore] No messages found for threadId ${threadId} to mark unread.`,
-            );
-            return;
-        }
-
-        // Find the latest message in the thread
-        const latestMessage = threadMessages.reduce((latest, current) =>
-            new Date(current.created_at ?? 0) > new Date(latest.created_at ?? 0)
-                ? current
-                : latest
-        );
-
-        // Check if user is actually in read_by list
-        if (!latestMessage.read_by.includes(userId)) {
-            console.log(
-                `[AdminNotificationStore] User ${userId} hasn't read latest message ${latestMessage.id}, cannot mark unread.`,
-            );
-            return; // Already considered unread by this user
-        }
-
-        const newReadBy = latestMessage.read_by.filter((id) => id !== userId);
-        // Determine new global is_read status. If anyone else read it, it stays read globally.
-        const newIsReadStatus = newReadBy.length > 0;
-
-        // Optimistic UI Update
-        const updatedMessages = messages.map((msg) =>
-            msg.id === latestMessage.id
-                ? { ...msg, is_read: newIsReadStatus, read_by: newReadBy }
-                : msg
-        );
-        const newUnreadCount =
-            updatedMessages.filter((msg) => !msg.is_read && !msg.is_archived)
-                .length;
-        set({ messages: updatedMessages, unreadCount: newUnreadCount });
-
+    markThreadAsUnread: async (threadId) => {
+        set({ isLoading: true });
+        // console.log(
+        //     `[markThreadAsUnread] Attempting RPC call for thread ${threadId} (latest message).`,
+        // ); // REMOVE/COMMENT OUT
+        let rpcError = null;
         try {
-            // DB Update - only update the latest message
-            const { error } = await supabase
-                .from("admin_messages")
-                .update({
-                    is_read: newIsReadStatus,
-                    read_by: newReadBy,
-                    updated_at: new Date().toISOString(),
-                })
-                .eq("id", latestMessage.id);
-
+            const { error } = await supabase.rpc("unmark_admin_message_read", {
+                p_thread_id: threadId,
+            });
+            rpcError = error;
             if (error) {
-                console.error(
-                    "[AdminNotificationStore] Error marking thread unread in DB:",
-                    error,
-                );
-                set({
-                    messages: originalMessages,
-                    unreadCount: get().messages.filter((msg) =>
-                        !msg.is_read && !msg.is_archived
-                    ).length,
-                }); // Revert
                 throw error;
             }
-            console.log(
-                `[AdminNotificationStore] Marked thread ${threadId} (latest msg ${latestMessage.id}) as unread for user ${userId}.`,
-            );
-        } catch (error) {
-            console.error("Error in markThreadAsUnread:", error);
+            // console.log(`[markThreadAsUnread] RPC successful for ${threadId}.`); // REMOVE/COMMENT OUT
+        } catch (error: any) {
+            console.error("[markThreadAsUnread] Error during RPC call:", error);
             set({
-                messages: originalMessages,
-                unreadCount: get().messages.filter((msg) =>
-                    !msg.is_read && !msg.is_archived
-                ).length,
-            }); // Ensure revert
+                isLoading: false,
+                error: `Mark unread failed: ${
+                    error?.message ?? "Unknown error"
+                }`,
+            });
+        } finally {
+            if (rpcError) {
+                console.error(
+                    "[markThreadAsUnread] RPC returned error:",
+                    rpcError.message,
+                );
+            }
+            set({ isLoading: false });
         }
-    },
-
-    // --- SUBSCRIPTION --- (Remains the same, might need refinement for retry logic)
-    subscribeToAdminMessages: (userId) => {
-        if (!userId) {
-            console.error(
-                "[AdminNotificationStore] Cannot subscribe without userId.",
-            );
-            return () => {}; // Return no-op unsubscribe
-        }
-        console.log(
-            `[AdminNotificationStore] Attempting subscription for userId: ${userId}`,
-        );
-        // Initial state set before attempting subscription
-        if (!get().isInitialized) {
-            set({ isLoading: true }); // Set loading only if not initialized
-        }
-
-        let channel: ReturnType<typeof supabase.channel> | null = null;
-        let retryTimeoutId: NodeJS.Timeout | null = null;
-        let retryCount = 0;
-        const maxRetries = 5;
-        const baseRetryDelay = 2000; // 2 seconds
-
-        const setupSubscription = () => {
-            if (channel) {
-                supabase.removeChannel(channel).catch((err) =>
-                    console.error(
-                        "[AdminNotificationStore] Error removing channel during retry:",
-                        err,
-                    )
-                );
-                channel = null;
-            }
-            if (retryTimeoutId) {
-                clearTimeout(retryTimeoutId);
-                retryTimeoutId = null;
-            }
-
-            const channelId = `admin-messages-${userId}-${Date.now()}`;
-            console.log(
-                `[AdminNotificationStore] Subscribing to channel: ${channelId} (Attempt: ${
-                    retryCount + 1
-                })`,
-            );
-
-            channel = supabase
-                .channel(channelId)
-                .on<AdminMessage>(
-                    "postgres_changes",
-                    { event: "*", schema: "public", table: "admin_messages" },
-                    (payload: RealtimePostgresChangesPayload<AdminMessage>) => {
-                        if (retryCount > 0) {
-                            console.log(
-                                "[AdminNotificationStore] Subscription successful after retry.",
-                            );
-                            retryCount = 0;
-                        }
-                        console.log(
-                            "[AdminNotificationStore] Realtime Event Received:",
-                            payload,
-                        );
-                        // Use addMessage for inserts to handle duplicates and sorting
-                        if (payload.eventType === "INSERT") {
-                            get().addMessage(payload.new);
-                        } else {
-                            // Handle UPDATE and DELETE as before (using setMessages for simplicity)
-                            const currentMessages = get().messages;
-                            let updatedMessages = [...currentMessages];
-                            switch (payload.eventType) {
-                                case "UPDATE":
-                                    const updatedMessage = payload.new;
-                                    const index = updatedMessages.findIndex((
-                                        msg,
-                                    ) => msg.id === updatedMessage.id);
-                                    if (index !== -1) {
-                                        updatedMessages[index] = updatedMessage;
-                                        console.log(
-                                            "[AdminNotificationStore] Updated message:",
-                                            updatedMessage.id,
-                                        );
-                                    } else {
-                                        console.warn(
-                                            "[AdminNotificationStore] Received UPDATE for non-existent message, treating as INSERT:",
-                                            updatedMessage.id,
-                                        );
-                                        updatedMessages.push(updatedMessage);
-                                    }
-                                    break;
-                                case "DELETE":
-                                    const deletedMessage = payload.old;
-                                    updatedMessages = updatedMessages.filter((
-                                        msg,
-                                    ) => msg.id !== deletedMessage?.id);
-                                    console.log(
-                                        "[AdminNotificationStore] Deleted message:",
-                                        deletedMessage?.id,
-                                    );
-                                    break;
-                                default:
-                                    break;
-                            }
-                            get().setMessages(updatedMessages); // Update state for non-inserts
-                        }
-                    },
-                )
-                .subscribe((status, err) => {
-                    if (status === "SUBSCRIBED") {
-                        console.log(
-                            `[AdminNotificationStore] Successfully subscribed to ${channelId}`,
-                        );
-                        retryCount = 0;
-                        set({
-                            isInitialized: true,
-                            isLoading: false,
-                            error: null,
-                        }); // Ensure loading is false
-                        // Optionally trigger a fetch after successful subscribe to ensure consistency?
-                        // get().fetchMessages(userId);
-                    }
-                    if (
-                        status === "CHANNEL_ERROR" || status === "TIMED_OUT" ||
-                        err
-                    ) {
-                        console.error(
-                            `[AdminNotificationStore] Subscription error on ${channelId}:`,
-                            status,
-                            err,
-                        );
-                        set({
-                            error: `Subscription failed: ${status}`,
-                            isInitialized: false,
-                            isLoading: false,
-                        }); // Stop loading on error
-
-                        retryCount++;
-                        if (retryCount <= maxRetries) {
-                            const delay = baseRetryDelay *
-                                Math.pow(2, retryCount - 1);
-                            console.log(
-                                `[AdminNotificationStore] Retrying subscription in ${delay}ms (Attempt ${retryCount}/${maxRetries})`,
-                            );
-                            retryTimeoutId = setTimeout(
-                                setupSubscription,
-                                delay,
-                            );
-                        } else {
-                            console.error(
-                                `[AdminNotificationStore] Subscription failed after ${maxRetries} retries.`,
-                            );
-                            set({
-                                error:
-                                    `Subscription failed permanently after ${maxRetries} retries.`,
-                            });
-                        }
-                    }
-                });
-        };
-
-        setupSubscription();
-
-        return () => {
-            console.log(
-                `[AdminNotificationStore] Unsubscribing and cleaning up for userId: ${userId}`,
-            );
-            if (retryTimeoutId) {
-                clearTimeout(retryTimeoutId);
-                retryTimeoutId = null;
-            }
-            if (channel) {
-                supabase.removeChannel(channel).catch((err) =>
-                    console.error(
-                        "[AdminNotificationStore] Error removing channel on cleanup:",
-                        err,
-                    )
-                );
-                channel = null;
-            }
-            // set({ isInitialized: false }); // Reset initialization status on unsubscribe?
-        };
-    },
-
-    // --- SELECTORS --- (Remains the same)
-    getGroupedThreads: (): {
-        parent: AdminMessage;
-        replies: AdminMessage[];
-    }[] => {
-        const { messages } = get();
-        const threads: Map<
-            string,
-            { parent: AdminMessage; replies: AdminMessage[] }
-        > = new Map();
-        const repliesMap: Map<string, AdminMessage[]> = new Map();
-
-        messages.forEach((msg) => {
-            if (msg.parent_message_id === null) {
-                threads.set(msg.id, { parent: msg, replies: [] });
-            } else {
-                const existingReplies = repliesMap.get(msg.parent_message_id) ||
-                    [];
-                repliesMap.set(msg.parent_message_id, [
-                    ...existingReplies,
-                    msg,
-                ]);
-            }
-        });
-
-        repliesMap.forEach((replies, parentId) => {
-            if (threads.has(parentId)) {
-                threads.get(parentId)!.replies = replies.sort((a, b) =>
-                    new Date(a.created_at ?? 0).getTime() -
-                    new Date(b.created_at ?? 0).getTime()
-                );
-            } else {
-                console.warn(
-                    `[AdminNotificationStore] Found replies for non-existent parent: ${parentId}`,
-                );
-            }
-        });
-
-        // Return threads sorted by the *latest* message in the thread (parent or last reply)
-        return Array.from(threads.values()).sort((a, b) => {
-            const lastMsgTime = (
-                thread: { parent: AdminMessage; replies: AdminMessage[] },
-            ) => {
-                const lastReplyTime = thread.replies.length > 0
-                    ? new Date(
-                        thread.replies[thread.replies.length - 1].created_at ??
-                            0,
-                    ).getTime()
-                    : 0;
-                const parentTime = new Date(thread.parent.created_at ?? 0)
-                    .getTime();
-                return Math.max(lastReplyTime, parentTime);
-            };
-            return lastMsgTime(b) - lastMsgTime(a); // Most recent thread first
-        });
     },
 }));
 

@@ -10,6 +10,7 @@ import * as Linking from "expo-linking";
 import { useNotificationStore } from "@/store/notificationStore";
 import { useCalendarStore } from "@/store/calendarStore";
 import { useVacationCalendarStore } from "@/store/vacationCalendarStore";
+import { useAdminNotificationStore } from "@/store/adminNotificationStore";
 import { format } from "date-fns";
 
 declare global {
@@ -70,6 +71,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const calendarCleanupRef = useRef<(() => void) | null>(null);
   const vacationCalendarCleanupRef = useRef<(() => void) | null>(null);
   const myTimeCleanupRef = useRef<(() => void) | null>(null); // Placeholder
+  const adminNotificationCleanupRef = useRef<(() => void) | null>(null); // Add ref for admin store cleanup
   // Refs for state comparison in listeners
   const appStateRef = useRef(AppState.currentState);
   const sessionRef = useRef(session);
@@ -131,11 +133,22 @@ export function AuthProvider({ children }: AuthProviderProps) {
       myTimeCleanupRef.current();
       myTimeCleanupRef.current = null;
     }
+    // --- Cleanup for Admin Notifications ---
+    if (adminNotificationCleanupRef.current) {
+      console.log("[Auth] Cleaning up Admin Notification subscription...");
+      adminNotificationCleanupRef.current();
+      adminNotificationCleanupRef.current = null;
+    } else {
+      // Ensure store cleanup runs even if ref wasn't set (e.g., init failed)
+      useAdminNotificationStore.getState().cleanupAdminNotifications();
+    }
+    // --- End Admin Notifications Cleanup ---
     // Reset initialized flags in stores
     useNotificationStore.getState().setIsInitialized(false);
     useCalendarStore.getState().setIsInitialized(false); // Explicitly reset PLD/SDV
     useVacationCalendarStore.getState().setIsInitialized(false); // Explicitly reset Vacation
     // Need to reset myTime flag once implemented
+    useAdminNotificationStore.getState().cleanupAdminNotifications(); // Explicitly call cleanup to reset state including isInitialized
     console.log("[Auth] Cleanup actions complete.");
   }, []);
 
@@ -187,11 +200,67 @@ export function AuthProvider({ children }: AuthProviderProps) {
             if (localIsCompanyAdmin) {
               console.log("[Auth] User is company admin.");
               finalStatus = "signedInAdmin";
-              useUserStore.getState().reset();
-              // --- Potentially initialize admin-specific things here ---
-              // Example: Fetch admin-specific data if needed
+              // --- MODIFICATION START ---
+              // useUserStore.getState().reset(); // REMOVED: Don't reset for admin
+              // Create a minimal representation based on the *required* fields for the frontend type
+              const adminMemberRep: Partial<Member> = {
+                id: refreshedUser.id, // Use the auth ID
+                role: "user", // Set a default valid role from UserRole type
+                first_name: "Company", // Placeholder name
+                last_name: "Admin", // Placeholder name
+                // Keep only fields confirmed to be in the frontend Member type definition
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+                division_id: null,
+                calendar_id: null,
+                current_zone_id: null,
+                home_zone_id: null,
+                phone_number: null,
+                status: "active",
+                company_hire_date: null,
+                date_of_birth: null,
+                wc_sen_roster: null, // Keep if confirmed in type
+                deleted: false,
+                pin_number: undefined,
+              };
+              // Use setMember with the partial admin representation (cast needed)
+              useUserStore.getState().setMember(adminMemberRep as Member);
+              // Set userRole in store to null, as 'company_admin' isn't a UserRole
+              useUserStore.getState().setUserRole(null);
+              console.log("[Auth] Set minimal userStore state for company admin:", { id: refreshedUser.id });
+              // --- MODIFICATION END ---
+
               // Ensure previous member state/subscriptions are cleaned up
-              runCleanupActions();
+              runCleanupActions(); // Run cleanup *before* initializing new stores
+
+              // !!! We still need to initialize the admin store for company admins !!!
+              // Reuse the initialization logic from the member section
+              const userId = refreshedUser.id;
+              const assignedDivisionId = null;
+              const effectiveUserRoles: UserRole[] = []; // Pass empty array
+
+              const adminNotificationStore = useAdminNotificationStore.getState();
+              if (!adminNotificationStore.isInitialized && userId) {
+                console.log("[Auth Init - Admin] Initializing Admin Notification Store...");
+                try {
+                  const cleanupFn = adminNotificationStore.initializeAdminNotifications(
+                    userId,
+                    effectiveUserRoles,
+                    assignedDivisionId,
+                    true // Pass true for isCompanyAdmin
+                  );
+                  adminNotificationCleanupRef.current = cleanupFn; // Store cleanup
+                  console.log(
+                    "[Auth Init - Admin] Admin Notification Store Initialized (subscription setup initiated)."
+                  );
+                } catch (error) {
+                  console.error("[Auth Init - Admin] Error initializing Admin Notification Store:", error);
+                }
+              } else {
+                console.log(
+                  `[Auth Init - Admin] Skipping Admin Notification Store init. Initialized: ${adminNotificationStore.isInitialized}, UserID: ${userId}`
+                );
+              }
             } else {
               console.log("[Auth] User is not company admin, fetching member data:", refreshedUser.id);
               try {
@@ -209,6 +278,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
                   const pinNumber = fetchedMemberData.pin_number;
                   const userId = refreshedUser.id;
                   const calendarId = fetchedMemberData.calendar_id;
+                  const assignedDivisionId = fetchedMemberData.division_id; // Get assigned division ID
+                  const effectiveUserRoles = [fetchedMemberData.role as UserRole]; // Basic role, could fetch effective roles if needed
 
                   // --- Define Date Ranges ---
                   const today = new Date();
@@ -314,7 +385,38 @@ export function AuthProvider({ children }: AuthProviderProps) {
                     );
                   }
 
-                  // 4. MyTime Hook (Placeholder - requires similar structure)
+                  // --- 4. Admin Notification Store ---
+                  const adminNotificationStore = useAdminNotificationStore.getState();
+                  if (!adminNotificationStore.isInitialized && userId) {
+                    console.log("[Auth Init - Member] Initializing Admin Notification Store...");
+                    initializationPromises.push(
+                      (async () => {
+                        try {
+                          // Pass necessary info: userId, roles, assigned division
+                          const cleanupFn = adminNotificationStore.initializeAdminNotifications(
+                            userId,
+                            effectiveUserRoles,
+                            assignedDivisionId,
+                            false // Pass false for isCompanyAdmin
+                          );
+                          adminNotificationCleanupRef.current = cleanupFn; // Store cleanup
+                          console.log(
+                            "[Auth Init - Member] Admin Notification Store Initialized (subscription setup initiated)."
+                          );
+                        } catch (error) {
+                          console.error("[Auth Init - Member] Error initializing Admin Notification Store:", error);
+                          // isInitialized is handled within the store's init function
+                        }
+                      })()
+                    );
+                  } else {
+                    console.log(
+                      `[Auth Init - Member] Skipping Admin Notification Store init. Initialized: ${adminNotificationStore.isInitialized}, UserID: ${userId}`
+                    );
+                  }
+                  // --- End Admin Notification Store ---
+
+                  // 5. MyTime Hook (Placeholder - requires similar structure)
                   // if (!myTimeHook.isInitialized && ...) {
                   //   initializationPromises.push(async () => { ... });
                   // }

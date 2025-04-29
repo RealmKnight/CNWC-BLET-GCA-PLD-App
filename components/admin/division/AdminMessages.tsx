@@ -8,6 +8,7 @@ import {
   Platform,
   KeyboardAvoidingView,
   Modal,
+  ActivityIndicator,
 } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -18,6 +19,7 @@ import { useAdminNotificationStore } from "@/store/adminNotificationStore";
 import { useUserStore } from "@/store/userStore";
 import { useEffectiveRoles } from "@/hooks/useEffectiveRoles";
 import { AdminMessage } from "@/types/adminMessages";
+import { supabase } from "@/utils/supabase";
 
 // UI & Utils
 import { Colors } from "@/constants/Colors";
@@ -25,6 +27,12 @@ import { useColorScheme } from "@/hooks/useColorScheme";
 import { useThemeColor } from "@/hooks/useThemeColor";
 import { ThemedTextInput } from "@/components/ThemedTextInput";
 import { ContactAdminModal } from "@/components/modals/ContactAdminModal";
+import { DivisionSelector } from "@/components/admin/division/DivisionSelector";
+
+interface DivisionInfo {
+  id: number;
+  name: string;
+}
 
 interface AdminMessagesProps {}
 
@@ -34,25 +42,41 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
   const [currentFilter, setCurrentFilter] = useState<"all" | "unread" | "archived">("all");
   const [replyText, setReplyText] = useState("");
   const [isNewMessageModalVisible, setIsNewMessageModalVisible] = useState(false);
+  const [availableDivisions, setAvailableDivisions] = useState<DivisionInfo[]>([]);
+  const [divisionsLoading, setDivisionsLoading] = useState<boolean>(false);
+  const [divisionsError, setDivisionsError] = useState<string | null>(null);
+  const [selectedDivisionName, setSelectedDivisionName] = useState<string | null>(null);
 
   // Get screen dimensions
   const { width } = useWindowDimensions();
-  const isWideScreen = width >= 768; // Define breakpoint
+  const isWideScreen = width >= 768;
 
   // Zustand Store
   const {
     messages,
-    fetchMessages,
-    subscribeToAdminMessages,
-    markAsRead,
+    readStatusMap,
+    isLoading: storeIsLoading,
+    error: storeError,
+    viewingDivisionId,
+    markMessageAsRead,
     replyAsAdmin,
     archiveThread,
-    markThreadAsUnread,
     acknowledgeMessage,
+    setViewDivision,
+    markThreadAsUnread,
   } = useAdminNotificationStore();
 
   const currentUser = useUserStore((state) => state.member);
   const effectiveRoles = useEffectiveRoles() ?? [];
+
+  // Determine if user can select divisions
+  const canSelectDivision = useMemo(
+    () =>
+      effectiveRoles.includes("application_admin") ||
+      effectiveRoles.includes("union_admin") ||
+      effectiveRoles.includes("company_admin" as any),
+    [effectiveRoles]
+  );
 
   // Theme & Colors
   const colorScheme = useColorScheme() ?? "light";
@@ -62,17 +86,39 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
   const selectedBackgroundColor = colors.tint + "30";
   const disabledColor = colors.icon;
 
-  // Fetch & Subscribe Effect
+  // Effect to fetch available divisions for the selector
   useEffect(() => {
-    let unsubscribe: (() => void) | undefined;
-    if (currentUser?.id) {
-      fetchMessages(currentUser.id);
-      unsubscribe = subscribeToAdminMessages(currentUser.id);
+    if (canSelectDivision) {
+      async function fetchDivisions() {
+        setDivisionsLoading(true);
+        setDivisionsError(null);
+        try {
+          const { data, error } = await supabase
+            .from("divisions")
+            .select("id, name")
+            .order("name", { ascending: true });
+
+          if (error) throw error;
+          const fetchedDivisions = data || [];
+          setAvailableDivisions(fetchedDivisions);
+
+          // Set initial selectedDivisionName based on viewingDivisionId from store
+          if (viewingDivisionId) {
+            const initialDivision = fetchedDivisions.find((d) => d.id === viewingDivisionId);
+            setSelectedDivisionName(initialDivision?.name ?? null);
+          } else if (fetchedDivisions.length > 0) {
+            setSelectedDivisionName(null);
+          }
+        } catch (err: any) {
+          console.error("Error fetching divisions:", err);
+          setDivisionsError("Could not load divisions.");
+        } finally {
+          setDivisionsLoading(false);
+        }
+      }
+      fetchDivisions();
     }
-    return () => {
-      if (unsubscribe) unsubscribe();
-    };
-  }, [currentUser?.id, fetchMessages, subscribeToAdminMessages]);
+  }, [canSelectDivision, viewingDivisionId]);
 
   // --- Thread Grouping and Filtering ---
   const getRootMessageId = (msg: AdminMessage): string => msg.parent_message_id || msg.id;
@@ -93,16 +139,10 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
       .filter((thread) => {
         if (!thread || thread.length === 0) return false;
         const isArchived = thread.some((msg) => msg.is_archived);
-        const latestMessage = thread[thread.length - 1];
-        const isAdminReader = currentUser?.id && latestMessage.read_by?.includes(currentUser.id);
-        switch (currentFilter) {
-          case "unread":
-            return !isArchived && !isAdminReader;
-          case "archived":
-            return isArchived;
-          case "all":
-          default:
-            return !isArchived;
+        if (currentFilter === "archived") {
+          return isArchived;
+        } else {
+          return !isArchived;
         }
       })
       .sort((threadA, threadB) => {
@@ -110,24 +150,12 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
         const lastMsgB = threadB[threadB.length - 1];
         return new Date(lastMsgB.created_at ?? 0).getTime() - new Date(lastMsgA.created_at ?? 0).getTime();
       });
-  }, [messages, currentFilter, currentUser?.id]);
+  }, [messages, currentFilter]);
 
   // --- Handlers ---
   const handleSelectThread = (threadId: string) => {
     setSelectedThreadId(threadId);
     setReplyText("");
-
-    const thread = filteredThreads.find((t) => getRootMessageId(t[0]) === threadId);
-    if (thread && thread.length > 0 && currentUser?.id) {
-      const latestMessage = thread[thread.length - 1];
-      if (!latestMessage.read_by?.includes(currentUser.id)) {
-        markAsRead(latestMessage.id, currentUser.id).catch((err) => {
-          console.error("Failed to mark thread as read:", err);
-        });
-      }
-    } else {
-      console.warn("Could not mark thread as read - thread or user ID missing");
-    }
   };
 
   const handleFilterChange = (filter: typeof currentFilter) => {
@@ -136,25 +164,35 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
     setReplyText("");
   };
 
+  const handleDivisionChange = async (divisionName: string) => {
+    const nameToSet = divisionName === "" ? null : divisionName;
+    setSelectedDivisionName(nameToSet);
+    let divisionIdToSet: number | null = null;
+    if (nameToSet) {
+      const selectedDiv = availableDivisions.find((d) => d.name === nameToSet);
+      divisionIdToSet = selectedDiv?.id ?? null;
+      if (!selectedDiv && nameToSet !== null) console.error(`Could not find ID for division name: ${nameToSet}`);
+    }
+    await setViewDivision(divisionIdToSet);
+  };
+
   const handleSendReply = async () => {
     if (!replyText.trim() || !selectedThreadId || !currentUser?.id) return;
     console.log(`Attempting to send reply to thread ${selectedThreadId}...`);
     try {
-      await replyAsAdmin(selectedThreadId, currentUser.id, replyText);
+      await replyAsAdmin(selectedThreadId, replyText);
       console.log(`Reply Sent to thread ${selectedThreadId}!`);
       setReplyText("");
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to send reply:", error);
-      // TODO: Show error feedback to the user
     }
   };
 
   const handleArchiveAction = (threadId: string | null) => {
     if (!threadId) return;
     console.log(`Archiving thread ${threadId}`);
-    archiveThread(threadId).catch((err) => {
+    archiveThread(threadId).catch((err: any) => {
       console.error(`Failed to archive thread ${threadId}:`, err);
-      // TODO: Show error feedback
     });
     if (selectedThreadId === threadId) {
       setSelectedThreadId(null);
@@ -162,25 +200,25 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
   };
 
   const handleMarkUnreadAction = (threadId: string | null) => {
-    if (!threadId || !currentUser?.id) return;
-    console.log(`Marking thread ${threadId} as unread`);
-    markThreadAsUnread(threadId, currentUser.id).catch((err) => {
+    if (!threadId) return;
+    console.log(`Marking thread ${threadId} as unread.`);
+    markThreadAsUnread(threadId).catch((err: Error) => {
       console.error(`Failed to mark thread ${threadId} as unread:`, err);
-      // TODO: Show error feedback
     });
   };
 
-  // --- Handler for Acknowledgment ---
   const handleAcknowledgeThread = (threadId: string | null) => {
     if (!threadId || !currentUser?.id) return;
     const thread = filteredThreads.find((t) => getRootMessageId(t[0]) === threadId);
     if (thread && thread.length > 0) {
       const latestMessage = thread[thread.length - 1];
-      if (latestMessage.requires_acknowledgment && !latestMessage.acknowledged_by?.includes(currentUser.id)) {
+      if (
+        latestMessage.requires_acknowledgment &&
+        !(Array.isArray(latestMessage.acknowledged_by) && latestMessage.acknowledged_by.includes(currentUser.id))
+      ) {
         console.log(`Acknowledging message ${latestMessage.id}`);
-        acknowledgeMessage(latestMessage.id, currentUser.id).catch((err) => {
+        acknowledgeMessage(latestMessage.id, currentUser.id).catch((err: any) => {
           console.error(`Failed to acknowledge message ${latestMessage.id}:`, err);
-          // TODO: Show error feedback
         });
       }
     }
@@ -275,6 +313,17 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
         </ThemedText>
       </TouchableOpacity>
 
+      {canSelectDivision && (
+        <View style={styles.divisionSelectorWrapper}>
+          <DivisionSelector
+            currentDivision={selectedDivisionName ?? ""}
+            onDivisionChange={handleDivisionChange}
+            isAdmin={true}
+            disabled={storeIsLoading}
+          />
+        </View>
+      )}
+
       <TouchableOpacity
         style={[
           styles.actionButton,
@@ -290,14 +339,17 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
     </View>
   );
 
-  const renderThreadItem = ({ item }: { item: AdminMessage[] }) => {
-    const rootMessage = item[0];
-    const latestMessage = item[item.length - 1];
+  const renderThreadItem = ({ item: thread }: { item: AdminMessage[] }) => {
+    if (!thread || thread.length === 0) return null;
+
+    thread.sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime());
+    const latestMessage = thread[0];
+    const rootMessage = thread.find((msg) => !msg.parent_message_id) || latestMessage;
     const rootId = getRootMessageId(rootMessage);
     const isSelected = selectedThreadId === rootId;
     const latestMessageDate = latestMessage.created_at ? new Date(latestMessage.created_at) : new Date();
-    const isAdminReader = currentUser?.id && latestMessage.read_by?.includes(currentUser.id);
-    const isUnread = !isAdminReader;
+
+    const isUnread = !readStatusMap[latestMessage.id];
 
     return (
       <TouchableOpacity
@@ -314,17 +366,14 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
       >
         <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
           {isUnread && <View style={[styles.unreadDot, { backgroundColor: colors.primary }]} />}
-          <ThemedText type="defaultSemiBold" style={isUnread ? styles.unreadText : {}}>
+          <ThemedText type={isUnread ? "defaultSemiBold" : "default"} style={isUnread ? styles.unreadText : {}}>
             {rootMessage.subject || "(No Subject)"}
           </ThemedText>
         </View>
-        <ThemedText
-          numberOfLines={1}
-          style={[styles.threadMessagePreview, { color: colors.textDim, marginLeft: isUnread ? 16 : 0 }]}
-        >
+        <ThemedText numberOfLines={1} style={[styles.threadMessagePreview, { color: colors.textDim }]}>
           {latestMessage.sender_role}: {latestMessage.message}
         </ThemedText>
-        <ThemedText style={[styles.threadTimestamp, { color: colors.textDim, marginLeft: isUnread ? 16 : 0 }]}>
+        <ThemedText style={[styles.threadTimestamp, { color: colors.textDim }]}>
           {latestMessageDate.toLocaleString()}
         </ThemedText>
       </TouchableOpacity>
@@ -338,10 +387,21 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
       keyExtractor={(item) => getRootMessageId(item[0])}
       style={[styles.messageListContainer, !isWideScreen && styles.fullWidthPane, { backgroundColor: colors.card }]}
       ListEmptyComponent={
-        <View style={styles.emptyListContainer}>
-          <Ionicons name="mail-outline" size={48} color={colors.textDim} />
-          <ThemedText style={[styles.emptyListText, { color: colors.textDim }]}>No messages found.</ThemedText>
-        </View>
+        storeIsLoading ? (
+          <ActivityIndicator style={{ marginTop: 50 }} size="large" color={colors.tint} />
+        ) : storeError ? (
+          <View style={styles.emptyListContainer}>
+            <Ionicons name="alert-circle-outline" size={48} color={colors.error} />
+            <ThemedText style={[styles.emptyListText, { color: colors.error }]}>
+              Error loading messages: {storeError}
+            </ThemedText>
+          </View>
+        ) : (
+          <View style={styles.emptyListContainer}>
+            <Ionicons name="mail-outline" size={48} color={colors.textDim} />
+            <ThemedText style={[styles.emptyListText, { color: colors.textDim }]}>No messages found.</ThemedText>
+          </View>
+        )
       }
       extraData={selectedThreadId}
     />
@@ -352,6 +412,20 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
     const selectedThread = currentThreadId
       ? filteredThreads.find((t) => getRootMessageId(t[0]) === currentThreadId)
       : null;
+
+    useEffect(() => {
+      if (selectedThread && selectedThread.length > 0) {
+        const latestMessage = selectedThread.reduce((latest, current) =>
+          new Date(current.created_at ?? 0) > new Date(latest.created_at ?? 0) ? current : latest
+        );
+        console.log(
+          `[renderMessageDetails] Viewing thread ${currentThreadId}, marking latest message ${latestMessage.id} as read.`
+        );
+        markMessageAsRead(latestMessage.id).catch((err: any) => {
+          console.error("Failed to mark message as read on view:", err);
+        });
+      }
+    }, [currentThreadId, selectedThread, markMessageAsRead]);
 
     if (!isWideScreen && !selectedThread) {
       return null;
@@ -366,11 +440,14 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
       );
     }
 
-    // Determine if acknowledgment is needed for the latest message
     const latestMessage = selectedThread[selectedThread.length - 1];
     const needsAcknowledgement =
       latestMessage.requires_acknowledgment &&
-      !(currentUser?.id && latestMessage.acknowledged_by?.includes(currentUser.id));
+      !(
+        currentUser?.id &&
+        Array.isArray(latestMessage.acknowledged_by) &&
+        latestMessage.acknowledged_by.includes(currentUser.id)
+      );
 
     const renderDetailItem = ({ item }: { item: AdminMessage }) => {
       const messageDate = item.created_at ? new Date(item.created_at) : new Date();
@@ -423,17 +500,14 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
             {rootSubject}
           </ThemedText>
           <View style={styles.detailActionsContainer}>
-            {/* Conditionally render Acknowledge button */}
             {needsAcknowledgement && (
               <TouchableOpacity
                 onPress={() => handleAcknowledgeThread(currentThreadId)}
-                style={styles.acknowledgeButton} // Add specific style if needed
+                style={styles.acknowledgeButton}
                 accessibilityRole="button"
                 accessibilityLabel="Acknowledge message"
               >
                 <Ionicons name="checkmark-done-outline" size={24} color={Colors.light.success} />
-                {/* Optionally add text */}
-                {/* <ThemedText style={{color: colors.success, marginLeft: 4}}>Ack</ThemedText> */}
               </TouchableOpacity>
             )}
             <TouchableOpacity
@@ -537,6 +611,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     gap: 8,
     alignItems: "center",
+    flexWrap: "wrap",
   },
   actionButton: {
     flexDirection: "row",
@@ -546,13 +621,18 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     gap: 6,
     borderWidth: 1,
+    borderColor: Colors.light.border,
   },
-  activeButton: {},
+  activeButton: {
+    borderColor: Colors.light.primary,
+  },
   buttonText: {
     fontSize: 14,
     fontWeight: "600",
   },
-  activeText: {},
+  activeText: {
+    // Example: fontWeight: "bold",
+  },
   contentContainer: {
     flex: 1,
     flexDirection: "row",
@@ -590,10 +670,11 @@ const styles = StyleSheet.create({
   },
   selectedThreadItem: {},
   unreadDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
     marginRight: 8,
+    alignSelf: "center",
   },
   unreadText: {
     fontWeight: "bold",
@@ -678,5 +759,9 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     justifyContent: "center",
     alignItems: "center",
+  },
+  divisionSelectorWrapper: {
+    marginLeft: 10,
+    zIndex: 10,
   },
 });

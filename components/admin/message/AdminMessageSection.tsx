@@ -58,9 +58,8 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
   // Zustand Store
   const {
     messages,
-    fetchMessages,
-    subscribeToAdminMessages,
-    markAsRead,
+    readStatusMap,
+    markMessageAsRead,
     archiveThread,
     replyAsAdmin,
     markThreadAsUnread,
@@ -81,19 +80,6 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
   const primaryContrastColor = colors.background;
   const selectedBackgroundColor = colors.tint + "30";
   const disabledColor = colors.icon;
-
-  // Fetch & Subscribe Effect
-  useEffect(() => {
-    let unsubscribe: (() => void) | undefined;
-    if (currentUser?.id && isCompanyAdmin) {
-      console.log(`AdminMessageSection: Fetching messages for Company Admin ${currentUser.id}`);
-      fetchMessages(currentUser.id);
-      unsubscribe = subscribeToAdminMessages(currentUser.id);
-    }
-    return () => {
-      if (unsubscribe) unsubscribe();
-    };
-  }, [currentUser?.id, isCompanyAdmin, fetchMessages, subscribeToAdminMessages]);
 
   // --- Thread Grouping and Filtering ---
   const getRootMessageId = (msg: AdminMessage): string => msg.parent_message_id || msg.id;
@@ -122,14 +108,11 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
           return false;
         }
 
-        const isAdminReader = currentUser?.id && latestMessage.read_by?.includes(currentUser.id);
         const needsAdminAck =
           latestMessage.requires_acknowledgment &&
           !(currentUser?.id && latestMessage.acknowledged_by?.includes(currentUser.id));
 
         switch (filterState.status) {
-          case "unread":
-            return !isArchived && !isAdminReader;
           case "archived":
             return isArchived;
           case "requires_ack":
@@ -148,20 +131,38 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
 
   // --- Handlers ---
   const handleSelectThread = (threadId: string) => {
-    setSelectedThreadId(threadId);
-    setReplyText("");
+    let foundThread: AdminMessage[] | undefined;
+    try {
+      foundThread = filteredThreads.find((t: AdminMessage[], index: number) => {
+        if (!t || t.length === 0) return false;
+        const rootId = getRootMessageId(t[0]);
+        return rootId === threadId;
+      });
+    } catch (e: any) {
+      console.error("[AdminMessageSection] Error during filteredThreads.find():", e);
+      foundThread = undefined;
+    }
 
-    const thread = filteredThreads.find((t) => getRootMessageId(t[0]) === threadId);
-    if (thread && thread.length > 0 && currentUser?.id) {
-      const latestMessage = thread[thread.length - 1];
-      if (!latestMessage.read_by?.includes(currentUser.id)) {
-        markAsRead(latestMessage.id, currentUser.id).catch((err) => {
+    const thread = foundThread;
+
+    if (thread && thread.length > 0) {
+      try {
+        thread.sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime());
+      } catch (e: any) {}
+
+      const latestMessage = thread[0];
+      if (latestMessage?.id) {
+        markMessageAsRead(latestMessage.id).catch((err: Error) => {
           console.error("Failed to mark thread as read:", err);
         });
+      } else {
+        console.warn("[AdminMessageSection] Could not find latest message ID to mark as read.");
       }
     } else {
-      console.warn("Could not mark thread as read - thread or user ID missing");
     }
+
+    setSelectedThreadId(threadId);
+    setReplyText("");
   };
 
   const updateFilter = (part: Partial<FilterState>) => {
@@ -174,10 +175,10 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
     if (!replyText.trim() || !selectedThreadId || !currentUser?.id) return;
     console.log(`Attempting to send reply to thread ${selectedThreadId}...`);
     try {
-      await replyAsAdmin(selectedThreadId, currentUser.id, replyText);
+      await replyAsAdmin(selectedThreadId, replyText);
       console.log(`Reply Sent to thread ${selectedThreadId}!`);
       setReplyText("");
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to send reply:", error);
       // TODO: Show error feedback
     }
@@ -194,9 +195,8 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
   };
 
   const handleMarkUnreadAction = (threadId: string | null) => {
-    if (!threadId || !currentUser?.id) return;
-    console.log(`Calling markThreadAsUnread for thread ${threadId} (Admin context)`);
-    markThreadAsUnread(threadId, currentUser.id).catch((err) => {
+    if (!threadId) return;
+    markThreadAsUnread(threadId).catch((err: Error) => {
       console.error("Failed to mark thread as unread:", err);
       // TODO: Show error feedback
     });
@@ -210,7 +210,7 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
       const latestMessage = thread[thread.length - 1];
       if (latestMessage.requires_acknowledgment && !latestMessage.acknowledged_by?.includes(currentUser.id)) {
         console.log(`Acknowledging message ${latestMessage.id} (Admin context)`);
-        acknowledgeMessage(latestMessage.id, currentUser.id).catch((err) => {
+        acknowledgeMessage(latestMessage.id, currentUser.id).catch((err: Error) => {
           console.error(`Failed to acknowledge message ${latestMessage.id}:`, err);
           // TODO: Show error feedback
         });
@@ -248,27 +248,6 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
             ]}
           >
             All
-          </ThemedText>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => updateFilter({ status: "unread" })}
-          style={[
-            styles.filterButton,
-            {
-              borderColor: colors.border,
-              backgroundColor: filterState.status === "unread" ? colors.primary : colors.background,
-            },
-            filterState.status === "unread" && styles.activeFilterButton,
-          ]}
-        >
-          <ThemedText
-            style={[
-              styles.filterButtonText,
-              { color: filterState.status === "unread" ? primaryContrastColor : themeTintColor },
-              filterState.status === "unread" && styles.activeFilterText,
-            ]}
-          >
-            Unread
           </ThemedText>
         </TouchableOpacity>
         <TouchableOpacity
@@ -382,14 +361,20 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
   );
 
   // Adapt renderThreadItem with styling from AdminMessages
-  const renderThreadItem = ({ item }: { item: AdminMessage[] }) => {
-    const rootMessage = item[0];
+  const renderThreadItem = ({ item: thread }: { item: AdminMessage[] }) => {
+    // Ensure thread is not empty before accessing elements
+    if (!thread || thread.length === 0) return null;
+
+    // Sort within the item render to ensure latest message is first
+    thread.sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime());
+    const latestMessage = thread[0]; // Latest message is now at index 0
+    const rootMessage = thread.find((msg) => !msg.parent_message_id) || latestMessage; // Find root or fallback to latest
     const rootId = getRootMessageId(rootMessage);
     const isSelected = selectedThreadId === rootId;
-    const latestMessage = item[item.length - 1];
-    const isAdminReader = currentUser?.id && latestMessage.read_by?.includes(currentUser.id);
-    const isUnread = !isAdminReader;
     const recipientRolesText = rootMessage.recipient_roles?.join(", ") || "N/A";
+
+    // Check read status using the map from the store
+    const isUnread = !readStatusMap[latestMessage.id];
 
     return (
       <TouchableOpacity
@@ -405,10 +390,18 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
       >
         {/* Row for Subject and Unread Dot */}
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-          <ThemedText type="defaultSemiBold" style={isUnread ? styles.unreadText : {}}>
-            {rootMessage.subject || "(No Subject)"}
-          </ThemedText>
-          {isUnread && <View style={[styles.unreadDot, { backgroundColor: colors.primary }]} />}
+          <View style={{ flexDirection: "row", alignItems: "center", flexShrink: 1 }}>
+            {/* Add unread dot indicator */}
+            {isUnread && <View style={[styles.unreadDot, { backgroundColor: colors.primary }]} />}
+            <ThemedText
+              type={isUnread ? "defaultSemiBold" : "default"}
+              style={isUnread ? styles.unreadText : {}}
+              numberOfLines={1}
+            >
+              {rootMessage.subject || "(No Subject)"}
+            </ThemedText>
+          </View>
+          {/* Removed original unread dot position */}
         </View>
         {/* Recipient Roles */}
         <ThemedText numberOfLines={1} style={[styles.threadMetaText, { color: colors.textDim }]}>
@@ -451,9 +444,6 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
           ]}
         >
           <ThemedText style={{ color: colors.error }}>Error: {error}</ThemedText>
-          <TouchableOpacity onPress={() => fetchMessages(currentUser?.id ?? "")}>
-            <ThemedText style={{ color: colors.primary, marginTop: 10 }}>Retry</ThemedText>
-          </TouchableOpacity>
         </View>
       );
     }
@@ -864,11 +854,11 @@ const styles = StyleSheet.create({
     // Themed background applied inline
   },
   unreadDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    // backgroundColor applied inline
-    // Aligned to the right via parent justify content
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginRight: 8,
+    alignSelf: "center", // Center dot vertically
   },
   unreadText: {
     fontWeight: "bold",
