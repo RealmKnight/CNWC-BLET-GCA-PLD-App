@@ -42,6 +42,7 @@ interface AuthContextType {
   exchangeCodeForSession: (code: string) => Promise<void>;
   updateProfile: (updates: Partial<UserProfile>) => Promise<void>;
   associateMemberWithPin: (pin: string) => Promise<void>;
+  setSessionFromId: (sessionId: string) => Promise<void>;
 }
 
 interface AuthProviderProps {
@@ -695,6 +696,29 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   };
 
+  // New function to set session directly from ID
+  const setSessionFromId = async (sessionId: string) => {
+    console.log("[Auth] Setting session directly from ID");
+    try {
+      const {
+        data: { session },
+        error,
+      } = await supabase.auth.getSession();
+      if (error) throw error;
+
+      if (session?.access_token === sessionId) {
+        console.log("[Auth] Session ID matches current session, updating auth state");
+        updateAuthState(session, "direct-session-set");
+      } else {
+        console.error("[Auth] Session ID mismatch or no session found");
+        throw new Error("Invalid session ID");
+      }
+    } catch (error) {
+      console.error("[Auth] Error setting session from ID:", error);
+      throw error;
+    }
+  };
+
   // Memoize the context value
   const value = useMemo(
     () => ({
@@ -711,6 +735,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       exchangeCodeForSession,
       updateProfile,
       associateMemberWithPin,
+      setSessionFromId,
     }),
     [user, session, member, isCompanyAdmin, userRole, authStatus, signOut] // Keep minimal deps
   );
