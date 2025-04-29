@@ -15,6 +15,7 @@ import { Database } from "@/types/supabase";
 const CACHE_DURATION = 30000; // 30 seconds
 const MAX_RETRIES = 3;
 const RETRY_BASE_DELAY = 1000; // 1 second base delay
+const FETCH_TIMEOUT = 5000; // 5 second timeout
 
 interface StatsCache {
   data: TimeStats | null;
@@ -36,26 +37,66 @@ const vacationStatsCache: VacationStatsCache = {
   timestamp: 0,
 };
 
-// Retry utility function
+// Add timeout wrapper function
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  context: string,
+): Promise<T> {
+  let timeoutId: NodeJS.Timeout;
+
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`Operation timed out after ${timeoutMs}ms: ${context}`));
+    }, timeoutMs);
+  });
+
+  try {
+    const result = await Promise.race([promise, timeoutPromise]);
+    clearTimeout(timeoutId!);
+    return result;
+  } catch (error) {
+    clearTimeout(timeoutId!);
+    throw error;
+  }
+}
+
+// Update the retry function
 async function retryFetch<T>(
   fetchFn: () => Promise<T>,
   context: string,
   maxRetries = MAX_RETRIES,
 ): Promise<T> {
   let lastError;
-  for (let i = 0; i < maxRetries; i++) {
+  let attempt = 0;
+
+  while (attempt < maxRetries) {
     try {
-      return await fetchFn();
+      attempt++;
+      console.log(`[MyTime] ${context} - Attempt ${attempt}/${maxRetries}`);
+
+      // Add timeout to the fetch operation
+      return await withTimeout(fetchFn(), FETCH_TIMEOUT, context);
     } catch (error) {
       lastError = error;
-      console.warn(`[MyTime] ${context} attempt ${i + 1} failed:`, error);
-      if (i < maxRetries - 1) {
-        const delay = RETRY_BASE_DELAY * Math.pow(2, i);
+
+      // Log detailed error information
+      console.warn(`[MyTime] ${context} - Attempt ${attempt} failed:`, {
+        error: error instanceof Error ? error.message : "Unknown error",
+        attempt,
+        maxRetries,
+        willRetry: attempt < maxRetries,
+      });
+
+      if (attempt < maxRetries) {
+        const delay = RETRY_BASE_DELAY * Math.pow(2, attempt - 1);
+        console.log(`[MyTime] ${context} - Waiting ${delay}ms before retry...`);
         await new Promise((resolve) => setTimeout(resolve, delay));
-        console.log(`[MyTime] Retrying ${context} after ${delay}ms delay...`);
       }
     }
   }
+
+  console.error(`[MyTime] ${context} - All ${maxRetries} attempts failed`);
   throw lastError;
 }
 
@@ -288,63 +329,43 @@ export function useMyTime() {
 
       const currentYear = new Date().getFullYear();
 
-      // Batch fetch member data and max PLDs
-      const [memberDataResult, maxPldsResult] = await retryFetch(
-        async () =>
-          Promise.all([
-            supabase
-              .from("members")
-              .select(
-                "division_id, sdv_entitlement, pld_rolled_over, company_hire_date",
-              )
-              .eq("id", member.id)
-              .single(),
-            supabase.rpc("update_member_max_plds", { p_member_id: member.id }),
-          ]),
-        "member data and max PLDs fetch",
-      );
+      // Combine all queries into a single batch operation
+      const results = await retryFetch(async () => {
+        const [memberData, maxPldsResult, requestsData] = await Promise.all([
+          // First batch: Member data and max PLDs
+          supabase
+            .from("members")
+            .select(
+              "division_id, sdv_entitlement, pld_rolled_over, company_hire_date",
+            )
+            .eq("id", member.id)
+            .single(),
+          supabase.rpc("update_member_max_plds", { p_member_id: member.id }),
+          // Second batch: All requests in a single query using a more efficient approach
+          supabase.rpc("get_member_year_requests", {
+            p_member_id: member.id,
+            p_year: currentYear,
+          }),
+        ]);
 
-      if (memberDataResult.error) throw memberDataResult.error;
-      const memberData = memberDataResult.data;
-      const maxPlds = maxPldsResult.data;
+        return { memberData, maxPldsResult, requestsData };
+      }, "batch stats fetch");
 
-      // Batch fetch all requests data
-      const [currentRequests, sixMonthRequests, usedRolledOverPlds] =
-        await retryFetch(
-          async () =>
-            Promise.all([
-              supabase
-                .from("pld_sdv_requests")
-                .select("*")
-                .eq("member_id", member.id)
-                .gte("request_date", `${currentYear}-01-01`)
-                .lte("request_date", `${currentYear}-12-31`),
-              supabase
-                .from("six_month_requests")
-                .select("*")
-                .eq("member_id", member.id)
-                .gte("request_date", `${currentYear}-01-01`)
-                .lte("request_date", `${currentYear}-12-31`),
-              supabase
-                .from("pld_sdv_requests")
-                .select("id")
-                .eq("member_id", member.id)
-                .eq("leave_type", "PLD")
-                .gte("request_date", `${currentYear}-01-01`)
-                .lte("request_date", `${currentYear}-03-31`)
-                .in("status", ["approved", "pending"])
-                .not("paid_in_lieu", "is", true)
-                .eq("is_rollover_pld", true),
-            ]),
-          "requests data fetch",
-        );
+      if (results.memberData.error) throw results.memberData.error;
+      if (results.maxPldsResult.error) throw results.maxPldsResult.error;
+      if (results.requestsData.error) throw results.requestsData.error;
 
-      if (currentRequests.error) throw currentRequests.error;
-      if (sixMonthRequests.error) throw sixMonthRequests.error;
-      if (usedRolledOverPlds.error) throw usedRolledOverPlds.error;
+      const memberData = results.memberData.data;
+      const maxPlds = results.maxPldsResult.data;
+      const {
+        current_requests = [],
+        six_month_requests = [],
+        used_rollover_plds = 0,
+      } = results.requestsData.data || {};
 
+      // Calculate stats from the batch results
       const unusedRolledOverPlds = (memberData.pld_rolled_over || 0) -
-        (usedRolledOverPlds.data?.length || 0);
+        used_rollover_plds;
 
       // Calculate base stats
       const baseStats: TimeStats = {
@@ -379,7 +400,7 @@ export function useMyTime() {
       };
 
       // Update stats based on current year requests
-      currentRequests.data?.forEach((request) => {
+      current_requests.forEach((request) => {
         const type = request.leave_type.toLowerCase() as "pld" | "sdv";
 
         if (request.paid_in_lieu) {
@@ -402,7 +423,7 @@ export function useMyTime() {
       });
 
       // Update stats based on six-month requests
-      sixMonthRequests.data?.forEach((request) => {
+      six_month_requests.forEach((request) => {
         const type = request.leave_type.toLowerCase() as "pld" | "sdv";
         if (!request.processed) {
           baseStats.requested[type]++;
@@ -417,7 +438,7 @@ export function useMyTime() {
         baseStats.requested.sdv + baseStats.waitlisted.sdv +
         baseStats.paidInLieu.sdv;
 
-      // Update cache
+      // Update cache with new stats
       statsCache.data = baseStats;
       statsCache.timestamp = now;
 
@@ -425,7 +446,7 @@ export function useMyTime() {
       setError(null);
 
       // Transform and combine requests
-      const transformedSixMonthRequests = (sixMonthRequests.data || []).map((
+      const transformedSixMonthRequests = (six_month_requests || []).map((
         request,
       ) => ({
         id: request.id,
@@ -437,7 +458,7 @@ export function useMyTime() {
       }));
 
       const allRequests: TimeOffRequest[] = [
-        ...(currentRequests.data || []).map((req) => ({
+        ...(current_requests || []).map((req) => ({
           ...req,
           status: req.status as TimeOffRequest["status"],
           requested_at: req.requested_at ?? "",
@@ -449,9 +470,11 @@ export function useMyTime() {
       setRequests(allRequests);
     } catch (err) {
       console.error("[MyTime] Error in fetchStats:", err);
-      setError(
-        err instanceof Error ? err.message : "Failed to fetch time statistics",
-      );
+      const errorMessage = err instanceof Error
+        ? err.message
+        : "Failed to fetch time statistics";
+      console.error("[MyTime] Error details:", errorMessage);
+      setError(errorMessage);
       setStats({
         total: { pld: 0, sdv: 0 },
         rolledOver: { pld: 0, unusedPlds: 0 },
