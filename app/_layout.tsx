@@ -68,10 +68,10 @@ function AuthAwareRouteHandler() {
   // Handle password reset flag cleanup
   useEffect(() => {
     if (
-      authStatus === "passwordReset" &&
+      typeof window !== "undefined" &&
+      window.__passwordResetInProgress &&
       pathname === "/(auth)/change-password" &&
-      Platform.OS === "web" &&
-      typeof window !== "undefined"
+      Platform.OS === "web"
     ) {
       setTimeout(() => {
         delete window.__passwordResetInProgress;
