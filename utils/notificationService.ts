@@ -400,10 +400,9 @@ export async function sendPasswordResetEmail(email: string): Promise<boolean> {
   try {
     console.log("[Auth] Sending password reset email to:", email);
 
-    // Format the redirect URL - use the correct format for password reset
-    // For Supabase auth, the URL should directly point to the change-password page
+    // Format the redirect URL - use the root change-password page which will handle the redirect
     const redirectUrl =
-      `${process.env.EXPO_PUBLIC_WEBSITE_URL}/(auth)/change-password`;
+      `${process.env.EXPO_PUBLIC_WEBSITE_URL}/change-password`;
 
     console.log("[Auth] Using redirect URL:", redirectUrl);
 
@@ -461,7 +460,7 @@ async function sendPasswordResetEmailViaEdgeFunction(
               Please click the button below to reset your password:
             </p>
             <p style="text-align: center;">
-              <a href="${process.env.EXPO_PUBLIC_WEBSITE_URL}/(auth)/change-password"
+              <a href="${process.env.EXPO_PUBLIC_WEBSITE_URL}/change-password"
                  style="background-color: #003366; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; display: inline-block; font-weight: bold;">
                 Reset Password
               </a>
