@@ -15,7 +15,7 @@ import { Picker } from "@react-native-picker/picker";
 import Toast from "react-native-toast-message";
 import { sendMessageWithNotification } from "@/utils/notificationService";
 import { supabase } from "@/utils/supabase";
-import { useRouter } from "expo-router";
+import { Redirect } from "expo-router";
 
 interface AdminMessageModalProps {
   visible: boolean;
@@ -24,19 +24,13 @@ interface AdminMessageModalProps {
   userEmail: string;
 }
 
-type AdminUserResponse = {
-  members: {
-    pin_number: string;
-  };
-};
-
 export function AdminMessageModal({ visible, onClose, pinNumber, userEmail }: AdminMessageModalProps) {
   const [message, setMessage] = useState("");
   const [selectedDivision, setSelectedDivision] = useState("");
   const [divisions, setDivisions] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
-  const router = useRouter();
+  const [shouldRedirect, setShouldRedirect] = useState(false);
 
   // Fetch divisions on mount
   React.useEffect(() => {
@@ -63,7 +57,7 @@ export function AdminMessageModal({ visible, onClose, pinNumber, userEmail }: Ad
   const handleLogout = async () => {
     try {
       await supabase.auth.signOut();
-      router.replace("/(auth)/sign-in");
+      setShouldRedirect(true);
     } catch (error) {
       console.error("Error signing out:", error);
       Toast.show({
@@ -73,6 +67,11 @@ export function AdminMessageModal({ visible, onClose, pinNumber, userEmail }: Ad
       });
     }
   };
+
+  // Check if we should redirect after logout
+  if (shouldRedirect) {
+    return <Redirect href="/(auth)/sign-in" />;
+  }
 
   const handleSendMessage = async () => {
     if (!message.trim() || !selectedDivision) {
@@ -87,7 +86,7 @@ export function AdminMessageModal({ visible, onClose, pinNumber, userEmail }: Ad
     setIsLoading(true);
     try {
       // Get all admin users for the selected division
-      const { data: adminUsers, error: adminError } = await supabase
+      const { data: adminData, error: adminError } = await supabase
         .from("user_roles")
         .select("members!inner(pin_number)")
         .eq("role", "division_admin")
@@ -95,11 +94,20 @@ export function AdminMessageModal({ visible, onClose, pinNumber, userEmail }: Ad
 
       if (adminError) throw adminError;
 
-      if (!adminUsers || adminUsers.length === 0) {
+      if (!adminData || adminData.length === 0) {
         throw new Error("No admins found for this division");
       }
 
-      const adminPinNumbers = adminUsers.map((u: MemberWithPinNumber) => parseInt(u.members.pin_number));
+      // Extract pin numbers
+      const adminPinNumbers: number[] = [];
+      for (const admin of adminData) {
+        // Access nested data safely
+        // @ts-ignore - Type is complex and not needed to be defined here
+        const adminPin = admin.members?.pin_number;
+        if (adminPin) {
+          adminPinNumbers.push(parseInt(adminPin));
+        }
+      }
 
       // Prepare the message content with user details
       const fullMessage = `User Association Request\n\nEmail: ${userEmail}\nPIN Attempted: ${pinNumber}\nDivision: ${selectedDivision}\n\nMessage: ${message}`;
@@ -248,12 +256,30 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 20,
     fontWeight: "600",
+    marginBottom: 20,
+    textAlign: "center",
+  },
+  label: {
+    fontSize: 16,
+    marginBottom: 8,
+    alignSelf: "flex-start",
+  },
+  picker: {
+    width: "100%",
+    backgroundColor: Colors.dark.background,
     marginBottom: 15,
     color: Colors.dark.text,
   },
-  label: {
-    marginBottom: 8,
+  webSelect: {
+    width: "100%",
+    height: 40,
+    backgroundColor: Colors.dark.background,
+    marginBottom: 15,
     color: Colors.dark.text,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    borderRadius: 4,
+    padding: 8,
   },
   messageInput: {
     width: "100%",
@@ -263,31 +289,37 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 10,
     marginBottom: 5,
-    textAlignVertical: "top",
     backgroundColor: Colors.dark.background,
     color: Colors.dark.text,
+    textAlignVertical: "top",
   },
   charCount: {
-    fontSize: 12,
-    color: Colors.dark.text,
     alignSelf: "flex-end",
+    fontSize: 12,
     marginBottom: 15,
+    color: Colors.dark.secondary,
   },
   modalButtons: {
     flexDirection: "row",
-    justifyContent: "space-between",
+    justifyContent: "space-around",
     width: "100%",
+    marginTop: 10,
   },
   modalButton: {
-    flex: 1,
-    height: 44,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
     borderRadius: 8,
-    justifyContent: "center",
+    minWidth: 120,
     alignItems: "center",
-    marginHorizontal: 5,
+    justifyContent: "center",
+  },
+  modalButtonText: {
+    fontSize: 16,
+    fontWeight: "600",
   },
   cancelButton: {
     backgroundColor: Colors.dark.error,
+    marginRight: 10,
   },
   sendButton: {
     backgroundColor: Colors.dark.success,
@@ -295,49 +327,23 @@ const styles = StyleSheet.create({
   buttonDisabled: {
     opacity: 0.7,
   },
-  modalButtonText: {
-    color: Colors.dark.background,
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  picker: {
-    width: "100%",
-    marginBottom: 15,
-    backgroundColor: Colors.dark.background,
-    color: Colors.dark.text,
-  },
-  webSelect: {
-    width: "100%",
-    height: 40,
-    marginBottom: 15,
-    backgroundColor: Colors.dark.background,
-    color: Colors.dark.text,
-    borderColor: Colors.dark.border,
-    borderWidth: 1,
-    borderRadius: 8,
-    padding: 8,
-  },
   successContainer: {
-    alignItems: "center",
     padding: 20,
+    alignItems: "center",
   },
   successTitle: {
     fontSize: 20,
     fontWeight: "600",
-    marginBottom: 15,
-    color: Colors.dark.success,
+    marginBottom: 20,
     textAlign: "center",
   },
   successText: {
     fontSize: 16,
-    color: Colors.dark.text,
     textAlign: "center",
     marginBottom: 20,
-    lineHeight: 24,
   },
   logoutButton: {
     backgroundColor: Colors.dark.buttonBackground,
-    width: "100%",
-    marginTop: 20,
+    marginTop: 10,
   },
 });

@@ -442,6 +442,28 @@ export default function MyTimeScreen() {
   // Calculate responsive card width
   const cardWidth = Math.min(width * 0.9, 600);
 
+  // Force initialize on mount
+  useEffect(() => {
+    if (member?.id && !isInitialized) {
+      console.log("[MyTimeScreen] Member detected and hook not initialized, calling initialize");
+      initialize(true);
+    }
+  }, [member?.id, isInitialized, initialize]);
+
+  // Add AppState listener to refresh data when app comes back to foreground
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextAppState) => {
+      if (nextAppState === "active" && member?.id && isInitialized) {
+        console.log("[MyTimeScreen] App came to foreground, refreshing data");
+        initialize(false); // Use false to respect cooldown period
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [member?.id, initialize, isInitialized]);
+
   // Handle focus events
   useFocusEffect(
     React.useCallback(() => {
@@ -612,6 +634,15 @@ export default function MyTimeScreen() {
     }
   };
 
+  // Add cleanup effect to handle component unmounting
+  useEffect(() => {
+    return () => {
+      // Cleanup code when component unmounts
+      console.log("[MyTimeScreen] Component unmounting, cleaning up references");
+      didSkipInitialFocusRef.current = false;
+    };
+  }, []);
+
   if (!member?.id || isLoading || !isInitialized || !stats) {
     return (
       <ThemedScrollView
@@ -631,21 +662,101 @@ export default function MyTimeScreen() {
     );
   }
 
-  if (error) {
+  // Improved loading state logic with better information display and retry capability
+  if (!member?.id) {
     return (
       <ThemedScrollView
         style={[
           styles.container,
-          {
-            backgroundColor: Colors[colorScheme ?? "light"].background,
-            paddingTop: insets.top,
-          },
+          { backgroundColor: Colors[colorScheme ?? "light"].background, paddingTop: insets.top },
         ]}
         contentContainerStyle={styles.contentContainer}
       >
         <ThemedView style={[styles.card, { width: cardWidth }]}>
           <ThemedView style={styles.loadingContainer}>
-            <ThemedText style={styles.loadingText}>Error: {error}</ThemedText>
+            <ActivityIndicator size="large" color={Colors[colorScheme ?? "light"].tint} />
+            <ThemedText style={styles.loadingText}>Waiting for user information...</ThemedText>
+          </ThemedView>
+        </ThemedView>
+      </ThemedScrollView>
+    );
+  }
+
+  if (isLoading || !isInitialized) {
+    return (
+      <ThemedScrollView
+        style={[
+          styles.container,
+          { backgroundColor: Colors[colorScheme ?? "light"].background, paddingTop: insets.top },
+        ]}
+        contentContainerStyle={styles.contentContainer}
+      >
+        <ThemedView style={[styles.card, { width: cardWidth }]}>
+          <ThemedView style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={Colors[colorScheme ?? "light"].tint} />
+            <ThemedText style={styles.loadingText}>
+              {isLoading ? "Loading time statistics..." : "Initializing..."}
+            </ThemedText>
+            {syncStatus.error && (
+              <ThemedView style={styles.errorIndicator}>
+                <Feather name="alert-circle" size={16} color={Colors[colorScheme ?? "light"].error} />
+                <ThemedText style={styles.errorText}>{syncStatus.error}</ThemedText>
+              </ThemedView>
+            )}
+            {(!isInitialized || syncStatus.failedAttempts > 0) && (
+              <ThemedTouchableOpacity style={[styles.retryButton, { marginTop: 16 }]} onPress={() => initialize(true)}>
+                <Feather name="refresh-cw" size={16} color={Colors[colorScheme ?? "light"].primary} />
+                <ThemedText style={[styles.retryText, { marginLeft: 8 }]}>Retry</ThemedText>
+              </ThemedTouchableOpacity>
+            )}
+          </ThemedView>
+        </ThemedView>
+      </ThemedScrollView>
+    );
+  }
+
+  // No data loaded state
+  if (!stats) {
+    return (
+      <ThemedScrollView
+        style={[
+          styles.container,
+          { backgroundColor: Colors[colorScheme ?? "light"].background, paddingTop: insets.top },
+        ]}
+        contentContainerStyle={styles.contentContainer}
+      >
+        <ThemedView style={[styles.card, { width: cardWidth }]}>
+          <ThemedView style={styles.loadingContainer}>
+            <Feather name="database" size={32} color={Colors[colorScheme ?? "light"].warning} />
+            <ThemedText style={[styles.loadingText, { marginTop: 16 }]}>No time data available</ThemedText>
+            <ThemedTouchableOpacity style={[styles.retryButton, { marginTop: 16 }]} onPress={() => initialize(true)}>
+              <Feather name="refresh-cw" size={16} color={Colors[colorScheme ?? "light"].primary} />
+              <ThemedText style={[styles.retryText, { marginLeft: 8 }]}>Refresh</ThemedText>
+            </ThemedTouchableOpacity>
+          </ThemedView>
+        </ThemedView>
+      </ThemedScrollView>
+    );
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <ThemedScrollView
+        style={[
+          styles.container,
+          { backgroundColor: Colors[colorScheme ?? "light"].background, paddingTop: insets.top },
+        ]}
+        contentContainerStyle={styles.contentContainer}
+      >
+        <ThemedView style={[styles.card, { width: cardWidth }]}>
+          <ThemedView style={styles.loadingContainer}>
+            <Feather name="alert-triangle" size={32} color={Colors[colorScheme ?? "light"].error} />
+            <ThemedText style={[styles.loadingText, { marginTop: 16 }]}>Error: {error}</ThemedText>
+            <ThemedTouchableOpacity style={[styles.retryButton, { marginTop: 16 }]} onPress={() => initialize(true)}>
+              <Feather name="refresh-cw" size={16} color={Colors[colorScheme ?? "light"].background} />
+              <ThemedText style={[styles.retryText, { marginLeft: 8 }]}>Retry</ThemedText>
+            </ThemedTouchableOpacity>
           </ThemedView>
         </ThemedView>
       </ThemedScrollView>
@@ -1284,5 +1395,20 @@ const styles = StyleSheet.create({
   warningMessageText: {
     marginLeft: 8,
     fontSize: 14,
+  },
+  retryButton: {
+    flexDirection: "row",
+    backgroundColor: Colors.dark.primary,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 16,
+  },
+  retryText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: Colors.dark.background,
   },
 });

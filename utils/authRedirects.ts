@@ -107,7 +107,11 @@ export function handlePasswordResetURL(): boolean {
     const url = window.location.href;
 
     // Special case for the problematic format with both query param and hash
-    if (url.includes("?code=") && url.includes("#/auth/change-password")) {
+    if (
+        url.includes("?code=") &&
+        (url.includes("#/auth/change-password") ||
+            url.includes("#/(auth)/change-password"))
+    ) {
         const code = new URLSearchParams(window.location.search).get("code");
         console.log("[AuthRedirect] Handling special mixed format URL");
 

@@ -6,7 +6,7 @@ import { ThemedText } from "@/components/ThemedText";
 import { Colors } from "@/constants/Colors";
 import { AdminMessageModal } from "@/components/AdminMessageModal";
 import Toast from "react-native-toast-message";
-import { router } from "expo-router";
+import { Redirect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Modal } from "@/components/ui/Modal";
 import { supabase } from "@/utils/supabase";
@@ -28,25 +28,31 @@ export default function MemberAssociationScreen() {
   const [associationSuccess, setAssociationSuccess] = useState(false);
   const [memberData, setMemberData] = useState<MemberData | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [shouldRedirect, setShouldRedirect] = useState(false);
   const { associateMemberWithPin, user, member, signOut } = useAuth();
 
   // Monitor member data and redirect when it's available after successful association
   useEffect(() => {
     // Only redirect if we've had a successful association and member data is present
     if (associationSuccess && member) {
-      console.log("[MemberAssociation] Member data loaded after association, redirecting to tabs:", {
+      console.log("[MemberAssociation] Member data loaded after association, ready to redirect:", {
         memberId: member.id,
         role: member.role,
       });
 
       // Short delay to allow Toast to be visible
       const redirectTimer = setTimeout(() => {
-        router.replace("/(tabs)");
+        setShouldRedirect(true);
       }, 1500);
 
       return () => clearTimeout(redirectTimer);
     }
   }, [associationSuccess, member]);
+
+  // If redirect is triggered, use the Redirect component
+  if (shouldRedirect) {
+    return <Redirect href="/(tabs)" />;
+  }
 
   const handleFetchMember = async () => {
     try {
@@ -122,8 +128,6 @@ export default function MemberAssociationScreen() {
       // No need to manually navigate - the auth status change will trigger navigation in _layout.tsx
     } catch (error) {
       console.error("Error signing out:", error);
-      // If sign out fails, try to redirect anyway
-      router.replace("/(auth)/sign-in");
     }
   };
 

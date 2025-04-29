@@ -2,11 +2,10 @@ import { createContext, useContext, useEffect, useState, ReactNode, useRef, useM
 import { Session, User } from "@supabase/supabase-js";
 import { supabase } from "../utils/supabase";
 import { Database } from "../types/supabase";
-import { router } from "expo-router";
+import * as Linking from "expo-linking";
 import { Platform, AppState } from "react-native";
 import { UserRole, UserProfile } from "@/types/auth";
 import { useUserStore } from "@/store/userStore";
-import * as Linking from "expo-linking";
 import { useNotificationStore } from "@/store/notificationStore";
 import { useCalendarStore } from "@/store/calendarStore";
 import { useVacationCalendarStore } from "@/store/vacationCalendarStore";
@@ -615,7 +614,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       const { error } = await supabase.auth.signUp({
         email,
         password,
-        options: { emailRedirectTo: Linking.createURL("/") },
+        options: { emailRedirectTo: Linking.createURL("/(auth)/sign-in") },
       });
       if (error) throw error;
       // User needs to confirm email, state remains loading/signedOut until confirmed
@@ -664,7 +663,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const resetPassword = async (email: string) => {
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: Linking.createURL("/reset-password"), // URL for the password update form
+        redirectTo: Linking.createURL("/(auth)/change-password"), // Updated path for password reset form
       });
       if (error) throw error;
       alert("Password reset email sent! Please check your inbox.");

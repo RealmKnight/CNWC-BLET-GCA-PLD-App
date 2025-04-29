@@ -844,15 +844,19 @@ export function useMyTime() {
   );
 
   const refreshData = useCallback(async (force = false) => {
+    // Use a local variable to track whether to complete initialization
+    // even if some data fetches fail
+    let shouldCompleteInitialization = !isInitialized;
+
+    // Guard clauses
     if (isFetchInProgressRef.current) {
-      console.log(
-        "[MyTime] Skipping refresh - fetch already in progress (ref check).",
-      );
+      console.log("[MyTime] Skipping refresh - fetch already in progress");
       return;
     }
 
     if (!member?.id) {
       console.log("[MyTime] Skipping refresh - no member ID");
+      setError("User information not available");
       return;
     }
 
@@ -867,32 +871,69 @@ export function useMyTime() {
 
     try {
       isFetchInProgressRef.current = true;
-      console.log("[MyTime] Starting data refresh (setting isRefreshing true)");
+      console.log(`[MyTime] Starting data refresh (force=${force})`);
       setIsRefreshing(true);
       setError(null);
 
-      await Promise.all([
-        fetchStats(),
-        fetchRequests(),
-        fetchVacationRequests(),
-        fetchVacationStats(),
+      // Use Promise.allSettled to continue even if some promises reject
+      const results = await Promise.allSettled([
+        fetchStats().catch((err) => {
+          console.error("[MyTime] Error in fetchStats:", err);
+          return null;
+        }),
+        fetchRequests().catch((err) => {
+          console.error("[MyTime] Error in fetchRequests:", err);
+          return null;
+        }),
+        fetchVacationRequests().catch((err) => {
+          console.error("[MyTime] Error in fetchVacationRequests:", err);
+          return null;
+        }),
+        fetchVacationStats().catch((err) => {
+          console.error("[MyTime] Error in fetchVacationStats:", err);
+          return null;
+        }),
       ]);
 
-      setIsInitialized(true);
+      // Check if all promises were rejected
+      const allFailed = results.every((result) => result.status === "rejected");
+      if (allFailed) {
+        throw new Error("Failed to fetch any data");
+      }
+
+      // Log any rejected promises
+      results.forEach((result, index) => {
+        if (result.status === "rejected") {
+          console.error(
+            `[MyTime] Promise at index ${index} rejected:`,
+            result.reason,
+          );
+        }
+      });
+
+      // Update state even if only some data was fetched
+      if (shouldCompleteInitialization) {
+        setIsInitialized(true);
+      }
+
       lastRefreshTimeRef.current = now;
-      // console.log("[MyTime] Data refreshed successfully");
+      console.log("[MyTime] Data refresh completed");
     } catch (error) {
-      console.error("[MyTime] Error refreshing data:", error);
+      console.error("[MyTime] Critical error refreshing data:", error);
       setError(
         error instanceof Error ? error.message : "Failed to refresh data",
       );
-      if (!isInitialized) setIsInitialized(true);
+
+      // Still mark as initialized to prevent infinite loading
+      if (shouldCompleteInitialization) {
+        console.log("[MyTime] Setting initialized=true despite errors");
+        setIsInitialized(true);
+      }
     } finally {
-      console.log(
-        "[MyTime] Refresh attempt finished, setting isRefreshing state to false.",
-      );
+      console.log("[MyTime] Refresh attempt finished, cleaning up state");
       setIsRefreshing(false);
       isFetchInProgressRef.current = false;
+      setIsLoading(false);
     }
   }, [
     member?.id,
@@ -1077,6 +1118,46 @@ export function useMyTime() {
       );
     }
   }, [member?.id, session, refreshData]);
+
+  // Replace with a more reliable initialization approach
+  useEffect(() => {
+    // Skip if member ID not available yet
+    if (!member?.id) {
+      console.log("[MyTime] No member ID available, skipping initialization");
+      return;
+    }
+
+    // If already initialized, no need to re-initialize
+    if (isInitialized && !isLoading) {
+      console.log("[MyTime] Already initialized, skipping");
+      return;
+    }
+
+    console.log("[MyTime] Starting initialization with member ID:", member.id);
+    setIsLoading(true);
+
+    refreshData(true)
+      .catch((err) => {
+        console.error("[MyTime] Error during refreshData:", err);
+      })
+      .finally(() => {
+        console.log(
+          "[MyTime] refreshData completed, setting loading false and initialized true",
+        );
+        setIsLoading(false);
+        setIsInitialized(true);
+        initialAuthLoadCompleteRef.current = true;
+      });
+
+    // Set current mount time
+    mountTimeRef.current = Date.now();
+
+    // Cleanup function
+    return () => {
+      console.log("[MyTime] Cleanup from initialization effect");
+      // Don't reset initialization state on unmount to prevent thrashing
+    };
+  }, [member?.id, refreshData]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener(

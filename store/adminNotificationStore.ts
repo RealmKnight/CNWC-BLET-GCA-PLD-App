@@ -294,7 +294,7 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
                 message_id?: string;
                 [key: string]: any;
             };
-            // Log the specific table that triggered the update (Keep this one? It's useful)
+            // Log the specific table that triggered the update
             console.log(
                 `[handleRealtimeUpdate] Received ${payload.eventType} on table '${payload.table}' for record:`,
                 record?.id ?? record?.message_id ?? "(no ID)",
@@ -309,61 +309,170 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
         // Cleanup previous channel if exists
         const existingChannel = get().realtimeChannel;
         if (existingChannel) {
-            supabase.removeChannel(existingChannel).catch((err) =>
-                console.error("Error removing existing channel:", err)
-            );
+            try {
+                supabase.removeChannel(existingChannel).catch((err) =>
+                    console.error(
+                        "[initializeAdminNotifications] Error removing existing channel:",
+                        err,
+                    )
+                );
+            } catch (err) {
+                console.error(
+                    "[initializeAdminNotifications] Exception during channel cleanup:",
+                    err,
+                );
+            }
         }
 
-        const channel = supabase
-            .channel(`admin-notifications-${userId}`)
-            .on(
-                "postgres_changes",
-                { event: "*", schema: "public", table: "admin_messages" },
-                handleRealtimeUpdate,
-            )
-            .on(
-                "postgres_changes",
-                {
-                    event: "*",
-                    schema: "public",
-                    table: "admin_message_read_status",
-                    filter: `user_id=eq.${userId}`,
-                },
-                handleRealtimeUpdate, // Use the same handler - just refetch
-            )
-            .subscribe((status, err) => {
-                // Log ALL statuses for debugging
-                console.log(
-                    `[initializeAdminNotifications] Realtime channel status: ${status}`,
-                    err ? `Error: ${err.message}` : "",
-                );
+        // Create a safe channel name (avoid special characters that might cause issues)
+        const channelName = `admin-notifications-${userId.replace(/-/g, "")}`;
+        console.log(
+            `[initializeAdminNotifications] Creating channel: ${channelName}`,
+        );
 
-                if (status === "SUBSCRIBED") {
-                    console.log(
-                        "[initializeAdminNotifications] Realtime channel successfully subscribed.",
-                    );
-                    // Potentially trigger a final fetch here to catch anything missed during setup
-                    // get()._fetchAndSetMessages(userId, get().viewingDivisionId);
-                } else if (
-                    status === "CHANNEL_ERROR" || status === "TIMED_OUT" || err
-                ) {
-                    console.error(
-                        "[initializeAdminNotifications] Realtime subscription error:",
-                        err ?? status,
-                    );
-                    set({
-                        error: `Subscription failed: ${err?.message ?? status}`,
-                        isLoading: false,
+        let retryCount = 0;
+        const maxRetries = 3;
+        const setupChannel = () => {
+            try {
+                const channel = supabase
+                    .channel(channelName)
+                    .on(
+                        "postgres_changes",
+                        {
+                            event: "*",
+                            schema: "public",
+                            table: "admin_messages",
+                        },
+                        handleRealtimeUpdate,
+                    )
+                    .on(
+                        "postgres_changes",
+                        {
+                            event: "*",
+                            schema: "public",
+                            table: "admin_message_read_status",
+                            filter: `user_id=eq.${userId}`,
+                        },
+                        handleRealtimeUpdate,
+                    )
+                    .subscribe((status, err) => {
+                        // Log ALL statuses for debugging
+                        console.log(
+                            `[initializeAdminNotifications] Realtime channel status: ${status}`,
+                            err ? `Error: ${err.message}` : "",
+                        );
+
+                        if (status === "SUBSCRIBED") {
+                            console.log(
+                                "[initializeAdminNotifications] Realtime channel successfully subscribed.",
+                            );
+                            retryCount = 0; // Reset retry count on success
+
+                            // Set a flag to indicate successful subscription
+                            set({ realtimeChannel: channel });
+
+                            // Trigger a final fetch to catch anything missed during setup
+                            get()._fetchAndSetMessages(
+                                userId,
+                                get().viewingDivisionId,
+                            );
+                        } else if (
+                            status === "CHANNEL_ERROR" ||
+                            status === "TIMED_OUT" || err
+                        ) {
+                            console.error(
+                                "[initializeAdminNotifications] Realtime subscription error:",
+                                err ?? status,
+                            );
+
+                            // Set a degraded state but don't block the UI
+                            set({
+                                error: `Subscription warning: ${
+                                    err?.message ?? status
+                                }`,
+                                isLoading: false,
+                            });
+
+                            // Attempt to retry connection with backoff
+                            if (retryCount < maxRetries) {
+                                retryCount++;
+                                const delay = Math.min(
+                                    1000 * Math.pow(2, retryCount),
+                                    8000,
+                                );
+                                console.log(
+                                    `[initializeAdminNotifications] Retrying in ${delay}ms (attempt ${retryCount}/${maxRetries})`,
+                                );
+
+                                setTimeout(() => {
+                                    // Clean up failed channel before retry
+                                    try {
+                                        supabase.removeChannel(channel).catch(
+                                            (e) =>
+                                                console.warn(
+                                                    "[initializeAdminNotifications] Error removing failed channel:",
+                                                    e,
+                                                ),
+                                        );
+                                    } catch (cleanupErr) {
+                                        console.warn(
+                                            "[initializeAdminNotifications] Exception during failed channel cleanup:",
+                                            cleanupErr,
+                                        );
+                                    }
+
+                                    setupChannel();
+                                }, delay);
+                            } else {
+                                console.warn(
+                                    "[initializeAdminNotifications] Max retries reached, falling back to polling.",
+                                );
+                                // Fall back to polling if we can't establish realtime
+                                const pollInterval = setInterval(() => {
+                                    console.log(
+                                        "[initializeAdminNotifications] Polling for updates...",
+                                    );
+                                    get()._fetchAndSetMessages(
+                                        userId,
+                                        get().viewingDivisionId,
+                                    );
+                                }, 30000); // Poll every 30 seconds
+
+                                // Store the interval for cleanup
+                                set({
+                                    realtimeChannel: null,
+                                    // @ts-ignore - Adding a custom property for cleanup
+                                    _pollInterval: pollInterval,
+                                });
+                            }
+                        } else if (status === "CLOSED") {
+                            console.warn(
+                                "[initializeAdminNotifications] Realtime channel closed.",
+                            );
+                            // Channel closed normally, no action needed
+                        }
                     });
-                } else if (status === "CLOSED") {
-                    console.warn(
-                        "[initializeAdminNotifications] Realtime channel closed.",
-                    );
-                    // Optionally handle automatic reconnection or notify user
-                }
-            });
 
-        set({ realtimeChannel: channel });
+                return channel;
+            } catch (error) {
+                console.error(
+                    "[initializeAdminNotifications] Exception setting up channel:",
+                    error,
+                );
+                set({
+                    isLoading: false,
+                    error: `Channel setup failed: ${
+                        error instanceof Error ? error.message : "Unknown error"
+                    }`,
+                });
+                return null;
+            }
+        };
+
+        const channel = setupChannel();
+        if (channel) {
+            set({ realtimeChannel: channel });
+        }
 
         // Return cleanup function
         return () => {
@@ -371,11 +480,32 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
                 "[initializeAdminNotifications] Cleanup: Unsubscribing realtime channel.",
             );
             const currentChannel = get().realtimeChannel; // Get channel from state
+
+            // Clear any polling interval if it exists
+            // @ts-ignore - Custom property access
+            const pollInterval = get()._pollInterval;
+            if (pollInterval) {
+                clearInterval(pollInterval);
+                // @ts-ignore - Custom property cleanup
+                set({ _pollInterval: null });
+            }
+
             if (currentChannel) {
-                supabase.removeChannel(currentChannel).catch((err) =>
-                    console.error("Error removing channel:", err)
-                );
-                set({ realtimeChannel: null }); // Clear channel from state
+                try {
+                    supabase.removeChannel(currentChannel).catch((err) =>
+                        console.error(
+                            "[initializeAdminNotifications] Error removing channel during cleanup:",
+                            err,
+                        )
+                    );
+                } catch (err) {
+                    console.error(
+                        "[initializeAdminNotifications] Exception during channel cleanup:",
+                        err,
+                    );
+                } finally {
+                    set({ realtimeChannel: null }); // Always clear channel from state
+                }
             }
         };
     },

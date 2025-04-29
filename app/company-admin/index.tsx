@@ -9,25 +9,23 @@ import {
   TouchableOpacity,
   KeyboardAvoidingView,
 } from "react-native";
-import { useAuth } from "../hooks/useAuth";
-import { Colors } from "../constants/Colors";
-import { useColorScheme } from "../hooks/useColorScheme";
-import { TabBar, Tab } from "../components/admin/TabBar";
-import { TouchableOpacityComponent } from "../components/TouchableOpacityComponent";
+import { useAuth } from "../../hooks/useAuth";
+import { Colors } from "../../constants/Colors";
+import { useColorScheme } from "../../hooks/useColorScheme";
+import { TabBar, Tab } from "../../components/admin/TabBar";
 import { Ionicons } from "@expo/vector-icons";
-import { router, useNavigation } from "expo-router";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { ThemedText } from "../components/ThemedText";
+import { ThemedText } from "../../components/ThemedText";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // Import all section components
-import { PldSdvSection } from "../components/admin/pld-sdv/PldSdvSection";
-import { VacationSection } from "../components/admin/vacation/VacationSection";
-import { AdminMessageSection } from "../components/admin/message/AdminMessageSection";
-import { AdminReviewSection } from "../components/admin/review/AdminReviewSection";
+import { PldSdvSection } from "../../components/admin/pld-sdv/PldSdvSection";
+import { VacationSection } from "../../components/admin/vacation/VacationSection";
+import { AdminMessageSection } from "../../components/admin/message/AdminMessageSection";
+import { AdminReviewSection } from "../../components/admin/review/AdminReviewSection";
 
 // Re-add supabase import as it's needed by handleLogout
-import { supabase } from "../utils/supabase";
+import { supabase } from "../../utils/supabase";
 
 // Define tabs
 const TABS: Tab[] = [
@@ -134,8 +132,7 @@ const AdaptiveScrollView: React.FC<AdaptiveScrollViewProps> = ({ children, style
 };
 
 export default function CompanyAdminScreen() {
-  const { user, isLoading, signOut } = useAuth();
-  const navigation = useNavigation();
+  const { user, authStatus, signOut } = useAuth();
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const colors = Colors[colorScheme];
   const { width } = useWindowDimensions();
@@ -250,10 +247,8 @@ export default function CompanyAdminScreen() {
     }
   };
 
-  // Adjust the loading check: Primarily rely on isLoading.
-  // If not loading but user becomes null (e.g., during logout transition before navigation),
-  // render a minimal view instead of returning early to avoid hook errors.
-  if (isLoading) {
+  // Adjust the loading check: Use authStatus instead of isLoading
+  if (authStatus === "loading") {
     return (
       <Container style={[styles.container, platformStyles.container, { backgroundColor: colors.background }]}>
         <View style={styles.loadingContainer}>

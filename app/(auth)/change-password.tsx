@@ -8,6 +8,7 @@ import { Colors } from "@/constants/Colors";
 import * as Linking from "expo-linking";
 import { useAuth } from "@/hooks/useAuth";
 import { AuthParams } from "@/utils/authRedirects";
+import { Redirect } from "expo-router";
 
 // Extend Window interface to include our custom properties
 declare global {
@@ -151,6 +152,7 @@ export default function ChangePasswordScreen() {
   const authInProgress = useRef(false);
   const { exchangeCodeForSession, session } = useAuth();
   const params = useLocalSearchParams();
+  const [redirectToSignIn, setRedirectToSignIn] = useState(false);
 
   // Handle password reset from Supabase auth link
   useEffect(() => {
@@ -607,17 +609,15 @@ export default function ChangePasswordScreen() {
   };
 
   const handleReturnToSignIn = () => {
-    // Clear auth flags before navigating
-    setIsAuthenticating(false);
-    authInProgress.current = false;
-    if (typeof window !== "undefined") {
-      window.__passwordResetInProgress = false;
+    // Clear any password reset flags in the global window object
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      delete window.__passwordResetInProgress;
+      delete window.__passwordResetParams;
+      delete window.__passwordResetSource;
     }
 
-    // For web, navigate directly to sign-in
-    if (Platform.OS === "web") {
-      router.replace("/(auth)/sign-in");
-    }
+    // Set redirect state to trigger the Redirect component
+    setRedirectToSignIn(true);
   };
 
   // Add a debug component
@@ -634,6 +634,11 @@ export default function ChangePasswordScreen() {
       </ThemedView>
     );
   };
+
+  // Add redirection when state is set
+  if (redirectToSignIn) {
+    return <Redirect href="/(auth)/sign-in" />;
+  }
 
   return (
     <ThemedView style={styles.container}>

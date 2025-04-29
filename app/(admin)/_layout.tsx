@@ -9,6 +9,7 @@ import { Platform, ViewStyle } from "react-native";
 import TabBarBackground from "@/components/ui/TabBarBackground";
 import { Ionicons } from "@expo/vector-icons";
 import { BottomTabNavigationOptions } from "@react-navigation/bottom-tabs";
+import { ProtectedRoute } from "@/components/ProtectedRoute";
 
 export default function AdminLayout() {
   const { userRole } = useAuth();
@@ -31,7 +32,7 @@ export default function AdminLayout() {
   // Show only division_admin tab for division admins
   if (userRole === "division_admin") {
     return (
-      <>
+      <ProtectedRoute requiredAuth="member">
         <AppHeader />
         <Tabs screenOptions={commonScreenOptions}>
           <Tabs.Screen
@@ -56,13 +57,13 @@ export default function AdminLayout() {
             }}
           />
         </Tabs>
-      </>
+      </ProtectedRoute>
     );
   }
 
   // For application_admin and union_admin roles
   return (
-    <>
+    <ProtectedRoute requiredAuth="member">
       <AppHeader />
       <Tabs screenOptions={commonScreenOptions}>
         {userRole === "application_admin" && (
@@ -97,6 +98,6 @@ export default function AdminLayout() {
           }}
         />
       </Tabs>
-    </>
+    </ProtectedRoute>
   );
 }

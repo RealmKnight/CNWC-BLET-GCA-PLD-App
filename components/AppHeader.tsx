@@ -1,6 +1,6 @@
-import React from "react";
+import React, { useState } from "react";
 import { StyleSheet, TouchableOpacity, Image, View } from "react-native";
-import { usePathname, useRouter, useSegments } from "expo-router";
+import { usePathname, useRouter, useSegments, Redirect } from "expo-router";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { useAuth } from "@/hooks/useAuth";
@@ -13,13 +13,26 @@ import { AdminMessageBadge } from "@/components/ui/AdminMessageBadge";
 export function AppHeader() {
   const pathname = usePathname();
   const segments = useSegments();
-  const { user, userRole, member, signOut } = useAuth();
+  const { user, userRole, member, signOut, authStatus } = useAuth();
   const router = useRouter();
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const isAdminRoute = segments[0] === "(admin)";
   const isAdmin = userRole?.includes("admin");
   const isProfileRoute = segments[0] === "(profile)";
   const isTabsRoute = segments[0] === "(tabs)";
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  // Check if current route is one of the navigation card routes
+  const isNavigationCardRoute = [
+    "(division)",
+    "(rosters)",
+    "(agreements)",
+    "(claims)",
+    "(gca)",
+    "(tools)",
+    "(safety)",
+    "(training)",
+  ].includes(segments[0]);
 
   const unreadAdminMessageCount = useAdminNotificationStore((state) => state.unreadCount);
   const showAdminBadge = isAdmin && !isAdminRoute && unreadAdminMessageCount > 0;
@@ -34,7 +47,15 @@ export function AppHeader() {
     memberPinNumber: member?.pin_number,
     unreadAdminMessageCount,
     showAdminBadge,
+    authStatus,
+    isLoggingOut,
   });
+
+  // If we've signOut out, let the redirect in index.tsx handle the navigation
+  if (isLoggingOut && authStatus === "signedOut") {
+    console.log("[AppHeader] Auth state is now signedOut, redirecting");
+    return <Redirect href="/(auth)/sign-in" />;
+  }
 
   const handleHomePress = () => {
     console.log("[AppHeader] Going to home tab");
@@ -86,9 +107,16 @@ export function AppHeader() {
     }
   };
 
-  const handleLogoutPress = () => {
+  const handleLogoutPress = async () => {
     console.log("[AppHeader] Logging out");
-    signOut();
+    setIsLoggingOut(true);
+    try {
+      await signOut();
+      // Don't navigate here - we'll let our authStatus redirect handle it
+    } catch (error) {
+      console.error("[AppHeader] Error during logout:", error);
+      setIsLoggingOut(false); // Reset in case of error
+    }
   };
 
   const iconColor = Colors[colorScheme].tint;
@@ -163,7 +191,7 @@ export function AppHeader() {
                 </View>
               </TouchableOpacity>
             )}
-            {isProfileRoute && (
+            {(isProfileRoute || isNavigationCardRoute) && (
               <TouchableOpacity onPress={handleHomePress} style={styles.iconButton}>
                 <Ionicons name="home-outline" size={28} color={iconColor} />
               </TouchableOpacity>

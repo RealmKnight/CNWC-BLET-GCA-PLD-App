@@ -5,19 +5,24 @@ import { ThemedView } from "@/components/ThemedView";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { Colors } from "@/constants/Colors";
 import { StyleSheet } from "react-native";
+import { ProtectedRoute } from "@/components/ProtectedRoute";
+
+type ColorScheme = "light" | "dark";
 
 export default function ProfileLayout() {
-  const colorScheme = useColorScheme() ?? "light";
+  const colorScheme = (useColorScheme() ?? "light") as ColorScheme;
 
   return (
-    <ThemedView style={[styles.container, { backgroundColor: Colors[colorScheme].background }]}>
-      <AppHeader />
-      <Stack
-        screenOptions={{
-          headerShown: false,
-        }}
-      />
-    </ThemedView>
+    <ProtectedRoute>
+      <ThemedView style={[styles.container, { backgroundColor: Colors[colorScheme].background }]}>
+        <AppHeader />
+        <Stack
+          screenOptions={{
+            headerShown: false,
+          }}
+        />
+      </ThemedView>
+    </ProtectedRoute>
   );
 }
 
