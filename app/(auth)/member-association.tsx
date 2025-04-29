@@ -6,7 +6,7 @@ import { ThemedText } from "@/components/ThemedText";
 import { Colors } from "@/constants/Colors";
 import { AdminMessageModal } from "@/components/AdminMessageModal";
 import Toast from "react-native-toast-message";
-import { Redirect } from "expo-router";
+import { Redirect, router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Modal } from "@/components/ui/Modal";
 import { supabase } from "@/utils/supabase";
@@ -29,7 +29,16 @@ export default function MemberAssociationScreen() {
   const [memberData, setMemberData] = useState<MemberData | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [shouldRedirect, setShouldRedirect] = useState(false);
-  const { associateMemberWithPin, user, member, signOut } = useAuth();
+  const [redirectToSignIn, setRedirectToSignIn] = useState(false);
+  const { associateMemberWithPin, user, member, signOut, authStatus } = useAuth();
+
+  // Monitor auth status changes for sign out redirection
+  useEffect(() => {
+    if (redirectToSignIn && authStatus === "signedOut") {
+      console.log("[MemberAssociation] Auth state is now signedOut, redirecting to sign-in");
+      router.replace("/(auth)/sign-in");
+    }
+  }, [redirectToSignIn, authStatus]);
 
   // Monitor member data and redirect when it's available after successful association
   useEffect(() => {
@@ -49,9 +58,18 @@ export default function MemberAssociationScreen() {
     }
   }, [associationSuccess, member]);
 
-  // If redirect is triggered, use the Redirect component
+  // If redirect is triggered for successful association, use the Redirect component
   if (shouldRedirect) {
     return <Redirect href="/(tabs)" />;
+  }
+
+  // If redirecting to sign-in after sign-out, show loading state
+  if (redirectToSignIn && isLoading) {
+    return (
+      <ThemedView style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+        <ThemedText>Signing out...</ThemedText>
+      </ThemedView>
+    );
   }
 
   const handleFetchMember = async () => {
@@ -124,10 +142,18 @@ export default function MemberAssociationScreen() {
 
   const goToSignIn = async () => {
     try {
+      console.log("[MemberAssociation] Starting sign out process");
+      setIsLoading(true);
+      setRedirectToSignIn(true);
       await signOut(); // Sign out the user
-      // No need to manually navigate - the auth status change will trigger navigation in _layout.tsx
+
+      // The useEffect will handle the redirection once authStatus changes to signedOut
     } catch (error) {
-      console.error("Error signing out:", error);
+      console.error("[MemberAssociation] Error signing out:", error);
+      setIsLoading(false);
+      setRedirectToSignIn(false);
+      // If sign-out fails, manually navigate
+      router.replace("/(auth)/sign-in");
     }
   };
 
