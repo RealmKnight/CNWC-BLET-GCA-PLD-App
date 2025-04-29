@@ -331,8 +331,8 @@ export function useMyTime() {
 
       // Combine all queries into a single batch operation
       const results = await retryFetch(async () => {
-        const [memberData, maxPldsResult, requestsData] = await Promise.all([
-          // First batch: Member data and max PLDs
+        // First batch: get member data and max PLDs
+        const [memberData, maxPldsResult] = await Promise.all([
           supabase
             .from("members")
             .select(
@@ -341,14 +341,43 @@ export function useMyTime() {
             .eq("id", member.id)
             .single(),
           supabase.rpc("update_member_max_plds", { p_member_id: member.id }),
-          // Second batch: All requests in a single query using a more efficient approach
-          supabase.rpc("get_member_year_requests", {
-            p_member_id: member.id,
-            p_year: currentYear,
-          }),
         ]);
 
-        return { memberData, maxPldsResult, requestsData };
+        // Now fetch regular requests for current year
+        const regularRequests = await supabase
+          .from("pld_sdv_requests")
+          .select("*")
+          .eq("member_id", member.id)
+          .gte("request_date", `${currentYear}-01-01`)
+          .lte("request_date", `${currentYear}-12-31`);
+
+        // Fetch six-month requests
+        const sixMonthRequests = await supabase
+          .from("six_month_requests")
+          .select("*")
+          .eq("member_id", member.id)
+          .gte("request_date", `${currentYear}-01-01`)
+          .lte("request_date", `${currentYear}-12-31`);
+
+        // Calculate used rollover PLDs from regular requests
+        const usedRolloverPlds = regularRequests.data
+          ? regularRequests.data
+            .filter((req) => req.status === "approved" && req.is_rollover_pld)
+            .length
+          : 0;
+
+        return {
+          memberData,
+          maxPldsResult,
+          requestsData: {
+            data: {
+              current_requests: regularRequests.data || [],
+              six_month_requests: sixMonthRequests.data || [],
+              used_rollover_plds: usedRolloverPlds,
+            },
+            error: regularRequests.error || sixMonthRequests.error,
+          },
+        };
       }, "batch stats fetch");
 
       if (results.memberData.error) throw results.memberData.error;
@@ -400,7 +429,7 @@ export function useMyTime() {
       };
 
       // Update stats based on current year requests
-      current_requests.forEach((request) => {
+      current_requests.forEach((request: any) => {
         const type = request.leave_type.toLowerCase() as "pld" | "sdv";
 
         if (request.paid_in_lieu) {
@@ -423,7 +452,7 @@ export function useMyTime() {
       });
 
       // Update stats based on six-month requests
-      six_month_requests.forEach((request) => {
+      six_month_requests.forEach((request: any) => {
         const type = request.leave_type.toLowerCase() as "pld" | "sdv";
         if (!request.processed) {
           baseStats.requested[type]++;
@@ -447,7 +476,7 @@ export function useMyTime() {
 
       // Transform and combine requests
       const transformedSixMonthRequests = (six_month_requests || []).map((
-        request,
+        request: any,
       ) => ({
         id: request.id,
         request_date: request.request_date,
@@ -458,7 +487,7 @@ export function useMyTime() {
       }));
 
       const allRequests: TimeOffRequest[] = [
-        ...(current_requests || []).map((req) => ({
+        ...(current_requests || []).map((req: any) => ({
           ...req,
           status: req.status as TimeOffRequest["status"],
           requested_at: req.requested_at ?? "",
