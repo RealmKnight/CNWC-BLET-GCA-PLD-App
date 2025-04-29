@@ -483,7 +483,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
       if (event === "PASSWORD_RECOVERY") {
         console.log("[Auth] Password recovery event detected.");
         // Set a global flag or context state to indicate password reset flow
-        // This helps prevent automatic redirects before reset is complete
         if (typeof window !== "undefined") {
           window.__passwordResetInProgress = true;
         }
@@ -491,9 +490,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
         return; // Don't proceed with regular updateAuthState
       }
 
-      // Clear the password reset flag if event is not recovery
-      // Explicitly check against the specific string to satisfy linter
-      if (typeof window !== "undefined" && String(event) !== "PASSWORD_RECOVERY") {
+      // Handle SIGNED_OUT during password reset
+      if (event === "SIGNED_OUT" && typeof window !== "undefined" && window.__passwordResetInProgress) {
+        console.log("[Auth] Ignoring SIGNED_OUT event during password reset");
+        return; // Don't process sign out during password reset
+      }
+
+      // Clear the password reset flag if event indicates completion
+      if (event === "SIGNED_IN" && typeof window !== "undefined") {
         delete window.__passwordResetInProgress;
       }
 
@@ -501,8 +505,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
       let source = `authStateChange-${event}`;
 
       // Only call updateAuthState if session state actually changes
-      // Comparing simple presence might be sufficient
-      // More robust: compare user ID if sessions exist
       const currentSessionUserId = sessionRef.current?.user?.id;
       const newSessionUserId = session?.user?.id;
 
@@ -513,37 +515,38 @@ export function AuthProvider({ children }: AuthProviderProps) {
         updateAuthState(session, source);
       } else {
         console.log(`[Auth] Auth state change (${event}), but session user unchanged. Skipping updateAuthState.`);
-        // If the event is USER_UPDATED, we might still want to refetch member data if role could change
-        // For now, assume role changes require re-login or are handled elsewhere.
       }
     });
 
-    // Initial check
-    supabase.auth
-      .getSession()
-      .then(({ data: { session: initialSession } }) => {
-        console.log(
-          "[Auth] Initial getSession result:",
-          initialSession ? `User: ${initialSession.user.id}` : "No session"
-        );
-        // Only call update if initialAuthCompleteRef is false
-        if (!initialAuthCompleteRef.current) {
-          updateAuthState(initialSession, "initial");
-        } else {
-          console.log("[Auth] Skipping initial updateAuthState as initial check already completed.");
-        }
-      })
-      .catch((error) => {
-        console.error("[Auth] Error during initial getSession:", error);
-        if (!initialAuthCompleteRef.current) {
-          updateAuthState(null, "initial-error"); // Ensure loading state resolves
-        }
-      });
+    // Initial check - but skip if we're in password reset
+    if (typeof window === "undefined" || !window.__passwordResetInProgress) {
+      supabase.auth
+        .getSession()
+        .then(({ data: { session: initialSession } }) => {
+          console.log(
+            "[Auth] Initial getSession result:",
+            initialSession ? `User: ${initialSession.user.id}` : "No session"
+          );
+          if (!initialAuthCompleteRef.current) {
+            updateAuthState(initialSession, "initial");
+          } else {
+            console.log("[Auth] Skipping initial updateAuthState as initial check already completed.");
+          }
+        })
+        .catch((error) => {
+          console.error("[Auth] Error during initial getSession:", error);
+          if (!initialAuthCompleteRef.current) {
+            updateAuthState(null, "initial-error");
+          }
+        });
+    } else {
+      console.log("[Auth] Skipping initial session check due to password reset in progress");
+    }
 
     return () => {
       authListener?.subscription.unsubscribe();
     };
-  }, [updateAuthState]); // Add updateAuthState as dependency
+  }, [updateAuthState]);
 
   // --- AppState Listener ---
   useEffect(() => {

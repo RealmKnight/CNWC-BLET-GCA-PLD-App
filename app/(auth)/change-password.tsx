@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { StyleSheet, TextInput, TouchableOpacity, Image, Platform } from "react-native";
-import { Link, useLocalSearchParams, router } from "expo-router";
+import { Link, router } from "expo-router";
 import { supabase } from "@/utils/supabase";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -15,43 +15,6 @@ export default function ChangePasswordScreen() {
   const [error, setError] = useState<string | null>(null);
   const [isSuccess, setIsSuccess] = useState(false);
   const { session } = useAuth();
-  const [redirectToSignIn, setRedirectToSignIn] = useState(false);
-
-  // Check session and loading state
-  const [sessionChecked, setSessionChecked] = useState(false);
-  const params = useLocalSearchParams();
-
-  // Check if we have a session (could be from password reset link)
-  useEffect(() => {
-    async function checkSession() {
-      // Get current session
-      const { data } = await supabase.auth.getSession();
-      setSessionChecked(true);
-
-      if (!data.session) {
-        console.log("[ChangePassword] No active session found");
-        // If we have a code parameter, this might be a recovery link
-        // Supabase should automatically exchange the code for a session
-        if (params.code) {
-          console.log("[ChangePassword] Found code parameter, waiting for session");
-          // Wait a moment for Supabase to process the code
-          setTimeout(async () => {
-            const { data: refreshedData } = await supabase.auth.getSession();
-            if (!refreshedData.session) {
-              console.log("[ChangePassword] Still no session after waiting");
-              setError("Your password reset link is invalid or has expired. Please request a new one.");
-            }
-          }, 1000);
-        } else {
-          setError("Please use a valid password reset link or sign in to change your password.");
-        }
-      } else {
-        console.log("[ChangePassword] Active session found, ready to change password");
-      }
-    }
-
-    checkSession();
-  }, [params.code]);
 
   const handleChangePassword = async () => {
     try {
@@ -74,13 +37,6 @@ export default function ChangePasswordScreen() {
         return;
       }
 
-      // Check if we have a session
-      const { data: sessionData } = await supabase.auth.getSession();
-      if (!sessionData?.session) {
-        setError("Your session has expired. Please request a new password reset link.");
-        return;
-      }
-
       // Update the user's password with Supabase
       const { error: updateError } = await supabase.auth.updateUser({ password });
 
@@ -90,6 +46,9 @@ export default function ChangePasswordScreen() {
       } else {
         console.log("[ChangePassword] Password updated successfully");
         setIsSuccess(true);
+
+        // Sign out after successful password change to force a fresh login
+        await supabase.auth.signOut();
       }
     } catch (error) {
       console.error("[ChangePassword] Unexpected error:", error);
@@ -99,12 +58,8 @@ export default function ChangePasswordScreen() {
     }
   };
 
-  const handleReturnToSignIn = () => {
-    setRedirectToSignIn(true);
-  };
-
-  // Add redirection when state is set
-  if (redirectToSignIn) {
+  // If no session, redirect to sign in
+  if (!session) {
     return <Redirect href="/(auth)/sign-in" />;
   }
 
@@ -118,37 +73,9 @@ export default function ChangePasswordScreen() {
         </ThemedText>
       </ThemedView>
 
-      {!sessionChecked ? (
+      {isSuccess ? (
         <ThemedView style={styles.form}>
-          <ThemedText>Checking your session...</ThemedText>
-        </ThemedView>
-      ) : error ? (
-        <ThemedView style={styles.form}>
-          <ThemedText style={styles.error}>{error}</ThemedText>
-          <ThemedText style={styles.instructions}>
-            If you're having trouble resetting your password, please request a new password reset link or contact
-            support.
-          </ThemedText>
-          <Link href="/(auth)/forgot-password" asChild>
-            <TouchableOpacity style={styles.button}>
-              <ThemedText style={styles.buttonText}>Request New Reset Link</ThemedText>
-            </TouchableOpacity>
-          </Link>
-
-          <ThemedText style={[styles.instructions, { marginTop: 20 }]}>
-            Already know your password? You can sign in directly.
-          </ThemedText>
           <Link href="/(auth)/sign-in" asChild>
-            <TouchableOpacity
-              style={[styles.button, { backgroundColor: "transparent", borderColor: Colors.dark.border }]}
-            >
-              <ThemedText style={styles.buttonText}>Back to Sign In</ThemedText>
-            </TouchableOpacity>
-          </Link>
-        </ThemedView>
-      ) : isSuccess ? (
-        <ThemedView style={styles.form}>
-          <Link href="/(auth)/sign-in" asChild onPress={handleReturnToSignIn}>
             <TouchableOpacity style={styles.button}>
               <ThemedText style={styles.buttonText}>Return to Sign In</ThemedText>
             </TouchableOpacity>
