@@ -400,9 +400,9 @@ export async function sendPasswordResetEmail(email: string): Promise<boolean> {
   try {
     console.log("[Auth] Sending password reset email to:", email);
 
-    // Format the redirect URL - use the root change-password page which will handle the redirect
-    const redirectUrl =
-      `${process.env.EXPO_PUBLIC_WEBSITE_URL}/change-password`;
+    // Format the redirect URL - ensure it's properly formatted without any special characters
+    const baseUrl = process.env.EXPO_PUBLIC_WEBSITE_URL?.replace(/\/$/, ""); // Remove trailing slash if present
+    const redirectUrl = `${baseUrl}/change-password`;
 
     console.log("[Auth] Using redirect URL:", redirectUrl);
 
@@ -443,6 +443,10 @@ async function sendPasswordResetEmailViaEdgeFunction(
   email: string,
 ): Promise<boolean> {
   try {
+    // Use the same URL construction as the primary method
+    const baseUrl = process.env.EXPO_PUBLIC_WEBSITE_URL?.replace(/\/$/, "");
+    const resetUrl = `${baseUrl}/change-password`;
+
     const { data, error } = await supabase.functions.invoke("send-email", {
       body: {
         to: email,
@@ -460,7 +464,7 @@ async function sendPasswordResetEmailViaEdgeFunction(
               Please click the button below to reset your password:
             </p>
             <p style="text-align: center;">
-              <a href="${process.env.EXPO_PUBLIC_WEBSITE_URL}/change-password"
+              <a href="${resetUrl}"
                  style="background-color: #003366; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; display: inline-block; font-weight: bold;">
                 Reset Password
               </a>
