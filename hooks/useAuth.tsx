@@ -180,12 +180,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         setUserRole(null);
         setIsCompanyAdmin(false); // Reset derived state
 
-        if (typeof window !== "undefined" && window.__passwordResetInProgress) {
-          console.log("[Auth] Password reset in progress, setting status.");
-          finalStatus = "signedInAdmin";
-          // Also update base state for consistency if needed by UI during reset
-          setIsCompanyAdmin(true);
-        } else if (newSession) {
+        if (newSession) {
           // Fetch fresh user data only if needed or potentially stale
           // Simplified: assume newSession.user is fresh enough for this check
           // but we might need to re-fetch if roles can change externally
