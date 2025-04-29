@@ -10,6 +10,7 @@ import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Modal } from "@/components/ui/Modal";
 import { supabase } from "@/utils/supabase";
+import { ContactAdminModal } from "@/components/modals/ContactAdminModal";
 
 // Type for member data
 interface MemberData {
@@ -23,10 +24,11 @@ export default function MemberAssociationScreen() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [showAdminModal, setShowAdminModal] = useState(false);
+  const [showContactAdminModal, setShowContactAdminModal] = useState(false);
   const [associationSuccess, setAssociationSuccess] = useState(false);
   const [memberData, setMemberData] = useState<MemberData | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const { associateMemberWithPin, user, member } = useAuth();
+  const { associateMemberWithPin, user, member, signOut } = useAuth();
 
   // Monitor member data and redirect when it's available after successful association
   useEffect(() => {
@@ -114,8 +116,19 @@ export default function MemberAssociationScreen() {
     }
   };
 
-  const goToSignIn = () => {
-    router.replace("/(auth)/sign-in");
+  const goToSignIn = async () => {
+    try {
+      await signOut(); // Sign out the user
+      // No need to manually navigate - the auth status change will trigger navigation in _layout.tsx
+    } catch (error) {
+      console.error("Error signing out:", error);
+      // If sign out fails, try to redirect anyway
+      router.replace("/(auth)/sign-in");
+    }
+  };
+
+  const openContactAdminModal = () => {
+    setShowContactAdminModal(true);
   };
 
   return (
@@ -134,9 +147,11 @@ export default function MemberAssociationScreen() {
       </ThemedView>
 
       <ThemedView style={styles.infoBox}>
-        <ThemedText style={styles.infoText}>
-          Having troubles? Contact your Division Admin (or Local Chairman).
-        </ThemedText>
+        <TouchableOpacity onPress={openContactAdminModal}>
+          <ThemedText style={[styles.infoText, styles.linkText]}>
+            Having troubles? Contact your Division Admin (or Local Chairman).
+          </ThemedText>
+        </TouchableOpacity>
       </ThemedView>
 
       <ThemedView style={styles.form}>
@@ -207,12 +222,16 @@ export default function MemberAssociationScreen() {
         </ThemedView>
       </Modal>
 
+      {/* Admin Message Modal for PIN problems */}
       <AdminMessageModal
         visible={showAdminModal}
         onClose={() => setShowAdminModal(false)}
         pinNumber={pinNumber}
         userEmail={user?.email || ""}
       />
+
+      {/* Contact Admin Modal for general assistance */}
+      <ContactAdminModal visible={showContactAdminModal} onClose={() => setShowContactAdminModal(false)} />
     </ThemedView>
   );
 }
@@ -250,6 +269,10 @@ const styles = StyleSheet.create({
   infoText: {
     fontSize: 14,
     textAlign: "center",
+  },
+  linkText: {
+    color: Colors.dark.tint,
+    textDecorationLine: "underline",
   },
   form: {
     width: "100%",

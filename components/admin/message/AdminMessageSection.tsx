@@ -580,6 +580,44 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
           </View>
         </ThemedView>
 
+        {/* Reply input container moved to top, below header */}
+        <View
+          style={[
+            styles.replyInputContainer,
+            {
+              borderTopColor: colors.border,
+              backgroundColor: colors.background,
+              position: "relative", // Change from absolute to relative
+              bottom: "auto", // Remove absolute positioning
+              borderBottomWidth: 1, // Add bottom border
+              borderTopWidth: 0, // Remove top border since it's below header
+            },
+          ]}
+        >
+          <ThemedTextInput
+            style={{
+              ...styles.replyTextInput,
+              borderColor: colors.border,
+              color: colors.text,
+              backgroundColor: colors.card,
+            }}
+            placeholder="Reply as Company Admin..."
+            placeholderTextColor={colors.textDim}
+            value={replyText}
+            onChangeText={setReplyText}
+            multiline
+          />
+          <TouchableOpacity
+            style={[styles.sendButton, { backgroundColor: !replyText.trim() ? disabledColor : colors.primary }]}
+            onPress={handleSendReply}
+            disabled={!replyText.trim()}
+            accessibilityRole="button"
+            accessibilityLabel="Send reply"
+          >
+            <ThemedText style={{ color: primaryContrastColor }}>Send</ThemedText>
+          </TouchableOpacity>
+        </View>
+
         {/* Message List in Detail View */}
         <FlatList
           data={selectedThread} // Already sorted chronologically
@@ -587,39 +625,8 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
           keyExtractor={(item) => item.id}
           style={styles.messageContentList}
           inverted={false} // Render top-down
-          contentContainerStyle={{ paddingVertical: 10 }} // Add vertical padding
-          ListFooterComponent={
-            // Themed Reply Input Area
-            <View
-              style={[
-                styles.replyInputContainer,
-                { borderTopColor: colors.border, backgroundColor: colors.background },
-              ]}
-            >
-              <ThemedTextInput
-                style={{
-                  ...styles.replyTextInput,
-                  borderColor: colors.border,
-                  color: colors.text,
-                  backgroundColor: colors.card,
-                }}
-                placeholder="Reply as Company Admin..."
-                placeholderTextColor={colors.textDim}
-                value={replyText}
-                onChangeText={setReplyText}
-                multiline
-              />
-              <TouchableOpacity
-                style={[styles.sendButton, { backgroundColor: !replyText.trim() ? disabledColor : colors.primary }]}
-                onPress={handleSendReply}
-                disabled={!replyText.trim()}
-                accessibilityRole="button"
-                accessibilityLabel="Send reply"
-              >
-                <ThemedText style={{ color: primaryContrastColor }}>Send</ThemedText>
-              </TouchableOpacity>
-            </View>
-          }
+          contentContainerStyle={{ paddingVertical: 10 }} // Remove the bottom padding
+          ListFooterComponent={null}
         />
       </>
     );
@@ -825,11 +832,11 @@ const styles = StyleSheet.create({
     gap: 15,
   },
   replyInputContainer: {
-    borderTopWidth: 1,
     padding: 10,
     flexDirection: "row",
     alignItems: "center",
     minHeight: 60,
+    // Remove position, bottom, left, right properties
     // background/border applied inline
   },
   replyTextInput: {

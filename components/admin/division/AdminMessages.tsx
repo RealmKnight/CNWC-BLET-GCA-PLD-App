@@ -527,44 +527,51 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
           </View>
         </ThemedView>
 
+        {/* Reply Input (moved above the FlatList) */}
+        {currentFilter !== "archived" && (
+          <View
+            style={[
+              styles.replyInputContainer,
+              {
+                padding: 10,
+                flexDirection: "row",
+                alignItems: "center",
+                minHeight: 60,
+                borderTopWidth: 1,
+              },
+            ]}
+          >
+            <ThemedTextInput
+              style={{
+                ...styles.replyTextInput,
+                borderColor: colors.border,
+                color: colors.text,
+                backgroundColor: colors.card,
+              }}
+              placeholder="Type your reply..."
+              placeholderTextColor={colors.textDim}
+              value={replyText}
+              onChangeText={setReplyText}
+              multiline
+            />
+            <TouchableOpacity
+              style={[styles.sendButton, { backgroundColor: !replyText.trim() ? disabledColor : colors.primary }]}
+              onPress={handleSendReply}
+              disabled={!replyText.trim()}
+              accessibilityRole="button"
+              accessibilityLabel="Send reply"
+            >
+              <ThemedText style={{ color: primaryContrastColor }}>Send</ThemedText>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Message content FlatList */}
         <FlatList
           data={selectedThread}
           renderItem={renderDetailItem}
           keyExtractor={(item) => item.id}
           style={styles.messageContentList}
-          ListFooterComponent={
-            currentFilter !== "archived" ? (
-              <View
-                style={[
-                  styles.replyInputContainer,
-                  { borderTopColor: colors.border, backgroundColor: colors.background },
-                ]}
-              >
-                <ThemedTextInput
-                  style={{
-                    ...styles.replyTextInput,
-                    borderColor: colors.border,
-                    color: colors.text,
-                    backgroundColor: colors.card,
-                  }}
-                  placeholder="Type your reply..."
-                  placeholderTextColor={colors.textDim}
-                  value={replyText}
-                  onChangeText={setReplyText}
-                  multiline
-                />
-                <TouchableOpacity
-                  style={[styles.sendButton, { backgroundColor: !replyText.trim() ? disabledColor : colors.primary }]}
-                  onPress={handleSendReply}
-                  disabled={!replyText.trim()}
-                  accessibilityRole="button"
-                  accessibilityLabel="Send reply"
-                >
-                  <ThemedText style={{ color: primaryContrastColor }}>Send</ThemedText>
-                </TouchableOpacity>
-              </View>
-            ) : null
-          }
           inverted={false}
           contentContainerStyle={{ paddingBottom: 10 }}
         />
@@ -727,11 +734,11 @@ const styles = StyleSheet.create({
     gap: 15,
   },
   replyInputContainer: {
-    borderTopWidth: 1,
     padding: 10,
     flexDirection: "row",
     alignItems: "center",
     minHeight: 60,
+    borderTopWidth: 1,
   },
   replyTextInput: {
     flex: 1,

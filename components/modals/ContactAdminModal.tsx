@@ -59,15 +59,16 @@ export function ContactAdminModal({ visible, onClose }: ContactAdminModalProps) 
   const contactableRoles = useMemo(() => {
     const isCurrentUserCompanyAdmin = effectiveRoles.includes("company_admin" as any);
     const isCurrentUserBasicUser = currentUser?.role === "user";
+    const isUserUnassociated = !currentUser; // Check if user is not yet associated with a member
 
-    if (isCurrentUserCompanyAdmin || isCurrentUserBasicUser) {
-      // Filter out 'Company Admin' if the current user is company admin or basic user
+    if (isCurrentUserCompanyAdmin || isCurrentUserBasicUser || isUserUnassociated) {
+      // Filter out 'Company Admin' if the current user is company admin, basic user, or not associated yet
       return ALL_CONTACTABLE_ADMIN_ROLES.filter((role) => role.value !== "company_admin");
     } else {
       // Other admins can see all roles
       return ALL_CONTACTABLE_ADMIN_ROLES;
     }
-  }, [effectiveRoles, currentUser?.role]);
+  }, [effectiveRoles, currentUser]);
   // --- End Dynamic Role Filtering ---
 
   const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
@@ -203,10 +204,13 @@ export function ContactAdminModal({ visible, onClose }: ContactAdminModalProps) 
 
   // Toggle specific division selection
   const handleDivisionToggle = (divisionId: number) => {
+    // Auto-uncheck "All Divisions" when selecting a specific division
+    setSelectAllDivisions(false);
+
+    // Toggle the specific division
     setTargetDivisionIds((prev) =>
       prev.includes(divisionId) ? prev.filter((id) => id !== divisionId) : [...prev, divisionId]
     );
-    setSelectAllDivisions(false); // Selecting a specific one disables "All"
   };
 
   // Toggle "All Divisions"
@@ -223,27 +227,32 @@ export function ContactAdminModal({ visible, onClose }: ContactAdminModalProps) 
     return (
       <View style={styles.roleSelectorContainer}>
         <ThemedText style={styles.label}>To:</ThemedText>
-        {contactableRoles.map((role) => (
-          <Pressable
-            key={role.value}
-            style={styles.checkboxContainer}
-            onPress={() => {
-              setSelectedRoles((prev) =>
-                prev.includes(role.value) ? prev.filter((r) => r !== role.value) : [...prev, role.value]
-              );
-            }}
-            accessibilityRole="checkbox"
-            accessibilityState={{ checked: selectedRoles.includes(role.value) }}
-            accessibilityLabel={role.label}
-          >
-            <Ionicons
-              name={selectedRoles.includes(role.value) ? "checkbox" : "square-outline"}
-              size={24}
-              color={colors.tint}
-            />
-            <ThemedText style={styles.checkboxLabel}>{role.label}</ThemedText>
-          </Pressable>
-        ))}
+        {contactableRoles.map((role) => {
+          const isDivisionAdmin = role.value === "division_admin";
+          const isSelected = selectedRoles.includes(role.value);
+
+          return (
+            <React.Fragment key={role.value}>
+              <Pressable
+                style={styles.checkboxContainer}
+                onPress={() => {
+                  setSelectedRoles((prev) =>
+                    prev.includes(role.value) ? prev.filter((r) => r !== role.value) : [...prev, role.value]
+                  );
+                }}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: isSelected }}
+                accessibilityLabel={role.label}
+              >
+                <Ionicons name={isSelected ? "checkbox" : "square-outline"} size={24} color={colors.tint} />
+                <ThemedText style={styles.checkboxLabel}>{role.label}</ThemedText>
+              </Pressable>
+
+              {/* Render division selector immediately after Division Admin role if selected */}
+              {isDivisionAdmin && isSelected && renderDivisionSelector()}
+            </React.Fragment>
+          );
+        })}
       </View>
     );
   };
@@ -253,51 +262,50 @@ export function ContactAdminModal({ visible, onClose }: ContactAdminModalProps) 
     if (!showDivisionSelector) return null;
 
     return (
-      <View style={styles.divisionSelectorContainer}>
-        <ThemedText style={styles.label}>Target Division(s):</ThemedText>
-        {divisionsLoading ? (
-          <ActivityIndicator color={colors.tint} style={{ marginVertical: 10 }} />
-        ) : divisionsError ? (
-          <ThemedText style={styles.errorText}>{divisionsError}</ThemedText>
-        ) : (
-          <>
-            {/* "All Divisions" Checkbox */}
-            <Pressable
-              style={styles.checkboxContainer}
-              onPress={handleSelectAllToggle}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: selectAllDivisions }}
-              accessibilityLabel="All Divisions"
-            >
-              <Ionicons name={selectAllDivisions ? "checkbox" : "square-outline"} size={24} color={colors.tint} />
-              <ThemedText style={[styles.checkboxLabel, selectAllDivisions && styles.boldLabel]}>
-                All Divisions
-              </ThemedText>
-            </Pressable>
-
-            {/* Individual Division Checkboxes */}
-            {availableDivisions.map((division) => (
+      <View style={[styles.checkboxContainer, { marginLeft: 20, marginTop: 5 }]}>
+        <View style={{ width: "100%" }}>
+          <ThemedText style={styles.label}>Target Division(s):</ThemedText>
+          {divisionsLoading ? (
+            <ActivityIndicator color={colors.tint} style={{ marginVertical: 10 }} />
+          ) : divisionsError ? (
+            <ThemedText style={styles.errorText}>{divisionsError}</ThemedText>
+          ) : (
+            <>
+              {/* "All Divisions" Checkbox */}
               <Pressable
-                key={division.id}
                 style={styles.checkboxContainer}
-                onPress={() => handleDivisionToggle(division.id)}
-                disabled={selectAllDivisions} // Disable if "All" is checked
+                onPress={handleSelectAllToggle}
                 accessibilityRole="checkbox"
-                accessibilityState={{ checked: targetDivisionIds.includes(division.id) }}
-                accessibilityLabel={division.name}
+                accessibilityState={{ checked: selectAllDivisions }}
+                accessibilityLabel="All Divisions"
               >
-                <Ionicons
-                  name={targetDivisionIds.includes(division.id) ? "checkbox" : "square-outline"}
-                  size={24}
-                  color={selectAllDivisions ? colors.icon : colors.tint} // Dim if disabled
-                />
-                <ThemedText style={[styles.checkboxLabel, selectAllDivisions && styles.disabledLabel]}>
-                  {division.name}
+                <Ionicons name={selectAllDivisions ? "checkbox" : "square-outline"} size={24} color={colors.tint} />
+                <ThemedText style={[styles.checkboxLabel, selectAllDivisions && styles.boldLabel]}>
+                  All Divisions
                 </ThemedText>
               </Pressable>
-            ))}
-          </>
-        )}
+
+              {/* Individual Division Checkboxes */}
+              {availableDivisions.map((division) => (
+                <Pressable
+                  key={division.id}
+                  style={styles.checkboxContainer}
+                  onPress={() => handleDivisionToggle(division.id)}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: targetDivisionIds.includes(division.id) }}
+                  accessibilityLabel={division.name}
+                >
+                  <Ionicons
+                    name={targetDivisionIds.includes(division.id) ? "checkbox" : "square-outline"}
+                    size={24}
+                    color={colors.tint}
+                  />
+                  <ThemedText style={styles.checkboxLabel}>{division.name}</ThemedText>
+                </Pressable>
+              ))}
+            </>
+          )}
+        </View>
       </View>
     );
   };
@@ -319,7 +327,6 @@ export function ContactAdminModal({ visible, onClose }: ContactAdminModalProps) 
             keyboardShouldPersistTaps="handled"
           >
             {renderRoleSelector()}
-            {renderDivisionSelector()}
 
             {/* Conditionally render the Acknowledgment Toggle */}
             {canRequireAcknowledgement && (
@@ -422,7 +429,8 @@ const styles = StyleSheet.create({
     padding: 5, // Add padding for easier pressing
   },
   scrollViewContent: {
-    flexShrink: 1, // Allow scroll view to shrink if content is short
+    flexShrink: 1,
+    padding: 8, // Allow scroll view to shrink if content is short
   },
   scrollViewContainer: {
     paddingBottom: 10, // Add padding at the bottom of scrollable content
@@ -499,7 +507,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     marginRight: 10, // Space between label and switch
   },
-  divisionSelectorContainer: {
+  nestedDivisionContainer: {
     marginTop: 15,
     paddingTop: 15,
     paddingBottom: 5, // Reduce padding below last item
@@ -507,10 +515,18 @@ const styles = StyleSheet.create({
     borderTopColor: Colors.light.border, // Use theme color
     backgroundColor: "transparent",
   },
+  nestedLabel: {
+    fontSize: 16,
+    marginBottom: 5,
+    fontWeight: "600",
+  },
+  nestedCheckboxContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 10,
+    backgroundColor: "transparent",
+  },
   boldLabel: {
     fontWeight: "bold",
-  },
-  disabledLabel: {
-    color: Colors.light.icon, // Use theme disabled color
   },
 });
