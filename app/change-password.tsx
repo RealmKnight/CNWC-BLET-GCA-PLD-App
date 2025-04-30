@@ -3,24 +3,26 @@ import { Redirect, useLocalSearchParams } from "expo-router";
 import { supabase } from "@/utils/supabase";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
+import { useAuth } from "@/hooks/useAuth";
 
-type RedirectPath = "/(auth)/change-password" | "/(auth)/sign-in";
+type RedirectPath = "/(auth)/sign-in"; // Only need sign-in redirect now
 
 /**
  * Root-level component that handles the redirect from Supabase password recovery email link.
- * It exchanges the code from the URL for a session and then redirects to the actual password change form.
+ * It exchanges the code from the URL for a session and signals the recovery flow start.
  */
 export default function ChangePasswordRedirect() {
   const params = useLocalSearchParams();
+  const { signalPasswordRecoveryStart } = useAuth();
   const [redirectTo, setRedirectTo] = useState<RedirectPath | null>(null);
-  const [isExchanging, setIsExchanging] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(true); // Use a single processing state
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const code = params.code ? (Array.isArray(params.code) ? params.code[0] : params.code) : null;
 
-    if (code && !isExchanging && redirectTo === null) {
-      setIsExchanging(true);
+    // Only process if we haven't already decided to redirect and have a code
+    if (code && isProcessing && redirectTo === null) {
       setError(null);
       console.log("[ChangePasswordRoot] Detected code, attempting exchange:", code);
 
@@ -33,36 +35,44 @@ export default function ChangePasswordRedirect() {
           }
 
           // Success! Session established by Supabase client internally.
-          // onAuthStateChange in useAuth will pick it up.
-          // Now redirect to the actual password change form.
-          console.log("[ChangePasswordRoot] Code exchange successful. Redirecting to password form.");
-          setRedirectTo("/(auth)/change-password");
+          console.log("[ChangePasswordRoot] Code exchange successful.");
+
+          // Signal that the recovery flow is starting
+          signalPasswordRecoveryStart();
+          console.log("[ChangePasswordRoot] Signaled recovery start. Allowing normal auth flow.");
+
+          // Don't redirect here. Let useAuth and layouts handle navigation.
+          // Set processing to false so we render null and don't re-run effect.
+          setIsProcessing(false);
         } catch (err: any) {
           console.error("[ChangePasswordRoot] Code exchange error:", err.message || err);
           setError("Invalid or expired recovery link. Please try again.");
-          // Redirect to sign-in on failure
-          setRedirectTo("/(auth)/sign-in");
-        } finally {
-          setIsExchanging(false);
+          setRedirectTo("/(auth)/sign-in"); // Redirect to sign-in on failure
+          setIsProcessing(false); // Stop processing on error
         }
       };
 
       exchangeAuthCode();
-    } else if (!code && !isExchanging && redirectTo === null) {
+    } else if (!code && isProcessing && redirectTo === null) {
       // No code present, this isn't the recovery flow
       console.log("[ChangePasswordRoot] No code found in URL. Redirecting to sign-in.");
       setRedirectTo("/(auth)/sign-in");
+      setIsProcessing(false);
+    } else if (!code) {
+      // If no code and we already processed, make sure we stop
+      setIsProcessing(false);
     }
-    // Intentionally limited dependencies - only run once based on initial params
-  }, [params.code]); // Rerun if params.code changes (though unlikely)
+    // Add isProcessing to dependencies to prevent re-running after completion/error
+  }, [params.code, signalPasswordRecoveryStart, isProcessing, redirectTo]);
 
   if (redirectTo) {
     // If redirect path is set, perform the redirect
     return <Redirect href={redirectTo} />;
   }
 
-  if (isExchanging) {
-    // Show loading state while exchanging code
+  // While processing (including exchanging code), show minimal loading or null
+  // Once processing is false and no redirect is set, returning null lets the rest of the app load.
+  if (isProcessing) {
     return (
       <ThemedView style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
         <ThemedText>Verifying link...</ThemedText>
@@ -70,16 +80,7 @@ export default function ChangePasswordRedirect() {
     );
   }
 
-  if (error) {
-    // Optionally show an error message before redirecting, or just rely on the redirect
-    return (
-      <ThemedView style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-        <ThemedText style={{ color: "red", marginBottom: 10 }}>{error}</ThemedText>
-        <ThemedText>Redirecting to sign-in...</ThemedText>
-      </ThemedView>
-    );
-  }
-
-  // Fallback: Should typically show loading or redirect immediately
+  // Render nothing once processing is complete and no redirect needed.
+  // This allows the main app layout and navigation take over.
   return null;
 }

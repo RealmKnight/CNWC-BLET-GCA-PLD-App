@@ -35,14 +35,15 @@ interface AuthContextType {
   isCompanyAdmin: boolean; // Keep for potential direct checks elsewhere
   userRole: UserRole | null;
   authStatus: AuthStatus; // <-- Replace isLoading and isMemberCheckComplete
+  isPasswordRecoveryFlow: boolean; // <-- ADDED FLAG
   signOut: () => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
-  exchangeCodeForSession: (code: string) => Promise<void>;
   updateProfile: (updates: Partial<UserProfile>) => Promise<void>;
   associateMemberWithPin: (pin: string) => Promise<void>;
-  setSessionFromId: (sessionId: string) => Promise<void>;
+  signalPasswordRecoveryStart: () => void; // <-- ADDED FUNCTION
+  clearPasswordRecoveryFlag: () => void; // <-- ADDED FUNCTION
 }
 
 interface AuthProviderProps {
@@ -59,6 +60,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [authStatus, setAuthStatus] = useState<AuthStatus>("loading"); // <-- Initialize new state
   const [appState, setAppState] = useState(AppState.currentState);
   const [isCompanyAdmin, setIsCompanyAdmin] = useState(false); // Keep derived state
+  const [isPasswordRecoveryFlow, setIsPasswordRecoveryFlow] = useState(false); // <-- ADDED STATE
 
   // Refs
   const isUpdatingAuth = useRef(false);
@@ -641,18 +643,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   };
 
-  // exchangeCodeForSession remains the same
-  const exchangeCodeForSession = async (code: string) => {
-    try {
-      const { error } = await supabase.auth.exchangeCodeForSession(code);
-      if (error) throw error;
-      // Session should be set via onAuthStateChange listener
-    } catch (error) {
-      console.error("Error exchanging code for session:", error);
-      throw error;
-    }
-  };
-
   // updateProfile remains the same (but might need role check for security)
   const updateProfile = async (updates: Partial<UserProfile>) => {
     if (!user) throw new Error("Not authenticated");
@@ -691,28 +681,19 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   };
 
-  // New function to set session directly from ID
-  const setSessionFromId = async (sessionId: string) => {
-    console.log("[Auth] Setting session directly from ID");
-    try {
-      const {
-        data: { session },
-        error,
-      } = await supabase.auth.getSession();
-      if (error) throw error;
+  // --- Add functions for managing the flag ---
+  const signalPasswordRecoveryStart = useCallback(() => {
+    console.log("[Auth] Signaling start of password recovery flow");
+    setIsPasswordRecoveryFlow(true);
+  }, []);
 
-      if (session?.access_token === sessionId) {
-        console.log("[Auth] Session ID matches current session, updating auth state");
-        updateAuthState(session, "direct-session-set");
-      } else {
-        console.error("[Auth] Session ID mismatch or no session found");
-        throw new Error("Invalid session ID");
-      }
-    } catch (error) {
-      console.error("[Auth] Error setting session from ID:", error);
-      throw error;
+  const clearPasswordRecoveryFlag = useCallback(() => {
+    if (isPasswordRecoveryFlow) {
+      // Only log if it was actually true
+      console.log("[Auth] Clearing password recovery flag");
+      setIsPasswordRecoveryFlow(false);
     }
-  };
+  }, [isPasswordRecoveryFlow]); // Depend on the flag itself
 
   // Memoize the context value
   const value = useMemo(
@@ -723,16 +704,28 @@ export function AuthProvider({ children }: AuthProviderProps) {
       isCompanyAdmin,
       userRole,
       authStatus,
+      isPasswordRecoveryFlow, // <-- ADDED
       signOut,
       signIn,
       signUp,
       resetPassword,
-      exchangeCodeForSession,
       updateProfile,
       associateMemberWithPin,
-      setSessionFromId,
+      signalPasswordRecoveryStart, // <-- ADDED
+      clearPasswordRecoveryFlag, // <-- ADDED
     }),
-    [user, session, member, isCompanyAdmin, userRole, authStatus, signOut] // Keep minimal deps
+    [
+      user,
+      session,
+      member,
+      isCompanyAdmin,
+      userRole,
+      authStatus,
+      isPasswordRecoveryFlow, // <-- ADDED DEPENDENCY
+      signOut, // Keep minimal deps for functions
+      signalPasswordRecoveryStart,
+      clearPasswordRecoveryFlag,
+    ]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

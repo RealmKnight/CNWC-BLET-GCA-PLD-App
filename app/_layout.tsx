@@ -10,6 +10,7 @@ import { configureNotifications, setupNotificationListeners } from "@/utils/noti
 import { handlePasswordResetURL } from "@/utils/authRedirects";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
+import { ChangePasswordModal } from "@/components/ui/ChangePasswordModal";
 
 // Separate loading screen component
 function LoadingScreen() {
@@ -23,11 +24,12 @@ function LoadingScreen() {
 // Auth-aware route handler component that focuses on initialization
 // We'll let index.tsx handle the actual redirects
 function AuthAwareRouteHandler() {
-  const { authStatus } = useAuth();
+  const { authStatus, isPasswordRecoveryFlow, clearPasswordRecoveryFlag } = useAuth();
   const segments = useSegments();
   const pathname = usePathname();
   const [isInitialized, setIsInitialized] = useState(false);
   const [hasSeenAuthResponse, setHasSeenAuthResponse] = useState(false);
+  const [showRecoveryModal, setShowRecoveryModal] = useState(false);
 
   // Add root navigation hook to check if router is ready
   const rootNavigation = useRootNavigation();
@@ -65,19 +67,14 @@ function AuthAwareRouteHandler() {
     }
   }, [authStatus, hasSeenAuthResponse]);
 
-  // Handle password reset flag cleanup
+  // Effect to show modal when recovery flag is set
   useEffect(() => {
-    if (
-      typeof window !== "undefined" &&
-      window.__passwordResetInProgress &&
-      pathname === "/(auth)/change-password" &&
-      Platform.OS === "web"
-    ) {
-      setTimeout(() => {
-        delete window.__passwordResetInProgress;
-      }, 500);
+    if (isPasswordRecoveryFlow) {
+      console.log("[RootLayout] Password recovery flag detected, showing modal.");
+      setShowRecoveryModal(true);
+      clearPasswordRecoveryFlag();
     }
-  }, [authStatus, pathname]);
+  }, [isPasswordRecoveryFlow, clearPasswordRecoveryFlag]);
 
   // Show loading screen if we're not ready
   if (!isInitialized || (authStatus === "loading" && !hasSeenAuthResponse)) {
@@ -97,10 +94,34 @@ export default function RootLayout() {
       <ThemeProvider>
         <AuthProvider>
           <AuthAwareRouteHandler />
+          <ModalRenderer />
           <ThemedToast />
         </AuthProvider>
       </ThemeProvider>
     </GestureHandlerRootView>
+  );
+}
+
+// New component to access auth context and render modal
+function ModalRenderer() {
+  const { isPasswordRecoveryFlow, clearPasswordRecoveryFlag } = useAuth();
+  const [showRecoveryModal, setShowRecoveryModal] = useState(false);
+
+  useEffect(() => {
+    if (isPasswordRecoveryFlow) {
+      console.log("[ModalRenderer] Password recovery flag detected, showing modal.");
+      setShowRecoveryModal(true);
+      clearPasswordRecoveryFlag();
+    }
+  }, [isPasswordRecoveryFlow, clearPasswordRecoveryFlag]);
+
+  return (
+    <ChangePasswordModal
+      visible={showRecoveryModal}
+      onClose={() => setShowRecoveryModal(false)}
+      signOutOnSuccess={true}
+      showBackButton={false}
+    />
   );
 }
 

@@ -39,11 +39,11 @@ export default function Index() {
     case "needsAssociation":
       return <Redirect href="/(auth)/member-association" />;
     case "signedInAdmin":
+      console.log("[Index] Redirecting signed-in admin to company-admin.");
       return <Redirect href="/company-admin" />;
     case "signedInMember":
+      console.log("[Index] Redirecting signed-in member to tabs.");
       return <Redirect href="/(tabs)" />;
-    case "passwordReset":
-      return <Redirect href="/(auth)/change-password" />;
     default:
       return <Redirect href="/(auth)/sign-in" />;
   }

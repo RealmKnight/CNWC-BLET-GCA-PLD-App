@@ -16,20 +16,6 @@ export default function AuthLayout() {
     );
   }
 
-  // Special case: if the user is on the change-password page, don't redirect them
-  // This allows users coming from password reset links to complete the flow
-  if (pathname === "/(auth)/change-password") {
-    console.log("[AuthLayout] On change-password page, allowing access for status:", authStatus);
-    return (
-      <Stack
-        screenOptions={{
-          headerShown: false,
-          contentStyle: { backgroundColor: "transparent" },
-        }}
-      />
-    );
-  }
-
   // Redirect authenticated members to the main app
   if (authStatus === "signedInMember") {
     return <Redirect href="/(tabs)" />;

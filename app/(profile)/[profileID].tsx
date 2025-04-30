@@ -793,7 +793,12 @@ export default function ProfileScreen() {
           </TouchableOpacity>
         </ThemedView>
       )}
-      <ChangePasswordModal visible={isPasswordModalVisible} onClose={() => setIsPasswordModalVisible(false)} />
+      <ChangePasswordModal
+        visible={isPasswordModalVisible}
+        onClose={() => setIsPasswordModalVisible(false)}
+        signOutOnSuccess={false}
+        showBackButton={true}
+      />
       {/* Union Information Section */}
       <ThemedView style={styles.section}>
         <ThemedText type="title">Union Information</ThemedText>

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { StyleSheet, TextInput, TouchableOpacity, Image, Platform } from "react-native";
+import { StyleSheet, TextInput, TouchableOpacity, Image, Platform, Alert } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { Colors } from "@/constants/Colors";
@@ -7,19 +7,28 @@ import { useColorScheme } from "@/hooks/useColorScheme";
 import { supabase } from "@/utils/supabase";
 import { Ionicons } from "@expo/vector-icons";
 import Toast from "react-native-toast-message";
+import { router } from "expo-router";
 
 interface ChangePasswordModalProps {
   visible: boolean;
   onClose: () => void;
+  signOutOnSuccess?: boolean;
+  showBackButton?: boolean;
 }
 
-export function ChangePasswordModal({ visible, onClose }: ChangePasswordModalProps) {
+export function ChangePasswordModal({
+  visible,
+  onClose,
+  signOutOnSuccess = false,
+  showBackButton = true,
+}: ChangePasswordModalProps) {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const theme = (useColorScheme() ?? "light") as keyof typeof Colors;
 
   const handleChangePassword = async () => {
+    let signedOut = false;
     try {
       // Basic form validation
       if (!password) {
@@ -58,27 +67,46 @@ export function ChangePasswordModal({ visible, onClose }: ChangePasswordModalPro
         console.error("Password update error:", updateError.message);
         Toast.show({
           type: "error",
-          text1: "Error",
+          text1: "Error Updating Password",
           text2: updateError.message,
         });
       } else {
+        const successMessage = signOutOnSuccess
+          ? "Password changed successfully. Signing out..."
+          : "Password changed successfully.";
+
+        console.log(`[ChangePasswordModal] Password updated successfully. SignOutOnSuccess: ${signOutOnSuccess}`);
         Toast.show({
           type: "success",
-          text1: "Success",
-          text2: "Password updated successfully",
+          text1: "Password Updated",
+          text2: successMessage,
+          visibilityTime: 2000,
         });
-        // Reset form and close modal
+
         setPassword("");
         setConfirmPassword("");
+
+        if (signOutOnSuccess) {
+          console.log("[ChangePasswordModal] Signing out as requested.");
+          try {
+            await supabase.auth.signOut();
+            signedOut = true;
+            console.log("[ChangePasswordModal] Sign out successful.");
+          } catch (signOutError) {
+            console.error("[ChangePasswordModal] Error signing out:", signOutError);
+          }
+        }
+
         onClose();
+
+        if (signOutOnSuccess) {
+          console.log("[ChangePasswordModal] Navigating to sign-in page.");
+          router.replace("/(auth)/sign-in");
+        }
       }
     } catch (error) {
-      console.error("Unexpected error:", error);
-      Toast.show({
-        type: "error",
-        text1: "Error",
-        text2: "An unexpected error occurred. Please try again.",
-      });
+      console.error("[ChangePasswordModal] Unexpected error during password change:", error);
+      Toast.show({ type: "error", text1: "Error", text2: "An unexpected error occurred." });
     } finally {
       setLoading(false);
     }
@@ -90,9 +118,13 @@ export function ChangePasswordModal({ visible, onClose }: ChangePasswordModalPro
     <ThemedView style={styles.modalOverlay}>
       <ThemedView style={styles.modalContent}>
         <ThemedView style={styles.modalHeader}>
-          <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-            <Ionicons name="arrow-back" size={24} color={Colors[theme].text} />
-          </TouchableOpacity>
+          {showBackButton ? (
+            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+              <Ionicons name="arrow-back" size={24} color={Colors[theme].text} />
+            </TouchableOpacity>
+          ) : (
+            <ThemedView style={styles.placeholder} />
+          )}
           <ThemedText type="title">Change Password</ThemedText>
           <ThemedView style={styles.placeholder} />
         </ThemedView>
