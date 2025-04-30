@@ -408,7 +408,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
                   const adminNotificationStore = useAdminNotificationStore.getState();
                   if (!adminNotificationStore.isInitialized && userId) {
                     // Use the correct log prefix based on whether this is a company admin or regular member
-                    const logPrefix = shouldInitializeMemberStores ? "[Auth Init - Member]" : "[Auth Init - Member Admin]";
+                    const logPrefix = shouldInitializeMemberStores
+                      ? "[Auth Init - Member]"
+                      : "[Auth Init - Member Admin]";
                     console.log(`${logPrefix} Initializing Admin Notification Store...`);
                     initializationPromises.push(
                       (async () => {
@@ -431,7 +433,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
                       })()
                     );
                   } else {
-                    const logPrefix = shouldInitializeMemberStores ? "[Auth Init - Member]" : "[Auth Init - Member Admin]";
+                    const logPrefix = shouldInitializeMemberStores
+                      ? "[Auth Init - Member]"
+                      : "[Auth Init - Member Admin]";
                     console.log(
                       `${logPrefix} Skipping Admin Notification Store init. Initialized: ${adminNotificationStore.isInitialized}, UserID: ${userId}`
                     );
@@ -557,4 +561,242 @@ export function AuthProvider({ children }: AuthProviderProps) {
       .then(({ data: { session: initialSession } }) => {
         console.log(
           "[Auth] Initial getSession result:",
-          initialSession ? `User: ${initialSession.user.id}`
+          initialSession ? `User: ${initialSession.user.id}` : "No session"
+        );
+        // Always update auth state with the initial session
+        updateAuthState(initialSession, "initial");
+      })
+      .catch((error) => {
+        console.error("[Auth] Error during initial getSession:", error);
+        updateAuthState(null, "initial-error");
+      });
+
+    return () => {
+      authListener?.subscription.unsubscribe();
+    };
+  }, [updateAuthState]);
+
+  // --- AppState Listener ---
+  useEffect(() => {
+    const handleAppStateChange = (nextAppState: any) => {
+      if (appStateRef.current.match(/inactive|background/) && nextAppState === "active") {
+        console.log("[Auth] App has come to the foreground!");
+
+        // Debounce the check slightly to avoid rapid calls
+        if (appStateTimeout.current) {
+          clearTimeout(appStateTimeout.current);
+        }
+
+        appStateTimeout.current = setTimeout(() => {
+          console.log("[Auth] Checking session validity on app focus...");
+          supabase.auth
+            .getSession()
+            .then(({ data: { session: currentValidSession } }) => {
+              const currentSessionUserId = sessionRef.current?.user?.id;
+              const validSessionUserId = currentValidSession?.user?.id;
+              console.log("[Auth] Focus check comparison:", { currentSessionUserId, validSessionUserId });
+              if (currentSessionUserId !== validSessionUserId) {
+                console.log("[Auth] Session changed while app was in background. Updating auth state.");
+                updateAuthState(currentValidSession, "appStateChange-focus-diff");
+              } else {
+                console.log("[Auth] Session still valid on app focus.");
+                // Optional: Verify realtime connections or trigger a light refresh if needed
+              }
+            })
+            .catch((error) => {
+              console.error("[Auth] Error checking session on app focus:", error);
+              // Decide if this error should trigger a sign-out
+              // updateAuthState(null, "appStateChange-error");
+            });
+        }, 500); // 500ms debounce
+      }
+      appStateRef.current = nextAppState;
+      setAppState(nextAppState); // Keep state updated if needed elsewhere
+      console.log("[Auth] AppState changed to:", nextAppState);
+    };
+
+    const subscription = AppState.addEventListener("change", handleAppStateChange);
+
+    return () => {
+      subscription.remove();
+      if (appStateTimeout.current) {
+        clearTimeout(appStateTimeout.current);
+      }
+    };
+  }, [updateAuthState]); // updateAuthState dependency
+
+  // --- Authentication Functions ---
+  const signIn = async (email: string, password: string) => {
+    setAuthStatus("loading"); // Show loading during sign-in attempt
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+      // onAuthStateChange will handle the session update and trigger updateAuthState
+    } catch (error: any) {
+      console.error("[Auth] Sign in error:", error);
+      setAuthStatus("signedOut"); // Revert status on error
+      throw error; // Re-throw for UI handling
+    }
+  };
+
+  const signUp = async (email: string, password: string) => {
+    setAuthStatus("loading");
+    try {
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: { emailRedirectTo: Linking.createURL("/(auth)/sign-in") },
+      });
+      if (error) throw error;
+      // User needs to confirm email, state remains loading/signedOut until confirmed
+      // Maybe add a specific status like 'needsEmailConfirmation'?
+      // For now, rely on onAuthStateChange after confirmation link is clicked
+      alert("Sign up successful! Please check your email to confirm.");
+    } catch (error: any) {
+      console.error("[Auth] Sign up error:", error);
+      setAuthStatus("signedOut");
+      throw error;
+    }
+  };
+
+  const signOut = async () => {
+    console.log("[Auth] Attempting sign out...");
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        console.error("[Auth] Error during sign out:", error);
+        // Still attempt cleanup even if Supabase signout fails
+      } else {
+        console.log("[Auth] Supabase sign out successful.");
+      }
+      // Clear local state immediately regardless of Supabase call success
+      // setAuthStatus("signedOut"); // Let onAuthStateChange handle this
+      // Reset local state immediately
+      setSession(null);
+      setUser(null);
+      setMember(null);
+      setUserRole(null);
+      setIsCompanyAdmin(false);
+      useUserStore.getState().reset();
+      // Run cleanup
+      runCleanupActions();
+      // DO NOT NAVIGATE HERE - let _layout handle it based on authStatus change
+      // router.replace('/sign-in'); // REMOVED
+    } catch (error) {
+      console.error("[Auth] Unexpected error during sign out process:", error);
+      // Attempt cleanup even on unexpected errors
+      runCleanupActions();
+      setAuthStatus("signedOut"); // Force status update on error
+    }
+  };
+
+  // resetPassword function update
+  const resetPassword = async (email: string) => {
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: Linking.createURL("/change-password"), // Use root path for password reset
+      });
+      if (error) throw error;
+      alert("Password reset email sent! Please check your inbox.");
+    } catch (error) {
+      console.error("Error sending password reset email:", error);
+      throw error;
+    }
+  };
+
+  // updateProfile remains the same (but might need role check for security)
+  const updateProfile = async (updates: Partial<UserProfile>) => {
+    if (!user) throw new Error("Not authenticated");
+    try {
+      // Add checks here if certain profile fields should only be updated by specific roles
+      const { error } = await supabase.auth.updateUser({ data: updates });
+      if (error) throw error;
+      // Re-fetch user data or rely on onAuthStateChange if metadata updates trigger it
+    } catch (error) {
+      console.error("Error updating profile:", error);
+      throw error;
+    }
+  };
+
+  // associateMemberWithPin remains the same
+  const associateMemberWithPin = async (pin: string) => {
+    if (!user) throw new Error("Not authenticated");
+    try {
+      const { data, error } = await supabase.rpc("associate_member_with_pin", {
+        input_pin: parseInt(pin, 10),
+        input_user_id: user.id,
+        input_email: user.email || "",
+      });
+
+      if (error) throw error;
+
+      if (data) {
+        // Association successful, re-trigger auth state update to fetch member data
+        updateAuthState(session, "associationSuccess");
+      } else {
+        throw new Error("PIN association failed. Please check the PIN and try again.");
+      }
+    } catch (error) {
+      console.error("Error associating member with PIN:", error);
+      throw error;
+    }
+  };
+
+  // --- Add functions for managing the flag ---
+  const signalPasswordRecoveryStart = useCallback(() => {
+    console.log("[Auth] Signaling start of password recovery flow");
+    setIsPasswordRecoveryFlow(true);
+  }, []);
+
+  const clearPasswordRecoveryFlag = useCallback(() => {
+    if (isPasswordRecoveryFlow) {
+      // Only log if it was actually true
+      console.log("[Auth] Clearing password recovery flag");
+      setIsPasswordRecoveryFlow(false);
+    }
+  }, [isPasswordRecoveryFlow]); // Depend on the flag itself
+
+  // Memoize the context value
+  const value = useMemo(
+    () => ({
+      user,
+      session,
+      member,
+      isCompanyAdmin,
+      userRole,
+      authStatus,
+      isPasswordRecoveryFlow, // <-- ADDED
+      signOut,
+      signIn,
+      signUp,
+      resetPassword,
+      updateProfile,
+      associateMemberWithPin,
+      signalPasswordRecoveryStart, // <-- ADDED
+      clearPasswordRecoveryFlag, // <-- ADDED
+    }),
+    [
+      user,
+      session,
+      member,
+      isCompanyAdmin,
+      userRole,
+      authStatus,
+      isPasswordRecoveryFlow, // <-- ADDED DEPENDENCY
+      signOut, // Keep minimal deps for functions
+      signalPasswordRecoveryStart,
+      clearPasswordRecoveryFlag,
+    ]
+  );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+// Custom hook to use the AuthContext
+export function useAuth() {
+  const context = useContext(AuthContext);
+  if (context === undefined) {
+    throw new Error("useAuth must be used within an AuthProvider");
+  }
+  return context;
+}
