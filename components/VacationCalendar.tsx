@@ -156,10 +156,22 @@ export function VacationCalendar({ current }: VacationCalendarProps) {
 
     const dates: any = {};
     const currentYear = new Date().getFullYear();
-    const startDate = new Date(currentYear, 0, 1);
-    const endDate = new Date(currentYear + (hasNextYearAllotments ? 1 : 0), 11, 31);
+    // Get first day of the year
+    const yearStart = new Date(currentYear, 0, 1);
+    // Find the first Monday
+    const startDate = startOfWeek(yearStart, { weekStartsOn: 1 });
+    // Get last day of the year (or next year if we have next year allotments)
+    const yearEnd = new Date(currentYear + (hasNextYearAllotments ? 1 : 0), 11, 31);
+    // Find the last Sunday
+    const endDate = endOfWeek(yearEnd, { weekStartsOn: 1 });
 
-    console.log("[VacationCalendar] Date Range for Marking:", { startDate, endDate, hasNextYearAllotments });
+    console.log("[VacationCalendar] Date Range for Marking:", {
+      startDate,
+      endDate,
+      hasNextYearAllotments,
+      isFirstDayMonday: format(startDate, "EEEE") === "Monday",
+      isLastDaySunday: format(endDate, "EEEE") === "Sunday",
+    });
 
     let currentDate = startDate;
     while (currentDate <= endDate) {

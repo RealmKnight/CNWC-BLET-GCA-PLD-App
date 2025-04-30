@@ -117,61 +117,86 @@ export const useVacationCalendarStore = create<VacationCalendarState>((
             return {};
         }
 
-        try {
-            console.log(
-                `[VacationCalendarStore] Fetching allotments from ${startDate} onwards for calendarId: ${calendarId}`,
-            );
+        const MAX_RETRIES = 3;
+        const RETRY_DELAY = 1000; // 1 second
 
-            const { data: allotmentsData, error } = await supabase
-                .from("vacation_allotments")
-                .select("*")
-                .eq("calendar_id", calendarId)
-                .gte("week_start_date", startDate);
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                console.log(
+                    `[VacationCalendarStore] Fetching allotments (attempt ${attempt}/${MAX_RETRIES}) from ${startDate} onwards for calendarId: ${calendarId}`,
+                );
 
-            if (error) throw error;
+                const { data: allotmentsData, error } = await supabase
+                    .from("vacation_allotments")
+                    .select("*")
+                    .eq("calendar_id", calendarId)
+                    .gte("week_start_date", startDate);
 
-            console.log("[VacationCalendarStore] Fetched allotments:", {
-                count: allotmentsData?.length,
-                firstAllotment: allotmentsData?.[0],
-                lastAllotment: allotmentsData?.[allotmentsData.length - 1],
-            });
+                if (error) {
+                    // If it's a CORS error, log it specifically
+                    if (
+                        error.message?.includes("CORS") ||
+                        error.message?.includes("Access-Control-Allow-Origin")
+                    ) {
+                        console.error(
+                            "[VacationCalendarStore] CORS error detected:",
+                            error,
+                        );
+                        throw new Error(`CORS error: ${error.message}`);
+                    }
+                    throw error;
+                }
 
-            const allotmentsByWeek: Record<string, WeekAllotment> = {};
-            allotmentsData?.forEach((allotment) => {
-                const weekKey = allotment.week_start_date;
-                if (
-                    typeof weekKey === "string" &&
-                    weekKey.match(/^\d{4}-\d{2}-\d{2}$/)
-                ) {
-                    allotmentsByWeek[weekKey] = allotment as WeekAllotment;
+                console.log("[VacationCalendarStore] Fetched allotments:", {
+                    count: allotmentsData?.length,
+                    firstAllotment: allotmentsData?.[0],
+                    lastAllotment: allotmentsData?.[allotmentsData.length - 1],
+                });
 
-                    // Log specific allotment data for the weeks we're having issues with
-                    if (weekKey === "2024-05-12" || weekKey === "2024-05-19") {
-                        console.log(
-                            `[VacationCalendarStore] Allotment data for ${weekKey}:`,
-                            allotment,
+                const allotmentsByWeek: Record<string, WeekAllotment> = {};
+                allotmentsData?.forEach((allotment) => {
+                    const weekKey = allotment.week_start_date;
+                    if (
+                        typeof weekKey === "string" &&
+                        weekKey.match(/^\d{4}-\d{2}-\d{2}$/)
+                    ) {
+                        // Ensure the week starts on a Monday
+                        const weekDate = parseISO(weekKey);
+                        const weekDay = format(weekDate, "EEEE");
+                        if (weekDay !== "Monday") {
+                            console.warn(
+                                `[VacationCalendarStore] Week ${weekKey} doesn't start on Monday (starts on ${weekDay})`,
+                            );
+                            return;
+                        }
+
+                        allotmentsByWeek[weekKey] = allotment as WeekAllotment;
+                    } else {
+                        console.warn(
+                            `[VacationCalendarStore] Invalid week_start_date found: ${weekKey}`,
                         );
                     }
-                } else {
-                    console.warn(
-                        `[VacationCalendarStore] Invalid week_start_date found: ${weekKey}`,
-                    );
+                });
+
+                return allotmentsByWeek;
+            } catch (error) {
+                console.error(
+                    `[VacationCalendarStore] Error fetching allotments (attempt ${attempt}/${MAX_RETRIES}):`,
+                    error,
+                );
+
+                if (attempt === MAX_RETRIES) {
+                    throw error;
                 }
-            });
 
-            console.log("[VacationCalendarStore] Processed allotments:", {
-                weekKeys: Object.keys(allotmentsByWeek),
-                sampleWeek: Object.entries(allotmentsByWeek)[0],
-            });
-
-            return allotmentsByWeek;
-        } catch (error) {
-            console.error(
-                "[VacationCalendarStore] Error fetching allotments:",
-                error,
-            );
-            throw error;
+                // Wait before retrying
+                await new Promise((resolve) =>
+                    setTimeout(resolve, RETRY_DELAY * attempt)
+                );
+            }
         }
+
+        throw new Error("Failed to fetch allotments after all retries");
     },
 
     fetchRequests: async (

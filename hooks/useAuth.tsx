@@ -212,7 +212,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
                 current_zone_id: null,
                 home_zone_id: null,
                 phone_number: null,
-                status: "active",
+                status: "ACTIVE",
                 company_hire_date: null,
                 date_of_birth: null,
                 wc_sen_roster: null, // Keep if confirmed in type
@@ -229,7 +229,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
               // Ensure previous member state/subscriptions are cleaned up
               runCleanupActions(); // Run cleanup *before* initializing new stores
 
-              // !!! We still need to initialize the admin store for company admins !!!
               // Reuse the initialization logic from the member section
               const userId = refreshedUser.id;
               const assignedDivisionId = null;
@@ -445,15 +444,211 @@ export function AuthProvider({ children }: AuthProviderProps) {
           finalStatus = "signedOut";
           runCleanupActions(); // Clean up any stale subscriptions
         }
+
+        // --->>> IMMEDIATE STATUS UPDATE <<<---
+        console.log(`[Auth IMMEDIATE] Determined finalStatus: ${finalStatus}. Attempting to set state now...`);
+        setAuthStatus(finalStatus);
+        console.log(`[Auth IMMEDIATE] setAuthStatus(${finalStatus}) called.`);
+        // --->>> END IMMEDIATE STATUS UPDATE <<<---
       } catch (error) {
-        console.error("[Auth] Critical error in updateAuthState:", error);
+        console.error("[Auth] Critical error in updateAuthState's main try block:", error);
         finalStatus = "signedOut"; // Fallback to signedOut on unexpected errors
+        // --->>> IMMEDIATE STATUS UPDATE (in catch) <<<---
+        console.log(
+          `[Auth IMMEDIATE - CATCH] Setting finalStatus: ${finalStatus} due to error. Attempting to set state now...`
+        );
+        setAuthStatus(finalStatus);
+        console.log(`[Auth IMMEDIATE - CATCH] setAuthStatus(${finalStatus}) called.`);
+        // --->>> END IMMEDIATE STATUS UPDATE (in catch) <<<---
         runCleanupActions(); // Ensure cleanup happens
       } finally {
-        console.log(`[Auth] Final authStatus from source '${source}': ${finalStatus}`);
-        setAuthStatus(finalStatus);
+        // CRITICAL CHANGE: Status is now set *before* this finally block.
+        // This block now only handles background tasks and cleanup logic.
+
+        // Now, initiate background data loading if the user is signed in (based on the status already set)
+        console.log(`[Auth FINALLY] Status was set to '${finalStatus}'. Checking if background tasks needed.`);
+
+        if (finalStatus === "signedInMember" && fetchedMemberData && refreshedUser) {
+          console.log("[Auth FINALLY] Starting background data initialization for member...");
+          // --- CENTRALIZED INITIALIZATION LOGIC ---
+          const pinNumber = fetchedMemberData.pin_number;
+          const userId = refreshedUser.id;
+          const calendarId = fetchedMemberData.calendar_id;
+          const assignedDivisionId = fetchedMemberData.division_id; // Get assigned division ID
+          const effectiveUserRoles = [fetchedMemberData.role as UserRole]; // Basic role, could fetch effective roles if needed
+
+          // --- Define Date Ranges ---
+          const today = new Date();
+          // PLD/SDV Range: Today -> 6 months from now
+          const pldStartDate = format(today, "yyyy-MM-dd");
+          const pldEndDate = format(new Date(today.getFullYear(), today.getMonth() + 6, today.getDate()), "yyyy-MM-dd");
+          // Vacation Range: Jan 1st -> Dec 31st of current year
+          const currentYear = today.getFullYear();
+          const vacationStartDate = `${currentYear}-01-01`;
+          const vacationEndDate = `${currentYear}-12-31`;
+
+          console.log("[Auth Init] Date Ranges:", {
+            pldStartDate,
+            pldEndDate,
+            vacationStartDate,
+            vacationEndDate,
+          });
+
+          // Initialize stores concurrently in the background
+          const initializationPromises = [];
+
+          // 1. Notification Store
+          const notificationStore = useNotificationStore.getState();
+          if (!notificationStore.isInitialized && pinNumber && userId) {
+            console.log("[Auth Init] Starting background Notification Store init...");
+            initializationPromises.push(
+              (async () => {
+                try {
+                  await notificationStore.fetchMessages(pinNumber, userId);
+                  const unsubscribe = notificationStore.subscribeToMessages(pinNumber);
+                  notificationCleanupRef.current = unsubscribe; // Store cleanup
+                  notificationStore.setIsInitialized(true); // Mark as initialized *after* successful fetch+subscribe
+                  console.log("[Auth Init] Background Notification Store Initialized.");
+                } catch (error) {
+                  console.error("[Auth Init] Error initializing Notification Store:", error);
+                  notificationStore.setIsInitialized(false); // Ensure not initialized on error
+                }
+              })()
+            );
+          } else {
+            console.log(
+              `[Auth Init] Skipping background Notification Store init. Initialized: ${notificationStore.isInitialized}, Pin: ${pinNumber}, UserID: ${userId}`
+            );
+          }
+
+          // 2. PLD/SDV Calendar Store
+          const calendarStore = useCalendarStore.getState();
+          if (!calendarStore.isInitialized && calendarId) {
+            console.log("[Auth Init] Starting background PLD/SDV Calendar Store init...");
+            calendarStore.setIsLoading(true); // Keep loading flag for this store
+            calendarStore.setError(null);
+            initializationPromises.push(
+              (async () => {
+                try {
+                  await calendarStore.loadInitialData(pldStartDate, pldEndDate, calendarId);
+                  calendarStore.setIsInitialized(true);
+                  calendarCleanupRef.current = calendarStore.cleanupCalendarState;
+                  console.log("[Auth Init] Background PLD/SDV Calendar Store Initialized.");
+                } catch (error) {
+                  console.error("[Auth Init] Error initializing PLD/SDV Calendar Store:", error);
+                  calendarStore.setIsInitialized(false);
+                  calendarStore.setError(error instanceof Error ? error.message : String(error)); // Set error on store
+                } finally {
+                  calendarStore.setIsLoading(false);
+                }
+              })()
+            );
+          } else {
+            console.log(
+              `[Auth Init] Skipping background PLD/SDV Calendar Store init. Initialized: ${calendarStore.isInitialized}, CalendarID: ${calendarId}`
+            );
+          }
+
+          // 3. Vacation Calendar Store
+          const vacationStore = useVacationCalendarStore.getState();
+          if (!vacationStore.isInitialized && calendarId) {
+            console.log("[Auth Init] Starting background Vacation Calendar Store init...");
+            vacationStore.setIsLoading(true); // Keep loading flag for this store
+            vacationStore.setError(null);
+            initializationPromises.push(
+              (async () => {
+                try {
+                  await vacationStore.loadInitialData(vacationStartDate, vacationEndDate, calendarId);
+                  vacationStore.setIsInitialized(true);
+                  vacationCalendarCleanupRef.current = vacationStore.cleanupCalendarState;
+                  console.log("[Auth Init] Background Vacation Calendar Store Initialized.");
+                } catch (error) {
+                  console.error("[Auth Init] Error initializing Vacation Calendar Store:", error);
+                  vacationStore.setIsInitialized(false);
+                  vacationStore.setError(error instanceof Error ? error.message : String(error)); // Set error on store
+                } finally {
+                  vacationStore.setIsLoading(false);
+                }
+              })()
+            );
+          } else {
+            console.log(
+              `[Auth Init] Skipping background Vacation Calendar Store init. Initialized: ${vacationStore.isInitialized}, CalendarID: ${calendarId}`
+            );
+          }
+
+          // --- 4. Admin Notification Store ---
+          const adminNotificationStore = useAdminNotificationStore.getState();
+          if (!adminNotificationStore.isInitialized && userId) {
+            console.log("[Auth Init - Member] Starting background Admin Notification Store init...");
+            initializationPromises.push(
+              (async () => {
+                try {
+                  const cleanupFn = adminNotificationStore.initializeAdminNotifications(
+                    userId,
+                    effectiveUserRoles,
+                    assignedDivisionId,
+                    false // Pass false for isCompanyAdmin
+                  );
+                  adminNotificationCleanupRef.current = cleanupFn; // Store cleanup
+                  console.log(
+                    "[Auth Init - Member] Background Admin Notification Store Initialized (subscription setup initiated)."
+                  );
+                } catch (error) {
+                  console.error("[Auth Init - Member] Error initializing Admin Notification Store:", error);
+                }
+              })()
+            );
+          } else {
+            console.log(
+              `[Auth Init - Member] Skipping background Admin Notification Store init. Initialized: ${adminNotificationStore.isInitialized}, UserID: ${userId}`
+            );
+          }
+          // --- End Admin Notification Store ---
+
+          // Wait for all background initializations to attempt completion
+          // We don't need to `await` this here as it's background work
+          Promise.allSettled(initializationPromises).then(() => {
+            console.log("[Auth] Background data initialization attempt complete.");
+          });
+          // --- END CENTRALIZED INITIALIZATION LOGIC ---
+        } else if (finalStatus === "signedInAdmin" && refreshedUser) {
+          console.log("[Auth FINALLY] Starting background data initialization for admin...");
+          // Initialize admin-specific stores if needed (currently only Admin Notifications)
+          const userId = refreshedUser.id;
+          const assignedDivisionId = null;
+          const effectiveUserRoles: UserRole[] = []; // Pass empty array
+
+          const adminNotificationStore = useAdminNotificationStore.getState();
+          if (!adminNotificationStore.isInitialized && userId) {
+            console.log("[Auth Init - Admin] Starting background Admin Notification Store init...");
+            // Run this in the background as well
+            (async () => {
+              try {
+                const cleanupFn = adminNotificationStore.initializeAdminNotifications(
+                  userId,
+                  effectiveUserRoles,
+                  assignedDivisionId,
+                  true // Pass true for isCompanyAdmin
+                );
+                adminNotificationCleanupRef.current = cleanupFn; // Store cleanup
+                console.log(
+                  "[Auth Init - Admin] Background Admin Notification Store Initialized (subscription setup initiated)."
+                );
+              } catch (error) {
+                console.error("[Auth Init - Admin] Error initializing Admin Notification Store:", error);
+              }
+            })(); // Immediately invoke async function
+          } else {
+            console.log(
+              `[Auth Init - Admin] Skipping background Admin Notification Store init. Initialized: ${adminNotificationStore.isInitialized}, UserID: ${userId}`
+            );
+          }
+        }
+
+        // Mark initial auth check as complete *after* status is set and background tasks may have started
         if (source === "initial") {
-          initialAuthCompleteRef.current = true; // Mark initial auth check as complete
+          initialAuthCompleteRef.current = true;
           console.log("[Auth] Initial auth check marked complete.");
         }
         isUpdatingAuth.current = false;

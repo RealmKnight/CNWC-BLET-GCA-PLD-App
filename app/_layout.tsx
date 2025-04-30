@@ -77,13 +77,14 @@ function AuthAwareRouteHandler() {
   }, [isPasswordRecoveryFlow, clearPasswordRecoveryFlag]);
 
   // Show loading screen if we're not ready
-  if (!isInitialized || (authStatus === "loading" && !hasSeenAuthResponse)) {
-    console.log("[Router] Loading or initializing...");
+  if (authStatus === "loading") {
+    console.log("[Router] Auth status is loading...");
     return <LoadingScreen />;
   }
 
-  // CRITICAL: Let index.tsx and other pages handle their own redirects
-  // Just render the Slot to allow the navigation system to work properly
+  // If authStatus is not loading, assume we are ready to render the rest of the app
+  // Let specific pages handle redirects based on the actual authStatus ('signedOut', 'needsAssociation', etc.)
+  console.log(`[Router] Auth status is '${authStatus}'. Rendering Slot.`);
   return <Slot />;
 }
 
