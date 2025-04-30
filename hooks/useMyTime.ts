@@ -5,11 +5,15 @@ import { RealtimeChannel } from "@supabase/supabase-js";
 import { useIsomorphicLayoutEffect } from "./useIsomorphicLayoutEffect";
 import { useUserStore } from "@/store/userStore";
 import { useCalendarStore } from "@/store/calendarStore";
-import { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
+import {
+  PostgrestError,
+  RealtimePostgresChangesPayload,
+} from "@supabase/supabase-js";
 import { useFocusEffect } from "@react-navigation/native";
 import React from "react";
 import { AppState } from "react-native";
 import { Database } from "@/types/supabase";
+import { addWeeks, subWeeks } from "date-fns";
 
 // Cache configuration
 const CACHE_DURATION = 30000; // 30 seconds
@@ -202,6 +206,51 @@ const isCacheFresh = (
   if (typeof window === "undefined") return false; // Never use cache during SSR
   return cache.data && (getSafeTimestamp() - cache.timestamp < duration);
 };
+
+// Add hydration-safe date handling functions
+const getSafeDate = () => {
+  if (typeof window === "undefined") {
+    // During SSR, return a stable date string
+    return new Date("2099-01-01").toISOString();
+  }
+  return new Date().toISOString();
+};
+
+const getDateRange = () => {
+  if (typeof window === "undefined") {
+    // During SSR, return stable date range
+    return {
+      minDate: "2099-01-01",
+      maxDate: "2099-01-15",
+    };
+  }
+
+  const now = new Date();
+  const minDate = subWeeks(now, 2);
+  const maxDate = addWeeks(now, 2);
+  return {
+    minDate: minDate.toISOString(),
+    maxDate: maxDate.toISOString(),
+  };
+};
+
+// Define a custom error class to better handle database errors
+export class DatabaseError extends Error {
+  code?: string;
+  details?: string | null;
+  hint?: string | null;
+
+  constructor(error: PostgrestError) {
+    super(error.message);
+    this.name = "DatabaseError";
+    this.code = error.code;
+    this.details = error.details;
+    this.hint = error.hint;
+
+    // This allows instances of DatabaseError to be used with instanceof
+    Object.setPrototypeOf(this, DatabaseError.prototype);
+  }
+}
 
 export function useMyTime() {
   const [stats, setStats] = useState<TimeStats | null>(null);
@@ -523,7 +572,7 @@ export function useMyTime() {
   }, [member?.id]);
 
   const requestPaidInLieu = useCallback(
-    async (type: "PLD" | "SDV") => {
+    async (type: "PLD" | "SDV", requestDate?: Date) => {
       if (!member?.id) {
         throw new Error("No member ID found");
       }
@@ -536,6 +585,7 @@ export function useMyTime() {
           type,
           memberId: member.id,
           calendarId: member.calendar_id,
+          requestDate,
         });
 
         // Check if user has available days for the requested type
@@ -552,10 +602,15 @@ export function useMyTime() {
           );
         }
 
+        // Format the request date or use today's date if not provided
+        const formattedDate = requestDate
+          ? requestDate.toISOString().split("T")[0]
+          : new Date().toISOString().split("T")[0];
+
         // Get existing requests to determine how many days are already used
         const { data: existingRequests, error: requestsError } = await supabase
           .from("pld_sdv_requests")
-          .select("leave_type, status, paid_in_lieu")
+          .select("leave_type, status, paid_in_lieu, request_date")
           .eq("member_id", member.id)
           .gte("request_date", `${currentYear}-01-01`)
           .lte("request_date", `${currentYear}-12-31`);
@@ -566,17 +621,18 @@ export function useMyTime() {
           );
         }
 
-        // Check if user already has a paid in lieu request for this type
+        // Check if user already has a paid in lieu request for this date
         const hasExistingPaidInLieuRequest = existingRequests?.some(
           (req) =>
             req.leave_type === type &&
             req.paid_in_lieu === true &&
+            req.request_date === formattedDate &&
             (req.status === "pending" || req.status === "approved"),
         );
 
         if (hasExistingPaidInLieuRequest) {
           throw new Error(
-            `You already have an active paid in lieu request for ${type}. Please cancel it before creating a new one.`,
+            `You already have an active paid in lieu request for ${type} on this date. Please cancel it before creating a new one.`,
           );
         }
 
@@ -671,7 +727,7 @@ export function useMyTime() {
             leave_type: type,
             paid_in_lieu: true,
             status: "pending",
-            request_date: new Date().toISOString().split("T")[0],
+            request_date: formattedDate,
             calendar_id: member.calendar_id,
           })
           .select()
@@ -680,16 +736,8 @@ export function useMyTime() {
         if (error) {
           console.error("[MyTime] Error requesting paid in lieu:", error);
 
-          // Handle specific database errors with user-friendly messages
-          if (error.code === "P0001") {
-            if (error.message?.includes("active request already exists")) {
-              throw new Error(
-                `You already have an active request for this date. Please cancel it before creating a new one.`,
-              );
-            }
-          }
-
-          throw error;
+          // Convert PostgrestError to our DatabaseError for better handling
+          throw new DatabaseError(error);
         }
 
         console.log("[MyTime] Paid in lieu request successful:", data);
@@ -697,12 +745,18 @@ export function useMyTime() {
       } catch (err) {
         console.error("[MyTime] Error in requestPaidInLieu:", err);
 
-        // Return the error message directly for display to user
-        if (err instanceof Error) {
-          throw new Error(err.message);
-        } else {
-          throw new Error("An error occurred while requesting paid in lieu.");
+        // Pass DatabaseError through directly
+        if (err instanceof DatabaseError) {
+          throw err;
         }
+
+        // Handle standard Error objects
+        if (err instanceof Error) {
+          throw err;
+        }
+
+        // For unknown error types
+        throw new Error("An error occurred while requesting paid in lieu.");
       }
     },
     [member?.id, member?.calendar_id],

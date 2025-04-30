@@ -17,9 +17,9 @@ import { ThemedTouchableOpacity } from "@/components/ThemedTouchableOpacity";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Colors } from "@/constants/Colors";
 import { Feather } from "@expo/vector-icons";
-import { useMyTime, UserVacationRequest } from "@/hooks/useMyTime";
+import { useMyTime, UserVacationRequest, DatabaseError } from "@/hooks/useMyTime";
 import { format } from "date-fns-tz";
-import { parseISO, isWithinInterval, isBefore, addDays } from "date-fns";
+import { parseISO, isWithinInterval, isBefore, addDays, subWeeks, addWeeks } from "date-fns";
 import { useFocusEffect } from "@react-navigation/native";
 import { useUserStore } from "@/store/userStore";
 import { useAuth } from "@/hooks/useAuth";
@@ -27,6 +27,7 @@ import Toast from "react-native-toast-message";
 import { Database } from "@/types/supabase";
 import { ClientOnlyComponent, DefaultLoadingFallback } from "@/components/ClientOnlyComponent";
 import { useIsomorphicLayoutEffect } from "@/hooks/useIsomorphicLayoutEffect";
+import { PaidInLieuModal } from "@/components/modals/PaidInLieuModal";
 
 interface LeaveRowProps {
   label: string;
@@ -529,6 +530,7 @@ export default function MyTimeScreen() {
   const [isCancelling, setIsCancelling] = useState(false);
   const [appState, setAppState] = useState(AppState.currentState);
   const didSkipInitialFocusRef = useRef(false);
+  const [dateRange, setDateRange] = useState({ minDate: "", maxDate: "" });
 
   // Get auth and store state
   const { session } = useAuth();
@@ -551,6 +553,19 @@ export default function MyTimeScreen() {
 
   // Calculate responsive card width
   const cardWidth = Math.min(width * 0.9, 600);
+
+  // Add mounted state for client-only rendering
+  const [isMounted, setIsMounted] = useState(false);
+
+  // Get safe date range for date picker
+  useIsomorphicLayoutEffect(() => {
+    setIsMounted(true);
+    // Calculate date range of ±2 weeks
+    const now = new Date();
+    const minDate = subWeeks(now, 2).toISOString();
+    const maxDate = addWeeks(now, 2).toISOString();
+    setDateRange({ minDate, maxDate });
+  }, []);
 
   // Force initialize on mount
   useEffect(() => {
@@ -627,38 +642,133 @@ export default function MyTimeScreen() {
     setShowPaidInLieuModal(true);
   };
 
-  const handleConfirmPaidInLieu = async () => {
-    if (!selectedType) return;
-
+  const handleConfirmPaidInLieu = async (type: "PLD" | "SDV", selectedDate: Date) => {
     try {
-      const success = await requestPaidInLieu(selectedType);
+      // Validate date is within allowed range
+      const now = new Date();
+      const minDate = subWeeks(now, 2);
+      const maxDate = addWeeks(now, 2);
+
+      if (!isWithinInterval(selectedDate, { start: minDate, end: maxDate })) {
+        Toast.show({
+          type: "error",
+          text1: "Invalid Date Selection",
+          text2: "Date must be within two weeks of today",
+          position: "bottom",
+          visibilityTime: 3000,
+        });
+        return;
+      }
+
+      if (!stats) {
+        Toast.show({
+          type: "error",
+          text1: "Request Failed",
+          text2: "Unable to determine available days. Please try again.",
+          position: "bottom",
+          visibilityTime: 3000,
+        });
+        return;
+      }
+
+      // Check if user has available days for the requested type
+      const availableDays = type === "PLD" ? stats.available.pld : stats.available.sdv;
+      if (availableDays <= 0) {
+        Toast.show({
+          type: "error",
+          text1: "No Available Days",
+          text2: `You don't have any available ${type} days to request payment for.`,
+          position: "bottom",
+          visibilityTime: 3000,
+        });
+        return;
+      }
+
+      // Show loading toast for better UX
+      Toast.show({
+        type: "info",
+        text1: "Processing Request",
+        text2: "Please wait while we process your request...",
+        position: "bottom",
+        visibilityTime: 2000,
+      });
+
+      const success = await requestPaidInLieu(type, selectedDate);
 
       if (success) {
         Toast.show({
           type: "success",
           text1: "Request Submitted",
-          text2: `Your request to receive payment for ${selectedType} has been submitted.`,
-          position: "bottom",
-          visibilityTime: 3000,
-        });
-      } else {
-        Toast.show({
-          type: "error",
-          text1: "Request Failed",
-          text2: "Unable to process your request. Please try again later.",
+          text2: `Your request to receive payment for ${type} has been submitted.`,
           position: "bottom",
           visibilityTime: 3000,
         });
       }
     } catch (error) {
       console.error("[MyTime] Error in handleConfirmPaidInLieu:", error);
-      Toast.show({
-        type: "error",
-        text1: "Request Failed",
-        text2: error instanceof Error ? error.message : "An error occurred while processing your request.",
-        position: "bottom",
-        visibilityTime: 3000,
-      });
+
+      // Handle specific error messages
+      if (error instanceof DatabaseError) {
+        // This is our DatabaseError from useMyTime.ts
+        if (error.code === "P0001") {
+          if (error.message?.includes("paid in lieu request already exists")) {
+            Toast.show({
+              type: "error",
+              text1: "Duplicate Request",
+              text2: "A paid in lieu request already exists for this date. Please select a different date.",
+              position: "bottom",
+              visibilityTime: 4000,
+            });
+          } else if (error.message?.includes("active request already exists")) {
+            Toast.show({
+              type: "error",
+              text1: "Duplicate Request",
+              text2: "You already have an active request for this date. Please cancel it before creating a new one.",
+              position: "bottom",
+              visibilityTime: 4000,
+            });
+          } else {
+            // Show the database hint if available (more user-friendly) or message
+            Toast.show({
+              type: "error",
+              text1: "Request Failed",
+              text2: error.hint || error.message || "Database error occurred",
+              position: "bottom",
+              visibilityTime: 3000,
+            });
+          }
+        } else {
+          // For other database errors
+          Toast.show({
+            type: "error",
+            text1: "Database Error",
+            text2: error.message || "An error occurred with the database",
+            position: "bottom",
+            visibilityTime: 3000,
+          });
+        }
+      } else {
+        // Handle standard Error objects
+        const errorMessage = error instanceof Error ? error.message : "An error occurred";
+
+        if (errorMessage.includes("No available")) {
+          Toast.show({
+            type: "error",
+            text1: "No Available Days",
+            text2: errorMessage,
+            position: "bottom",
+            visibilityTime: 3000,
+          });
+        } else {
+          Toast.show({
+            type: "error",
+            text1: "Request Failed",
+            text2: errorMessage,
+            position: "bottom",
+            visibilityTime: 3000,
+          });
+        }
+      }
     } finally {
       setShowPaidInLieuModal(false);
       setSelectedType(null);
@@ -1015,108 +1125,17 @@ export default function MyTimeScreen() {
         </ThemedView>
       </ThemedScrollView>
 
-      <Modal visible={showPaidInLieuModal} transparent animationType="fade" onRequestClose={handleCancelPaidInLieu}>
-        <ThemedView style={styles.modalContainer}>
-          <ThemedView style={styles.modalContent}>
-            <ThemedText style={styles.modalTitle}>Request Paid in Lieu</ThemedText>
-            <ThemedText style={styles.modalDescription}>
-              Select the type of day you want to request payment for:
-            </ThemedText>
-
-            {/* Warning message if no days are available */}
-            {stats && stats.available.pld <= 0 && stats.available.sdv <= 0 && (
-              <ThemedView style={styles.warningContainer}>
-                <Feather name="alert-triangle" size={18} color={Colors[colorScheme ?? "light"].warning} />
-                <ThemedText style={styles.warningMessageText}>
-                  You don't have any available days to request payment for.
-                </ThemedText>
-              </ThemedView>
-            )}
-
-            {/* PLD warning if only PLD is unavailable */}
-            {stats && stats.available.pld <= 0 && stats.available.sdv > 0 && (
-              <ThemedView style={styles.warningContainer}>
-                <Feather name="info" size={18} color={Colors[colorScheme ?? "light"].warning} />
-                <ThemedText style={styles.warningMessageText}>You don't have any available PLD days.</ThemedText>
-              </ThemedView>
-            )}
-
-            {/* SDV warning if only SDV is unavailable */}
-            {stats && stats.available.pld > 0 && stats.available.sdv <= 0 && (
-              <ThemedView style={styles.warningContainer}>
-                <Feather name="info" size={18} color={Colors[colorScheme ?? "light"].warning} />
-                <ThemedText style={styles.warningMessageText}>You don't have any available SDV days.</ThemedText>
-              </ThemedView>
-            )}
-
-            <ThemedView style={styles.typeButtonsContainer}>
-              <ThemedTouchableOpacity
-                style={[
-                  styles.typeButton,
-                  selectedType === "PLD" && styles.selectedTypeButton,
-                  stats && stats.available.pld <= 0 && styles.disabledButton,
-                ]}
-                onPress={() => setSelectedType("PLD")}
-                disabled={stats && stats.available.pld <= 0}
-              >
-                <ThemedText
-                  style={[
-                    styles.typeButtonText,
-                    selectedType === "PLD" && styles.selectedTypeButtonText,
-                    stats && stats.available.pld <= 0 && styles.disabledButtonText,
-                  ]}
-                >
-                  PLD ({stats?.available.pld || 0})
-                </ThemedText>
-              </ThemedTouchableOpacity>
-
-              <ThemedTouchableOpacity
-                style={[
-                  styles.typeButton,
-                  selectedType === "SDV" && styles.selectedTypeButton,
-                  stats && stats.available.sdv <= 0 && styles.disabledButton,
-                ]}
-                onPress={() => setSelectedType("SDV")}
-                disabled={stats && stats.available.sdv <= 0}
-              >
-                <ThemedText
-                  style={[
-                    styles.typeButtonText,
-                    selectedType === "SDV" && styles.selectedTypeButtonText,
-                    stats && stats.available.sdv <= 0 && styles.disabledButtonText,
-                  ]}
-                >
-                  SDV ({stats?.available.sdv || 0})
-                </ThemedText>
-              </ThemedTouchableOpacity>
-            </ThemedView>
-
-            <ThemedView style={styles.modalButtonsContainer}>
-              <ThemedTouchableOpacity style={styles.cancelButton} onPress={handleCancelPaidInLieu}>
-                <ThemedText style={styles.cancelButtonText}>Cancel</ThemedText>
-              </ThemedTouchableOpacity>
-
-              <ThemedTouchableOpacity
-                style={[
-                  styles.confirmButton,
-                  (!selectedType ||
-                    (stats && selectedType === "PLD" && stats.available.pld <= 0) ||
-                    (stats && selectedType === "SDV" && stats.available.sdv <= 0)) &&
-                    styles.disabledButton,
-                ]}
-                onPress={handleConfirmPaidInLieu}
-                disabled={
-                  !selectedType ||
-                  (stats && selectedType === "PLD" && stats.available.pld <= 0) ||
-                  (stats && selectedType === "SDV" && stats.available.sdv <= 0)
-                }
-              >
-                <ThemedText style={styles.confirmButtonText}>Request Payment</ThemedText>
-              </ThemedTouchableOpacity>
-            </ThemedView>
-          </ThemedView>
-        </ThemedView>
-      </Modal>
+      {/* Replace existing Paid In Lieu Modal with our new component */}
+      {isMounted && (
+        <PaidInLieuModal
+          isVisible={showPaidInLieuModal}
+          onConfirm={handleConfirmPaidInLieu}
+          onCancel={handleCancelPaidInLieu}
+          stats={stats}
+          minDate={dateRange.minDate}
+          maxDate={dateRange.maxDate}
+        />
+      )}
 
       <CancelRequestModal
         isVisible={showCancelModal}

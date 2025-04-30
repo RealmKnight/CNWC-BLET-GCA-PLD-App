@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Platform,
   StyleSheet,
@@ -10,7 +10,7 @@ import {
   useWindowDimensions,
 } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
-import { format, parseISO } from "date-fns";
+import { format, parseISO, isAfter, isBefore } from "date-fns";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { Ionicons } from "@expo/vector-icons";
@@ -24,6 +24,10 @@ interface DatePickerProps {
   style?: ViewStyle;
   textStyle?: TextStyle;
   disabled?: boolean;
+  minDate?: Date;
+  maxDate?: Date;
+  accessibilityLabel?: string;
+  accessibilityHint?: string;
 }
 
 export function DatePicker({
@@ -34,14 +38,46 @@ export function DatePicker({
   style,
   textStyle,
   disabled = false,
+  minDate,
+  maxDate,
+  accessibilityLabel,
+  accessibilityHint,
 }: DatePickerProps) {
   const [showPicker, setShowPicker] = useState(false);
   const [webTempDate, setWebTempDate] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const { width } = useWindowDimensions();
   const isMobileWeb = Platform.OS === "web" && width < 768;
 
   const formattedDate = date ? format(date, "yyyy-MM-dd") : "";
+
+  // Format min/max dates for web input
+  const minDateStr = minDate ? format(minDate, "yyyy-MM-dd") : "";
+  const maxDateStr = maxDate ? format(maxDate, "yyyy-MM-dd") : "";
+
+  // Validate the date is within the allowed range
+  const validateDate = (dateToCheck: Date): boolean => {
+    setError(null);
+    if (minDate && isBefore(dateToCheck, minDate)) {
+      setError(`Date must be on or after ${format(minDate, "MMM d, yyyy")}`);
+      return false;
+    }
+    if (maxDate && isAfter(dateToCheck, maxDate)) {
+      setError(`Date must be on or before ${format(maxDate, "MMM d, yyyy")}`);
+      return false;
+    }
+    return true;
+  };
+
+  // Clear error when date changes
+  useEffect(() => {
+    if (date) {
+      validateDate(date);
+    } else {
+      setError(null);
+    }
+  }, [date]);
 
   // Themed styles
   const defaultViewStyle: ViewStyle = {
@@ -50,7 +86,7 @@ export function DatePicker({
     borderRadius: 8,
     paddingHorizontal: 12,
     backgroundColor: Colors[colorScheme].background,
-    borderColor: Colors[colorScheme].border,
+    borderColor: error ? Colors[colorScheme].error : Colors[colorScheme].border,
     flexDirection: "row",
     alignItems: "center",
     opacity: disabled ? 0.6 : 1,
@@ -78,7 +114,8 @@ export function DatePicker({
           onPress={() => !disabled && setShowPicker(true)}
           activeOpacity={0.7}
           accessibilityRole="button"
-          accessibilityLabel={placeholder}
+          accessibilityLabel={accessibilityLabel || placeholder}
+          accessibilityHint={accessibilityHint}
           disabled={disabled}
         >
           <ThemedText
@@ -91,6 +128,9 @@ export function DatePicker({
           </ThemedText>
           <Ionicons name="calendar-outline" size={20} color={Colors[colorScheme].icon} style={{ marginLeft: 8 }} />
         </TouchableOpacity>
+
+        {error && <ThemedText style={styles.errorText}>{error}</ThemedText>}
+
         <Modal visible={showPicker} transparent animationType="fade" onRequestClose={() => setShowPicker(false)}>
           <View style={styles.modalOverlay}>
             <View
@@ -100,10 +140,19 @@ export function DatePicker({
               ]}
             >
               <ThemedText style={styles.modalTitle}>{placeholder}</ThemedText>
+
+              {minDate && maxDate && (
+                <ThemedText style={styles.dateRangeText}>
+                  Select a date between {format(minDate, "MMM d, yyyy")} and {format(maxDate, "MMM d, yyyy")}
+                </ThemedText>
+              )}
+
               <input
                 type="date"
                 value={webTempDate || formattedDate}
                 onChange={(e) => setWebTempDate(e.target.value)}
+                min={minDateStr}
+                max={maxDateStr}
                 style={{
                   color: Colors[colorScheme].text,
                   background: Colors[colorScheme].background,
@@ -115,7 +164,8 @@ export function DatePicker({
                   marginBottom: 16,
                   fontFamily: "inherit",
                 }}
-                aria-label={placeholder}
+                aria-label={accessibilityLabel || placeholder}
+                aria-describedby={accessibilityHint}
                 autoFocus
               />
               <View style={styles.modalButtons}>
@@ -140,7 +190,10 @@ export function DatePicker({
                         parsedDate.getMonth(),
                         parsedDate.getDate()
                       );
-                      onDateChange(selectedDate);
+
+                      if (validateDate(selectedDate)) {
+                        onDateChange(selectedDate);
+                      }
                     }
                     setShowPicker(false);
                     setWebTempDate("");
@@ -166,7 +219,8 @@ export function DatePicker({
         onPress={() => !disabled && setShowPicker(true)}
         activeOpacity={0.7}
         accessibilityRole="button"
-        accessibilityLabel={placeholder}
+        accessibilityLabel={accessibilityLabel || placeholder}
+        accessibilityHint={accessibilityHint}
         disabled={disabled}
       >
         <ThemedText
@@ -176,14 +230,21 @@ export function DatePicker({
         </ThemedText>
         <Ionicons name="calendar-outline" size={20} color={Colors[colorScheme].icon} style={{ marginLeft: 8 }} />
       </TouchableOpacity>
+
+      {error && <ThemedText style={styles.errorText}>{error}</ThemedText>}
+
       {showPicker && (
         <DateTimePicker
           value={date || new Date()}
           mode={mode}
           onChange={(_event, selectedDate) => {
             setShowPicker(false);
-            if (selectedDate) onDateChange(selectedDate);
+            if (selectedDate && validateDate(selectedDate)) {
+              onDateChange(selectedDate);
+            }
           }}
+          minimumDate={minDate}
+          maximumDate={maxDate}
           textColor={Colors[colorScheme].text}
           themeVariant={colorScheme}
         />
@@ -229,5 +290,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     minWidth: 100,
+  },
+  errorText: {
+    color: Colors.dark.error,
+    fontSize: 14,
+    marginTop: 4,
+  },
+  dateRangeText: {
+    fontSize: 14,
+    textAlign: "center",
+    marginBottom: 12,
+    opacity: 0.8,
   },
 });
