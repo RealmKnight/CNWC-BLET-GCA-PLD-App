@@ -433,32 +433,39 @@ function RequestDialog({
       return false;
     }
 
+    const now = new Date();
+    const dateObj = parseISO(selectedDate);
     const isSixMonthDate = isSameDayWithFormat(selectedDate, getSixMonthDate(), "yyyy-MM-dd");
-    const isEndOfMonth = isLastDayOfMonth(new Date());
+    const isEndOfMonth = isLastDayOfMonth(now);
     const sixMonthDate = getSixMonthDate();
 
+    // FIXED: Properly handle six-month requests according to business rules
+    // Six month requests are ONLY the exact 6-month date OR dates after it in the same month on month-end
     const result =
       isSixMonthDate ||
       (isEndOfMonth &&
-        parseISO(selectedDate).getMonth() === sixMonthDate.getMonth() &&
-        parseISO(selectedDate).getFullYear() === sixMonthDate.getFullYear() &&
-        !isBefore(parseISO(selectedDate), sixMonthDate));
+        dateObj.getMonth() === sixMonthDate.getMonth() &&
+        dateObj.getFullYear() === sixMonthDate.getFullYear() &&
+        dateObj.getDate() >= sixMonthDate.getDate());
 
-    // Log detailed information about six-month date detection
-    console.log(`[RequestDialog] Six-month request detection for ${selectedDate}:`, {
-      isSixMonthDate,
-      isEndOfMonth,
-      sixMonthDate: format(sixMonthDate, "yyyy-MM-dd"),
-      selectedDateMonth: parseISO(selectedDate).getMonth(),
-      sixMonthDateMonth: sixMonthDate.getMonth(),
-      selectedDateYear: parseISO(selectedDate).getFullYear(),
-      sixMonthDateYear: sixMonthDate.getFullYear(),
-      isBeforeSixMonthDate: isBefore(parseISO(selectedDate), sixMonthDate),
-      result,
-    });
+    // Log detailed information about six-month date detection but only in development
+    if (process.env.NODE_ENV === "development") {
+      console.log(`[RequestDialog] Six-month request detection for ${selectedDate}:`, {
+        isSixMonthDate,
+        isEndOfMonth,
+        sixMonthDate: format(sixMonthDate, "yyyy-MM-dd"),
+        selectedDateMonth: dateObj.getMonth(),
+        sixMonthDateMonth: sixMonthDate.getMonth(),
+        selectedDateYear: dateObj.getFullYear(),
+        sixMonthDateYear: sixMonthDate.getFullYear(),
+        selectedDateDay: dateObj.getDate(),
+        sixMonthDateDay: sixMonthDate.getDate(),
+        result,
+      });
+    }
 
     return result;
-  }, [selectedDate, calendarType]); // *** ADDED calendarType dependency ***
+  }, [selectedDate, calendarType]);
 
   // Fetch the total count of six-month requests for this date when dialog is shown
   useEffect(() => {
@@ -714,19 +721,33 @@ function RequestDialog({
   // For six month dates, don't count other users' requests against the allotment
   // But we do want to show the total count of six-month requests
   const currentAllotment = useMemo(() => {
+    // Determine if this is truly a six-month request
+    const now = new Date();
+    const dateObj = parseISO(selectedDate);
+    const sixMonthDate = getSixMonthDate();
+    const isEndOfMonth = isLastDayOfMonth(now);
+    const isSixMonthRequestDate =
+      dateObj.getTime() === sixMonthDate.getTime() || // Exact date match
+      (isEndOfMonth &&
+        dateObj.getMonth() === sixMonthDate.getMonth() &&
+        dateObj.getFullYear() === sixMonthDate.getFullYear() &&
+        dateObj.getDate() >= sixMonthDate.getDate()); // Same month/year and day is at or after six-month date
+
     const result = {
       max: localAllotments.max,
-      current: isSixMonthRequest
+      current: isSixMonthRequestDate
         ? totalSixMonthRequests // Show total six-month requests instead of just the user's request
         : activeRequests.length,
     };
 
     // Log the current allotment for debugging
-    if (isSixMonthRequest) {
+    if (isSixMonthRequestDate) {
       console.log("[RequestDialog] Six-month allotment:", {
         date: selectedDate,
         max: result.max,
         total: totalSixMonthRequests,
+        isEndOfMonth,
+        sixMonthDate: format(sixMonthDate, "yyyy-MM-dd"),
       });
     }
 
@@ -2030,16 +2051,32 @@ export default function CalendarScreen() {
     try {
       console.log(`[CalendarScreen] Submitting ${leaveType} request for ${selectedDate}`);
 
+      const now = new Date();
+      const dateObj = parseISO(selectedDate);
       const isSixMonthDate = isSameDayWithFormat(selectedDate, getSixMonthDate(), "yyyy-MM-dd");
-      const isEndOfMonth = isLastDayOfMonth(new Date());
+      const isEndOfMonth = isLastDayOfMonth(now);
       const sixMonthDate = getSixMonthDate();
 
+      // Special debug for problematic dates
+      const isSpecialDate = selectedDate.includes("10-31") || selectedDate.includes("04-30");
+      if (isSpecialDate) {
+        console.log(`[CalendarScreen] Handling special date ${selectedDate}:`, {
+          isEndOfMonth,
+          sixMonthDate: format(sixMonthDate, "yyyy-MM-dd"),
+          selectedMonth: dateObj.getMonth(),
+          sixMonthMonth: sixMonthDate.getMonth(),
+          selectedYear: dateObj.getFullYear(),
+          sixMonthYear: sixMonthDate.getFullYear(),
+        });
+      }
+
+      // Properly handle six-month requests: either exact date or dates beyond in same month when end-of-month
       const isSixMonthRequest =
         isSixMonthDate ||
         (isEndOfMonth &&
-          parseISO(selectedDate).getMonth() === sixMonthDate.getMonth() &&
-          parseISO(selectedDate).getFullYear() === sixMonthDate.getFullYear() &&
-          !isBefore(parseISO(selectedDate), sixMonthDate));
+          dateObj.getMonth() === sixMonthDate.getMonth() &&
+          dateObj.getFullYear() === sixMonthDate.getFullYear() &&
+          dateObj.getDate() >= sixMonthDate.getDate());
 
       let result;
       if (isSixMonthRequest) {

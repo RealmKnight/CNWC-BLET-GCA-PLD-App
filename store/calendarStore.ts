@@ -172,22 +172,76 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       return false;
     }
 
-    // Check if date is beyond six months
-    if (isAfter(dateObj, sixMonthsFromNow)) {
+    // Check if today is end of month for six month request handling or exact 6-month date
+    const isEndOfMonth = isLastDayOfMonth(now);
+    const isSixMonthDate = dateObj.getTime() === sixMonthsFromNow.getTime();
+
+    // CORRECTED: Six month requests are ONLY dates exactly 6 months away OR dates AFTER
+    // the exact 6-month point when it's the end of month and the target month has more days
+    const isSixMonthRequest = isSixMonthDate || (
+      isEndOfMonth &&
+      dateObj.getMonth() === sixMonthsFromNow.getMonth() &&
+      dateObj.getFullYear() === sixMonthsFromNow.getFullYear() &&
+      dateObj.getDate() >= sixMonthsFromNow.getDate() // Only dates at or beyond the exact 6-month point
+    );
+
+    // Check if the date is a normal request (less than 6 months away)
+    // For end-of-month cases, dates in the target month but BEFORE the exact six-month date
+    // should be treated as normal requests
+    const isNormalRequest = !isAfter(dateObj, sixMonthsFromNow) || (
+      isEndOfMonth &&
+      dateObj.getMonth() === sixMonthsFromNow.getMonth() &&
+      dateObj.getFullYear() === sixMonthsFromNow.getFullYear() &&
+      dateObj.getDate() < sixMonthsFromNow.getDate()
+    );
+
+    // Special check for the problematic dates at end of target month
+    if (isEndOfMonth) {
+      // Check if the date is in the same month and year as six-month date
+      const isSameMonthAndYear =
+        dateObj.getMonth() === sixMonthsFromNow.getMonth() &&
+        dateObj.getFullYear() === sixMonthsFromNow.getFullYear();
+
+      if (isSameMonthAndYear) {
+        // Get the maximum day of the target month
+        const lastDayOfMonth = new Date(
+          dateObj.getFullYear(),
+          dateObj.getMonth() + 1,
+          0,
+        ).getDate();
+
+        // If it's a valid day in the target month, it should be selectable
+        if (dateObj.getDate() <= lastDayOfMonth) {
+          // Only log once per day for performance - moved to debug level
+          // console.log(`[CalendarStore] Special month-end case: ${date} is selectable`);
+
+          // Still need to check allotments
+          const year = dateObj.getFullYear();
+          const dateAllotment = state.allotments[date];
+          const yearlyAllotment = state.yearlyAllotments[year];
+          const maxAllotment = dateAllotment ?? yearlyAllotment ?? 0;
+
+          if (maxAllotment === 0) {
+            console.log(
+              "[CalendarStore] Date not selectable - no allotment:",
+              date,
+            );
+            return false;
+          }
+
+          return true;
+        }
+      }
+    }
+
+    // Standard check - if date is beyond six months and not a special six-month request
+    if (isAfter(dateObj, sixMonthsFromNow) && !isSixMonthRequest) {
       console.log(
         "[CalendarStore] Date not selectable - beyond six months:",
         date,
       );
       return false;
     }
-
-    // Check if today is end of month for six month request handling or exact 6-month date
-    const isEndOfMonth = isLastDayOfMonth(now);
-    const isSixMonthDate = dateObj.getTime() === sixMonthsFromNow.getTime();
-    const isSixMonthRequest = isSixMonthDate || (isEndOfMonth &&
-      dateObj.getMonth() === sixMonthsFromNow.getMonth() &&
-      dateObj.getFullYear() === sixMonthsFromNow.getFullYear() &&
-      !isBefore(dateObj, sixMonthsFromNow));
 
     // Check allotments
     const year = dateObj.getFullYear();
@@ -217,10 +271,7 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
 
     // Don't check if the date is full here - allow selection of full dates for waitlisting
     // Regular requests - anything between 48 hours and six months
-    if (
-      !isBefore(dateObj, fortyEightHoursFromNow) &&
-      !isAfter(dateObj, sixMonthsFromNow)
-    ) {
+    if (isNormalRequest) {
       // console.log("[CalendarStore] Date selectable - regular request:", date);
       return true;
     }
@@ -235,12 +286,38 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
     const dateObj = parseISO(date);
     const fortyEightHoursFromNow = addDays(now, 2);
 
+    // CRITICAL FIX: Always call getSixMonthDate() to get the current calculation
+    // This ensures we always have the most up-to-date six-month reference point
+    const sixMonthsFromNow = getSixMonthDate();
+
     // Basic time constraint check
     if (isBefore(dateObj, fortyEightHoursFromNow)) {
       return "unavailable";
     }
 
-    // Get allotment info
+    // Check if this is a six-month request date - FUNDAMENTAL ALGORITHM
+    const isEndOfMonth = isLastDayOfMonth(now);
+
+    // Calculate six-month request eligibility using the same logic as isDateSelectable
+    // This ensures consistency between date selection and visual appearance
+    const isSixMonthDate = dateObj.getTime() === sixMonthsFromNow.getTime();
+
+    // Six-month requests are ONLY dates exactly 6 months away OR dates AFTER
+    // the exact 6-month point when it's the end of month
+    const isSixMonthRequest = isSixMonthDate || (
+      isEndOfMonth &&
+      dateObj.getMonth() === sixMonthsFromNow.getMonth() &&
+      dateObj.getFullYear() === sixMonthsFromNow.getFullYear() &&
+      dateObj.getDate() >= sixMonthsFromNow.getDate()
+    );
+
+    // For six-month requests, always indicate availability
+    // regardless of whether the date has an allotment
+    if (isSixMonthRequest) {
+      return "available";
+    }
+
+    // Get allotment info for normal requests
     const year = dateObj.getFullYear();
     const dateAllotment = state.allotments[date];
     const yearlyAllotment = state.yearlyAllotments[year];
@@ -250,8 +327,8 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       return "unavailable";
     }
 
-    // Check if date is selectable using our six-month logic
-    if (!state.isDateSelectable(date)) {
+    // Standard check for dates beyond six months
+    if (isAfter(dateObj, sixMonthsFromNow) && !isSixMonthRequest) {
       return "unavailable";
     }
 
@@ -979,13 +1056,19 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
     const member = useUserStore.getState().member;
 
     if (!member?.id) {
+      console.log(
+        "[CalendarStore] checkSixMonthRequest: No member ID available",
+      );
       return false;
     }
 
     try {
+      console.log(`[CalendarStore] Checking for six-month request for ${date}`);
+
+      // CRITICAL FIX: Explicitly query the six_month_requests table for the given date and member
       const { data, error } = await supabase
         .from("six_month_requests")
-        .select("id")
+        .select("id, request_date, leave_type, processed")
         .eq("member_id", member.id)
         .eq("request_date", date)
         .eq("processed", false)
@@ -993,13 +1076,22 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
 
       if (error) {
         console.error(
-          "[CalendarStore] Error checking six month request:",
+          `[CalendarStore] Error checking six month request for ${date}:`,
           error,
         );
         return false;
       }
 
-      return !!data; // Return true if a request exists, false otherwise
+      const exists = !!data;
+
+      if (exists) {
+        console.log(
+          `[CalendarStore] Found existing six-month request for ${date}:`,
+          data,
+        );
+      }
+
+      return exists;
     } catch (error) {
       console.error("[CalendarStore] Error checking six month request:", error);
       return false;
