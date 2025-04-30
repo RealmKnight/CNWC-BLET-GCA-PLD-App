@@ -13,6 +13,7 @@ import { Database } from "@/types/supabase";
 
 // Cache configuration
 const CACHE_DURATION = 30000; // 30 seconds
+const VACATION_CACHE_DURATION = 120000; // 2 minutes for vacation data
 const MAX_RETRIES = 3;
 const RETRY_BASE_DELAY = 1000; // 1 second base delay
 const FETCH_TIMEOUT = 5000; // 5 second timeout
@@ -190,6 +191,18 @@ interface SyncStatus {
 const MAX_RETRY_ATTEMPTS = 5;
 const RETRY_DELAY = 1000; // 1 second
 
+// New function to safely get the current timestamp
+const getSafeTimestamp = () => typeof window !== "undefined" ? Date.now() : 0;
+
+// Add a helper to check if cache is fresh in an SSR-safe way
+const isCacheFresh = (
+  cache: { data: any; timestamp: number },
+  duration: number,
+) => {
+  if (typeof window === "undefined") return false; // Never use cache during SSR
+  return cache.data && (getSafeTimestamp() - cache.timestamp < duration);
+};
+
 export function useMyTime() {
   const [stats, setStats] = useState<TimeStats | null>(null);
   const [vacationStats, setVacationStats] = useState<VacationStats | null>(
@@ -221,7 +234,7 @@ export function useMyTime() {
     error: null,
   });
 
-  // New function to fetch vacation statistics
+  // Fix for fetchVacationStats function
   const fetchVacationStats = useCallback(async () => {
     if (!member?.id || member.pin_number === null) {
       console.log(
@@ -231,12 +244,8 @@ export function useMyTime() {
       return;
     }
 
-    // Check cache first
-    const now = Date.now();
-    if (
-      vacationStatsCache.data &&
-      now - vacationStatsCache.timestamp < CACHE_DURATION
-    ) {
+    // Check cache first - use cache helper
+    if (isCacheFresh(vacationStatsCache, VACATION_CACHE_DURATION)) {
       console.log("[MyTime] Using cached vacation stats data");
       setVacationStats(vacationStatsCache.data);
       return;
@@ -249,27 +258,24 @@ export function useMyTime() {
       );
       setError(null);
 
-      // Batch fetch member data and vacation requests
-      const [memberData, vacationRequestsData] = await retryFetch(
-        async () =>
-          Promise.all([
-            supabase
-              .from("members")
-              .select("curr_vacation_weeks, curr_vacation_split")
-              .eq("id", member.id)
-              .single(),
-            supabase
-              .from("vacation_requests")
-              .select("id")
-              .eq("pin_number", member.pin_number)
-              .eq("status", "approved")
-              .gte("start_date", `${new Date().getFullYear()}-01-01`)
-              .lte("end_date", `${new Date().getFullYear()}-12-31`),
-          ]),
-        "vacation stats data fetch",
-      );
+      // Single attempt fetch - this query should be fast and reliable
+      const memberData = await supabase
+        .from("members")
+        .select("curr_vacation_weeks, curr_vacation_split")
+        .eq("id", member.id)
+        .single();
 
       if (memberData.error) throw memberData.error;
+
+      // Then get approved vacation requests count
+      const vacationRequestsData = await supabase
+        .from("vacation_requests")
+        .select("id")
+        .eq("pin_number", member.pin_number)
+        .eq("status", "approved")
+        .gte("start_date", `${new Date().getFullYear()}-01-01`)
+        .lte("end_date", `${new Date().getFullYear()}-12-31`);
+
       if (vacationRequestsData.error) throw vacationRequestsData.error;
 
       const totalWeeks = memberData.data?.curr_vacation_weeks || 0;
@@ -288,7 +294,7 @@ export function useMyTime() {
 
       // Update cache
       vacationStatsCache.data = vacStats;
-      vacationStatsCache.timestamp = now;
+      vacationStatsCache.timestamp = getSafeTimestamp();
 
       console.log("[MyTime] Calculated vacation stats:", vacStats);
       setVacationStats(vacStats);
@@ -315,9 +321,8 @@ export function useMyTime() {
       return;
     }
 
-    // Check cache first
-    const now = Date.now();
-    if (statsCache.data && now - statsCache.timestamp < CACHE_DURATION) {
+    // Check cache first using the helper function
+    if (isCacheFresh(statsCache, CACHE_DURATION)) {
       console.log("[MyTime] Using cached stats data");
       setStats(statsCache.data);
       return;
@@ -469,7 +474,7 @@ export function useMyTime() {
 
       // Update cache with new stats
       statsCache.data = baseStats;
-      statsCache.timestamp = now;
+      statsCache.timestamp = getSafeTimestamp();
 
       setStats(baseStats);
       setError(null);
@@ -780,10 +785,10 @@ export function useMyTime() {
         "[MyTime] Fetching vacation requests for member PIN:",
         member.pin_number,
       );
-      setError(null);
 
       const currentYear = new Date().getFullYear();
 
+      // Simple single query without retries - should be fast and reliable
       const { data, error } = await supabase
         .from("vacation_requests")
         .select("id, start_date, end_date, status, requested_at")
@@ -793,11 +798,10 @@ export function useMyTime() {
         .order("start_date", { ascending: true });
 
       if (error) {
-        console.error("[MyTime] Error fetching vacation requests:", error);
         throw error;
       }
 
-      console.log("[MyTime] Fetched vacation requests:", data);
+      console.log("[MyTime] Fetched vacation requests:", data?.length || 0);
       setVacationRequests(
         (data || []).map((req) => ({
           ...req,
@@ -806,11 +810,8 @@ export function useMyTime() {
       );
     } catch (err) {
       console.error("[MyTime] Error in fetchVacationRequests:", err);
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Failed to fetch vacation requests",
-      );
+      // Don't set global error for vacation requests - this is secondary data
+      // Just set empty data and log the error
       setVacationRequests([]);
     }
   }, [member?.id, member?.pin_number]);
@@ -970,10 +971,10 @@ export function useMyTime() {
       return;
     }
 
-    const now = Date.now();
+    // Use safe timestamp function to avoid hydration mismatch
     if (
       !force && lastRefreshTimeRef.current &&
-      now - lastRefreshTimeRef.current < REFRESH_COOLDOWN
+      getSafeTimestamp() - lastRefreshTimeRef.current < REFRESH_COOLDOWN
     ) {
       console.log("[MyTime] Skipping refresh - within cooldown period");
       return;
@@ -994,48 +995,34 @@ export function useMyTime() {
         vacationStatsCache.timestamp = 0;
       }
 
-      // Prepare fetch operations based on member state
-      const fetchOperations = [
-        retryFetch(() => fetchStats(), "stats refresh"),
-        retryFetch(() => fetchRequests(), "requests refresh"),
-      ];
+      // Primary data fetches that should block UI
+      await Promise.all([
+        fetchStats(),
+        fetchRequests(),
+      ]);
 
-      // Only add vacation-related fetches if member has a PIN
+      // Mark as initialized as soon as primary data is loaded
+      if (shouldCompleteInitialization) {
+        setIsInitialized(true);
+        shouldCompleteInitialization = false;
+      }
+
+      // Secondary data fetches (vacation data) can continue in background
       if (member.pin_number !== null) {
-        fetchOperations.push(
-          retryFetch(
-            () => fetchVacationRequests(),
-            "vacation requests refresh",
-          ),
-          retryFetch(() => fetchVacationStats(), "vacation stats refresh"),
+        // Don't await these - let them resolve in the background
+        fetchVacationRequests().catch((err) =>
+          console.warn(
+            "[MyTime] Background vacation requests fetch error:",
+            err,
+          )
+        );
+
+        fetchVacationStats().catch((err) =>
+          console.warn("[MyTime] Background vacation stats fetch error:", err)
         );
       }
 
-      // Execute all fetches concurrently
-      const results = await Promise.allSettled(fetchOperations);
-
-      // Log any rejected promises
-      results.forEach((result, index) => {
-        if (result.status === "rejected") {
-          console.error(
-            `[MyTime] Operation ${index} failed:`,
-            result.reason,
-          );
-        }
-      });
-
-      // Check if all promises were rejected
-      const allFailed = results.every((result) => result.status === "rejected");
-      if (allFailed) {
-        throw new Error("Failed to fetch any data");
-      }
-
-      // Update state even if only some data was fetched
-      if (shouldCompleteInitialization) {
-        setIsInitialized(true);
-      }
-
-      lastRefreshTimeRef.current = now;
+      lastRefreshTimeRef.current = getSafeTimestamp();
       console.log("[MyTime] Data refresh completed");
     } catch (error) {
       console.error("[MyTime] Critical error refreshing data:", error);

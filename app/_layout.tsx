@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, Suspense } from "react";
 import { Slot, usePathname, useSegments, useRootNavigation } from "expo-router";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { StyleSheet, Platform } from "react-native";
@@ -85,7 +85,11 @@ function AuthAwareRouteHandler() {
   // If authStatus is not loading, assume we are ready to render the rest of the app
   // Let specific pages handle redirects based on the actual authStatus ('signedOut', 'needsAssociation', etc.)
   console.log(`[Router] Auth status is '${authStatus}'. Rendering Slot.`);
-  return <Slot />;
+  return (
+    <Suspense fallback={<LoadingScreen />} key="client-only-suspense">
+      <Slot />
+    </Suspense>
+  );
 }
 
 // Export a stable component tree for the root

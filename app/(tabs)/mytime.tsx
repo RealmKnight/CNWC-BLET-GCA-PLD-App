@@ -25,6 +25,8 @@ import { useUserStore } from "@/store/userStore";
 import { useAuth } from "@/hooks/useAuth";
 import Toast from "react-native-toast-message";
 import { Database } from "@/types/supabase";
+import { ClientOnlyComponent, DefaultLoadingFallback } from "@/components/ClientOnlyComponent";
+import { useIsomorphicLayoutEffect } from "@/hooks/useIsomorphicLayoutEffect";
 
 interface LeaveRowProps {
   label: string;
@@ -274,53 +276,90 @@ function CancelRequestModal({ isVisible, request, onConfirm, onCancel, isLoading
   );
 }
 
-// Original sorting function for TimeOffRequest (PLD/SDV/6mo)
+// Add a safe date comparison function
+const safeCompareDate = (dateA: string, dateB: string, descending: boolean = false) => {
+  // During SSR, just compare the strings
+  if (typeof window === "undefined") {
+    return descending ? dateB.localeCompare(dateA) : dateA.localeCompare(dateB);
+  }
+
+  // On client, use full date parsing
+  const dateObjA = parseISO(dateA);
+  const dateObjB = parseISO(dateB);
+
+  return descending ? dateObjB.getTime() - dateObjA.getTime() : dateObjA.getTime() - dateObjB.getTime();
+};
+
+// Update the sortRequestsByDate function
 function sortRequestsByDate(requests: TimeOffRequest[]): {
   future: TimeOffRequest[];
   past: TimeOffRequest[];
 } {
-  const now = new Date();
-  now.setHours(0, 0, 0, 0); // Reset time to start of day for fair comparison
+  // Use a stable approach to determining "now" that works in both SSR and client
+  const now = typeof window !== "undefined" ? new Date() : new Date("2099-01-01");
+  const today = typeof window !== "undefined" ? new Date().toISOString().split("T")[0] : "2099-01-01";
 
-  return requests.reduce(
-    (acc, request) => {
-      const requestDate = parseISO(request.request_date);
-      requestDate.setHours(0, 0, 0, 0);
+  const future: TimeOffRequest[] = [];
+  const past: TimeOffRequest[] = [];
 
-      if (requestDate >= now) {
-        acc.future.push(request);
+  requests.forEach((request) => {
+    // During SSR, just compare the date strings directly
+    if (typeof window === "undefined") {
+      // For SSR, anything before today is past, rest is future
+      if (request.request_date < today) {
+        past.push(request);
       } else {
-        acc.past.push(request);
+        future.push(request);
       }
-      return acc;
-    },
-    { future: [] as TimeOffRequest[], past: [] as TimeOffRequest[] }
-  );
+      return;
+    }
+
+    // On client, use full date parsing
+    const requestDate = parseISO(request.request_date);
+    if (requestDate >= now) {
+      future.push(request);
+    } else {
+      past.push(request);
+    }
+  });
+
+  return { future, past };
 }
 
-// New sorting function specifically for UserVacationRequest
+// Update the sortVacationRequestsByDate function
 function sortVacationRequestsByDate(requests: UserVacationRequest[]): {
   future: UserVacationRequest[];
   past: UserVacationRequest[];
 } {
-  const now = new Date();
-  now.setHours(0, 0, 0, 0); // Reset time to start of day
+  // Ensure consistent date representation in SSR and client
+  const now = typeof window !== "undefined" ? new Date() : new Date("2099-01-01");
+  const today = typeof window !== "undefined" ? new Date().toISOString().split("T")[0] : "2099-01-01";
 
-  return requests.reduce(
-    (acc, request) => {
-      // Use start_date for comparison
-      const requestDate = parseISO(request.start_date);
-      requestDate.setHours(0, 0, 0, 0);
+  const future: UserVacationRequest[] = [];
+  const past: UserVacationRequest[] = [];
 
-      if (requestDate >= now) {
-        acc.future.push(request);
+  requests.forEach((request) => {
+    // During SSR, just compare the date strings directly
+    if (typeof window === "undefined") {
+      // For SSR, anything before today is past, rest is future
+      if (request.start_date < today) {
+        past.push(request);
       } else {
-        acc.past.push(request);
+        future.push(request);
       }
-      return acc;
-    },
-    { future: [] as UserVacationRequest[], past: [] as UserVacationRequest[] }
-  );
+      return;
+    }
+
+    // On client, use full date parsing
+    const requestStartDate = parseISO(request.start_date);
+    if (requestStartDate >= now) {
+      future.push(request);
+    } else {
+      past.push(request);
+    }
+  });
+
+  return { future, past };
 }
 
 function RolloverWarningBanner({ unusedPlds }: { unusedPlds: number }) {
@@ -408,6 +447,77 @@ function VacationRequestRow({ request }: VacationRequestRowProps) {
   );
 }
 
+/**
+ * A client-only component to render the stats section
+ * This prevents hydration mismatches by only rendering on the client side
+ */
+function ClientOnlyStats({
+  stats,
+  vacationStats,
+  cardWidth,
+  colorScheme,
+  onPaidInLieuPress,
+}: {
+  stats: any;
+  vacationStats: any | null;
+  cardWidth: number;
+  colorScheme: string;
+  onPaidInLieuPress: () => void;
+}) {
+  const [isMounted, setIsMounted] = useState(false);
+
+  useIsomorphicLayoutEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  if (!isMounted) return <DefaultLoadingFallback />;
+
+  return (
+    <>
+      {/* Current Allocations Card */}
+      <ThemedView style={[styles.card, { width: cardWidth }]}>
+        <ThemedView style={styles.sectionHeader}>
+          <ThemedText style={styles.sectionTitle}>Current Single Day Allocations</ThemedText>
+        </ThemedView>
+        <ThemedView style={styles.tableHeader}>
+          <ThemedText style={styles.headerLabel}>Type</ThemedText>
+          <ThemedText style={styles.headerValue}>PLD</ThemedText>
+          <ThemedText style={styles.headerValue}>SDV</ThemedText>
+        </ThemedView>
+
+        <LeaveRow label="Total" pldValue={stats.total.pld} sdvValue={stats.total.sdv} />
+        <LeaveRow label="Rolled Over" pldValue={stats.rolledOver.pld} />
+        <LeaveRow label="Available" pldValue={stats.available.pld} sdvValue={stats.available.sdv} />
+        <LeaveRow label="Requested/Pending" pldValue={stats.requested.pld} sdvValue={stats.requested.sdv} />
+        <LeaveRow label="Waitlisted" pldValue={stats.waitlisted.pld} sdvValue={stats.waitlisted.sdv} />
+        <LeaveRow label="Approved" pldValue={stats.approved.pld} sdvValue={stats.approved.sdv} />
+        <LeaveRow
+          label="Paid in Lieu"
+          pldValue={stats.paidInLieu.pld}
+          sdvValue={stats.paidInLieu.sdv}
+          showIcon={true}
+          onIconPress={onPaidInLieuPress}
+        />
+      </ThemedView>
+
+      {/* Vacation Summary Card */}
+      {vacationStats && (
+        <ThemedView style={[styles.card, { width: cardWidth, marginTop: 24 }]}>
+          <ThemedView style={styles.sectionHeader}>
+            <ThemedText style={styles.sectionTitle}>Vacation Summary</ThemedText>
+          </ThemedView>
+
+          <VacationSummaryRow label="Total Vacation Weeks" value={vacationStats.totalWeeks} />
+          <VacationSummaryRow label="Split Weeks (converted to SDVs)" value={vacationStats.splitWeeks} />
+          <VacationSummaryRow label="Weeks to Bid" value={vacationStats.weeksToBid} />
+          <VacationSummaryRow label="Approved Vacation Requests" value={vacationStats.approvedWeeks} />
+          <VacationSummaryRow label="Remaining Weeks to Bid" value={vacationStats.remainingWeeks} highlight={true} />
+        </ThemedView>
+      )}
+    </>
+  );
+}
+
 export default function MyTimeScreen() {
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
@@ -485,10 +595,10 @@ export default function MyTimeScreen() {
       } else {
         console.log("[MyTimeScreen] Screen focused, but hook not initialized. Skipping refresh.");
       }
-    }, [member?.id, initialize, isInitialized]) // Add initialize and isInitialized to dependencies
+    }, [member?.id, initialize, isInitialized])
   );
 
-  // Memoize the filtered and sorted requests
+  // Memoize the filtered and sorted requests - MOVED BACK HERE
   const { pendingAndApproved, waitlisted, sortedVacationRequests } = useMemo(() => {
     // Sort PLD/SDV/6mo requests
     const pendingAndApproved = sortRequestsByDate(
@@ -497,16 +607,18 @@ export default function MyTimeScreen() {
           request.status === "pending" || request.status === "approved" || request.status === "cancellation_pending"
       )
     );
-    pendingAndApproved.future.sort((a, b) => parseISO(a.request_date).getTime() - parseISO(b.request_date).getTime());
-    pendingAndApproved.past.sort((a, b) => parseISO(b.request_date).getTime() - parseISO(a.request_date).getTime());
+
+    // Use safe date comparison instead of parseISO
+    pendingAndApproved.future.sort((a, b) => safeCompareDate(a.request_date, b.request_date));
+    pendingAndApproved.past.sort((a, b) => safeCompareDate(b.request_date, a.request_date, true));
 
     const waitlisted = sortRequestsByDate(requests.filter((request) => request.status === "waitlisted"));
-    waitlisted.future.sort((a, b) => parseISO(a.request_date).getTime() - parseISO(b.request_date).getTime());
-    waitlisted.past.sort((a, b) => parseISO(b.request_date).getTime() - parseISO(a.request_date).getTime());
+    waitlisted.future.sort((a, b) => safeCompareDate(a.request_date, b.request_date));
+    waitlisted.past.sort((a, b) => safeCompareDate(b.request_date, a.request_date, true));
 
     const sortedVacationRequests = sortVacationRequestsByDate(vacationRequests);
-    sortedVacationRequests.future.sort((a, b) => parseISO(a.start_date).getTime() - parseISO(b.start_date).getTime());
-    sortedVacationRequests.past.sort((a, b) => parseISO(b.start_date).getTime() - parseISO(a.start_date).getTime());
+    sortedVacationRequests.future.sort((a, b) => safeCompareDate(a.start_date, b.start_date));
+    sortedVacationRequests.past.sort((a, b) => safeCompareDate(b.start_date, a.start_date, true));
 
     return { pendingAndApproved, waitlisted, sortedVacationRequests };
   }, [requests, vacationRequests]);
@@ -792,46 +904,16 @@ export default function MyTimeScreen() {
 
         {stats && <RolloverWarningBanner unusedPlds={stats.rolledOver.unusedPlds} />}
 
-        {/* Current Allocations Card */}
-        <ThemedView style={[styles.card, { width: cardWidth }]}>
-          <ThemedView style={styles.sectionHeader}>
-            <ThemedText style={styles.sectionTitle}>Current Single Day Allocations</ThemedText>
-          </ThemedView>
-          <ThemedView style={styles.tableHeader}>
-            <ThemedText style={styles.headerLabel}>Type</ThemedText>
-            <ThemedText style={styles.headerValue}>PLD</ThemedText>
-            <ThemedText style={styles.headerValue}>SDV</ThemedText>
-          </ThemedView>
-
-          <LeaveRow label="Total" pldValue={stats.total.pld} sdvValue={stats.total.sdv} />
-          <LeaveRow label="Rolled Over" pldValue={stats.rolledOver.pld} />
-          <LeaveRow label="Available" pldValue={stats.available.pld} sdvValue={stats.available.sdv} />
-          <LeaveRow label="Requested/Pending" pldValue={stats.requested.pld} sdvValue={stats.requested.sdv} />
-          <LeaveRow label="Waitlisted" pldValue={stats.waitlisted.pld} sdvValue={stats.waitlisted.sdv} />
-          <LeaveRow label="Approved" pldValue={stats.approved.pld} sdvValue={stats.approved.sdv} />
-          <LeaveRow
-            label="Paid in Lieu"
-            pldValue={stats.paidInLieu.pld}
-            sdvValue={stats.paidInLieu.sdv}
-            showIcon={true}
-            onIconPress={handlePaidInLieuPress}
+        {/* Render stats with ClientOnlyComponent to prevent hydration mismatches */}
+        <ClientOnlyComponent fallback={<DefaultLoadingFallback />}>
+          <ClientOnlyStats
+            stats={stats}
+            vacationStats={vacationStats}
+            cardWidth={cardWidth}
+            colorScheme={colorScheme ?? "light"}
+            onPaidInLieuPress={handlePaidInLieuPress}
           />
-        </ThemedView>
-
-        {/* Vacation Summary Card */}
-        {vacationStats && (
-          <ThemedView style={[styles.card, { width: cardWidth, marginTop: 24 }]}>
-            <ThemedView style={styles.sectionHeader}>
-              <ThemedText style={styles.sectionTitle}>Vacation Summary</ThemedText>
-            </ThemedView>
-
-            <VacationSummaryRow label="Total Vacation Weeks" value={vacationStats.totalWeeks} />
-            <VacationSummaryRow label="Split Weeks (converted to SDVs)" value={vacationStats.splitWeeks} />
-            <VacationSummaryRow label="Weeks to Bid" value={vacationStats.weeksToBid} />
-            <VacationSummaryRow label="Approved Vacation Requests" value={vacationStats.approvedWeeks} />
-            <VacationSummaryRow label="Remaining Weeks to Bid" value={vacationStats.remainingWeeks} highlight={true} />
-          </ThemedView>
-        )}
+        </ClientOnlyComponent>
 
         <ThemedView style={[styles.sectionHeader, { marginTop: 12 }]}>
           <ThemedText style={styles.sectionTitle}>Time Off Requests</ThemedText>
