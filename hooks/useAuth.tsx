@@ -335,7 +335,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
                           } catch (error) {
                             console.error("[Auth Init] Error initializing Notification Store:", error);
                             notificationStore.setIsInitialized(false); // Ensure not initialized on error
-                          } finally {
                           }
                         })()
                       );
@@ -410,7 +409,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
                     // Use the correct log prefix based on whether this is a company admin or regular member
                     const logPrefix = shouldInitializeMemberStores
                       ? "[Auth Init - Member]"
-                      : "[Auth Init - Member Admin]";
+                      : "[Auth Init - Company Admin]";
                     console.log(`${logPrefix} Initializing Admin Notification Store...`);
                     initializationPromises.push(
                       (async () => {
@@ -420,7 +419,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
                             userId,
                             effectiveUserRoles,
                             assignedDivisionId,
-                            false // Pass false for isCompanyAdmin for members
+                            !shouldInitializeMemberStores // Pass true for isCompanyAdmin when not a regular member
                           );
                           adminNotificationCleanupRef.current = cleanupFn; // Store cleanup
                           console.log(
@@ -435,7 +434,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
                   } else {
                     const logPrefix = shouldInitializeMemberStores
                       ? "[Auth Init - Member]"
-                      : "[Auth Init - Member Admin]";
+                      : "[Auth Init - Company Admin]";
                     console.log(
                       `${logPrefix} Skipping Admin Notification Store init. Initialized: ${adminNotificationStore.isInitialized}, UserID: ${userId}`
                     );
