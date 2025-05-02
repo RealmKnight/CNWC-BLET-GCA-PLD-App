@@ -11,35 +11,41 @@ import {
 } from "@supabase/supabase-js";
 import { useFocusEffect } from "@react-navigation/native";
 import React from "react";
-import { AppState } from "react-native";
+import { AppState, Platform } from "react-native";
 import { Database } from "@/types/supabase";
 import { addWeeks, subWeeks } from "date-fns";
 
-// Cache configuration
-const CACHE_DURATION = 30000; // 30 seconds
-const VACATION_CACHE_DURATION = 120000; // 2 minutes for vacation data
+// Cache configuration - removing CACHE_DURATION
+// const CACHE_DURATION = 30000; // 30 seconds - REMOVED
+// const VACATION_CACHE_DURATION = 120000; // 2 minutes for vacation data - REMOVED
 const MAX_RETRIES = 3;
 const RETRY_BASE_DELAY = 1000; // 1 second base delay
-const FETCH_TIMEOUT = 5000; // 5 second timeout
+const FETCH_TIMEOUT = 15000; // 15 second timeout (increased from 5s)
+const REFRESH_COOLDOWN = 5000; // 5 second cooldown between refreshes
+const FOCUS_REFRESH_COOLDOWN = 30000; // 30 second cooldown for screen focus refreshes
 
 interface StatsCache {
   data: TimeStats | null;
   timestamp: number;
+  isValid: boolean; // Added for event-based invalidation
 }
 
 interface VacationStatsCache {
   data: VacationStats | null;
   timestamp: number;
+  isValid: boolean; // Added for event-based invalidation
 }
 
 const statsCache: StatsCache = {
   data: null,
   timestamp: 0,
+  isValid: false,
 };
 
 const vacationStatsCache: VacationStatsCache = {
   data: null,
   timestamp: 0,
+  isValid: false,
 };
 
 // Add timeout wrapper function
@@ -50,10 +56,15 @@ async function withTimeout<T>(
 ): Promise<T> {
   let timeoutId: NodeJS.Timeout;
 
+  // Increase timeout to 15 seconds (from 5 seconds)
+  const actualTimeout = 15000;
+
   const timeoutPromise = new Promise<T>((_, reject) => {
     timeoutId = setTimeout(() => {
-      reject(new Error(`Operation timed out after ${timeoutMs}ms: ${context}`));
-    }, timeoutMs);
+      reject(
+        new Error(`Operation timed out after ${actualTimeout}ms: ${context}`),
+      );
+    }, actualTimeout);
   });
 
   try {
@@ -66,7 +77,7 @@ async function withTimeout<T>(
   }
 }
 
-// Update the retry function
+// Update the retry function with better error handling and exponential backoff
 async function retryFetch<T>(
   fetchFn: () => Promise<T>,
   context: string,
@@ -80,7 +91,7 @@ async function retryFetch<T>(
       attempt++;
       console.log(`[MyTime] ${context} - Attempt ${attempt}/${maxRetries}`);
 
-      // Add timeout to the fetch operation
+      // Add timeout to the fetch operation - don't pass timeoutMs as it's hardcoded now
       return await withTimeout(fetchFn(), FETCH_TIMEOUT, context);
     } catch (error) {
       lastError = error;
@@ -94,7 +105,11 @@ async function retryFetch<T>(
       });
 
       if (attempt < maxRetries) {
-        const delay = RETRY_BASE_DELAY * Math.pow(2, attempt - 1);
+        // Exponential backoff with a cap on max delay
+        const delay = Math.min(
+          RETRY_BASE_DELAY * Math.pow(2, attempt - 1),
+          10000, // Cap at 10 seconds max delay
+        );
         console.log(`[MyTime] ${context} - Waiting ${delay}ms before retry...`);
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
@@ -134,6 +149,7 @@ export interface TimeStats {
     pld: number;
     sdv: number;
   };
+  syncStatus: SyncStatus;
 }
 
 // New interface for vacation statistics
@@ -198,13 +214,12 @@ const RETRY_DELAY = 1000; // 1 second
 // New function to safely get the current timestamp
 const getSafeTimestamp = () => typeof window !== "undefined" ? Date.now() : 0;
 
-// Add a helper to check if cache is fresh in an SSR-safe way
+// Modify the global cache check function to use isValid flag
 const isCacheFresh = (
-  cache: { data: any; timestamp: number },
-  duration: number,
+  cache: { data: any; timestamp: number; isValid: boolean },
 ) => {
   if (typeof window === "undefined") return false; // Never use cache during SSR
-  return cache.data && (getSafeTimestamp() - cache.timestamp < duration);
+  return cache.data && cache.isValid;
 };
 
 // Add hydration-safe date handling functions
@@ -252,29 +267,62 @@ export class DatabaseError extends Error {
   }
 }
 
+// Add a singleton pattern for subscription management
+// This ensures we only have one active subscription per user
+let globalRealtimeChannel: {
+  channel: RealtimeChannel | null;
+  userId: string | null;
+  unsubscribe: (() => void) | null;
+} = {
+  channel: null,
+  userId: null,
+  unsubscribe: null,
+};
+
+// Add a flag to prevent concurrent refreshes
+let isRefreshingData = false;
+let consecutiveFailures = 0;
+const MAX_CONSECUTIVE_FAILURES = 3;
+const FAILURE_BACKOFF_TIME = 5000; // 5 seconds
+let lastFailureTime = 0;
+
+// Add tracking for focus events
+let lastFocusRefreshTime = 0;
+let lastRefreshAttemptTime = 0; // Add a timestamp to track refresh attempts
+
+// At the module level, add a flag to track global initialization state
+// let isGloballyInitialized = false; // REMOVE THIS - We'll rely on the hook's own state
+
+// Determine initial state based on cache freshness
+const initialStatsAreFresh = isCacheFresh(statsCache);
+const initialVacationStatsAreFresh = isCacheFresh(vacationStatsCache);
+const initialIsLoading =
+  !(initialStatsAreFresh && initialVacationStatsAreFresh);
+
 export function useMyTime() {
-  const [stats, setStats] = useState<TimeStats | null>(null);
-  const [vacationStats, setVacationStats] = useState<VacationStats | null>(
-    null,
+  const { member, user, authStatus } = useAuth();
+  const { isInitialized: isCalendarInitialized } = useCalendarStore();
+  // Initialize state from cache if fresh
+  const [timeStats, setTimeStats] = useState<TimeStats | null>(() =>
+    initialStatsAreFresh ? statsCache.data : null
   );
-  const [requests, setRequests] = useState<TimeOffRequest[]>([]);
+  const [vacationStats, setVacationStats] = useState<VacationStats | null>(() =>
+    initialVacationStatsAreFresh ? vacationStatsCache.data : null
+  );
+  const [timeOffRequests, setTimeOffRequests] = useState<TimeOffRequest[]>([]);
   const [vacationRequests, setVacationRequests] = useState<
     UserVacationRequest[]
   >([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [isInitialized, setIsInitialized] = useState(false);
+  const [sixMonthRequests, setSixMonthRequests] = useState<SixMonthRequest[]>(
+    [],
+  );
+  // Initialize isLoading based on initial cache status
+  const [isLoading, setIsLoading] = useState(initialIsLoading);
+  const [isRefreshing, setIsRefreshing] = useState(false); // For explicit user-triggered refreshes
   const [error, setError] = useState<string | null>(null);
-  const { member: authMember, session } = useAuth();
-  const member = useUserStore((state) => state.member);
-  const [realtimeChannel, setRealtimeChannel] = useState<
-    RealtimeChannel | null
-  >(null);
-  const mountTimeRef = useRef(Date.now());
-  const lastRefreshTimeRef = useRef<number | null>(null);
-  const isFetchInProgressRef = useRef(false);
-  const REFRESH_COOLDOWN = 1000; // 1 second cooldown
-  const initialAuthLoadCompleteRef = useRef(false);
+  const [isInitialized, setIsInitialized] = useState(false); // Tracks if this hook instance has initialized
+
+  // New Sync Status state to provide more detailed loading/error feedback
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({
     isSyncing: false,
     lastSyncAttempt: null,
@@ -283,487 +331,423 @@ export function useMyTime() {
     error: null,
   });
 
-  // Fix for fetchVacationStats function
-  const fetchVacationStats = useCallback(async () => {
-    if (!member?.id || member.pin_number === null) {
+  // Refs
+  const realtimeChannel = useRef<RealtimeChannel | null>(null);
+  const lastRefreshTime = useRef<number>(0);
+  const isMounted = useRef(false); // Change initial value to false
+  // Add a ref to store the refreshData function
+  const refreshDataRef = useRef<
+    ((isUserInitiated?: boolean) => Promise<void>) | null
+  >(null);
+
+  // Set isMounted to true in an effect that runs once on mount
+  useEffect(() => {
+    console.log("[MyTime] Component mounting, setting isMounted = true");
+    isMounted.current = true;
+
+    return () => {
+      console.log("[MyTime] Component unmounting, setting isMounted = false");
+      isMounted.current = false;
+    };
+  }, []);
+
+  // Export invalidateCache function - MOVED UP
+  const invalidateCache = useCallback(() => {
+    console.log("[MyTime] Invalidating cache");
+    statsCache.isValid = false;
+    vacationStatsCache.isValid = false;
+  }, []);
+
+  // MOVED UP - Update fetchTimeStats to use event-based caching with better error handling
+  const fetchTimeStats = useCallback(
+    async (memberId: string, forceRefresh = false) => {
       console.log(
-        "[MyTime] Skipping fetchVacationStats - no member ID or PIN",
+        "[MyTime] Fetching time stats for member:",
+        memberId,
+        "force:",
+        forceRefresh,
+        "statsCache.isValid:",
+        statsCache.isValid,
+        "hasData:",
+        !!statsCache.data,
+        "isMounted:",
+        isMounted.current,
       );
-      setVacationStats(null);
-      return;
-    }
 
-    // Check cache first - use cache helper
-    if (isCacheFresh(vacationStatsCache, VACATION_CACHE_DURATION)) {
-      console.log("[MyTime] Using cached vacation stats data");
-      setVacationStats(vacationStatsCache.data);
-      return;
-    }
-
-    try {
-      console.log(
-        "[MyTime] Fetching fresh vacation statistics for member PIN:",
-        member.pin_number,
-      );
-      setError(null);
-
-      // Single attempt fetch - this query should be fast and reliable
-      const memberData = await supabase
-        .from("members")
-        .select("curr_vacation_weeks, curr_vacation_split")
-        .eq("id", member.id)
-        .single();
-
-      if (memberData.error) throw memberData.error;
-
-      // Then get approved vacation requests count
-      const vacationRequestsData = await supabase
-        .from("vacation_requests")
-        .select("id")
-        .eq("pin_number", member.pin_number)
-        .eq("status", "approved")
-        .gte("start_date", `${new Date().getFullYear()}-01-01`)
-        .lte("end_date", `${new Date().getFullYear()}-12-31`);
-
-      if (vacationRequestsData.error) throw vacationRequestsData.error;
-
-      const totalWeeks = memberData.data?.curr_vacation_weeks || 0;
-      const splitWeeks = memberData.data?.curr_vacation_split || 0;
-      const weeksToBid = totalWeeks - splitWeeks;
-      const approvedWeeks = vacationRequestsData.data?.length || 0;
-      const remainingWeeks = weeksToBid - approvedWeeks;
-
-      const vacStats: VacationStats = {
-        totalWeeks,
-        splitWeeks,
-        weeksToBid,
-        approvedWeeks,
-        remainingWeeks: Math.max(0, remainingWeeks),
-      };
-
-      // Update cache
-      vacationStatsCache.data = vacStats;
-      vacationStatsCache.timestamp = getSafeTimestamp();
-
-      console.log("[MyTime] Calculated vacation stats:", vacStats);
-      setVacationStats(vacStats);
-    } catch (err) {
-      console.error("[MyTime] Error in fetchVacationStats:", err);
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Failed to fetch vacation statistics",
-      );
-      setVacationStats({
-        totalWeeks: 0,
-        splitWeeks: 0,
-        weeksToBid: 0,
-        approvedWeeks: 0,
-        remainingWeeks: 0,
-      });
-    }
-  }, [member?.id, member?.pin_number]);
-
-  const fetchStats = useCallback(async () => {
-    if (!member?.id) {
-      console.log("[MyTime] Skipping fetchStats - no member ID");
-      return;
-    }
-
-    // Check cache first using the helper function
-    if (isCacheFresh(statsCache, CACHE_DURATION)) {
-      console.log("[MyTime] Using cached stats data");
-      setStats(statsCache.data);
-      return;
-    }
-
-    try {
-      console.log("[MyTime] Fetching fresh stats data");
-      setError(null);
-
-      const currentYear = new Date().getFullYear();
-
-      // Combine all queries into a single batch operation
-      const results = await retryFetch(async () => {
-        // First batch: get member data and max PLDs
-        const [memberData, maxPldsResult] = await Promise.all([
-          supabase
-            .from("members")
-            .select(
-              "division_id, sdv_entitlement, pld_rolled_over, company_hire_date",
-            )
-            .eq("id", member.id)
-            .single(),
-          supabase.rpc("update_member_max_plds", { p_member_id: member.id }),
-        ]);
-
-        // Now fetch regular requests for current year
-        const regularRequests = await supabase
-          .from("pld_sdv_requests")
-          .select("*")
-          .eq("member_id", member.id)
-          .gte("request_date", `${currentYear}-01-01`)
-          .lte("request_date", `${currentYear}-12-31`);
-
-        // Fetch six-month requests
-        const sixMonthRequests = await supabase
-          .from("six_month_requests")
-          .select("*")
-          .eq("member_id", member.id)
-          .gte("request_date", `${currentYear}-01-01`)
-          .lte("request_date", `${currentYear}-12-31`);
-
-        // Calculate used rollover PLDs from regular requests
-        const usedRolloverPlds = regularRequests.data
-          ? regularRequests.data
-            .filter((req) => req.status === "approved" && req.is_rollover_pld)
-            .length
-          : 0;
-
-        return {
-          memberData,
-          maxPldsResult,
-          requestsData: {
-            data: {
-              current_requests: regularRequests.data || [],
-              six_month_requests: sixMonthRequests.data || [],
-              used_rollover_plds: usedRolloverPlds,
-            },
-            error: regularRequests.error || sixMonthRequests.error,
-          },
-        };
-      }, "batch stats fetch");
-
-      if (results.memberData.error) throw results.memberData.error;
-      if (results.maxPldsResult.error) throw results.maxPldsResult.error;
-      if (results.requestsData.error) throw results.requestsData.error;
-
-      const memberData = results.memberData.data;
-      const maxPlds = results.maxPldsResult.data;
-      const {
-        current_requests = [],
-        six_month_requests = [],
-        used_rollover_plds = 0,
-      } = results.requestsData.data || {};
-
-      // Calculate stats from the batch results
-      const unusedRolledOverPlds = (memberData.pld_rolled_over || 0) -
-        used_rollover_plds;
-
-      // Calculate base stats
-      const baseStats: TimeStats = {
-        total: {
-          pld: maxPlds,
-          sdv: memberData?.sdv_entitlement ?? 0,
-        },
-        rolledOver: {
-          pld: memberData.pld_rolled_over ?? 0,
-          unusedPlds: Math.max(0, unusedRolledOverPlds),
-        },
-        available: {
-          pld: maxPlds + (memberData.pld_rolled_over ?? 0),
-          sdv: memberData?.sdv_entitlement ?? 0,
-        },
-        requested: {
-          pld: 0,
-          sdv: 0,
-        },
-        waitlisted: {
-          pld: 0,
-          sdv: 0,
-        },
-        approved: {
-          pld: 0,
-          sdv: 0,
-        },
-        paidInLieu: {
-          pld: 0,
-          sdv: 0,
-        },
-      };
-
-      // Update stats based on current year requests
-      current_requests.forEach((request: any) => {
-        const type = request.leave_type.toLowerCase() as "pld" | "sdv";
-
-        if (request.paid_in_lieu) {
-          if (request.status === "pending") {
-            baseStats.requested[type]++;
-          } else if (request.status === "approved") {
-            baseStats.paidInLieu[type]++;
-          }
-        } else {
-          if (request.status === "pending") {
-            baseStats.requested[type]++;
-          } else if (request.status === "cancellation_pending") {
-            baseStats.requested[type]++;
-          } else if (request.status === "waitlisted") {
-            baseStats.waitlisted[type]++;
-          } else if (request.status === "approved") {
-            baseStats.approved[type]++;
-          }
-        }
-      });
-
-      // Update stats based on six-month requests
-      six_month_requests.forEach((request: any) => {
-        const type = request.leave_type.toLowerCase() as "pld" | "sdv";
-        if (!request.processed) {
-          baseStats.requested[type]++;
-        }
-      });
-
-      // Update available counts
-      baseStats.available.pld -= baseStats.approved.pld +
-        baseStats.requested.pld + baseStats.waitlisted.pld +
-        baseStats.paidInLieu.pld;
-      baseStats.available.sdv -= baseStats.approved.sdv +
-        baseStats.requested.sdv + baseStats.waitlisted.sdv +
-        baseStats.paidInLieu.sdv;
-
-      // Update cache with new stats
-      statsCache.data = baseStats;
-      statsCache.timestamp = getSafeTimestamp();
-
-      setStats(baseStats);
-      setError(null);
-
-      // Transform and combine requests
-      const transformedSixMonthRequests = (six_month_requests || []).map((
-        request: any,
-      ) => ({
-        id: request.id,
-        request_date: request.request_date,
-        leave_type: request.leave_type as "PLD" | "SDV",
-        status: "pending" as TimeOffRequest["status"],
-        requested_at: request.requested_at ?? "",
-        is_six_month_request: true,
-      }));
-
-      const allRequests: TimeOffRequest[] = [
-        ...(current_requests || []).map((req: any) => ({
-          ...req,
-          status: req.status as TimeOffRequest["status"],
-          requested_at: req.requested_at ?? "",
-          is_six_month_request: false,
-        })),
-        ...transformedSixMonthRequests,
-      ];
-
-      setRequests(allRequests);
-    } catch (err) {
-      console.error("[MyTime] Error in fetchStats:", err);
-      const errorMessage = err instanceof Error
-        ? err.message
-        : "Failed to fetch time statistics";
-      console.error("[MyTime] Error details:", errorMessage);
-      setError(errorMessage);
-      setStats({
-        total: { pld: 0, sdv: 0 },
-        rolledOver: { pld: 0, unusedPlds: 0 },
-        available: { pld: 0, sdv: 0 },
-        requested: { pld: 0, sdv: 0 },
-        waitlisted: { pld: 0, sdv: 0 },
-        approved: { pld: 0, sdv: 0 },
-        paidInLieu: { pld: 0, sdv: 0 },
-      });
-      setRequests([]);
-    }
-  }, [member?.id]);
-
-  const requestPaidInLieu = useCallback(
-    async (type: "PLD" | "SDV", requestDate?: Date) => {
-      if (!member?.id) {
-        throw new Error("No member ID found");
-      }
-      if (!member.calendar_id) {
-        throw new Error("No calendar ID assigned to the member");
+      // Check cache validity, use cache if valid and not forcing refresh
+      if (!forceRefresh && isCacheFresh(statsCache)) {
+        console.log("[MyTime] Using cached time stats:", statsCache.data);
+        setTimeStats(statsCache.data);
+        return statsCache.data;
       }
 
       try {
-        console.log("[MyTime] Requesting paid in lieu for:", {
-          type,
-          memberId: member.id,
-          calendarId: member.calendar_id,
-          requestDate,
-        });
+        const result = await retryFetch(
+          async () => {
+            console.log(
+              "[MyTime] Starting actual database queries for time stats",
+            );
+            const currentYear = new Date().getFullYear();
 
-        // Check if user has available days for the requested type
-        const currentYear = new Date().getFullYear();
-        const { data: memberEntitlements, error: memberError } = await supabase
-          .from("members")
-          .select("max_plds, sdv_entitlement, pld_rolled_over")
-          .eq("id", member.id)
-          .single();
+            // Split into smaller queries to reduce timeout risk
+            // First get member data
+            const memberData = await supabase
+              .from("members")
+              .select(
+                "division_id, sdv_entitlement, pld_rolled_over, company_hire_date",
+              )
+              .eq("id", memberId)
+              .single();
 
-        if (memberError) {
-          throw new Error(
-            "Unable to determine available days. Please try again.",
-          );
-        }
+            if (memberData.error) {
+              console.error(
+                "[MyTime] Error fetching member data:",
+                memberData.error,
+              );
+              throw memberData.error;
+            }
 
-        // Format the request date or use today's date if not provided
-        const formattedDate = requestDate
-          ? requestDate.toISOString().split("T")[0]
-          : new Date().toISOString().split("T")[0];
+            console.log("[MyTime] Successfully fetched member data");
 
-        // Get existing requests to determine how many days are already used
-        const { data: existingRequests, error: requestsError } = await supabase
-          .from("pld_sdv_requests")
-          .select("leave_type, status, paid_in_lieu, request_date")
-          .eq("member_id", member.id)
-          .gte("request_date", `${currentYear}-01-01`)
-          .lte("request_date", `${currentYear}-12-31`);
+            // Get max PLDs
+            const maxPldsResult = await supabase.rpc("update_member_max_plds", {
+              p_member_id: memberId,
+            });
 
-        if (requestsError) {
-          throw new Error(
-            "Unable to check existing requests. Please try again.",
-          );
-        }
+            if (maxPldsResult.error) {
+              console.error(
+                "[MyTime] Error fetching max PLDs:",
+                maxPldsResult.error,
+              );
+              throw maxPldsResult.error;
+            }
 
-        // Check if user already has a paid in lieu request for this date
-        const hasExistingPaidInLieuRequest = existingRequests?.some(
-          (req) =>
-            req.leave_type === type &&
-            req.paid_in_lieu === true &&
-            req.request_date === formattedDate &&
-            (req.status === "pending" || req.status === "approved"),
+            console.log(
+              "[MyTime] Successfully fetched max PLDs:",
+              maxPldsResult.data,
+            );
+
+            // Now fetch regular requests for current year
+            const regularRequests = await supabase
+              .from("pld_sdv_requests")
+              .select("id, leave_type, status, paid_in_lieu, is_rollover_pld") // Select only needed fields
+              .eq("member_id", memberId)
+              .gte("request_date", `${currentYear}-01-01`)
+              .lte("request_date", `${currentYear}-12-31`);
+
+            if (regularRequests.error) {
+              console.error(
+                "[MyTime] Error fetching regular requests:",
+                regularRequests.error,
+              );
+              throw regularRequests.error;
+            }
+
+            console.log(
+              "[MyTime] Successfully fetched regular requests count:",
+              regularRequests.data?.length || 0,
+            );
+
+            // Fetch six-month requests
+            const sixMonthRequests = await supabase
+              .from("six_month_requests")
+              .select("id, leave_type, processed") // Select only needed fields
+              .eq("member_id", memberId)
+              .gte("request_date", `${currentYear}-01-01`)
+              .lte("request_date", `${currentYear}-12-31`);
+
+            if (sixMonthRequests.error) {
+              console.error(
+                "[MyTime] Error fetching six-month requests:",
+                sixMonthRequests.error,
+              );
+              throw sixMonthRequests.error;
+            }
+
+            console.log(
+              "[MyTime] Successfully fetched six-month requests count:",
+              sixMonthRequests.data?.length || 0,
+            );
+
+            // Calculate used rollover PLDs from regular requests
+            const usedRolloverPlds = regularRequests.data
+              ? regularRequests.data
+                .filter((req) =>
+                  req.status === "approved" && req.is_rollover_pld
+                )
+                .length
+              : 0;
+
+            const unusedRolledOverPlds =
+              (memberData.data.pld_rolled_over || 0) -
+              usedRolloverPlds;
+
+            // Calculate base stats
+            const baseStats: TimeStats = {
+              total: {
+                pld: maxPldsResult.data,
+                sdv: memberData.data?.sdv_entitlement ?? 0,
+              },
+              rolledOver: {
+                pld: memberData.data.pld_rolled_over ?? 0,
+                unusedPlds: Math.max(0, unusedRolledOverPlds),
+              },
+              available: {
+                pld: maxPldsResult.data +
+                  (memberData.data.pld_rolled_over ?? 0),
+                sdv: memberData.data?.sdv_entitlement ?? 0,
+              },
+              requested: {
+                pld: 0,
+                sdv: 0,
+              },
+              waitlisted: {
+                pld: 0,
+                sdv: 0,
+              },
+              approved: {
+                pld: 0,
+                sdv: 0,
+              },
+              paidInLieu: {
+                pld: 0,
+                sdv: 0,
+              },
+              syncStatus: syncStatus,
+            };
+
+            // Update stats based on current year requests - with error handling
+            try {
+              (regularRequests.data || []).forEach((request) => {
+                const type = request.leave_type?.toLowerCase() as "pld" | "sdv";
+                if (!type) return; // Skip if no leave type
+
+                if (request.paid_in_lieu) {
+                  if (request.status === "pending") {
+                    baseStats.requested[type]++;
+                  } else if (request.status === "approved") {
+                    baseStats.paidInLieu[type]++;
+                  }
+                } else {
+                  if (request.status === "pending") {
+                    baseStats.requested[type]++;
+                  } else if (request.status === "cancellation_pending") {
+                    baseStats.requested[type]++;
+                  } else if (request.status === "waitlisted") {
+                    baseStats.waitlisted[type]++;
+                  } else if (request.status === "approved") {
+                    baseStats.approved[type]++;
+                  }
+                }
+              });
+            } catch (err) {
+              console.error("[MyTime] Error processing regular requests:", err);
+              // Continue despite this error
+            }
+
+            // Update stats based on six-month requests - with error handling
+            try {
+              (sixMonthRequests.data || []).forEach((request) => {
+                const type = request.leave_type?.toLowerCase() as "pld" | "sdv";
+                if (!type) return; // Skip if no leave type
+
+                if (!request.processed) {
+                  baseStats.requested[type]++;
+                }
+              });
+            } catch (err) {
+              console.error(
+                "[MyTime] Error processing six-month requests:",
+                err,
+              );
+              // Continue despite this error
+            }
+
+            // Update available counts
+            baseStats.available.pld -= baseStats.approved.pld +
+              baseStats.requested.pld + baseStats.waitlisted.pld +
+              baseStats.paidInLieu.pld;
+            baseStats.available.sdv -= baseStats.approved.sdv +
+              baseStats.requested.sdv + baseStats.waitlisted.sdv +
+              baseStats.paidInLieu.sdv;
+
+            // Ensure we don't have negative values
+            baseStats.available.pld = Math.max(0, baseStats.available.pld);
+            baseStats.available.sdv = Math.max(0, baseStats.available.sdv);
+
+            console.log(
+              "[MyTime] Successfully calculated stats:",
+              JSON.stringify(baseStats, null, 2),
+            );
+
+            return baseStats;
+          },
+          "Fetch Time Stats",
         );
 
-        if (hasExistingPaidInLieuRequest) {
-          throw new Error(
-            `You already have an active paid in lieu request for ${type} on this date. Please cancel it before creating a new one.`,
-          );
-        }
+        console.log(
+          "[MyTime] Successfully fetched time stats, updating state and cache",
+        );
 
-        // Get existing six-month requests to also count against available days
-        const { data: sixMonthRequests, error: sixMonthRequestsError } =
-          await supabase
-            .from("six_month_requests")
-            .select("leave_type")
-            .eq("member_id", member.id)
-            .eq("processed", false)
-            .gte("request_date", `${currentYear}-01-01`)
-            .lte("request_date", `${currentYear}-12-31`);
+        // Update cache with new data and mark as valid
+        statsCache.data = result;
+        statsCache.timestamp = Date.now();
+        statsCache.isValid = true;
 
-        if (sixMonthRequestsError) {
-          throw new Error(
-            "Unable to check six-month requests. Please try again.",
-          );
-        }
+        // IMPORTANT CHANGE: Always update the state regardless of isMounted
+        // React will handle this safely even if the component unmounts during the async operation
+        setTimeStats(result);
+        console.log(
+          "[MyTime] State updated with time stats data, isMounted =",
+          isMounted.current,
+        );
 
-        // Calculate used days
-        let usedPlds = 0;
-        let usedSdvs = 0;
+        return result;
+      } catch (error) {
+        console.error("[MyTime] Error fetching time stats:", error);
 
-        existingRequests?.forEach((request) => {
-          // Only count requests that are consuming days (approved, pending, or waitlisted but not paid in lieu)
-          if (
-            (request.status === "approved" ||
-              request.status === "pending" ||
-              request.status === "waitlisted" ||
-              request.status === "cancellation_pending") &&
-            !request.paid_in_lieu
-          ) {
-            if (request.leave_type === "PLD") {
-              usedPlds++;
-            } else if (request.leave_type === "SDV") {
-              usedSdvs++;
-            }
-          }
+        // Return default data structure on error to prevent UI breakage
+        const defaultStats: TimeStats = {
+          total: { pld: 0, sdv: 0 },
+          rolledOver: { pld: 0, unusedPlds: 0 },
+          available: { pld: 0, sdv: 0 },
+          requested: { pld: 0, sdv: 0 },
+          waitlisted: { pld: 0, sdv: 0 },
+          approved: { pld: 0, sdv: 0 },
+          paidInLieu: { pld: 0, sdv: 0 },
+          syncStatus: {
+            ...syncStatus,
+            error: error instanceof Error
+              ? error.message
+              : "Unknown error fetching time stats",
+          },
+        };
 
-          // Count paid in lieu requests separately
-          if (
-            (request.status === "approved" || request.status === "pending") &&
-            request.paid_in_lieu
-          ) {
-            if (request.leave_type === "PLD") {
-              usedPlds++;
-            } else if (request.leave_type === "SDV") {
-              usedSdvs++;
-            }
-          }
-        });
+        // Always update the state even on error
+        setTimeStats(defaultStats);
+        console.log(
+          "[MyTime] Setting default stats on error, isMounted =",
+          isMounted.current,
+        );
 
-        // Count pending six-month requests against available days
-        sixMonthRequests?.forEach((request) => {
-          if (request.leave_type === "PLD") {
-            usedPlds++;
-          } else if (request.leave_type === "SDV") {
-            usedSdvs++;
-          }
-        });
-
-        // Calculate available days
-        const totalPlds = (memberEntitlements?.max_plds || 0) +
-          (memberEntitlements?.pld_rolled_over || 0);
-        const totalSdvs = memberEntitlements?.sdv_entitlement || 0;
-
-        const availablePlds = totalPlds - usedPlds;
-        const availableSdvs = totalSdvs - usedSdvs;
-
-        console.log("[MyTime] Available days for paid in lieu:", {
-          pld: availablePlds,
-          sdv: availableSdvs,
-          totalPlds,
-          totalSdvs,
-          usedPlds,
-          usedSdvs,
-        });
-
-        // Check if user has available days for the requested type
-        const availableDays = type === "PLD" ? availablePlds : availableSdvs;
-
-        if (availableDays <= 0) {
-          throw new Error(
-            `No available ${type} days left. Cannot request paid in lieu.`,
-          );
-        }
-
-        const { data, error } = await supabase
-          .from("pld_sdv_requests")
-          .insert({
-            member_id: member.id,
-            leave_type: type,
-            paid_in_lieu: true,
-            status: "pending",
-            request_date: formattedDate,
-            calendar_id: member.calendar_id,
-          })
-          .select()
-          .single();
-
-        if (error) {
-          console.error("[MyTime] Error requesting paid in lieu:", error);
-
-          // Convert PostgrestError to our DatabaseError for better handling
-          throw new DatabaseError(error);
-        }
-
-        console.log("[MyTime] Paid in lieu request successful:", data);
-        return true;
-      } catch (err) {
-        console.error("[MyTime] Error in requestPaidInLieu:", err);
-
-        // Pass DatabaseError through directly
-        if (err instanceof DatabaseError) {
-          throw err;
-        }
-
-        // Handle standard Error objects
-        if (err instanceof Error) {
-          throw err;
-        }
-
-        // For unknown error types
-        throw new Error("An error occurred while requesting paid in lieu.");
+        throw error;
       }
     },
-    [member?.id, member?.calendar_id],
+    [syncStatus],
   );
 
-  const fetchRequests = useCallback(async () => {
-    if (!member?.id) return;
+  // MOVED UP - Update fetchVacationStats to use event-based caching
+  const fetchVacationStats = useCallback(
+    async (memberId: string, forceRefresh = false) => {
+      console.log(
+        "[MyTime] Fetching vacation stats for member:",
+        memberId,
+        "force:",
+        forceRefresh,
+        "isMounted:",
+        isMounted.current,
+      );
+
+      // Check cache validity, use cache if valid and not forcing refresh
+      if (!forceRefresh && isCacheFresh(vacationStatsCache)) {
+        console.log("[MyTime] Using cached vacation stats");
+        setVacationStats(vacationStatsCache.data);
+        return vacationStatsCache.data;
+      }
+
+      try {
+        const result = await retryFetch(
+          async () => {
+            // Get member data for vacation entitlement
+            const memberData = await supabase
+              .from("members")
+              .select("curr_vacation_weeks, curr_vacation_split, pin_number")
+              .eq("id", memberId)
+              .single();
+
+            if (memberData.error) throw memberData.error;
+
+            const pin = memberData.data?.pin_number;
+            if (pin === null) {
+              console.log(
+                "[MyTime] Member has no PIN number, skipping vacation stats",
+              );
+              return {
+                totalWeeks: 0,
+                splitWeeks: 0,
+                weeksToBid: 0,
+                approvedWeeks: 0,
+                remainingWeeks: 0,
+              };
+            }
+
+            // Get approved vacation requests count using PIN number
+            const currentYear = new Date().getFullYear();
+            const vacationRequestsData = await supabase
+              .from("vacation_requests")
+              .select("id")
+              .eq("pin_number", pin)
+              .eq("status", "approved")
+              .gte("start_date", `${currentYear}-01-01`)
+              .lte("end_date", `${currentYear}-12-31`);
+
+            if (vacationRequestsData.error) throw vacationRequestsData.error;
+
+            const totalWeeks = memberData.data?.curr_vacation_weeks || 0;
+            const splitWeeks = memberData.data?.curr_vacation_split || 0;
+            const weeksToBid = totalWeeks - splitWeeks;
+            const approvedWeeks = vacationRequestsData.data?.length || 0;
+            const remainingWeeks = weeksToBid - approvedWeeks;
+
+            return {
+              totalWeeks,
+              splitWeeks,
+              weeksToBid,
+              approvedWeeks,
+              remainingWeeks: Math.max(0, remainingWeeks),
+            };
+          },
+          "Fetch Vacation Stats",
+        );
+
+        // Update cache with new data and mark as valid
+        vacationStatsCache.data = result;
+        vacationStatsCache.timestamp = Date.now();
+        vacationStatsCache.isValid = true;
+
+        // Always update the state regardless of isMounted
+        setVacationStats(result);
+        console.log(
+          "[MyTime] Vacation stats updated, isMounted =",
+          isMounted.current,
+        );
+
+        return result;
+      } catch (error) {
+        console.error("[MyTime] Error fetching vacation stats:", error);
+        // Don't set null on error - return empty stats object
+        const defaultVacationStats = {
+          totalWeeks: 0,
+          splitWeeks: 0,
+          weeksToBid: 0,
+          approvedWeeks: 0,
+          remainingWeeks: 0,
+        };
+        setVacationStats(defaultVacationStats);
+        throw error;
+      }
+    },
+    [],
+  );
+
+  // MOVED UP - Fetch time off requests (PLD/SDV)
+  const fetchTimeOffRequests = useCallback(async (memberId: string) => {
+    console.log(
+      "[MyTime] Fetching time off requests for member:",
+      memberId,
+      "isMounted:",
+      isMounted.current,
+    );
 
     try {
       const currentYear = new Date().getFullYear();
@@ -772,7 +756,7 @@ export function useMyTime() {
       const { data: regularRequests, error: regularError } = await supabase
         .from("pld_sdv_requests")
         .select("*")
-        .eq("member_id", member.id)
+        .eq("member_id", memberId)
         .gte("request_date", `${currentYear}-01-01`)
         .lte("request_date", `${currentYear}-12-31`)
         .not("status", "in", '("cancelled","denied")')
@@ -780,11 +764,11 @@ export function useMyTime() {
 
       if (regularError) throw regularError;
 
-      // Fetch six-month requests
+      // Fetch six-month requests separately - we'll combine them later
       const { data: sixMonthRequests, error: sixMonthError } = await supabase
         .from("six_month_requests")
         .select("*")
-        .eq("member_id", member.id)
+        .eq("member_id", memberId)
         .gte("request_date", `${currentYear}-01-01`)
         .lte("request_date", `${currentYear}-12-31`)
         .order("request_date", { ascending: true });
@@ -801,9 +785,10 @@ export function useMyTime() {
         status: "pending" as TimeOffRequest["status"],
         requested_at: request.requested_at ?? "",
         is_six_month_request: true,
+        calendar_id: request.calendar_id,
       }));
 
-      // Combine all requests and update state
+      // Combine all requests
       const allRequests: TimeOffRequest[] = [
         ...(regularRequests || []).map((req) => ({
           ...req,
@@ -813,620 +798,1089 @@ export function useMyTime() {
         })),
         ...transformedSixMonthRequests,
       ];
-      setRequests(allRequests);
-    } catch (err) {
-      console.error("[MyTime] Error fetching requests:", err);
+
+      // Always update state
+      setTimeOffRequests(allRequests);
+      console.log(
+        "[MyTime] Time off requests updated, count:",
+        allRequests.length,
+      );
+
+      return allRequests;
+    } catch (error) {
+      console.error("[MyTime] Error fetching time off requests:", error);
       setError(
-        err instanceof Error
-          ? err.message
+        error instanceof Error
+          ? error.message
           : "Failed to fetch time off requests",
       );
-      setRequests([]);
+      // Set empty array on error
+      setTimeOffRequests([]);
+      return [];
     }
-  }, [member?.id]);
+  }, []);
 
-  const fetchVacationRequests = useCallback(async () => {
-    if (!member?.id || member.pin_number === null) {
-      console.log(
-        "[MyTime] Skipping fetchVacationRequests - no member ID or PIN",
-      );
-      setVacationRequests([]);
-      return;
-    }
+  // MOVED UP - Fetch vacation requests
+  const fetchVacationRequests = useCallback(async (memberId: string) => {
+    console.log(
+      "[MyTime] Fetching vacation requests for member:",
+      memberId,
+      "isMounted:",
+      isMounted.current,
+    );
 
     try {
-      console.log(
-        "[MyTime] Fetching vacation requests for member PIN:",
-        member.pin_number,
-      );
-
       const currentYear = new Date().getFullYear();
 
-      // Simple single query without retries - should be fast and reliable
+      // Get member's PIN number first
+      const { data: memberData, error: memberError } = await supabase
+        .from("members")
+        .select("pin_number")
+        .eq("id", memberId)
+        .single();
+
+      if (memberError) throw memberError;
+
+      const pin = memberData?.pin_number;
+      if (pin === null) {
+        console.log(
+          "[MyTime] Member has no PIN number, skipping vacation requests",
+        );
+        if (isMounted.current) {
+          setVacationRequests([]);
+        }
+        return [];
+      }
+
+      // Now fetch vacation requests using the PIN
       const { data, error } = await supabase
         .from("vacation_requests")
         .select("id, start_date, end_date, status, requested_at")
-        .eq("pin_number", member.pin_number)
+        .eq("pin_number", pin)
         .gte("start_date", `${currentYear}-01-01`)
         .lte("start_date", `${currentYear}-12-31`)
         .order("start_date", { ascending: true });
 
-      if (error) {
-        throw error;
+      if (error) throw error;
+
+      const vacRequests = (data || []).map((req) => ({
+        ...req,
+        requested_at: req.requested_at ?? new Date(0).toISOString(),
+      })) as UserVacationRequest[];
+
+      // Always update state
+      setVacationRequests(vacRequests);
+      console.log(
+        "[MyTime] Vacation requests updated, count:",
+        vacRequests.length,
+      );
+
+      return vacRequests;
+    } catch (error) {
+      console.error("[MyTime] Error fetching vacation requests:", error);
+      // Don't set global error for vacation requests - this is secondary data
+      // Set empty array on error
+      setVacationRequests([]);
+      return [];
+    }
+  }, []);
+
+  // MOVED UP - Fetch six-month requests
+  const fetchSixMonthRequests = useCallback(async (memberId: string) => {
+    console.log("[MyTime] Fetching six-month requests for member:", memberId);
+
+    try {
+      const currentYear = new Date().getFullYear();
+
+      const { data, error } = await supabase
+        .from("six_month_requests")
+        .select("*")
+        .eq("member_id", memberId)
+        .eq("processed", false)
+        .gte("request_date", `${currentYear}-01-01`)
+        .lte("request_date", `${currentYear}-12-31`);
+
+      if (error) throw error;
+
+      if (isMounted.current) {
+        setSixMonthRequests(data || []);
       }
 
-      console.log("[MyTime] Fetched vacation requests:", data?.length || 0);
-      setVacationRequests(
-        (data || []).map((req) => ({
-          ...req,
-          requested_at: req.requested_at ?? new Date(0).toISOString(),
-        })) as UserVacationRequest[],
-      );
-    } catch (err) {
-      console.error("[MyTime] Error in fetchVacationRequests:", err);
-      // Don't set global error for vacation requests - this is secondary data
-      // Just set empty data and log the error
-      setVacationRequests([]);
+      return data || [];
+    } catch (error) {
+      console.error("[MyTime] Error fetching six-month requests:", error);
+      return [];
     }
-  }, [member?.id, member?.pin_number]);
+  }, []);
 
-  const cancelRequest = useCallback(
-    async (requestId: string) => {
-      if (!member?.id) return false;
+  // Function to refresh data with cooldown and cache check
+  const refreshData = useCallback(async (isUserInitiated = false) => {
+    if (!member || !user) {
+      console.log("[MyTime] Cannot refresh without member and user data");
+      return;
+    }
+
+    const now = Date.now();
+    const timeSinceLastRefresh = now - lastRefreshTime.current;
+    const timeSinceLastAttempt = now - lastRefreshAttemptTime;
+
+    // Update the last attempt time regardless of whether we proceed with the refresh
+    lastRefreshAttemptTime = now;
+
+    console.log(
+      `[MyTime] refreshData called, userInitiated: ${isUserInitiated}, timeSinceLastRefresh: ${timeSinceLastRefresh}ms, isRefreshingData: ${isRefreshingData}`,
+    );
+
+    // PREVENT INFINITE LOOPS: Don't allow concurrent refreshes
+    if (isRefreshingData) {
+      console.log("[MyTime] Refresh already in progress, skipping");
+      return;
+    }
+
+    // PREVENT INFINITE LOOPS: If we've had too many consecutive failures, back off
+    if (!isUserInitiated && consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+      const timeSinceLastFailure = now - lastFailureTime;
+      if (timeSinceLastFailure < FAILURE_BACKOFF_TIME) {
+        console.log(
+          `[MyTime] Backing off after ${consecutiveFailures} consecutive failures. Will retry after cooldown.`,
+        );
+        return;
+      }
+    }
+
+    // Apply cooldown unless user initiated or force refresh
+    if (!isUserInitiated && timeSinceLastRefresh < REFRESH_COOLDOWN) {
+      console.log(
+        "[MyTime] Refresh on cooldown, skipping. Time since last refresh:",
+        timeSinceLastRefresh,
+        "ms",
+      );
+      return;
+    }
+
+    // Prevent frequent successive refresh attempts even if not concurrent
+    if (!isUserInitiated && timeSinceLastAttempt < 1000) { // 1 second minimum between attempts
+      console.log("[MyTime] Too many rapid refresh attempts, throttling");
+      return;
+    }
+
+    // If user initiated, update UI immediately
+    if (isUserInitiated) {
+      setIsRefreshing(true);
+      // Also invalidate cache for user-initiated refreshes
+      invalidateCache();
+    } else {
+      // Background refresh
+      setSyncStatus((prev) => ({
+        ...prev,
+        isSyncing: true,
+        lastSyncAttempt: new Date(),
+      }));
+    }
+
+    // Set the concurrent refresh flag
+    isRefreshingData = true;
+
+    try {
+      console.log(
+        "[MyTime] Starting refresh" +
+          (isUserInitiated ? " (user initiated)" : ""),
+      );
+
+      // Critical safety check - ensure we're still mounted before continuing
+      if (!isMounted.current) {
+        console.log(
+          "[MyTime] Component unmounted during refresh preparation, aborting",
+        );
+        isRefreshingData = false;
+        return;
+      }
+
+      // Fetch all data with proper error handling for each
+      try {
+        await fetchTimeStats(member.id, isUserInitiated);
+        console.log("[MyTime] Time stats fetched successfully");
+      } catch (error) {
+        console.error("[MyTime] Error fetching time stats:", error);
+        // Continue with other fetches
+      }
 
       try {
-        // Find the request in local state to get its date
-        const requestToCancel = requests.find((req) =>
-          req.id === requestId && !req.is_six_month_request
+        await fetchVacationStats(member.id, isUserInitiated);
+        console.log("[MyTime] Vacation stats fetched successfully");
+      } catch (error) {
+        console.error("[MyTime] Error fetching vacation stats:", error);
+        // Continue with other fetches
+      }
+
+      try {
+        await fetchTimeOffRequests(member.id);
+        console.log("[MyTime] Time off requests fetched successfully");
+      } catch (error) {
+        console.error("[MyTime] Error fetching time off requests:", error);
+        // Continue with other fetches
+      }
+
+      try {
+        await fetchVacationRequests(member.id);
+        console.log("[MyTime] Vacation requests fetched successfully");
+      } catch (error) {
+        console.error("[MyTime] Error fetching vacation requests:", error);
+        // Continue with other fetches
+      }
+
+      try {
+        await fetchSixMonthRequests(member.id);
+        console.log("[MyTime] Six-month requests fetched successfully");
+      } catch (error) {
+        console.error("[MyTime] Error fetching six-month requests:", error);
+        // Continue with other fetches
+      }
+
+      // Update status
+      lastRefreshTime.current = now;
+      consecutiveFailures = 0; // Reset failure counter on success
+
+      if (!isUserInitiated) {
+        setSyncStatus((prev) => ({
+          ...prev,
+          isSyncing: false,
+          lastSuccessfulSync: new Date(),
+          failedAttempts: 0,
+          error: null,
+        }));
+      }
+
+      console.log("[MyTime] Refresh complete");
+    } catch (error) {
+      console.error("[MyTime] Refresh error:", error);
+
+      // Update failure tracking
+      consecutiveFailures++;
+      lastFailureTime = Date.now();
+
+      if (!isUserInitiated) {
+        setSyncStatus((prev) => ({
+          ...prev,
+          isSyncing: false,
+          failedAttempts: prev.failedAttempts + 1,
+          error: error instanceof Error
+            ? error.message
+            : "Failed to refresh MyTime data",
+        }));
+      } else {
+        setError(
+          error instanceof Error
+            ? error.message
+            : "Failed to refresh MyTime data",
         );
+      }
+    } finally {
+      if (isUserInitiated) {
+        setIsRefreshing(false);
+      }
+      // Clear the concurrent refresh flag
+      isRefreshingData = false;
+    }
+  }, [
+    member,
+    user,
+    invalidateCache,
+    fetchTimeStats,
+    fetchVacationStats,
+    fetchTimeOffRequests,
+    fetchVacationRequests,
+    fetchSixMonthRequests,
+  ]);
 
-        if (!requestToCancel) {
-          throw new Error("Request not found");
-        }
+  // Store the refreshData function in the ref so setupRealtimeChannel can use it
+  useEffect(() => {
+    refreshDataRef.current = refreshData;
+  }, [refreshData]);
 
-        // Optimistically update the UI state
-        setRequests((prevRequests) =>
-          prevRequests.map((req) =>
-            req.id === requestId
-              ? { ...req, status: "cancellation_pending" as const }
-              : req
-          )
-        );
+  // MOVED UP - Setup realtime channel - Modified to use the singleton pattern
+  const setupRealtimeChannel = useCallback((memberId: string) => {
+    // Check if we already have a subscription for this user
+    if (
+      globalRealtimeChannel.channel && globalRealtimeChannel.userId === memberId
+    ) {
+      console.log("[MyTime] Subscription already exists for user:", memberId);
+      return globalRealtimeChannel.unsubscribe;
+    }
 
-        // Invalidate stats cache immediately
-        statsCache.data = null;
-        statsCache.timestamp = 0;
+    // If we have a subscription for a different user, clean it up first
+    if (
+      globalRealtimeChannel.channel && globalRealtimeChannel.userId !== memberId
+    ) {
+      console.log(
+        "[MyTime] Cleaning up existing subscription for different user before creating new one",
+      );
+      globalRealtimeChannel.channel.unsubscribe();
+      globalRealtimeChannel.channel = null;
+      globalRealtimeChannel.userId = null;
+      if (globalRealtimeChannel.unsubscribe) {
+        globalRealtimeChannel.unsubscribe();
+        globalRealtimeChannel.unsubscribe = null;
+      }
+    }
 
-        // Call the database function to handle cancellation logic
-        const { data, error } = await supabase.rpc("cancel_leave_request", {
-          p_request_id: requestId,
-          p_member_id: member.id,
+    // Clean up local component subscription if it exists
+    if (realtimeChannel.current) {
+      console.log("[MyTime] Cleaning up component-level subscription");
+      realtimeChannel.current.unsubscribe();
+      realtimeChannel.current = null;
+    }
+
+    console.log("[MyTime] Setting up realtime channel for member:", memberId);
+
+    try {
+      // Get member's PIN number first for vacation requests
+      supabase
+        .from("members")
+        .select("pin_number")
+        .eq("id", memberId)
+        .single()
+        .then(({ data, error }) => {
+          if (error) {
+            console.error("[MyTime] Error getting member PIN:", error);
+            return;
+          }
+
+          const pin = data?.pin_number;
+
+          const channel = supabase.channel(`mytime-updates-${memberId}`);
+          console.log(
+            "[MyTime] Creating new channel:",
+            `mytime-updates-${memberId}`,
+          );
+
+          // Listen for changes to PLD/SDV requests
+          channel
+            .on(
+              "postgres_changes",
+              {
+                event: "*",
+                schema: "public",
+                table: "pld_sdv_requests",
+                filter: `member_id=eq.${memberId}`,
+              },
+              (payload) => {
+                console.log(
+                  "[MyTime Realtime] PLD/SDV request update:",
+                  payload,
+                );
+                // Invalidate cache and refresh data
+                invalidateCache();
+                // Use refreshDataRef instead of calling refreshData directly
+                if (refreshDataRef.current) {
+                  refreshDataRef.current(false);
+                }
+              },
+            );
+
+          // Only set up vacation requests listener if PIN exists
+          if (pin) {
+            channel.on(
+              "postgres_changes",
+              {
+                event: "*",
+                schema: "public",
+                table: "vacation_requests",
+                filter: `pin_number=eq.${pin}`,
+              },
+              (payload) => {
+                console.log(
+                  "[MyTime Realtime] Vacation request update:",
+                  payload,
+                );
+                // Invalidate cache and refresh data
+                invalidateCache();
+                // Use refreshDataRef instead of calling refreshData directly
+                if (refreshDataRef.current) {
+                  refreshDataRef.current(false);
+                }
+              },
+            );
+          }
+
+          // Listen for changes to allocation
+          channel
+            .on(
+              "postgres_changes",
+              {
+                event: "*",
+                schema: "public",
+                table: "member_pld_sdv_allocations",
+                filter: `member_id=eq.${memberId}`,
+              },
+              (payload) => {
+                console.log("[MyTime Realtime] Allocation update:", payload);
+                // Invalidate cache and refresh data
+                invalidateCache();
+                // Use refreshDataRef instead of calling refreshData directly
+                if (refreshDataRef.current) {
+                  refreshDataRef.current(false);
+                }
+              },
+            )
+            .subscribe((status) => {
+              console.log(
+                `[MyTime Realtime] Subscription status for user ${memberId}:`,
+                status,
+              );
+            });
+
+          // Store in both the component ref and global singleton
+          realtimeChannel.current = channel;
+          globalRealtimeChannel.channel = channel;
+          globalRealtimeChannel.userId = memberId;
+
+          // Create unsubscribe function
+          const unsubscribeFn = () => {
+            console.log(
+              "[MyTime] Unsubscribing from channel:",
+              `mytime-updates-${memberId}`,
+            );
+            channel.unsubscribe();
+            // Clear the global reference if it's this channel
+            if (globalRealtimeChannel.channel === channel) {
+              globalRealtimeChannel.channel = null;
+              globalRealtimeChannel.userId = null;
+              globalRealtimeChannel.unsubscribe = null;
+            }
+          };
+
+          // Store unsubscribe function
+          globalRealtimeChannel.unsubscribe = unsubscribeFn;
+
+          return unsubscribeFn;
         });
 
-        if (error) {
-          // Revert optimistic update on error
-          setRequests((prevRequests) =>
-            prevRequests.map((req) =>
-              req.id === requestId ? requestToCancel : req
-            )
-          );
-          throw error;
-        }
+      // Return a dummy cleanup function for now, the real one will be set after async operation
+      return () => {
+        console.log("[MyTime] Placeholder cleanup called");
+      };
+    } catch (error) {
+      console.error("[MyTime] Error setting up realtime channel:", error);
+      return () => {};
+    }
+  }, [invalidateCache]); // Remove refreshData dependency
 
-        // If immediate cancellation (data is true), update stats
-        if (data) {
-          // Force refresh stats immediately
-          await retryFetch(
-            () => fetchStats(),
-            "stats refresh after cancellation",
-          );
-        }
+  // Initialization function for the hook instance
+  const initialize = useCallback(async (force = false) => {
+    console.log(
+      "[MyTime] Hook initialize called with force =",
+      force,
+      "isMounted:",
+      isMounted.current,
+      "isInitialized (hook):",
+      isInitialized,
+    );
 
-        // Calendar Store Interaction Update
-        if (requestToCancel?.request_date) {
-          const calendarStore = useCalendarStore.getState();
-          const requestsForDate =
-            calendarStore.requests[requestToCancel.request_date] || [];
-          const newStatus: TimeOffRequest["status"] = data
-            ? "cancelled"
-            : "cancellation_pending";
+    if (!member || !user) {
+      console.log("[MyTime] Cannot initialize without member and user data");
+      setIsLoading(false); // Not loading if we can't initialize
+      return;
+    }
 
-          const updatedRequests = requestsForDate.map((req) =>
-            req.id === requestId ? { ...req, status: newStatus } : req
-          ).filter((req) => req.status !== "cancelled");
-
-          calendarStore.setRequests({
-            ...calendarStore.requests,
-            [requestToCancel.request_date]: updatedRequests as any,
-          });
-          console.log(
-            `[MyTime] Updated calendarStore for date: ${requestToCancel.request_date} with status: ${newStatus}`,
-          );
-        }
-
-        return true;
-      } catch (err) {
-        console.error("[MyTime] Error cancelling request:", err);
-        throw err;
+    // If already initialized in this instance and not forcing, do nothing
+    if (isInitialized && !force) {
+      console.log(
+        "[MyTime] Already initialized this instance, skipping init logic",
+      );
+      // If cache is invalid, trigger a quiet refresh
+      if (!isCacheFresh(statsCache) || !isCacheFresh(vacationStatsCache)) {
+        console.log(
+          "[MyTime] Cache invalid on skipped init, triggering quiet refresh",
+        );
+        refreshData(false); // Use non-user initiated refresh
       }
-    },
-    [member?.id, requests, fetchStats],
+      setIsLoading(false); // Ensure loading is false if already initialized
+      return;
+    }
+
+    // Prevent concurrent initializations for this instance
+    if (isLoading && !force) {
+      console.log(
+        "[MyTime] Instance already loading, skipping duplicate initialization",
+      );
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      // Set up realtime channel - this should be safe to call multiple times due to singleton logic
+      setupRealtimeChannel(member.id);
+
+      console.log("[MyTime] Starting initial data fetching for hook instance");
+
+      // Fetch all data - force refresh on initial load
+      await refreshData(true); // Use user-initiated to ensure data is fetched fresh
+
+      setIsInitialized(true); // Mark this instance as initialized
+      lastRefreshTime.current = Date.now();
+      lastFocusRefreshTime = Date.now(); // Update focus refresh time too
+
+      console.log(
+        "[MyTime] Hook instance initialization complete, isInitialized =",
+        true,
+      );
+    } catch (error) {
+      console.error("[MyTime] Hook instance initialization error:", error);
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Failed to initialize MyTime data",
+      );
+      // Mark as initialized even on error to prevent re-init loops
+      setIsInitialized(true);
+    } finally {
+      // Always ensure isLoading is false after initialization attempt
+      setIsLoading(false);
+      console.log(
+        "[MyTime] Setting isLoading = false after initialize attempt",
+      );
+    }
+  }, [
+    member,
+    user,
+    setupRealtimeChannel,
+    refreshData, // Add refreshData dependency
+  ]);
+
+  // Modified cleanup function
+  const cleanup = useCallback(() => {
+    console.log("[MyTime] Running cleanup");
+
+    // Clear all state
+    setTimeStats(null);
+    setVacationStats(null);
+    setTimeOffRequests([]);
+    setVacationRequests([]);
+    setSixMonthRequests([]);
+    setIsLoading(false);
+    setIsRefreshing(false);
+    setError(null);
+    setIsInitialized(false);
+
+    // Reset cache
+    statsCache.data = null;
+    statsCache.timestamp = 0;
+    statsCache.isValid = false;
+    vacationStatsCache.data = null;
+    vacationStatsCache.timestamp = 0;
+    vacationStatsCache.isValid = false;
+
+    // Close realtime channel - component level
+    if (realtimeChannel.current) {
+      console.log("[MyTime] Removing component realtime subscription");
+      realtimeChannel.current.unsubscribe();
+      realtimeChannel.current = null;
+    }
+
+    // Don't touch the global subscription here - let the auth system manage that
+    // This function is called when the component unmounts, but the user might still be logged in
+
+    console.log("[MyTime] Cleanup complete");
+  }, []);
+
+  // Use effect for app state changes - refined to check realtime connection
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextAppState) => {
+      // Only refresh when returning to active state
+      if (nextAppState === "active" && member && user) {
+        console.log("[MyTime] App became active, checking realtime connection");
+
+        // Check if realtime channel needs to be re-established
+        if (!realtimeChannel.current) {
+          console.log("[MyTime] Realtime channel not found, setting up");
+          setupRealtimeChannel(member.id);
+        }
+
+        // Only refresh if significant time has passed or cache invalid
+        if (
+          !isCacheFresh(statsCache) ||
+          !isCacheFresh(vacationStatsCache) ||
+          Date.now() - lastRefreshTime.current > 60000 // 1 minute
+        ) {
+          console.log("[MyTime] Cache invalid or stale, refreshing data");
+          refreshData(false);
+        }
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [member, user, setupRealtimeChannel, refreshData]);
+
+  // Use focus effect for screen focus - refined to respect cooldown and prevent loops
+  useFocusEffect(
+    React.useCallback(() => {
+      if (member && user) {
+        const now = Date.now();
+        // Only refresh on focus if significant time has passed
+        if (now - lastFocusRefreshTime > FOCUS_REFRESH_COOLDOWN) {
+          console.log(
+            "[MyTime] Focus refresh cooldown passed, refreshing on focus",
+          );
+          lastFocusRefreshTime = now;
+
+          // Check if realtime channel needs to be set up
+          if (!realtimeChannel.current && !globalRealtimeChannel.channel) {
+            console.log("[MyTime] Setting up realtime channel on focus");
+            setupRealtimeChannel(member.id);
+          }
+
+          // Only refresh if cache is invalid
+          if (!isCacheFresh(statsCache) || !isCacheFresh(vacationStatsCache)) {
+            console.log("[MyTime] Cache invalid, refreshing data on focus");
+            refreshData(false);
+          }
+        } else {
+          console.log("[MyTime] Skipping focus refresh, cooldown active");
+        }
+      }
+
+      return () => {
+        // No cleanup needed, handled by useEffect unmount
+      };
+    }, [member, user, setupRealtimeChannel, refreshData]),
   );
 
-  const cancelSixMonthRequest = useCallback(
-    async (requestId: string) => {
-      if (!member?.id) {
-        console.error("[useMyTime] Cannot cancel request: No member ID");
+  // Initialize when member and user are available AND component is mounted
+  useEffect(() => {
+    if (
+      authStatus === "signedInMember" && member && user && isMounted.current
+    ) {
+      console.log(
+        "[MyTime] Auth OK & Mounted. Checking initialization need. Hook initialized:",
+        isInitialized,
+        "Global channel user:",
+        globalRealtimeChannel.userId,
+        "Hook isLoading:",
+        isLoading, // Log current loading state
+      );
+
+      // Check if the global channel is already set up for this user by the standalone init
+      if (
+        globalRealtimeChannel.channel &&
+        globalRealtimeChannel.userId === member.id
+      ) {
+        console.log(
+          "[MyTime] Global channel exists for this user. Checking initial cache status.",
+        );
+
+        // Mark the hook as initialized now, as the global setup handles the channel
+        if (!isInitialized) {
+          setIsInitialized(true);
+        }
+
+        // Re-check cache freshness (it might have changed since initial state setup)
+        const statsFreshNow = isCacheFresh(statsCache);
+        const vacationFreshNow = isCacheFresh(vacationStatsCache);
+
+        // If the initial state was loaded from fresh cache, ensure isLoading is false.
+        // If the cache became stale *after* initial load, this condition might not be met.
+        if (statsFreshNow && vacationFreshNow) {
+          console.log(
+            "[MyTime] Cache still fresh or became fresh. Ensuring loading is false.",
+          );
+          // If state isn't already populated (edge case), populate it.
+          if (!timeStats && statsCache.data) setTimeStats(statsCache.data);
+          if (!vacationStats && vacationStatsCache.data) {
+            setVacationStats(vacationStatsCache.data);
+          }
+          setIsLoading(false); // Ensure loading is false if cache is fresh
+        } else {
+          // Cache is NOW stale or missing. Trigger a background refresh.
+          console.log(
+            "[MyTime] Cache became stale or was initially stale. Triggering quiet background refresh.",
+          );
+          setIsLoading(true); // Set loading to true while background refresh happens
+          refreshData(false);
+        }
+      } else if (!isInitialized) {
+        // Global channel NOT set up correctly OR hook not initialized yet, run the hook's internal init
+        console.log(
+          "[MyTime] Global channel mismatch or hook not initialized. Running hook's internal initialize.",
+        );
+        // initialize() function manages its own isLoading state, so no need to set it here.
+        initialize(false);
+      } else {
+        // Hook is already initialized, global channel check wasn't needed or passed earlier.
+        console.log(
+          "[MyTime] Hook already initialized, skipping initialize call.",
+        );
+        // Ensure loading is false if already initialized and not currently refreshing
+        if (!isRefreshingData) { // Check if a refresh isn't already in progress
+          setIsLoading(false);
+        }
+      }
+    }
+    return () => {};
+  }, [
+    authStatus,
+    member,
+    user,
+    isInitialized,
+    initialize,
+    isMounted.current,
+    timeStats,
+    vacationStats,
+  ]); // Add timeStats/vacationStats to deps
+
+  // Add an AppState event listener specifically for background/foreground transitions
+  useEffect(() => {
+    if (Platform.OS !== "web") {
+      const subscription = AppState.addEventListener(
+        "change",
+        (nextAppState) => {
+          if (nextAppState === "active" && member && user && isInitialized) {
+            console.log(
+              "[MyTime] App became active after background - checking for data freshness",
+            );
+
+            // Check if cache is stale
+            const now = Date.now();
+            const timeSinceLastRefresh = now - lastRefreshTime.current;
+
+            // If it's been more than 2 minutes or cache invalid, refresh data
+            if (timeSinceLastRefresh > 120000 || !isCacheFresh(statsCache)) {
+              console.log(
+                "[MyTime] Cache is stale, refreshing data on return from background",
+              );
+              // Use a non-user-initiated refresh to avoid showing spinner
+              refreshData(false);
+            }
+          }
+        },
+      );
+
+      return () => {
+        subscription.remove();
+      };
+    }
+
+    return undefined;
+  }, [member, user, isInitialized, refreshData]);
+
+  // Request paid in lieu
+  const requestPaidInLieu = useCallback(
+    async (type: "PLD" | "SDV", date: Date): Promise<boolean> => {
+      if (!member || !user) {
+        console.error(
+          "[MyTime] Cannot request paid in lieu without member and user data",
+        );
         return false;
       }
 
       try {
-        // Find the request in local state
-        const requestToCancel = requests.find(
-          (req) => req.id === requestId && req.is_six_month_request,
+        console.log(
+          `[MyTime] Requesting paid in lieu for ${type} on ${date.toISOString()}`,
         );
 
-        if (!requestToCancel) {
-          throw new Error("Six-month request not found");
-        }
+        // Format date for database
+        const formattedDate = date.toISOString().split("T")[0];
 
-        // Optimistically remove from UI
-        setRequests((prevRequests) =>
-          prevRequests.filter((req) =>
-            !(req.id === requestId && req.is_six_month_request)
-          )
+        // Insert request into database
+        const { data, error } = await supabase
+          .from("pld_sdv_requests")
+          .insert({
+            member_id: member.id,
+            request_date: formattedDate,
+            leave_type: type,
+            status: "pending",
+            paid_in_lieu: true,
+            requested_at: new Date().toISOString(),
+          })
+          .select("id")
+          .single();
+
+        if (error) throw error;
+
+        // Invalidate cache and refresh data
+        invalidateCache();
+        refreshData(true);
+
+        console.log("[MyTime] Paid in lieu request successful:", data);
+        return true;
+      } catch (error) {
+        console.error("[MyTime] Error requesting paid in lieu:", error);
+        setError(
+          error instanceof Error
+            ? error.message
+            : "Failed to request paid in lieu",
         );
+        return false;
+      }
+    },
+    [member, user, invalidateCache, refreshData],
+  );
 
-        // Invalidate stats cache immediately
-        statsCache.data = null;
-        statsCache.timestamp = 0;
+  // Cancel a regular request
+  const cancelRequest = useCallback(
+    async (requestId: string): Promise<boolean> => {
+      if (!member || !user) {
+        console.error(
+          "[MyTime] Cannot cancel request without member and user data",
+        );
+        return false;
+      }
 
-        // Delete the request
-        const { error: deleteError } = await supabase
+      try {
+        console.log(`[MyTime] Cancelling request ${requestId}`);
+
+        // Update request status in database
+        const { data, error } = await supabase
+          .from("pld_sdv_requests")
+          .update({
+            status: "cancelled",
+          })
+          .eq("id", requestId)
+          .eq("member_id", member.id)
+          .select("id")
+          .single();
+
+        if (error) throw error;
+
+        // Invalidate cache and refresh data
+        invalidateCache();
+        refreshData(true);
+
+        console.log("[MyTime] Cancel request successful:", data);
+        return true;
+      } catch (error) {
+        console.error("[MyTime] Error cancelling request:", error);
+        setError(
+          error instanceof Error ? error.message : "Failed to cancel request",
+        );
+        return false;
+      }
+    },
+    [member, user, invalidateCache, refreshData],
+  );
+
+  // Cancel a six-month request
+  const cancelSixMonthRequest = useCallback(
+    async (requestId: string): Promise<boolean> => {
+      if (!member || !user) {
+        console.error(
+          "[MyTime] Cannot cancel six-month request without member and user data",
+        );
+        return false;
+      }
+
+      try {
+        console.log(`[MyTime] Cancelling six-month request ${requestId}`);
+
+        // Delete six-month request from database
+        const { data, error } = await supabase
           .from("six_month_requests")
           .delete()
           .eq("id", requestId)
-          .eq("member_id", member.id);
+          .eq("member_id", member.id)
+          .eq("processed", false); // Only allow cancellation if not processed
 
-        if (deleteError) {
-          // Revert optimistic update on error
-          setRequests((prevRequests) => [...prevRequests, requestToCancel]);
-          throw deleteError;
-        }
+        if (error) throw error;
 
-        // Force refresh stats immediately
-        await retryFetch(
-          () => fetchStats(),
-          "stats refresh after six-month cancellation",
-        );
+        // Invalidate cache and refresh data
+        invalidateCache();
+        refreshData(true);
 
+        console.log("[MyTime] Cancel six-month request successful");
         return true;
       } catch (error) {
-        console.error("[useMyTime] Error in cancelSixMonthRequest:", error);
+        console.error("[MyTime] Error cancelling six-month request:", error);
+        setError(
+          error instanceof Error
+            ? error.message
+            : "Failed to cancel six-month request",
+        );
         return false;
       }
     },
-    [member?.id, requests, fetchStats],
+    [member, user, invalidateCache, refreshData],
   );
 
-  const refreshData = useCallback(async (force = false) => {
-    // Use a local variable to track whether to complete initialization
-    let shouldCompleteInitialization = !isInitialized;
-
-    // Guard clauses
-    if (isFetchInProgressRef.current) {
-      console.log("[MyTime] Skipping refresh - fetch already in progress");
-      return;
-    }
-
-    if (!member?.id) {
-      console.log("[MyTime] Skipping refresh - no member ID");
-      setError("User information not available");
-      return;
-    }
-
-    // Use safe timestamp function to avoid hydration mismatch
-    if (
-      !force && lastRefreshTimeRef.current &&
-      getSafeTimestamp() - lastRefreshTimeRef.current < REFRESH_COOLDOWN
-    ) {
-      console.log("[MyTime] Skipping refresh - within cooldown period");
-      return;
-    }
-
-    try {
-      isFetchInProgressRef.current = true;
-      console.log(`[MyTime] Starting data refresh (force=${force})`);
-      setIsRefreshing(true);
-      setError(null);
-
-      // Clear caches if force refresh
-      if (force) {
-        console.log("[MyTime] Force refresh - clearing caches");
-        statsCache.data = null;
-        statsCache.timestamp = 0;
-        vacationStatsCache.data = null;
-        vacationStatsCache.timestamp = 0;
-      }
-
-      // Primary data fetches that should block UI
-      await Promise.all([
-        fetchStats(),
-        fetchRequests(),
-      ]);
-
-      // Mark as initialized as soon as primary data is loaded
-      if (shouldCompleteInitialization) {
-        setIsInitialized(true);
-        shouldCompleteInitialization = false;
-      }
-
-      // Secondary data fetches (vacation data) can continue in background
-      if (member.pin_number !== null) {
-        // Don't await these - let them resolve in the background
-        fetchVacationRequests().catch((err) =>
-          console.warn(
-            "[MyTime] Background vacation requests fetch error:",
-            err,
-          )
-        );
-
-        fetchVacationStats().catch((err) =>
-          console.warn("[MyTime] Background vacation stats fetch error:", err)
-        );
-      }
-
-      lastRefreshTimeRef.current = getSafeTimestamp();
-      console.log("[MyTime] Data refresh completed");
-    } catch (error) {
-      console.error("[MyTime] Critical error refreshing data:", error);
-      setError(
-        error instanceof Error ? error.message : "Failed to refresh data",
-      );
-
-      // Still mark as initialized to prevent infinite loading
-      if (shouldCompleteInitialization) {
-        console.log("[MyTime] Setting initialized=true despite errors");
-        setIsInitialized(true);
-      }
-    } finally {
-      console.log("[MyTime] Refresh attempt finished, cleaning up state");
-      setIsRefreshing(false);
-      isFetchInProgressRef.current = false;
-      setIsLoading(false);
-    }
-  }, [
-    member?.id,
-    member?.pin_number,
-    fetchStats,
-    fetchRequests,
-    fetchVacationRequests,
-    fetchVacationStats,
+  // Expose all the necessary functions and state
+  return {
+    timeStats,
+    vacationStats,
+    timeOffRequests,
+    vacationRequests,
+    sixMonthRequests,
+    isLoading,
+    isRefreshing,
+    error,
     isInitialized,
-  ]);
+    syncStatus,
+    // Functions
+    refreshData,
+    initialize,
+    requestPaidInLieu,
+    cancelRequest,
+    cancelSixMonthRequest,
+    invalidateCache,
+  };
+}
 
-  const handleRealtimeChange = useCallback(
-    async (payload: RealtimePostgresChangesPayload<any>) => {
-      const { eventType, new: newRecord, old: oldRecord, table } = payload;
+// ... keep existing utility functions ...
 
-      switch (table) {
-        case "pld_sdv_requests":
-          if (eventType === "INSERT") {
-            setRequests(
-              (prev) => [...prev, transformToTimeOffRequest(newRecord)],
-            );
-          } else if (eventType === "UPDATE") {
-            setRequests((prev) =>
-              prev.map((req) =>
-                req.id === newRecord.id
-                  ? transformToTimeOffRequest(newRecord)
-                  : req
-              )
-            );
-          } else if (eventType === "DELETE") {
-            setRequests((prev) =>
-              prev.filter((req) => req.id !== oldRecord.id)
-            );
-          }
-          // Refresh stats since they need recalculation
-          await retryableOperation(fetchStats);
-          break;
+// Export the invalidateCache function at the module level
+export function invalidateCache() {
+  console.log("[MyTime] Module-level cache invalidation");
+  statsCache.isValid = false;
+  vacationStatsCache.isValid = false;
+}
 
-        case "six_month_requests":
-          if (eventType === "INSERT") {
-            setRequests((prev) => [...prev, {
-              ...transformToTimeOffRequest(newRecord),
-              is_six_month_request: true,
-            }]);
-          } else if (eventType === "DELETE") {
-            setRequests((prev) =>
-              prev.filter((req) =>
-                !(req.id === oldRecord.id && req.is_six_month_request)
-              )
-            );
-          }
-          await retryableOperation(fetchStats);
-          break;
-
-        case "vacation_requests":
-          if (eventType === "INSERT") {
-            setVacationRequests((prev) => [...prev, {
-              id: newRecord.id,
-              start_date: newRecord.start_date,
-              end_date: newRecord.end_date,
-              status: newRecord.status,
-              requested_at: newRecord.requested_at ?? new Date(0).toISOString(),
-            }]);
-          } else if (eventType === "UPDATE") {
-            setVacationRequests((prev) =>
-              prev.map((req) =>
-                req.id === newRecord.id
-                  ? {
-                    ...req,
-                    start_date: newRecord.start_date,
-                    end_date: newRecord.end_date,
-                    status: newRecord.status,
-                    requested_at: newRecord.requested_at ?? req.requested_at,
-                  }
-                  : req
-              )
-            );
-          } else if (eventType === "DELETE") {
-            setVacationRequests((prev) =>
-              prev.filter((req) => req.id !== oldRecord.id)
-            );
-          }
-          // Update vacation stats when requests change
-          await retryableOperation(fetchVacationStats);
-          break;
-
-        case "members":
-          if (eventType === "UPDATE" && newRecord.id === member?.id) {
-            // If member data was updated (like vacation weeks/split), refresh vacation stats
-            await retryableOperation(fetchVacationStats);
-          }
-          break;
-      }
-    },
-    [fetchStats, fetchVacationStats, member?.id],
+// Update the standalone initialize function to synchronize with the global initialization flag
+export async function initialize(userId: string, force = false) {
+  console.log(
+    "[MyTime] Standalone initialize called for user:",
+    userId,
+    "force:",
+    force,
+    // "isGloballyInitialized:", // Remove check against removed flag
+    // isGloballyInitialized,
   );
 
-  useIsomorphicLayoutEffect(() => {
-    if (!member?.id || !member.pin_number) {
-      console.log("[MyTime] Skipping realtime setup - no member ID or PIN");
+  try {
+    if (!userId) {
+      console.log("[MyTime] Standalone: Cannot initialize without user ID");
       return;
     }
 
-    console.log("[MyTime] Setting up realtime subscriptions");
-    const regularRequestsChannel = supabase
-      .channel("mytime-regular")
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "pld_sdv_requests",
-          filter: `member_id=eq.${member.id}`,
-        },
-        handleRealtimeChange,
-      )
-      .subscribe();
+    // Check if we already have a subscription for this user and not forcing
+    if (
+      globalRealtimeChannel.channel &&
+      globalRealtimeChannel.userId === userId &&
+      !force
+    ) {
+      console.log(
+        "[MyTime] Standalone: Global channel already exists for this user, skipping setup.",
+      );
+      return { cleanup: globalRealtimeChannel.unsubscribe || (() => {}) };
+    }
 
-    const sixMonthRequestsChannel = supabase
-      .channel("mytime-six-month")
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "six_month_requests",
-          filter: `member_id=eq.${member.id}`,
-        },
-        handleRealtimeChange,
-      )
-      .subscribe();
+    // If forcing or channel is for a different user, clean up existing global channel
+    if (globalRealtimeChannel.channel) {
+      console.log(
+        "[MyTime] Standalone: Cleaning up existing global channel before creating new one.",
+      );
+      if (globalRealtimeChannel.unsubscribe) {
+        globalRealtimeChannel.unsubscribe();
+      }
+      // Clear global refs immediately after unsubscribe call
+      globalRealtimeChannel.channel = null;
+      globalRealtimeChannel.userId = null;
+      globalRealtimeChannel.unsubscribe = null;
+    }
 
-    const vacationRequestsChannel = supabase
-      .channel(`mytime-vacation-requests-${member.pin_number}`)
-      .on(
+    console.log("[MyTime] Standalone: Setting up global realtime channel.");
+    // Setup channel logic (copied from hook's setupRealtimeChannel, simplified)
+    const { data: memberData, error: memberError } = await supabase
+      .from("members")
+      .select("pin_number")
+      .eq("id", userId)
+      .single();
+
+    if (memberError) {
+      console.error(
+        "[MyTime] Standalone: Error getting member PIN:",
+        memberError,
+      );
+      // Continue without PIN if needed, channel setup might still work for PLD/SDV
+    }
+    const pin = memberData?.pin_number;
+
+    const channel = supabase.channel(`mytime-updates-${userId}`);
+
+    // Setup listeners (PLD/SDV, Allocation)
+    channel.on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "pld_sdv_requests",
+        filter: `member_id=eq.${userId}`,
+      },
+      (payload) => {
+        invalidateCache();
+      },
+    );
+    channel.on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "member_pld_sdv_allocations",
+        filter: `member_id=eq.${userId}`,
+      },
+      (payload) => {
+        invalidateCache();
+      },
+    );
+    // Add vacation listener only if PIN exists
+    if (pin) {
+      channel.on(
         "postgres_changes",
         {
           event: "*",
           schema: "public",
           table: "vacation_requests",
-          filter: `pin_number=eq.${member.pin_number}`,
+          filter: `pin_number=eq.${pin}`,
         },
-        handleRealtimeChange,
-      )
-      .subscribe();
-
-    return () => {
-      console.log("[MyTime] Cleaning up realtime subscriptions");
-      regularRequestsChannel.unsubscribe();
-      sixMonthRequestsChannel.unsubscribe();
-      vacationRequestsChannel.unsubscribe();
-    };
-  }, [member?.id, member?.pin_number, handleRealtimeChange]);
-
-  useEffect(() => {
-    if (member?.id && session && !initialAuthLoadCompleteRef.current) {
-      console.log(
-        "[MyTime] Member/Session ready and initial load pending, initializing (setting isLoading true)",
-      );
-      initialAuthLoadCompleteRef.current = true;
-      setIsLoading(true);
-      refreshData(true)
-        .catch((err) => {
-          console.error("[MyTime] Error during initial refreshData:", err);
-        })
-        .finally(() => {
-          console.log(
-            "[MyTime] Initial refreshData call completed (setting isLoading false).",
-          );
-          setIsLoading(false);
-        });
-      mountTimeRef.current = Date.now();
-    } else if (!member?.id && !session) {
-      initialAuthLoadCompleteRef.current = false;
-      setIsInitialized(false);
-      setStats(null);
-      setRequests([]);
-      setVacationRequests([]);
-      setIsLoading(true);
-      setIsRefreshing(false);
-      console.log(
-        "[MyTime] Member/Session lost, resetting initial load flag and state",
+        (payload) => {
+          invalidateCache();
+        },
       );
     }
-  }, [member?.id, session, refreshData]);
 
-  // Replace with a more reliable initialization approach
-  useEffect(() => {
-    // Skip if member ID not available yet
-    if (!member?.id) {
-      console.log("[MyTime] No member ID available, skipping initialization");
-      return;
-    }
+    channel.subscribe((status) => {
+      console.log(
+        `[MyTime Standalone] Subscription status for user ${userId}:`,
+        status,
+      );
+    });
 
-    // If already initialized, no need to re-initialize
-    if (isInitialized && !isLoading) {
-      console.log("[MyTime] Already initialized, skipping");
-      return;
-    }
+    // Store channel in global singleton
+    globalRealtimeChannel.channel = channel;
+    globalRealtimeChannel.userId = userId;
 
-    console.log("[MyTime] Starting initialization with member ID:", member.id);
-    setIsLoading(true);
-
-    refreshData(true)
-      .catch((err) => {
-        console.error("[MyTime] Error during refreshData:", err);
-      })
-      .finally(() => {
-        console.log(
-          "[MyTime] refreshData completed, setting loading false and initialized true",
-        );
-        setIsLoading(false);
-        setIsInitialized(true);
-        initialAuthLoadCompleteRef.current = true;
-      });
-
-    // Set current mount time
-    mountTimeRef.current = Date.now();
-
-    // Cleanup function
-    return () => {
-      console.log("[MyTime] Cleanup from initialization effect");
-      // Don't reset initialization state on unmount to prevent thrashing
+    // Create unsubscribe function
+    const cleanupFn = () => {
+      console.log("[MyTime] Standalone cleanup called for user:", userId);
+      if (globalRealtimeChannel.channel === channel) {
+        console.log("[MyTime] Standalone: Unsubscribing global channel.");
+        channel.unsubscribe();
+        globalRealtimeChannel.channel = null;
+        globalRealtimeChannel.userId = null;
+        globalRealtimeChannel.unsubscribe = null;
+      }
+      // No need to manage isGloballyInitialized flag here
     };
-  }, [member?.id, refreshData]);
+    globalRealtimeChannel.unsubscribe = cleanupFn;
 
-  useEffect(() => {
-    const subscription = AppState.addEventListener(
-      "change",
-      async (nextAppState) => {
-        if (nextAppState === "active" && member?.id) {
-          console.log(
-            "[MyTime] App active, attempting refresh via refreshData()",
-          );
-          await refreshData();
-        }
-      },
-    );
+    console.log("[MyTime] Standalone: Global channel setup complete.");
+    // Optional: Pre-warm cache here if desired, but not strictly necessary
+    // e.g., await fetchTimeStats(userId, true); // But be careful not to interfere with hook
 
-    return () => {
-      subscription.remove();
-    };
-  }, [member?.id, refreshData]);
+    // No need to set isGloballyInitialized = true;
 
-  useEffect(() => {
-    return () => {
-      console.log("[MyTime] Cleaning up on unmount");
-      // Don't set isLoading to true on cleanup as it triggers unnecessary resets
-      setIsRefreshing(false);
-      // Keep the initialized state and stats to prevent UI flicker
-      setError(null);
-      // Don't clear requests/stats on unmount as they may be needed by other components
-      lastRefreshTimeRef.current = null;
-    };
-  }, []);
-
-  // Add transform helper function
-  const transformToTimeOffRequest = (record: any): TimeOffRequest => ({
-    id: record.id,
-    request_date: record.request_date,
-    leave_type: record.leave_type,
-    status: record.status,
-    requested_at: record.requested_at ?? "",
-    waitlist_position: record.waitlist_position,
-    paid_in_lieu: record.paid_in_lieu,
-    is_six_month_request: false,
-    calendar_id: record.calendar_id,
-  });
-
-  // Add retryable operation helper
-  const retryableOperation = async (operation: () => Promise<void>) => {
-    setSyncStatus((prev) => ({
-      ...prev,
-      isSyncing: true,
-      lastSyncAttempt: new Date(),
-    }));
-
-    try {
-      await operation();
-      setSyncStatus((prev) => ({
-        ...prev,
-        isSyncing: false,
-        lastSuccessfulSync: new Date(),
-        failedAttempts: 0,
-        error: null,
-      }));
-    } catch (error) {
-      const newFailedAttempts = syncStatus.failedAttempts + 1;
-
-      if (newFailedAttempts < MAX_RETRY_ATTEMPTS) {
-        setSyncStatus((prev) => ({
-          ...prev,
-          failedAttempts: newFailedAttempts,
-          error: `Retry attempt ${newFailedAttempts} of ${MAX_RETRY_ATTEMPTS}`,
-        }));
-
-        await new Promise((resolve) =>
-          setTimeout(resolve, RETRY_DELAY * Math.pow(2, newFailedAttempts - 1))
-        );
-        await retryableOperation(operation);
-      } else {
-        setSyncStatus((prev) => ({
-          ...prev,
-          isSyncing: false,
-          failedAttempts: newFailedAttempts,
-          error: "Max retry attempts reached. Please try again later.",
-        }));
+    return { cleanup: cleanupFn };
+  } catch (error) {
+    console.error("[MyTime] Error in standalone initialize:", error);
+    // Ensure cleanup if error occurs mid-setup
+    if (
+      globalRealtimeChannel.channel && globalRealtimeChannel.userId === userId
+    ) {
+      if (globalRealtimeChannel.unsubscribe) {
+        globalRealtimeChannel.unsubscribe();
       }
     }
-  };
-
-  // Add this function near the top with other cache-related code
-  function invalidateCache() {
-    statsCache.data = null;
-    statsCache.timestamp = 0;
-    vacationStatsCache.data = null;
-    vacationStatsCache.timestamp = 0;
+    throw error; // Re-throw error
   }
-
-  return {
-    stats,
-    vacationStats,
-    requests,
-    vacationRequests,
-    isLoading,
-    isRefreshing,
-    error,
-    isInitialized,
-    initialize: refreshData,
-    requestPaidInLieu,
-    cancelRequest,
-    cancelSixMonthRequest,
-    syncStatus,
-    invalidateCache,
-  };
 }

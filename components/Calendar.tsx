@@ -71,11 +71,6 @@ interface CalendarProps {
   onDayActuallyPressed?: (date: string) => void;
 }
 
-// Add a global variable outside the component to track prefetch status
-// This ensures it persists across re-renders
-let GLOBAL_MONTH_END_PREFETCH_DONE = false;
-let GLOBAL_PREFETCH_TIMESTAMP = 0;
-
 export function Calendar({ current, zoneId, isZoneSpecific = false, onDayActuallyPressed }: CalendarProps) {
   const theme = (useColorScheme() ?? "light") as ColorScheme;
   const division = useUserStore((state) => state.division);
@@ -91,11 +86,9 @@ export function Calendar({ current, zoneId, isZoneSpecific = false, onDayActuall
     allotments,
     yearlyAllotments,
     requests,
+    sixMonthRequestDays,
     checkSixMonthRequest,
   } = useCalendarStore();
-
-  // Store days with six month requests to avoid excessive DB lookups
-  const [sixMonthRequestDays, setSixMonthRequestDays] = useState<Record<string, boolean>>({});
 
   // Use a ref to track if marked dates were already generated
   const markedDatesGeneratedRef = useRef(false);
@@ -138,263 +131,6 @@ export function Calendar({ current, zoneId, isZoneSpecific = false, onDayActuall
     [member?.id, requests]
   );
 
-  // Function to check if user has either a regular or six-month request for a date
-  const hasUserAnyRequestForDate = useCallback(
-    async (dateStr: string) => {
-      // First check regular requests
-      const hasRegularRequest = hasUserRequestForDate(dateStr);
-      if (hasRegularRequest) return true;
-
-      // If we've already checked for a six-month request for this date, use cached result
-      if (sixMonthRequestDays[dateStr] !== undefined) {
-        return sixMonthRequestDays[dateStr];
-      }
-
-      // Otherwise, check for six-month request
-      try {
-        const hasSixMonthRequest = await checkSixMonthRequest(dateStr);
-
-        // Cache the result
-        if (hasSixMonthRequest) {
-          console.log(`[Calendar] Found and caching six-month request for ${dateStr}`);
-          setSixMonthRequestDays((prev) => ({
-            ...prev,
-            [dateStr]: true,
-          }));
-        }
-
-        return hasSixMonthRequest;
-      } catch (error) {
-        console.error(`[Calendar] Error checking six month request for ${dateStr}:`, error);
-        return false;
-      }
-    },
-    [hasUserRequestForDate, checkSixMonthRequest, sixMonthRequestDays]
-  );
-
-  // Prefetch six-month request data for visible dates
-  useEffect(() => {
-    if (!isInitialized || !member?.id) return;
-
-    // Get the six-month date and check if today is the end of month
-    const now = new Date();
-    const nowTimestamp = now.getTime();
-
-    // If we've performed a prefetch in the last 15 minutes, skip it
-    if (GLOBAL_MONTH_END_PREFETCH_DONE && nowTimestamp - GLOBAL_PREFETCH_TIMESTAMP < 15 * 60 * 1000) {
-      // console.log("[Calendar] Skipping prefetch - already done recently");
-      return;
-    }
-
-    const isEndOfMonth = isLastDayOfMonth(now);
-    const sixMonthDate = addMonths(now, 6);
-    const sixMonthDateStr = format(sixMonthDate, "yyyy-MM-dd");
-
-    const fetchSixMonthData = async () => {
-      try {
-        // Always check the exact six-month date
-        const hasRequest = await checkSixMonthRequest(sixMonthDateStr);
-        if (hasRequest) {
-          setSixMonthRequestDays((prev) => ({
-            ...prev,
-            [sixMonthDateStr]: true,
-          }));
-        }
-
-        // CRITICAL FIX: For end-of-month cases, we MUST prefetch ALL days
-        // that might be six-month request days
-        if (isEndOfMonth) {
-          console.log("[Calendar] End of month detected, prefetching ALL eligible six-month target month days");
-
-          // Mark as done so we don't keep prefetching and record timestamp
-          GLOBAL_MONTH_END_PREFETCH_DONE = true;
-          GLOBAL_PREFETCH_TIMESTAMP = nowTimestamp;
-
-          // Get all days from the six-month date to the end of that month
-          const targetYear = sixMonthDate.getFullYear();
-          const targetMonth = sixMonthDate.getMonth();
-
-          // Get the last day of the target month
-          const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
-
-          // Start from the day of the exact six-month date (inclusive)
-          const startDay = sixMonthDate.getDate();
-
-          console.log(`[Calendar] Prefetching end-of-month six-month days:`, {
-            targetYear,
-            targetMonth: targetMonth + 1, // +1 for human-readable month
-            startDay,
-            lastDayOfTargetMonth,
-            daysToCheck: lastDayOfTargetMonth - startDay + 1,
-          });
-
-          // In month-end case, check ALL days from the six-month date to the end of the month
-          // This is critical for correctly handling Oct 31 and similar dates
-          for (let day = startDay; day <= lastDayOfTargetMonth; day++) {
-            const dateToCheck = new Date(targetYear, targetMonth, day);
-            const dateToCheckStr = format(dateToCheck, "yyyy-MM-dd");
-
-            // Skip checking if we've already checked this date
-            if (sixMonthRequestDays[dateToCheckStr] !== undefined) continue;
-
-            const hasRequestForDay = await checkSixMonthRequest(dateToCheckStr);
-            if (hasRequestForDay) {
-              setSixMonthRequestDays((prev) => ({
-                ...prev,
-                [dateToCheckStr]: true,
-              }));
-
-              // Log when we find a request to help with debugging
-              console.log(`[Calendar] Found existing six-month request for ${dateToCheckStr}`);
-            }
-          }
-        }
-      } catch (error) {
-        console.error("[Calendar] Error prefetching six-month request data:", error);
-      }
-    };
-
-    fetchSixMonthData();
-
-    // No need for cleanup - the global flag with timestamp handles this now
-  }, [isInitialized, member?.id, checkSixMonthRequest]);
-
-  // NEW: Add an effect to fetch ALL six-month requests for the user on component mount
-  useEffect(() => {
-    if (!isInitialized || !member?.id) return;
-
-    const fetchAllSixMonthRequests = async () => {
-      try {
-        console.log("[Calendar] Fetching all six-month requests for current user");
-        const now = startOfDay(new Date());
-        const isEndOfMonth = isLastDayOfMonth(now);
-        const sixMonthDate = addMonths(now, 6);
-
-        // Fetch from supabase directly
-        const { data, error } = await supabase
-          .from("six_month_requests")
-          .select("id, request_date, leave_type")
-          .eq("member_id", member.id)
-          .eq("processed", false)
-          .gte("request_date", format(now, "yyyy-MM-dd"))
-          .lte("request_date", format(addMonths(now, 7), "yyyy-MM-dd")); // Add extra month to be safe
-
-        if (error) {
-          throw error;
-        }
-
-        if (data && data.length > 0) {
-          console.log(`[Calendar] Found ${data.length} six-month requests:`, data);
-
-          // Add all found requests to the sixMonthRequestDays state
-          const newSixMonthDays = { ...sixMonthRequestDays };
-          data.forEach((req) => {
-            newSixMonthDays[req.request_date] = true;
-          });
-
-          setSixMonthRequestDays(newSixMonthDays);
-
-          // Force a refresh of markedDates
-          markedDatesGeneratedRef.current = false;
-        } else {
-          console.log("[Calendar] No existing six-month requests found");
-        }
-
-        // If it's end of month, ensure we check all relevant dates in the target month
-        if (isEndOfMonth) {
-          console.log("[Calendar] End of month detected, ensuring all potential six-month days are checked");
-
-          // Get the last day of the target month
-          const targetMonth = sixMonthDate.getMonth();
-          const targetYear = sixMonthDate.getFullYear();
-          const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
-
-          console.log(`[Calendar] Target month: ${targetMonth + 1}/${targetYear}, last day: ${lastDayOfTargetMonth}`);
-
-          // Start from the six-month day
-          const startDay = sixMonthDate.getDate();
-
-          // Force an explicit prefetch of all days in the target month from the six-month date
-          for (let day = startDay; day <= lastDayOfTargetMonth; day++) {
-            const dateToCheck = new Date(targetYear, targetMonth, day);
-            // Skip invalid dates
-            if (dateToCheck.getMonth() !== targetMonth) continue;
-
-            const dateStr = format(dateToCheck, "yyyy-MM-dd");
-
-            // Skip if we already know about this date
-            if (sixMonthRequestDays[dateStr] === true) continue;
-
-            // Check for six-month request for this date
-            const hasRequest = await checkSixMonthRequest(dateStr);
-            if (hasRequest) {
-              console.log(`[Calendar] Found six-month request for ${dateStr} during end-of-month prefetch`);
-              setSixMonthRequestDays((prev) => ({
-                ...prev,
-                [dateStr]: true,
-              }));
-            }
-          }
-        }
-      } catch (error) {
-        console.error("[Calendar] Error fetching all six-month requests:", error);
-      }
-    };
-
-    fetchAllSixMonthRequests();
-  }, [isInitialized, member?.id, checkSixMonthRequest]);
-
-  // Set up real-time subscription for six-month requests
-  useEffect(() => {
-    if (!isInitialized || !member?.id) return;
-
-    console.log("[Calendar] Setting up real-time subscription for six-month requests");
-    const sixMonthChannel = supabase
-      .channel("six-month-requests")
-      .on(
-        "postgres_changes",
-        {
-          event: "*", // Listen to all events (INSERT, UPDATE, DELETE)
-          schema: "public",
-          table: "six_month_requests",
-          filter: `member_id=eq.${member.id}`,
-        },
-        (payload) => {
-          console.log("[Calendar] Six-month request update:", payload);
-          const { eventType, new: newRecord, old: oldRecord } = payload;
-
-          if (eventType === "INSERT" && newRecord && newRecord.request_date) {
-            console.log(`[Calendar] New six-month request for ${newRecord.request_date}`);
-            setSixMonthRequestDays((prev) => ({
-              ...prev,
-              [newRecord.request_date]: true,
-            }));
-
-            // Force markedDates recalculation
-            markedDatesGeneratedRef.current = false;
-          } else if (eventType === "DELETE" && oldRecord && oldRecord.request_date) {
-            console.log(`[Calendar] Removed six-month request for ${oldRecord.request_date}`);
-            setSixMonthRequestDays((prev) => {
-              const newState = { ...prev };
-              delete newState[oldRecord.request_date];
-              return newState;
-            });
-
-            // Force markedDates recalculation
-            markedDatesGeneratedRef.current = false;
-          }
-        }
-      )
-      .subscribe((status) => {
-        console.log("[Calendar] Six-month subscription status:", status);
-      });
-
-    return () => {
-      console.log("[Calendar] Cleaning up six-month subscription");
-      sixMonthChannel.unsubscribe();
-    };
-  }, [isInitialized, member?.id]);
-
   // Generate marked dates for the calendar - with optimized memoization to reduce recalculations
   const markedDates = useMemo(() => {
     // Skip if not ready
@@ -420,9 +156,11 @@ export function Calendar({ current, zoneId, isZoneSpecific = false, onDayActuall
 
     const dates: any = {};
     const now = startOfDay(new Date());
+    const currentYear = now.getFullYear();
 
-    // CRITICAL FIX: Calculate the current six-month reference date directly here
+    // Calculate the six-month reference date
     const sixMonthsFromNow = addMonths(now, 6);
+    const sixMonthYear = sixMonthsFromNow.getFullYear();
     const isEndOfMonth = isLastDayOfMonth(now);
 
     // Log these critical values for debugging
@@ -431,21 +169,17 @@ export function Calendar({ current, zoneId, isZoneSpecific = false, onDayActuall
       isEndOfMonth,
       sixMonthDate: format(sixMonthsFromNow, "yyyy-MM-dd"),
       sixMonthMonth: sixMonthsFromNow.getMonth() + 1,
-      sixMonthYear: sixMonthsFromNow.getFullYear(),
+      sixMonthYear: sixMonthYear,
       sixMonthDay: sixMonthsFromNow.getDate(),
     });
 
-    // Get all dates in the visible range (including past month for context)
-    const visibleRangeStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    // Expand range to cover Jan 1st of current year to Dec 31st of the six-month year
+    const visibleRangeStart = new Date(currentYear, 0, 1); // Jan 1st of current year
+    const visibleRangeEnd = new Date(sixMonthYear, 11, 31); // Dec 31st of the year the 6-month mark is in
 
-    // CRITICAL FIX: Extend the visible range to ensure we include the entire six-month window
-    // plus several extra days to account for edge cases at month boundaries
-    const visibleRangeEnd = new Date(sixMonthsFromNow.getFullYear(), sixMonthsFromNow.getMonth() + 1, 0);
-
-    console.log("[Calendar] Visible range:", {
+    console.log("[Calendar] Generating marks for range:", {
       start: format(visibleRangeStart, "yyyy-MM-dd"),
       end: format(visibleRangeEnd, "yyyy-MM-dd"),
-      includesLastDayOfTargetMonth: true,
     });
 
     const allDates = eachDayOfInterval({
@@ -513,6 +247,9 @@ export function Calendar({ current, zoneId, isZoneSpecific = false, onDayActuall
         return;
       }
 
+      // Determine if the date should be disabled based on the store's logic
+      const isDisabled = !isDateSelectable(dateStr);
+
       dates[dateStr] = {
         customStyles: {
           container: {
@@ -523,6 +260,8 @@ export function Calendar({ current, zoneId, isZoneSpecific = false, onDayActuall
             fontWeight: "bold",
           },
         },
+        disabled: isDisabled, // Use disabled prop for visual cue
+        disableTouchEvent: isDisabled, // Disable touch if not selectable
       };
 
       // Add selection styling if this is the selected date
@@ -552,11 +291,10 @@ export function Calendar({ current, zoneId, isZoneSpecific = false, onDayActuall
     isZoneSpecific,
     selectedDate,
     theme,
-    // Include these as dependencies to ensure recalculation
     requests,
     allotments,
     yearlyAllotments,
-    sixMonthRequestDays, // Include the actual state object, not just its length
+    sixMonthRequestDays,
     getDateAvailability,
     hasUserRequestForDate,
   ]);
@@ -570,17 +308,6 @@ export function Calendar({ current, zoneId, isZoneSpecific = false, onDayActuall
     Object.keys(requests).length,
     Object.keys(sixMonthRequestDays).length,
   ]);
-
-  // Log when marked dates are regenerated, but throttle it to avoid spamming
-  useEffect(() => {
-    if (Object.keys(markedDates).length > 0) {
-      console.log("[Calendar] Marked dates updated:", {
-        hasMarks: Object.keys(markedDates).length,
-        zoneId,
-        isInitialized,
-      });
-    }
-  }, [markedDates, zoneId, isInitialized]);
 
   // Generate a unique key for the calendar that changes when data changes
   const calendarDataKey = useMemo(() => {
@@ -610,21 +337,7 @@ export function Calendar({ current, zoneId, isZoneSpecific = false, onDayActuall
   const handleDayPress = async (day: DateData) => {
     const now = new Date();
     const dateObj = parseISO(day.dateString);
-    const fortyEightHoursFromNow = addDays(now, 2);
     const sixMonthsFromNow = addMonths(now, 6);
-
-    // Basic time constraint checks
-    if (isBefore(dateObj, fortyEightHoursFromNow)) {
-      Toast.show({
-        type: "info",
-        text1: "Not Available",
-        text2: "Day you clicked is no longer available to Request",
-        position: "bottom",
-        visibilityTime: 3000,
-        topOffset: 50,
-      });
-      return;
-    }
 
     // Check if the date is beyond the standard six-month window
     // But we need to handle month-end cases specially
@@ -674,44 +387,12 @@ export function Calendar({ current, zoneId, isZoneSpecific = false, onDayActuall
       }
     }
 
-    // IMPORTANT: For six-month requests, always check if the user already has a request
-    // This ensures the calendar is always updated with the latest request status
-    if (isSixMonthRequest && member?.id) {
-      console.log(`[Calendar] Checking for existing six-month request for ${day.dateString}`);
-      try {
-        const hasSixMonthRequest = await checkSixMonthRequest(day.dateString);
-        if (hasSixMonthRequest) {
-          console.log(`[Calendar] Found existing six-month request for ${day.dateString}, updating local state`);
-          setSixMonthRequestDays((prev) => ({
-            ...prev,
-            [day.dateString]: true,
-          }));
-
-          // Force a re-render of the calendar to show the updated request status
-          markedDatesGeneratedRef.current = false;
-        }
-      } catch (error) {
-        console.error(`[Calendar] Error checking for six-month request for ${day.dateString}:`, error);
-      }
-    }
-
-    // We don't need to check zone access here since we've already validated it during zone ID calculation
-    // and the calendar only shows the correct zone's data if the user has access
+    // Note: The rest of the six-month request handling is now managed by the calendarStore,
+    // so we don't need to maintain our own local state for sixMonthRequestDays
 
     if (isDateSelectable(day.dateString)) {
       setSelectedDate(day.dateString);
       onDayActuallyPressed?.(day.dateString);
-
-      // Check if the selected date has a six-month request after selection
-      if (day.dateString) {
-        const hasSixMonthRequest = await checkSixMonthRequest(day.dateString);
-        if (hasSixMonthRequest) {
-          setSixMonthRequestDays((prev) => ({
-            ...prev,
-            [day.dateString]: true,
-          }));
-        }
-      }
     } else {
       // Get the availability to customize the message
       const availability = getDateAvailability(day.dateString);

@@ -80,6 +80,13 @@ interface VacationCalendarState {
 
     // Cleanup
     cleanupCalendarState: () => void;
+    cleanupVacationCalendarState: () => void;
+    refreshData: (
+        startDate: string,
+        endDate: string,
+        calendarId: string,
+        force: boolean,
+    ) => Promise<void>;
 }
 
 export const useVacationCalendarStore = create<VacationCalendarState>((
@@ -287,14 +294,14 @@ export const useVacationCalendarStore = create<VacationCalendarState>((
             );
             set({
                 isLoading: false,
-                error: "User or assigned calendar not found",
+                error: "Calendar not found",
             });
             return;
         }
 
         set({ isLoading: true, error: null });
         console.log(
-            `[VacationStore] Loading initial data for calendar ${calendarId}...`,
+            `[VacationStore] Loading initial data for calendar ${calendarId} from ${startDate} to ${endDate}...`,
         );
         try {
             const [allotmentsResult, requestsResult, hasNextYear] =
@@ -313,6 +320,7 @@ export const useVacationCalendarStore = create<VacationCalendarState>((
                 hasNextYearAllotments: hasNextYear,
                 isLoading: false,
                 error: null,
+                isInitialized: true,
             });
             console.log("[VacationStore] Initial data loaded successfully.");
         } catch (error) {
@@ -325,6 +333,7 @@ export const useVacationCalendarStore = create<VacationCalendarState>((
                 error: error instanceof Error
                     ? error.message
                     : "Failed to load vacation data",
+                isInitialized: false,
             });
         }
     },
@@ -412,6 +421,76 @@ export const useVacationCalendarStore = create<VacationCalendarState>((
             hasNextYearAllotments: false,
         });
     },
+
+    cleanupVacationCalendarState: () => {
+        console.log("[VacationStore] Cleaning up vacation calendar state...");
+        set({
+            selectedWeek: null,
+            allotments: {},
+            requests: {},
+            isLoading: false,
+            error: null,
+            isInitialized: false,
+            hasNextYearAllotments: false,
+        });
+    },
+
+    refreshData: async (
+        startDate: string,
+        endDate: string,
+        calendarId: string,
+        force: boolean = false,
+    ) => {
+        console.log(`[VacationStore] Refreshing data with force=${force}...`);
+
+        if (!calendarId) {
+            console.error(
+                "[VacationStore] refreshData called without calendarId.",
+            );
+            return;
+        }
+
+        // If not forcing refresh, we primarily rely on realtime subscriptions
+        // which are set up in the setupVacationCalendarSubscriptions function
+        if (!force) {
+            console.log(
+                "[VacationStore] Skipping manual refresh, realtime subscriptions will handle updates",
+            );
+            return;
+        }
+
+        // For forced refreshes, update loading state but don't block the UI
+        set((state) => ({ isLoading: true, error: null }));
+
+        try {
+            const [allotmentsResult, requestsResult, hasNextYear] =
+                await Promise.all([
+                    get().fetchAllotments(startDate, endDate, calendarId),
+                    get().fetchRequests(startDate, endDate, calendarId),
+                    get().checkNextYearAllotments(
+                        calendarId,
+                        new Date().getFullYear() + 1,
+                    ),
+                ]);
+
+            set({
+                allotments: allotmentsResult,
+                requests: requestsResult,
+                hasNextYearAllotments: hasNextYear,
+                isLoading: false,
+                error: null,
+            });
+            console.log("[VacationStore] Data refreshed successfully");
+        } catch (error) {
+            console.error("[VacationStore] Failed to refresh data:", error);
+            set({
+                isLoading: false,
+                error: error instanceof Error
+                    ? error.message
+                    : "Failed to refresh vacation data",
+            });
+        }
+    },
 }));
 
 export function setupVacationCalendarSubscriptions() {
@@ -422,7 +501,7 @@ export function setupVacationCalendarSubscriptions() {
         console.log(
             "[VacationCalendarStore] No calendar_id found, skipping subscriptions",
         );
-        return { unsubscribe: () => {} };
+        return () => {};
     }
 
     console.log(
@@ -716,16 +795,44 @@ export function setupVacationCalendarSubscriptions() {
         )
         .subscribe();
 
-    return {
-        unsubscribe: () => {
-            console.log(
-                "[VacationCalendarStore] Unsubscribing from realtime updates for calendar:",
-                calendarId,
+    // Return a cleanup function that removes both channels
+    return () => {
+        console.log(
+            "[VacationCalendarStore] Unsubscribing from realtime updates",
+        );
+        isSubscribed = false;
+        allotmentsChannel.unsubscribe();
+
+        try {
+            if (allotmentsChannel) {
+                console.log(
+                    "[VacationCalendarStore] Removing allotments channel",
+                );
+                supabase.removeChannel(allotmentsChannel).catch((err) =>
+                    console.error(
+                        "[VacationCalendarStore] Error removing allotments channel:",
+                        err,
+                    )
+                );
+            }
+
+            if (requestsChannel) {
+                console.log(
+                    "[VacationCalendarStore] Removing requests channel",
+                );
+                supabase.removeChannel(requestsChannel).catch((err) =>
+                    console.error(
+                        "[VacationCalendarStore] Error removing requests channel:",
+                        err,
+                    )
+                );
+            }
+        } catch (error) {
+            console.error(
+                "[VacationCalendarStore] Error during channel cleanup:",
+                error,
             );
-            isSubscribed = false;
-            allotmentsChannel.unsubscribe();
-            requestsChannel.unsubscribe();
-        },
+        }
     };
 }
 

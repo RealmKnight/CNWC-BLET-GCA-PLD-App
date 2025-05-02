@@ -26,8 +26,7 @@ import { useVacationCalendarStore, WeekRequest } from "@/store/vacationCalendarS
 import { useAuth } from "@/hooks/useAuth";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
-import { format } from "date-fns-tz";
-import { parseISO, isBefore, isAfter, addDays, isLastDayOfMonth } from "date-fns";
+import { format, parseISO, isBefore, isAfter, isLastDayOfMonth, startOfDay, addDays } from "date-fns";
 import { isSameDayWithFormat, getSixMonthDate } from "@/utils/date-utils";
 import { supabase } from "@/utils/supabase";
 import { useUserStore } from "@/store/userStore";
@@ -57,6 +56,7 @@ interface RequestDialogProps {
   calendarType: CalendarType; // Add calendar type
   calendarId: string; // Add calendar ID
   onAdjustmentComplete: () => void; // Add new prop for reopening after adjustment
+  viewMode?: "past" | "request" | "nearPast"; // Add new prop for view mode
 }
 
 function RequestDialog({
@@ -69,9 +69,16 @@ function RequestDialog({
   calendarType,
   calendarId,
   onAdjustmentComplete,
+  viewMode,
 }: RequestDialogProps) {
   const theme = (useColorScheme() ?? "light") as ColorScheme;
-  const { stats, initialize: refreshMyTimeStats, cancelSixMonthRequest, invalidateCache } = useMyTime();
+  const {
+    timeStats, // Correctly destructure timeStats
+    initialize: refreshMyTimeStats,
+    cancelSixMonthRequest,
+    invalidateCache,
+    isLoading: isMyTimeLoading,
+  } = useMyTime();
   const { member } = useUserStore();
   const userRole = useUserStore((state) => state.userRole);
   const checkSixMonthRequest = useCalendarStore((state) => state.checkSixMonthRequest);
@@ -270,22 +277,12 @@ function RequestDialog({
     };
   }, [selectedDate, member?.calendar_id, isVisible, calendarId]);
 
-  // Refresh stats whenever the dialog becomes visible
-  useEffect(() => {
-    if (isVisible) {
-      console.log("[RequestDialog] Dialog opened, refreshing stats");
-      refreshMyTimeStats(true);
-    }
-  }, [isVisible, refreshMyTimeStats]);
-
   // Ensure we have the latest stats even if useMyTime updates elsewhere
   // This ensures we're always showing accurate stats in the dialog
   useEffect(() => {
-    console.log("[RequestDialog] Stats updated:", {
-      pldAvailable: stats?.available.pld,
-      sdvAvailable: stats?.available.sdv,
-    });
-  }, [stats]);
+    // Log the entire timeStats object when it changes
+    console.log("[RequestDialog] timeStats object updated:", timeStats);
+  }, [timeStats]); // Depend on timeStats
 
   // Wrap the onSubmit handler to also refresh stats after a request
   const handleSubmit = async (leaveType: "PLD" | "SDV") => {
@@ -573,15 +570,24 @@ function RequestDialog({
   // For six month dates, we don't want to show other users' requests
   // as they shouldn't count against the allotment
   const filteredRequests = useMemo(() => {
+    // If viewing past dates, only show approved requests
+    if (viewMode === "past" || viewMode === "nearPast") {
+      return localRequests.filter((req) => req.status === "approved");
+    }
     if (isSixMonthRequest) {
       // On six-month dates, don't show any requests in the dialog list
       // Six-month requests should only be visible on the MyTime screen
       return [];
     }
     return localRequests; // Use local requests that are updated in realtime
-  }, [localRequests, isSixMonthRequest]);
+  }, [localRequests, isSixMonthRequest, viewMode]);
 
   const activeRequests = useMemo(() => {
+    // If viewing past dates, all filtered requests are considered 'active' for display
+    if (viewMode === "past" || viewMode === "nearPast") {
+      return filteredRequests;
+    }
+    // Otherwise, use existing logic
     return filteredRequests.filter(
       (r) =>
         r.status === "approved" ||
@@ -589,7 +595,7 @@ function RequestDialog({
         r.status === "waitlisted" ||
         r.status === "cancellation_pending"
     );
-  }, [filteredRequests]);
+  }, [filteredRequests, viewMode]);
 
   // Find the user's specific request for the selected date
   const userRequest = useMemo(() => {
@@ -869,7 +875,7 @@ function RequestDialog({
     // as they are processed by seniority and will be waitlisted if needed
     if (isSixMonthRequest) {
       // Disable if there's already a six-month request or no available days
-      const isDisabled = (stats?.available.pld ?? 0) <= 0 || isSubmitting || hasSixMonthRequest;
+      const isDisabled = (timeStats?.available.pld ?? 0) <= 0 || isSubmitting || hasSixMonthRequest;
       return {
         onPress: () => handleSubmit("PLD"),
         disabled: isDisabled,
@@ -882,7 +888,7 @@ function RequestDialog({
     // - Submission in progress
     // - User already has a request for this date (handled by showing Cancel button)
     // DO NOT disable for full days as that prevents waitlisting
-    const isDisabled = (stats?.available.pld ?? 0) <= 0 || isSubmitting; // Remove hasExistingRequest check
+    const isDisabled = (timeStats?.available.pld ?? 0) <= 0 || isSubmitting; // Remove hasExistingRequest check
 
     return {
       onPress: () => handleSubmit("PLD"),
@@ -890,7 +896,7 @@ function RequestDialog({
       loadingState: isSubmitting,
     };
   }, [
-    stats?.available.pld,
+    timeStats?.available.pld, // Update dependency
     isSubmitting,
     handleSubmit,
     hasSixMonthRequest, // Keep this for six-month logic
@@ -902,7 +908,7 @@ function RequestDialog({
     // as they are processed by seniority and will be waitlisted if needed
     if (isSixMonthRequest) {
       // Disable if there's already a six-month request or no available days
-      const isDisabled = (stats?.available.sdv ?? 0) <= 0 || isSubmitting || hasSixMonthRequest;
+      const isDisabled = (timeStats?.available.sdv ?? 0) <= 0 || isSubmitting || hasSixMonthRequest;
       return {
         onPress: () => handleSubmit("SDV"),
         disabled: isDisabled,
@@ -915,7 +921,7 @@ function RequestDialog({
     // - Submission in progress
     // - User already has a request for this date (handled by showing Cancel button)
     // DO NOT disable for full days as that prevents waitlisting
-    const isDisabled = (stats?.available.sdv ?? 0) <= 0 || isSubmitting; // Remove hasExistingRequest check
+    const isDisabled = (timeStats?.available.sdv ?? 0) <= 0 || isSubmitting; // Remove hasExistingRequest check
 
     return {
       onPress: () => handleSubmit("SDV"),
@@ -923,7 +929,7 @@ function RequestDialog({
       loadingState: isSubmitting,
     };
   }, [
-    stats?.available.sdv,
+    timeStats?.available.sdv, // Update dependency
     isSubmitting,
     handleSubmit,
     hasSixMonthRequest, // Keep this for six-month logic
@@ -1039,61 +1045,46 @@ function RequestDialog({
   };
 
   // Add new state for dialog loading
-  const [isDialogLoading, setIsDialogLoading] = useState(false);
+  // const [isDialogLoading, setIsDialogLoading] = useState(false);
+  // const initialLoadCompletedRef = useRef(false);
 
   // Add a ref to track initial load
-  const initialLoadCompletedRef = useRef(false);
+  // const initialLoadCompletedRef = useRef(false);
 
   // Modify the effect that handles dialog visibility
-  useEffect(() => {
-    if (isVisible) {
-      const loadFreshStats = async () => {
-        // Only show loading and force refresh on initial open
-        if (!initialLoadCompletedRef.current) {
-          setIsDialogLoading(true);
-          try {
-            console.log("[RequestDialog] Dialog opened, performing initial stats refresh");
-            invalidateCache(); // Clear any cached stats
-            await refreshMyTimeStats(true); // Force fresh stats
-            initialLoadCompletedRef.current = true;
-          } catch (error) {
-            console.error("[RequestDialog] Error refreshing stats:", error);
-            Toast.show({
-              type: "error",
-              text1: "Error",
-              text2: "Failed to load current statistics",
-              position: "bottom",
-            });
-          } finally {
-            setIsDialogLoading(false);
-          }
-        } else {
-          console.log("[RequestDialog] Dialog reopened, using existing stats");
-        }
-      };
-
-      loadFreshStats();
-    } else {
-      // Reset the initial load flag when dialog closes
-      initialLoadCompletedRef.current = false;
-    }
-  }, [isVisible, refreshMyTimeStats, invalidateCache]);
-
-  // Add effect to handle realtime updates
-  useEffect(() => {
-    if (isVisible && !isDialogLoading) {
-      // Update stats without showing loading state
-      const updateStats = async () => {
-        try {
-          await refreshMyTimeStats(false); // Don't force refresh, use cache if valid
-        } catch (error) {
-          console.error("[RequestDialog] Error updating stats from realtime:", error);
-        }
-      };
-
-      updateStats();
-    }
-  }, [isVisible, localRequests, isDialogLoading, refreshMyTimeStats]);
+  // useEffect(() => {
+  //   if (isVisible) {
+  //     const loadFreshStats = async () => {
+  //       // Only show loading and force refresh on initial open
+  //       if (!initialLoadCompletedRef.current) {
+  //         setIsDialogLoading(true);
+  //         try {
+  //           console.log("[RequestDialog] Dialog opened, performing initial stats refresh");
+  //           invalidateCache(); // Clear any cached stats
+  //           await refreshMyTimeStats(true); // Force fresh stats
+  //           initialLoadCompletedRef.current = true;
+  //         } catch (error) {
+  //           console.error("[RequestDialog] Error refreshing stats:", error);
+  //           Toast.show({
+  //             type: "error",
+  //             text1: "Error",
+  //             text2: "Failed to load current statistics",
+  //             position: "bottom",
+  //           });
+  //         } finally {
+  //           setIsDialogLoading(false);
+  //         }
+  //       } else {
+  //         console.log("[RequestDialog] Dialog reopened, using existing stats");
+  //       }
+  //     };
+  //
+  //     loadFreshStats();
+  //   } else {
+  //     // Reset the initial load flag when dialog closes
+  //     initialLoadCompletedRef.current = false;
+  //   }
+  // }, [isVisible, refreshMyTimeStats, invalidateCache]);
 
   // Add loading indicator to the dialog content
   return (
@@ -1127,14 +1118,22 @@ function RequestDialog({
             </View>
           )}
 
-          <View style={dialogStyles.remainingDaysContainer}>
-            <ThemedText style={dialogStyles.remainingDaysText}>
-              Available PLD Days: {stats?.available.pld ?? 0}
-            </ThemedText>
-            <ThemedText style={dialogStyles.remainingDaysText}>
-              Available SDV Days: {stats?.available.sdv ?? 0}
-            </ThemedText>
-          </View>
+          {/* Conditionally render stats or loading indicator */}
+          {isMyTimeLoading ? (
+            <View style={[dialogStyles.remainingDaysContainer, dialogStyles.loadingContainer]}>
+              <ActivityIndicator size="small" color={Colors[theme].tint} />
+              <ThemedText style={dialogStyles.loadingText}>Loading available days...</ThemedText>
+            </View>
+          ) : (
+            <View style={dialogStyles.remainingDaysContainer}>
+              <ThemedText style={dialogStyles.remainingDaysText}>
+                Available PLD Days: {timeStats?.available.pld ?? 0}
+              </ThemedText>
+              <ThemedText style={dialogStyles.remainingDaysText}>
+                Available SDV Days: {timeStats?.available.sdv ?? 0}
+              </ThemedText>
+            </View>
+          )}
 
           <ScrollView style={dialogStyles.requestList}>
             {/* Approved/Pending/Cancellation Pending Requests */}
@@ -1254,7 +1253,7 @@ function RequestDialog({
                   </TouchableOpacity>
                 )
               ) : // User does NOT have an existing six-month request, show either one or both buttons
-              (stats?.available.pld ?? 0) <= 0 && (stats?.available.sdv ?? 0) > 0 ? (
+              (timeStats?.available.pld ?? 0) <= 0 && (timeStats?.available.sdv ?? 0) > 0 ? (
                 // Only SDV is available, show one button that takes up full width
                 <TouchableOpacity
                   style={[
@@ -1269,7 +1268,7 @@ function RequestDialog({
                 >
                   <ThemedText style={dialogStyles.modalButtonText}>Request SDV (Six Month)</ThemedText>
                 </TouchableOpacity>
-              ) : (stats?.available.sdv ?? 0) <= 0 && (stats?.available.pld ?? 0) > 0 ? (
+              ) : (timeStats?.available.sdv ?? 0) <= 0 && (timeStats?.available.pld ?? 0) > 0 ? (
                 // Only PLD is available, show one button that takes up full width
                 <TouchableOpacity
                   style={[
@@ -1361,14 +1360,14 @@ function RequestDialog({
               // User has NO existing regular request, show PLD/SDV buttons
               <>
                 {Platform.OS === "web" ? (
-                  (stats?.available.pld ?? 0) <= 0 && (stats?.available.sdv ?? 0) > 0 ? (
+                  (timeStats?.available.pld ?? 0) <= 0 && (timeStats?.available.sdv ?? 0) > 0 ? (
                     // Only SDV is available, show one button that takes up full width
                     <TouchableOpacity
                       style={[
                         dialogStyles.modalButton,
                         dialogStyles.submitButton,
                         { flex: 2 }, // Take up full width (space of both buttons)
-                        approvedPendingRequests.length >= currentAllotment.max && (stats?.available.sdv ?? 0) > 0
+                        approvedPendingRequests.length >= currentAllotment.max && (timeStats?.available.sdv ?? 0) > 0
                           ? dialogStyles.waitlistButton
                           : null,
                         sdvButtonProps.disabled && dialogStyles.disabledButton,
@@ -1381,14 +1380,14 @@ function RequestDialog({
                         {approvedPendingRequests.length >= currentAllotment.max ? "Join Waitlist (SDV)" : "Request SDV"}
                       </ThemedText>
                     </TouchableOpacity>
-                  ) : (stats?.available.sdv ?? 0) <= 0 && (stats?.available.pld ?? 0) > 0 ? (
+                  ) : (timeStats?.available.sdv ?? 0) <= 0 && (timeStats?.available.pld ?? 0) > 0 ? (
                     // Only PLD is available, show one button that takes up full width
                     <TouchableOpacity
                       style={[
                         dialogStyles.modalButton,
                         dialogStyles.submitButton,
                         { flex: 2 }, // Take up full width (space of both buttons)
-                        approvedPendingRequests.length >= currentAllotment.max && (stats?.available.pld ?? 0) > 0
+                        approvedPendingRequests.length >= currentAllotment.max && (timeStats?.available.pld ?? 0) > 0
                           ? dialogStyles.waitlistButton
                           : null,
                         submitButtonProps.disabled && dialogStyles.disabledButton,
@@ -1408,7 +1407,7 @@ function RequestDialog({
                         style={[
                           dialogStyles.modalButton,
                           dialogStyles.submitButton,
-                          approvedPendingRequests.length >= currentAllotment.max && (stats?.available.pld ?? 0) > 0
+                          approvedPendingRequests.length >= currentAllotment.max && (timeStats?.available.pld ?? 0) > 0
                             ? dialogStyles.waitlistButton
                             : null,
                           submitButtonProps.disabled && dialogStyles.disabledButton,
@@ -1428,7 +1427,7 @@ function RequestDialog({
                         style={[
                           dialogStyles.modalButton,
                           dialogStyles.submitButton,
-                          approvedPendingRequests.length >= currentAllotment.max && (stats?.available.sdv ?? 0) > 0
+                          approvedPendingRequests.length >= currentAllotment.max && (timeStats?.available.sdv ?? 0) > 0
                             ? dialogStyles.waitlistButton
                             : null,
                           sdvButtonProps.disabled && dialogStyles.disabledButton,
@@ -1445,14 +1444,14 @@ function RequestDialog({
                       </TouchableOpacity>
                     </>
                   )
-                ) : (stats?.available.pld ?? 0) <= 0 && (stats?.available.sdv ?? 0) > 0 ? (
+                ) : (timeStats?.available.pld ?? 0) <= 0 && (timeStats?.available.sdv ?? 0) > 0 ? (
                   // Only SDV is available, show one button that takes up full width
                   <TouchableOpacity
                     style={[
                       dialogStyles.modalButton,
                       dialogStyles.submitButton,
                       { flex: 2 }, // Take up full width (space of both buttons)
-                      approvedPendingRequests.length >= currentAllotment.max && (stats?.available.sdv ?? 0) > 0
+                      approvedPendingRequests.length >= currentAllotment.max && (timeStats?.available.sdv ?? 0) > 0
                         ? dialogStyles.waitlistButton
                         : null,
                       sdvButtonProps.disabled && dialogStyles.disabledButton,
@@ -1465,14 +1464,14 @@ function RequestDialog({
                       {approvedPendingRequests.length >= currentAllotment.max ? "Join Waitlist (SDV)" : "Request SDV"}
                     </ThemedText>
                   </TouchableOpacity>
-                ) : (stats?.available.sdv ?? 0) <= 0 && (stats?.available.pld ?? 0) > 0 ? (
+                ) : (timeStats?.available.sdv ?? 0) <= 0 && (timeStats?.available.pld ?? 0) > 0 ? (
                   // Only PLD is available, show one button that takes up full width
                   <TouchableOpacity
                     style={[
                       dialogStyles.modalButton,
                       dialogStyles.submitButton,
                       { flex: 2 }, // Take up full width (space of both buttons)
-                      approvedPendingRequests.length >= currentAllotment.max && (stats?.available.pld ?? 0) > 0
+                      approvedPendingRequests.length >= currentAllotment.max && (timeStats?.available.pld ?? 0) > 0
                         ? dialogStyles.waitlistButton
                         : null,
                       submitButtonProps.disabled && dialogStyles.disabledButton,
@@ -1492,7 +1491,7 @@ function RequestDialog({
                       style={[
                         dialogStyles.modalButton,
                         dialogStyles.submitButton,
-                        approvedPendingRequests.length >= currentAllotment.max && (stats?.available.pld ?? 0) > 0
+                        approvedPendingRequests.length >= currentAllotment.max && (timeStats?.available.pld ?? 0) > 0
                           ? dialogStyles.waitlistButton
                           : null,
                         submitButtonProps.disabled && dialogStyles.disabledButton,
@@ -1510,7 +1509,7 @@ function RequestDialog({
                       style={[
                         dialogStyles.modalButton,
                         dialogStyles.submitButton,
-                        approvedPendingRequests.length >= currentAllotment.max && (stats?.available.sdv ?? 0) > 0
+                        approvedPendingRequests.length >= currentAllotment.max && (timeStats?.available.sdv ?? 0) > 0
                           ? dialogStyles.waitlistButton
                           : null,
                         sdvButtonProps.disabled && dialogStyles.disabledButton,
@@ -1529,8 +1528,8 @@ function RequestDialog({
             )}
           </View>
 
-          {/* Add the Adjust Allocation button for admins */}
-          {isAdmin && (
+          {/* Add the Adjust Allocation button for admins, conditionally based on viewMode */}
+          {isAdmin && (viewMode === "request" || viewMode === "nearPast") && (
             <View style={dialogStyles.adminButtonContainer}>
               <TouchableOpacity
                 style={[dialogStyles.modalButton, dialogStyles.adjustButton]}
@@ -1539,16 +1538,6 @@ function RequestDialog({
               >
                 <ThemedText style={dialogStyles.modalButtonText}>Adjust Allocation</ThemedText>
               </TouchableOpacity>
-            </View>
-          )}
-
-          {/* Loading overlay */}
-          {isDialogLoading && (
-            <View style={dialogStyles.loadingOverlay}>
-              <View style={dialogStyles.loadingContent}>
-                <ActivityIndicator size="large" color={Colors[theme].tint} />
-                <ThemedText style={dialogStyles.loadingText}>Loading current statistics...</ThemedText>
-              </View>
             </View>
           )}
         </View>
@@ -1896,10 +1885,10 @@ export default function CalendarScreen() {
     setSelectedDate,
     allotments: pldAllotments,
     yearlyAllotments,
-    loadInitialData: loadPldData, // Renamed to avoid conflict
     isInitialized: isPldInitialized,
     isLoading: isPldLoading,
     isDateSelectable,
+    error: pldError,
   } = useCalendarStore();
 
   // Vacation Calendar Store Hook
@@ -1907,92 +1896,20 @@ export default function CalendarScreen() {
     selectedWeek,
     requests: vacationRequests,
     allotments: vacationAllotments,
-    loadInitialData: loadVacationData, // Renamed to avoid conflict
     isInitialized: isVacationInitialized,
     isLoading: isVacationLoading,
     setSelectedWeek,
+    error: vacationError,
   } = useVacationCalendarStore();
 
   // MyTime Hook
   const { stats, initialize: refreshMyTimeStats } = useMyTime();
 
+  // Combined store errors take precedence over component errors
+  const displayError = pldError || vacationError || error;
+
   // Derive combined loading state from stores
   const isLoading = isPldLoading || isVacationLoading;
-
-  // --- Data Loading Logic (called by focus effect) ---
-  const loadDataSafely = useCallback(async () => {
-    // Prevent concurrent loads using ref
-    if (isLoadingRef.current) {
-      console.log("[CalendarScreen] Already loading data (ref check).");
-      return;
-    }
-    // *** Ensure member and calendar_id exist before proceeding ***
-    if (!user || !member || !member.calendar_id) {
-      console.log("[CalendarScreen] No user, member, or member calendar_id, skipping load.");
-      // Set error or handle appropriately if this state is unexpected after initialization
-      if (isPldInitialized && isVacationInitialized) {
-        // Only error if stores thought they were ready
-        setError("User or calendar information missing unexpectedly.");
-      }
-      return;
-    }
-
-    // *** Store calendarId locally for use in Promise.all ***
-    const calendarId = member.calendar_id;
-    console.log("[CalendarScreen] Starting data load for calendar:", calendarId);
-    isLoadingRef.current = true;
-    setError(null); // Clear previous errors
-
-    try {
-      const now = new Date();
-      // Use the specific date ranges calculated in useAuth
-      // PLD/SDV Range: Today -> 6 months from now
-      const pldStartDate = format(now, "yyyy-MM-dd");
-      const pldEndDate = format(new Date(now.getFullYear(), now.getMonth() + 6, now.getDate()), "yyyy-MM-dd");
-      // Vacation Range: Jan 1st -> Dec 31st of current year
-      const currentYear = now.getFullYear();
-      const vacationStartDate = `${currentYear}-01-01`;
-      const vacationEndDate = `${currentYear}-12-31`;
-
-      // Call the renamed load functions from the stores, passing calendarId
-      await Promise.all([
-        // *** Pass calendarId to loadPldData ***
-        loadPldData(pldStartDate, pldEndDate, calendarId),
-        // *** Pass calendarId to loadVacationData ***
-        loadVacationData(vacationStartDate, vacationEndDate, calendarId),
-      ]);
-      console.log("[CalendarScreen] Data loaded/refreshed successfully for both calendars");
-    } catch (err) {
-      console.error("[CalendarScreen] Error loading data:", err);
-      setError(err instanceof Error ? err.message : "Failed to load calendar data");
-    } finally {
-      isLoadingRef.current = false; // Release the lock
-    }
-    // *** Add member dependency explicitly ***
-  }, [user, member, loadPldData, loadVacationData]);
-
-  // --- Effects ---
-
-  // Effect for refreshing data on screen focus (after initial load)
-  useFocusEffect(
-    useCallback(() => {
-      const now = Date.now();
-      // Only refresh if stores are initialized and cooldown passed
-      if (isPldInitialized && isVacationInitialized && now - lastRefreshTimeRef.current > REFRESH_COOLDOWN) {
-        console.log("[CalendarScreen] Screen focused, refreshing data.");
-        loadDataSafely(); // Call the combined load function
-        lastRefreshTimeRef.current = now;
-      } else {
-        console.log("[CalendarScreen] Screen focused, skipping refresh:", {
-          isPldInitialized,
-          isVacationInitialized,
-          timeSinceLastRefresh: now - lastRefreshTimeRef.current,
-          cooldown: REFRESH_COOLDOWN,
-          isLoadingRef: isLoadingRef.current,
-        });
-      }
-    }, [isPldInitialized, isVacationInitialized, loadDataSafely]) // Dependencies only related to refresh logic
-  );
 
   // Effect to fetch calendar name (UI specific, can stay)
   useEffect(() => {
@@ -2013,25 +1930,6 @@ export default function CalendarScreen() {
     fetchCalendarName();
   }, [member?.calendar_id]);
 
-  // Effect to set up real-time subscriptions for calendar updates
-  useEffect(() => {
-    if (!member?.calendar_id || !isPldInitialized) {
-      console.log("[CalendarScreen] Not setting up subscriptions - missing calendar_id or store not initialized");
-      return;
-    }
-
-    console.log("[CalendarScreen] Setting up persistent calendar subscriptions");
-    const subscription = setupCalendarSubscriptions();
-
-    // Return cleanup function
-    return () => {
-      console.log("[CalendarScreen] Cleaning up calendar subscriptions");
-      subscription.unsubscribe();
-    };
-  }, [member?.calendar_id, isPldInitialized]);
-
-  // --- Handlers ---
-
   // Create a stable key for calendar type switching
   const calendarTypeKey = useMemo(
     () => `${activeCalendar}-calendar-${member?.calendar_id}`,
@@ -2043,6 +1941,26 @@ export default function CalendarScreen() {
     setCurrentDate(newDate);
     console.log(`[CalendarScreen] Updating current view to: ${newDate}`);
   }, []);
+
+  // Handler for day selection
+  const handleDayPress = useCallback(
+    (date: string) => {
+      console.log(`[CalendarScreen] Day pressed: ${date}`);
+
+      if (activeCalendar === "PLD/SDV") {
+        setSelectedDate(date);
+        // Always attempt to show the dialog for PLD/SDV if a date is pressed
+        // The dialog itself will handle view modes (past/request)
+        // The Calendar component should prevent pressing truly unavailable dates (>6 months)
+        setRequestDialogVisible(true);
+      } else if (activeCalendar === "Vacation") {
+        setSelectedWeek(date);
+        // Optionally open a dialog for vacation weeks too, if applicable
+        // setRequestDialogVisible(true);
+      }
+    },
+    [activeCalendar, setSelectedDate, setSelectedWeek] // Removed isDateSelectable dependency
+  );
 
   // Handler for submitting PLD/SDV requests
   const handleRequestSubmit = async (leaveType: "PLD" | "SDV") => {
@@ -2134,7 +2052,7 @@ export default function CalendarScreen() {
   // --- Conditional Rendering ---
 
   // Show loading indicator until both stores are initialized by useAuth
-  const showInitialLoading = !isPldInitialized || !isVacationInitialized;
+  const showInitialLoading = isLoading && (!isPldInitialized || !isVacationInitialized);
   if (showInitialLoading) {
     return (
       <ThemedView style={styles.centeredContainer}>
@@ -2145,13 +2063,11 @@ export default function CalendarScreen() {
   }
 
   // Show error state if error occurred during loading
-  if (error) {
+  if (displayError) {
     return (
       <ThemedView style={styles.centeredContainer}>
         <Ionicons name="warning-outline" size={48} color={Colors[theme].error} />
-        <ThemedText style={styles.errorText}>Error: {error}</ThemedText>
-        {/* Optional: Add a retry button? Maybe call loadDataSafely? */}
-        <Button title="Retry" onPress={() => loadDataSafely()} color={Colors[theme].tint} />
+        <ThemedText style={styles.errorText}>Error: {displayError}</ThemedText>
       </ThemedView>
     );
   }
@@ -2206,31 +2122,57 @@ export default function CalendarScreen() {
       <ScrollView style={styles.scrollView}>
         {isLoading && <ActivityIndicator style={{ marginTop: 20 }} size="small" color={Colors[theme].textDim} />}
         {activeCalendar === "PLD/SDV" ? (
-          <Calendar
-            key={calendarTypeKey}
-            current={currentDate}
-            onDayActuallyPressed={updateCurrentCalendarView} // ADDED PROP
-            // Pass relevant PLD/SDV props from useCalendarStore
-          />
+          <Calendar key={calendarTypeKey} current={currentDate} onDayActuallyPressed={handleDayPress} />
         ) : (
           <VacationCalendar
             key={calendarTypeKey}
             current={currentDate}
-            // Pass relevant Vacation props from useVacationCalendarStore
+            onDayActuallyPressed={(date) => updateCurrentCalendarView(date)}
           />
         )}
       </ScrollView>
 
-      {/* Request Button - Only for PLD/SDV and if a date is selected and selectable */}
-      {activeCalendar === "PLD/SDV" && selectedDate && isDateSelectable(selectedDate) && (
-        <TouchableOpacity
-          style={styles.requestButton}
-          onPress={() => setRequestDialogVisible(true)}
-          disabled={!isPldInitialized} // Disable if PLD store isn't ready
-        >
-          <ThemedText style={styles.requestButtonText}>Request Day / View Requests</ThemedText>
-        </TouchableOpacity>
-      )}
+      {/* Determine button and dialog behavior based on selected date */}
+      {activeCalendar === "PLD/SDV" &&
+        selectedDate &&
+        (() => {
+          const now = startOfDay(new Date());
+          const fortyEightHoursFromNow = startOfDay(addDays(now, 2));
+          let selectedDateObj: Date | null = null;
+          try {
+            selectedDateObj = parseISO(selectedDate);
+          } catch (e) {
+            /* ignore parsing error */
+          }
+
+          // Determine view mode for the dialog
+          let viewMode: "past" | "request" | "nearPast" = "request";
+          if (selectedDateObj && isBefore(selectedDateObj, now)) {
+            viewMode = "past";
+          } else if (selectedDateObj && isBefore(selectedDateObj, fortyEightHoursFromNow)) {
+            viewMode = "nearPast";
+          }
+
+          // Determine button text
+          const buttonText =
+            viewMode === "past" || viewMode === "nearPast" ? "View Past Requests" : "Request Day / View Requests";
+
+          // Always render the button if a date is selected.
+          // The underlying Calendar component prevents pressing >6 month dates.
+          return (
+            <TouchableOpacity
+              style={styles.requestButton}
+              onPress={() => setRequestDialogVisible(true)} // Already set in handleDayPress, but safe to keep
+              disabled={!isPldInitialized} // Disable if PLD store isn't ready
+            >
+              <ThemedText style={styles.requestButtonText}>{buttonText}</ThemedText>
+            </TouchableOpacity>
+          );
+
+          // NOTE: Removed the logic that showed the "not available" banner here,
+          // as handleDayPress now always opens the dialog for selected past/present dates.
+          // The visual marking comes from getDateAvailability + Calendar component.
+        })()}
 
       {/* Request Button - Only for Vacation if a week is selected */}
       {activeCalendar === "Vacation" && selectedWeek && (
@@ -2243,32 +2185,48 @@ export default function CalendarScreen() {
         </TouchableOpacity>
       )}
 
-      {/* Show message if date selected but not requestable - PLD/SDV */}
-      {activeCalendar === "PLD/SDV" && selectedDate && !isDateSelectable(selectedDate) && (
-        <ThemedView style={styles.notAvailableBanner}>
-          <ThemedText style={styles.notAvailableText}>This date is not available for requests.</ThemedText>
-        </ThemedView>
-      )}
-
       {/* Request Dialog for PLD/SDV - Render conditionally */}
-      {requestDialogVisible && activeCalendar === "PLD/SDV" && selectedDate && (
-        <RequestDialog
-          isVisible={requestDialogVisible}
-          onClose={() => setRequestDialogVisible(false)}
-          onSubmit={handleRequestSubmit}
-          selectedDate={selectedDate || ""}
-          allotments={{
-            max: selectedDate
-              ? pldAllotments[selectedDate] ?? yearlyAllotments[new Date(selectedDate).getFullYear()] ?? 0
-              : 0,
-            current: selectedDate && pldRequests[selectedDate] ? pldRequests[selectedDate].length : 0,
-          }}
-          requests={selectedDate && pldRequests[selectedDate] ? pldRequests[selectedDate] : []}
-          calendarType="PLD/SDV"
-          calendarId={member?.calendar_id || ""}
-          onAdjustmentComplete={handleAdjustmentComplete}
-        />
-      )}
+      {requestDialogVisible &&
+        activeCalendar === "PLD/SDV" &&
+        selectedDate &&
+        (() => {
+          const now = startOfDay(new Date());
+          const fortyEightHoursFromNow = startOfDay(addDays(now, 2));
+          let selectedDateObj: Date | null = null;
+          try {
+            selectedDateObj = parseISO(selectedDate);
+          } catch (e) {
+            /* ignore parsing error */
+          }
+
+          // Determine view mode for the dialog
+          let viewMode: "past" | "request" | "nearPast" = "request";
+          if (selectedDateObj && isBefore(selectedDateObj, now)) {
+            viewMode = "past";
+          } else if (selectedDateObj && isBefore(selectedDateObj, fortyEightHoursFromNow)) {
+            viewMode = "nearPast";
+          }
+
+          return (
+            <RequestDialog
+              isVisible={requestDialogVisible}
+              onClose={() => setRequestDialogVisible(false)}
+              onSubmit={handleRequestSubmit}
+              selectedDate={selectedDate || ""}
+              allotments={{
+                max: selectedDate
+                  ? pldAllotments[selectedDate] ?? yearlyAllotments[new Date(selectedDate).getFullYear()] ?? 0
+                  : 0,
+                current: selectedDate && pldRequests[selectedDate] ? pldRequests[selectedDate].length : 0,
+              }}
+              requests={selectedDate && pldRequests[selectedDate] ? pldRequests[selectedDate] : []}
+              calendarType="PLD/SDV"
+              calendarId={member?.calendar_id || ""}
+              onAdjustmentComplete={handleAdjustmentComplete}
+              viewMode={viewMode} // Pass the viewMode prop
+            />
+          );
+        })()}
 
       {/* Request Dialog - Vacation */}
       {activeCalendar === "Vacation" && (
@@ -2299,7 +2257,6 @@ export default function CalendarScreen() {
     </ThemedView>
   );
 }
-// --- END CORRECTED CalendarScreen Component ---
 
 const styles = StyleSheet.create({
   container: {
@@ -2410,6 +2367,92 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     textAlign: "center",
   } as TextStyle,
+  refreshingOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 1000,
+  } as ViewStyle,
+  refreshingText: {
+    color: Colors.light.textDim,
+    fontWeight: "600",
+    textAlign: "center",
+  } as TextStyle,
+  todayButton: {
+    backgroundColor: Colors.light.tint,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    minWidth: 80,
+    alignItems: "center",
+  } as ViewStyle,
+  todayButtonText: {
+    color: Colors.dark.buttonText,
+    fontWeight: "600",
+  } as TextStyle,
+  typeSelector: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: Colors.dark.background,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.dark.border,
+  } as ViewStyle,
+  typeSelectorButton: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  } as ViewStyle,
+  typeSelectorText: {
+    fontSize: 14,
+    fontWeight: "500",
+  } as TextStyle,
+  header: {
+    width: "100%",
+    padding: 16,
+    backgroundColor: Colors.dark.background,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.dark.border,
+  } as ViewStyle,
+  headerTitle: {
+    fontSize: 24,
+    fontWeight: "700",
+    color: Colors.dark.text,
+  } as TextStyle,
+  calendarName: {
+    fontSize: 18,
+    fontWeight: "500",
+    color: Colors.dark.textDim,
+    marginTop: 8,
+  } as TextStyle,
+  errorDescription: {
+    color: Colors.light.textDim,
+    fontWeight: "500",
+    textAlign: "center",
+    marginBottom: 16,
+  } as TextStyle,
+  retryButton: {
+    backgroundColor: Colors.light.tint,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignItems: "center",
+  } as ViewStyle,
+  retryButtonText: {
+    color: "white",
+    fontWeight: "600",
+  } as TextStyle,
 });
 
 const dialogStyles = StyleSheet.create({
@@ -2419,7 +2462,7 @@ const dialogStyles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    backgroundColor: "rgba(0, 0, 0, 0.7)",
     justifyContent: "center",
     alignItems: "center",
     zIndex: 1000,

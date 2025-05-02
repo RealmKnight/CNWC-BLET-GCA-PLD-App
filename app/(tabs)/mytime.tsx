@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from "react";
+import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import {
   StyleSheet,
   useWindowDimensions,
@@ -448,118 +448,46 @@ function VacationRequestRow({ request }: VacationRequestRowProps) {
   );
 }
 
-/**
- * A client-only component to render the stats section
- * This prevents hydration mismatches by only rendering on the client side
- */
-function ClientOnlyStats({
-  stats,
-  vacationStats,
-  cardWidth,
-  colorScheme,
-  onPaidInLieuPress,
-}: {
-  stats: any;
-  vacationStats: any | null;
-  cardWidth: number;
-  colorScheme: string;
-  onPaidInLieuPress: () => void;
-}) {
-  const [isMounted, setIsMounted] = useState(false);
-
-  useIsomorphicLayoutEffect(() => {
-    setIsMounted(true);
-  }, []);
-
-  if (!isMounted) return <DefaultLoadingFallback />;
-
-  return (
-    <>
-      {/* Current Allocations Card */}
-      <ThemedView style={[styles.card, { width: cardWidth }]}>
-        <ThemedView style={styles.sectionHeader}>
-          <ThemedText style={styles.sectionTitle}>Current Single Day Allocations</ThemedText>
-        </ThemedView>
-        <ThemedView style={styles.tableHeader}>
-          <ThemedText style={styles.headerLabel}>Type</ThemedText>
-          <ThemedText style={styles.headerValue}>PLD</ThemedText>
-          <ThemedText style={styles.headerValue}>SDV</ThemedText>
-        </ThemedView>
-
-        <LeaveRow label="Total" pldValue={stats.total.pld} sdvValue={stats.total.sdv} />
-        <LeaveRow label="Rolled Over" pldValue={stats.rolledOver.pld} />
-        <LeaveRow label="Available" pldValue={stats.available.pld} sdvValue={stats.available.sdv} />
-        <LeaveRow label="Requested/Pending" pldValue={stats.requested.pld} sdvValue={stats.requested.sdv} />
-        <LeaveRow label="Waitlisted" pldValue={stats.waitlisted.pld} sdvValue={stats.waitlisted.sdv} />
-        <LeaveRow label="Approved" pldValue={stats.approved.pld} sdvValue={stats.approved.sdv} />
-        <LeaveRow
-          label="Paid in Lieu"
-          pldValue={stats.paidInLieu.pld}
-          sdvValue={stats.paidInLieu.sdv}
-          showIcon={true}
-          onIconPress={onPaidInLieuPress}
-        />
-      </ThemedView>
-
-      {/* Vacation Summary Card */}
-      {vacationStats && (
-        <ThemedView style={[styles.card, { width: cardWidth, marginTop: 24 }]}>
-          <ThemedView style={styles.sectionHeader}>
-            <ThemedText style={styles.sectionTitle}>Vacation Summary</ThemedText>
-          </ThemedView>
-
-          <VacationSummaryRow label="Total Vacation Weeks" value={vacationStats.totalWeeks} />
-          <VacationSummaryRow label="Split Weeks (converted to SDVs)" value={vacationStats.splitWeeks} />
-          <VacationSummaryRow label="Weeks to Bid" value={vacationStats.weeksToBid} />
-          <VacationSummaryRow label="Approved Vacation Requests" value={vacationStats.approvedWeeks} />
-          <VacationSummaryRow label="Remaining Weeks to Bid" value={vacationStats.remainingWeeks} highlight={true} />
-        </ThemedView>
-      )}
-    </>
-  );
-}
-
 export default function MyTimeScreen() {
-  const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const { width } = useWindowDimensions();
-  const [showPaidInLieuModal, setShowPaidInLieuModal] = useState(false);
-  const [selectedType, setSelectedType] = useState<"PLD" | "SDV" | null>(null);
-  const [showCancelModal, setShowCancelModal] = useState(false);
-  const [selectedRequest, setSelectedRequest] = useState<TimeOffRequest | null>(null);
-  const [isCancelling, setIsCancelling] = useState(false);
-  const [appState, setAppState] = useState(AppState.currentState);
-  const didSkipInitialFocusRef = useRef(false);
-  const [dateRange, setDateRange] = useState({ minDate: "", maxDate: "" });
+  const insets = useSafeAreaInsets();
+  const { member } = useAuth();
 
-  // Get auth and store state
-  const { session } = useAuth();
-  const member = useUserStore((state) => state.member);
-
+  // Get data from the centralized myTime store instead of managing local state
   const {
-    stats,
+    timeStats,
     vacationStats,
-    requests,
+    timeOffRequests,
     vacationRequests,
     isLoading,
+    isRefreshing,
     error,
-    isInitialized,
-    initialize,
+    refreshData,
     requestPaidInLieu,
     cancelRequest,
     cancelSixMonthRequest,
-    syncStatus,
   } = useMyTime();
 
-  // Calculate responsive card width
-  const cardWidth = Math.min(width * 0.9, 600);
-
-  // Add mounted state for client-only rendering
+  // Local UI state (non-data related)
+  const [isPaidInLieuVisible, setIsPaidInLieuVisible] = useState(false);
+  const [selectedRequest, setSelectedRequest] = useState<TimeOffRequest | null>(null);
+  const [isCancelModalVisible, setIsCancelModalVisible] = useState(false);
+  const [isCancellingRequest, setIsCancellingRequest] = useState(false);
+  // Add state to track if component is mounted and force re-renders
   const [isMounted, setIsMounted] = useState(false);
+  const mountedRef = useRef(false);
+  const [renderCounter, setRenderCounter] = useState(0);
+  const refreshAttempts = useRef(0);
 
-  // Get safe date range for date picker
+  // Date range for paid in lieu
+  const [dateRange, setDateRange] = useState({ minDate: "", maxDate: "" });
+
+  // Debug logs to track component lifecycle
+  console.log(`[MyTimeScreen] Rendering cycle #${renderCounter}, timeStats present: ${!!timeStats}`);
+
+  // Set date range on component mount
   useIsomorphicLayoutEffect(() => {
-    setIsMounted(true);
     // Calculate date range of ±2 weeks
     const now = new Date();
     const minDate = subWeeks(now, 2).toISOString();
@@ -567,57 +495,88 @@ export default function MyTimeScreen() {
     setDateRange({ minDate, maxDate });
   }, []);
 
-  // Force initialize on mount
+  // Improved mount effect with better logging
   useEffect(() => {
-    if (member?.id && !isInitialized) {
-      console.log("[MyTimeScreen] Member detected and hook not initialized, calling initialize");
-      initialize(true);
-    }
-  }, [member?.id, isInitialized, initialize]);
+    console.log("[MyTimeScreen] Component mounting");
+    setIsMounted(true);
+    mountedRef.current = true;
 
-  // Add AppState listener to refresh data when app comes back to foreground
-  useEffect(() => {
-    const subscription = AppState.addEventListener("change", (nextAppState) => {
-      if (nextAppState === "active" && member?.id && isInitialized) {
-        console.log("[MyTimeScreen] App came to foreground, refreshing data");
-        initialize(false); // Use false to respect cooldown period
-      }
-    });
+    // Force refresh data as soon as the component mounts, but only once
+    if (refreshAttempts.current === 0) {
+      console.log("[MyTimeScreen] Initial data load triggered");
+      refreshData(true);
+      refreshAttempts.current++;
+    }
 
     return () => {
-      subscription.remove();
+      console.log("[MyTimeScreen] Component unmounting");
+      setIsMounted(false);
+      mountedRef.current = false;
     };
-  }, [member?.id, initialize, isInitialized]);
+  }, [refreshData]);
 
-  // Handle focus events
+  const cardWidth = useMemo(() => {
+    return Math.min(width - 32, 480);
+  }, [width]);
+
+  // Add focus effect to refresh data when screen is focused - with cooldown
   useFocusEffect(
     React.useCallback(() => {
-      if (!didSkipInitialFocusRef.current) {
-        didSkipInitialFocusRef.current = true;
-        console.log("[MyTimeScreen] Skipping initial focus event refresh.");
-        return;
+      console.log("[MyTime] Screen focused, mounted:", mountedRef.current);
+      if (mountedRef.current && refreshAttempts.current > 0) {
+        console.log("[MyTime] Non-initial screen focus, refreshing data quietly");
+        refreshData(false); // Use non-user-initiated refresh on focus to avoid showing loading spinner
+      } else if (mountedRef.current) {
+        console.log("[MyTime] First focus, incrementing refresh attempts");
+        refreshAttempts.current++;
       }
-
-      if (!member?.id) {
-        console.log("[MyTimeScreen] Focus but no auth/member, skipping refresh attempt");
-        return;
-      }
-
-      // Only refresh if the hook is initialized
-      if (isInitialized) {
-        console.log("[MyTimeScreen] Screen focused, attempting refresh");
-        initialize(true); // Pass true to indicate it's a refresh
-      } else {
-        console.log("[MyTimeScreen] Screen focused, but hook not initialized. Skipping refresh.");
-      }
-    }, [member?.id, initialize, isInitialized])
+      return () => {};
+    }, [refreshData])
   );
 
-  // Memoize the filtered and sorted requests - MOVED BACK HERE
+  // Log when stats update for debugging and force render
+  useEffect(() => {
+    if (timeStats) {
+      console.log(
+        "[MyTimeScreen] Stats updated: available PLD:",
+        timeStats.available?.pld,
+        "mounted:",
+        mountedRef.current
+      );
+
+      // Force a re-render when stats update
+      if (mountedRef.current) {
+        setRenderCounter((prev) => prev + 1);
+      }
+    }
+  }, [timeStats]);
+
+  // Add use effect for more reliable stats presentation
+  const forceUpdate = useCallback(() => {
+    console.log("[MyTimeScreen] Force updating component...");
+    // This causes a component re-render without changing state
+    setRenderCounter((prev) => prev + 1);
+  }, []);
+
+  // If data doesn't appear within 1.5 seconds, force update
+  useEffect(() => {
+    if (!timeStats && !isLoading && mountedRef.current) {
+      const timer = setTimeout(() => {
+        console.log("[MyTimeScreen] Forced update due to missing stats");
+        forceUpdate();
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [timeStats, isLoading, forceUpdate]);
+
+  // Memoize the filtered and sorted requests - guard against empty data
   const { pendingAndApproved, waitlisted, sortedVacationRequests } = useMemo(() => {
+    // Ensure timeOffRequests is an array before filtering
+    const safeTimeOffRequests = Array.isArray(timeOffRequests) ? timeOffRequests : [];
+
     // Sort PLD/SDV/6mo requests
     const pendingAndApproved = sortRequestsByDate(
-      requests.filter(
+      safeTimeOffRequests.filter(
         (request) =>
           request.status === "pending" || request.status === "approved" || request.status === "cancellation_pending"
       )
@@ -627,19 +586,23 @@ export default function MyTimeScreen() {
     pendingAndApproved.future.sort((a, b) => safeCompareDate(a.request_date, b.request_date));
     pendingAndApproved.past.sort((a, b) => safeCompareDate(b.request_date, a.request_date, true));
 
-    const waitlisted = sortRequestsByDate(requests.filter((request) => request.status === "waitlisted"));
+    const waitlisted = sortRequestsByDate(safeTimeOffRequests.filter((request) => request.status === "waitlisted"));
     waitlisted.future.sort((a, b) => safeCompareDate(a.request_date, b.request_date));
     waitlisted.past.sort((a, b) => safeCompareDate(b.request_date, a.request_date, true));
 
-    const sortedVacationRequests = sortVacationRequestsByDate(vacationRequests);
+    // Ensure vacationRequests is an array before sorting
+    const safeVacationRequests = Array.isArray(vacationRequests) ? vacationRequests : [];
+    const sortedVacationRequests = sortVacationRequestsByDate(safeVacationRequests);
+
     sortedVacationRequests.future.sort((a, b) => safeCompareDate(a.start_date, b.start_date));
     sortedVacationRequests.past.sort((a, b) => safeCompareDate(b.start_date, a.start_date, true));
 
     return { pendingAndApproved, waitlisted, sortedVacationRequests };
-  }, [requests, vacationRequests]);
+  }, [timeOffRequests, vacationRequests]);
 
+  // Handle paid in lieu modal
   const handlePaidInLieuPress = () => {
-    setShowPaidInLieuModal(true);
+    setIsPaidInLieuVisible(true);
   };
 
   const handleConfirmPaidInLieu = async (type: "PLD" | "SDV", selectedDate: Date) => {
@@ -660,7 +623,7 @@ export default function MyTimeScreen() {
         return;
       }
 
-      if (!stats) {
+      if (!timeStats) {
         Toast.show({
           type: "error",
           text1: "Request Failed",
@@ -672,7 +635,7 @@ export default function MyTimeScreen() {
       }
 
       // Check if user has available days for the requested type
-      const availableDays = type === "PLD" ? stats.available.pld : stats.available.sdv;
+      const availableDays = type === "PLD" ? timeStats.available.pld : timeStats.available.sdv;
       if (availableDays <= 0) {
         Toast.show({
           type: "error",
@@ -693,6 +656,7 @@ export default function MyTimeScreen() {
         visibilityTime: 2000,
       });
 
+      // Use the requestPaidInLieu method from the hook
       const success = await requestPaidInLieu(type, selectedDate);
 
       if (success) {
@@ -770,78 +734,64 @@ export default function MyTimeScreen() {
         }
       }
     } finally {
-      setShowPaidInLieuModal(false);
-      setSelectedType(null);
+      setIsPaidInLieuVisible(false);
     }
   };
 
   const handleCancelPaidInLieu = () => {
-    setShowPaidInLieuModal(false);
-    setSelectedType(null);
+    setIsPaidInLieuVisible(false);
   };
 
+  // Handle request cancellation
   const handleCancelRequest = (request: TimeOffRequest) => {
     setSelectedRequest(request);
-    setShowCancelModal(true);
+    setIsCancelModalVisible(true);
   };
 
   const handleCancelSixMonthRequest = (request: TimeOffRequest) => {
     setSelectedRequest(request);
-    setShowCancelModal(true);
+    setIsCancelModalVisible(true);
   };
 
   const handleConfirmCancel = async () => {
     if (!selectedRequest) return;
 
     try {
-      setIsCancelling(true);
+      setIsCancellingRequest(true);
       console.log("[MyTime] Attempting to cancel request:", {
         id: selectedRequest.id,
         isSixMonth: selectedRequest.is_six_month_request,
       });
 
+      let success = false;
       if (selectedRequest.is_six_month_request) {
-        const success = await cancelSixMonthRequest(selectedRequest.id);
-        if (success) {
-          Toast.show({
-            type: "success",
-            text1: "Success",
-            text2: "Six-month request cancelled successfully",
-            position: "bottom",
-            visibilityTime: 3000,
-          });
-        } else {
-          Toast.show({
-            type: "error",
-            text1: "Error",
-            text2: "Failed to cancel six-month request",
-            position: "bottom",
-            visibilityTime: 3000,
-          });
-        }
+        success = await cancelSixMonthRequest(selectedRequest.id);
       } else {
-        const success = await cancelRequest(selectedRequest.id);
-        if (success) {
-          Toast.show({
-            type: "success",
-            text1: "Success",
-            text2: "Request cancelled successfully",
-            position: "bottom",
-            visibilityTime: 3000,
-          });
-        } else {
-          Toast.show({
-            type: "error",
-            text1: "Error",
-            text2: "Failed to cancel request",
-            position: "bottom",
-            visibilityTime: 3000,
-          });
-        }
+        success = await cancelRequest(selectedRequest.id);
       }
 
-      setShowCancelModal(false);
-      setSelectedRequest(null);
+      if (success) {
+        Toast.show({
+          type: "success",
+          text1: "Success",
+          text2: selectedRequest.is_six_month_request
+            ? "Six-month request cancelled successfully"
+            : "Request cancelled successfully",
+          position: "bottom",
+          visibilityTime: 3000,
+        });
+
+        setIsCancelModalVisible(false);
+        setSelectedRequest(null);
+      } else {
+        Toast.show({
+          type: "error",
+          text1: "Error",
+          text2: "Failed to cancel request. Please try again.",
+          position: "bottom",
+          visibilityTime: 3000,
+        });
+      }
     } catch (error) {
       console.error("[MyTime] Error in handleConfirmCancel:", error);
       Toast.show({
@@ -852,138 +802,55 @@ export default function MyTimeScreen() {
         visibilityTime: 3000,
       });
     } finally {
-      setIsCancelling(false);
+      setIsCancellingRequest(false);
     }
   };
 
-  // Add cleanup effect to handle component unmounting
-  useEffect(() => {
-    return () => {
-      // Cleanup code when component unmounts
-      console.log("[MyTimeScreen] Component unmounting, cleaning up references");
-      didSkipInitialFocusRef.current = false;
-    };
-  }, []);
+  // Handle pull-to-refresh - update to use the myTime store's refreshData
+  const handleRefresh = () => {
+    console.log("[MyTimeScreen] User-initiated pull-to-refresh");
+    refreshData(true);
+  };
 
-  if (!member?.id || isLoading || !isInitialized || !stats) {
+  // Display loading indicator when data is loading
+  if (isLoading) {
+    console.log("[MyTimeScreen] Rendering loading state");
     return (
-      <ThemedScrollView
-        style={[
-          styles.container,
-          { backgroundColor: Colors[colorScheme ?? "light"].background, paddingTop: insets.top },
-        ]}
-        contentContainerStyle={styles.contentContainer}
-      >
-        <ThemedView style={[styles.card, { width: cardWidth }]}>
-          <ThemedView style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={Colors[colorScheme ?? "light"].tint} />
-            <ThemedText style={styles.loadingText}>Loading time statistics...</ThemedText>
-          </ThemedView>
-        </ThemedView>
-      </ThemedScrollView>
+      <ThemedView style={[styles.loadingContainer, { paddingTop: insets.top }]}>
+        <ActivityIndicator size="large" color={Colors[colorScheme ?? "light"].primary} />
+        <ThemedText style={styles.loadingText}>Loading your time off data...</ThemedText>
+      </ThemedView>
     );
   }
 
-  // Improved loading state logic with better information display and retry capability
-  if (!member?.id) {
-    return (
-      <ThemedScrollView
-        style={[
-          styles.container,
-          { backgroundColor: Colors[colorScheme ?? "light"].background, paddingTop: insets.top },
-        ]}
-        contentContainerStyle={styles.contentContainer}
-      >
-        <ThemedView style={[styles.card, { width: cardWidth }]}>
-          <ThemedView style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={Colors[colorScheme ?? "light"].tint} />
-            <ThemedText style={styles.loadingText}>Waiting for user information...</ThemedText>
-          </ThemedView>
-        </ThemedView>
-      </ThemedScrollView>
-    );
-  }
-
-  if (isLoading || !isInitialized) {
-    return (
-      <ThemedScrollView
-        style={[
-          styles.container,
-          { backgroundColor: Colors[colorScheme ?? "light"].background, paddingTop: insets.top },
-        ]}
-        contentContainerStyle={styles.contentContainer}
-      >
-        <ThemedView style={[styles.card, { width: cardWidth }]}>
-          <ThemedView style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={Colors[colorScheme ?? "light"].tint} />
-            <ThemedText style={styles.loadingText}>
-              {isLoading ? "Loading time statistics..." : "Initializing..."}
-            </ThemedText>
-            {syncStatus.error && (
-              <ThemedView style={styles.errorIndicator}>
-                <Feather name="alert-circle" size={16} color={Colors[colorScheme ?? "light"].error} />
-                <ThemedText style={styles.errorText}>{syncStatus.error}</ThemedText>
-              </ThemedView>
-            )}
-            {(!isInitialized || syncStatus.failedAttempts > 0) && (
-              <ThemedTouchableOpacity style={[styles.retryButton, { marginTop: 16 }]} onPress={() => initialize(true)}>
-                <Feather name="refresh-cw" size={16} color={Colors[colorScheme ?? "light"].primary} />
-                <ThemedText style={[styles.retryText, { marginLeft: 8 }]}>Retry</ThemedText>
-              </ThemedTouchableOpacity>
-            )}
-          </ThemedView>
-        </ThemedView>
-      </ThemedScrollView>
-    );
-  }
-
-  // No data loaded state
-  if (!stats) {
-    return (
-      <ThemedScrollView
-        style={[
-          styles.container,
-          { backgroundColor: Colors[colorScheme ?? "light"].background, paddingTop: insets.top },
-        ]}
-        contentContainerStyle={styles.contentContainer}
-      >
-        <ThemedView style={[styles.card, { width: cardWidth }]}>
-          <ThemedView style={styles.loadingContainer}>
-            <Feather name="database" size={32} color={Colors[colorScheme ?? "light"].warning} />
-            <ThemedText style={[styles.loadingText, { marginTop: 16 }]}>No time data available</ThemedText>
-            <ThemedTouchableOpacity style={[styles.retryButton, { marginTop: 16 }]} onPress={() => initialize(true)}>
-              <Feather name="refresh-cw" size={16} color={Colors[colorScheme ?? "light"].primary} />
-              <ThemedText style={[styles.retryText, { marginLeft: 8 }]}>Refresh</ThemedText>
-            </ThemedTouchableOpacity>
-          </ThemedView>
-        </ThemedView>
-      </ThemedScrollView>
-    );
-  }
-
-  // Error state
+  // Display error state when there's an error
   if (error) {
+    console.log("[MyTimeScreen] Rendering error state:", error);
     return (
-      <ThemedScrollView
-        style={[
-          styles.container,
-          { backgroundColor: Colors[colorScheme ?? "light"].background, paddingTop: insets.top },
-        ]}
-        contentContainerStyle={styles.contentContainer}
-      >
-        <ThemedView style={[styles.card, { width: cardWidth }]}>
-          <ThemedView style={styles.loadingContainer}>
-            <Feather name="alert-triangle" size={32} color={Colors[colorScheme ?? "light"].error} />
-            <ThemedText style={[styles.loadingText, { marginTop: 16 }]}>Error: {error}</ThemedText>
-            <ThemedTouchableOpacity style={[styles.retryButton, { marginTop: 16 }]} onPress={() => initialize(true)}>
-              <Feather name="refresh-cw" size={16} color={Colors[colorScheme ?? "light"].background} />
-              <ThemedText style={[styles.retryText, { marginLeft: 8 }]}>Retry</ThemedText>
-            </ThemedTouchableOpacity>
-          </ThemedView>
-        </ThemedView>
-      </ThemedScrollView>
+      <ThemedView style={[styles.errorContainer, { paddingTop: insets.top }]}>
+        <Feather name="alert-circle" size={48} color={Colors[colorScheme ?? "light"].error} />
+        <ThemedText style={styles.errorTitle}>Error Loading Data</ThemedText>
+        <ThemedText style={styles.errorText}>{error}</ThemedText>
+        <ThemedTouchableOpacity style={styles.retryButton} onPress={() => refreshData(true)}>
+          <ThemedText style={styles.retryButtonText}>Retry</ThemedText>
+        </ThemedTouchableOpacity>
+      </ThemedView>
     );
   }
+
+  // Create a safe stats object that won't crash if timeStats is incomplete or null
+  const safeStats = timeStats
+    ? {
+        total: { pld: timeStats.total?.pld ?? 0, sdv: timeStats.total?.sdv ?? 0 },
+        rolledOver: { pld: timeStats.rolledOver?.pld ?? 0, unusedPlds: timeStats.rolledOver?.unusedPlds ?? 0 },
+        available: { pld: timeStats.available?.pld ?? 0, sdv: timeStats.available?.sdv ?? 0 },
+        requested: { pld: timeStats.requested?.pld ?? 0, sdv: timeStats.requested?.sdv ?? 0 },
+        waitlisted: { pld: timeStats.waitlisted?.pld ?? 0, sdv: timeStats.waitlisted?.sdv ?? 0 },
+        approved: { pld: timeStats.approved?.pld ?? 0, sdv: timeStats.approved?.sdv ?? 0 },
+        paidInLieu: { pld: timeStats.paidInLieu?.pld ?? 0, sdv: timeStats.paidInLieu?.sdv ?? 0 },
+        syncStatus: timeStats.syncStatus,
+      }
+    : null;
 
   return (
     <>
@@ -996,34 +863,81 @@ export default function MyTimeScreen() {
           },
         ]}
         contentContainerStyle={styles.contentContainer}
+        refreshing={isRefreshing}
+        onRefresh={handleRefresh}
       >
         {/* Add sync status indicator */}
-        {syncStatus.isSyncing && (
+        {timeStats?.syncStatus?.isSyncing && (
           <ThemedView style={styles.syncIndicator}>
             <ActivityIndicator size="small" color={Colors[colorScheme ?? "light"].tint} />
             <ThemedText style={styles.syncText}>Syncing...</ThemedText>
           </ThemedView>
         )}
 
-        {syncStatus.error && (
+        {timeStats?.syncStatus?.error && (
           <ThemedView style={styles.errorIndicator}>
             <Feather name="alert-circle" size={16} color={Colors[colorScheme ?? "light"].error} />
-            <ThemedText style={styles.errorText}>{syncStatus.error}</ThemedText>
+            <ThemedText style={styles.errorText}>{timeStats.syncStatus.error}</ThemedText>
           </ThemedView>
         )}
 
-        {stats && <RolloverWarningBanner unusedPlds={stats.rolledOver.unusedPlds} />}
+        {timeStats?.rolledOver?.unusedPlds > 0 && (
+          <RolloverWarningBanner unusedPlds={timeStats.rolledOver.unusedPlds} />
+        )}
 
-        {/* Render stats with ClientOnlyComponent to prevent hydration mismatches */}
-        <ClientOnlyComponent fallback={<DefaultLoadingFallback />}>
-          <ClientOnlyStats
-            stats={stats}
-            vacationStats={vacationStats}
-            cardWidth={cardWidth}
-            colorScheme={colorScheme ?? "light"}
-            onPaidInLieuPress={handlePaidInLieuPress}
-          />
-        </ClientOnlyComponent>
+        {/* Render statistics directly */}
+        {!safeStats ? (
+          // Show loading state if stats aren't available
+          <ThemedView style={[styles.card, { width: cardWidth, padding: 20, alignItems: "center" }]}>
+            <ActivityIndicator size="small" color={Colors[colorScheme ?? "light"].primary} />
+            <ThemedText style={{ marginTop: 12 }}>Loading your time off data...</ThemedText>
+          </ThemedView>
+        ) : (
+          // Render stats directly instead of using a separate component
+          <ThemedView style={[styles.card, { width: cardWidth }]} key={`stats-${renderCounter}`}>
+            <ThemedView style={styles.sectionHeader}>
+              <ThemedText style={styles.sectionTitle}>Current Single Day Allocations</ThemedText>
+            </ThemedView>
+            <ThemedView style={styles.tableHeader}>
+              <ThemedText style={styles.headerLabel}>Type</ThemedText>
+              <ThemedText style={styles.headerValue}>PLD</ThemedText>
+              <ThemedText style={styles.headerValue}>SDV</ThemedText>
+            </ThemedView>
+
+            <LeaveRow label="Total" pldValue={safeStats.total.pld} sdvValue={safeStats.total.sdv} />
+            <LeaveRow label="Rolled Over" pldValue={safeStats.rolledOver.pld} />
+            <LeaveRow label="Available" pldValue={safeStats.available.pld} sdvValue={safeStats.available.sdv} />
+            <LeaveRow label="Requested/Pending" pldValue={safeStats.requested.pld} sdvValue={safeStats.requested.sdv} />
+            <LeaveRow label="Waitlisted" pldValue={safeStats.waitlisted.pld} sdvValue={safeStats.waitlisted.sdv} />
+            <LeaveRow label="Approved" pldValue={safeStats.approved.pld} sdvValue={safeStats.approved.sdv} />
+            <LeaveRow
+              label="Paid in Lieu"
+              pldValue={safeStats.paidInLieu.pld}
+              sdvValue={safeStats.paidInLieu.sdv}
+              showIcon={true}
+              onIconPress={handlePaidInLieuPress}
+            />
+          </ThemedView>
+        )}
+
+        {/* Vacation Summary Card */}
+        {vacationStats && (
+          <ThemedView style={[styles.card, { width: cardWidth, marginTop: 24 }]}>
+            <ThemedView style={styles.sectionHeader}>
+              <ThemedText style={styles.sectionTitle}>Vacation Summary</ThemedText>
+            </ThemedView>
+
+            <VacationSummaryRow label="Total Vacation Weeks" value={vacationStats.totalWeeks ?? 0} />
+            <VacationSummaryRow label="Split Weeks (converted to SDVs)" value={vacationStats.splitWeeks ?? 0} />
+            <VacationSummaryRow label="Weeks to Bid" value={vacationStats.weeksToBid ?? 0} />
+            <VacationSummaryRow label="Approved Vacation Requests" value={vacationStats.approvedWeeks ?? 0} />
+            <VacationSummaryRow
+              label="Remaining Weeks to Bid"
+              value={vacationStats.remainingWeeks ?? 0}
+              highlight={true}
+            />
+          </ThemedView>
+        )}
 
         <ThemedView style={[styles.sectionHeader, { marginTop: 12 }]}>
           <ThemedText style={styles.sectionTitle}>Time Off Requests</ThemedText>
@@ -1045,7 +959,7 @@ export default function MyTimeScreen() {
 
               {pendingAndApproved.past.length > 0 && pendingAndApproved.future.length > 0 && (
                 <ThemedView style={styles.dateSeparator}>
-                  <ThemedText style={styles.sectionTitle}>Past Requests</ThemedText>
+                  <ThemedText style={styles.dateSeparatorText}>Past Requests</ThemedText>
                 </ThemedView>
               )}
 
@@ -1125,27 +1039,25 @@ export default function MyTimeScreen() {
         </ThemedView>
       </ThemedScrollView>
 
-      {/* Replace existing Paid In Lieu Modal with our new component */}
-      {isMounted && (
-        <PaidInLieuModal
-          isVisible={showPaidInLieuModal}
-          onConfirm={handleConfirmPaidInLieu}
-          onCancel={handleCancelPaidInLieu}
-          stats={stats}
-          minDate={dateRange.minDate}
-          maxDate={dateRange.maxDate}
-        />
-      )}
+      {/* Paid In Lieu Modal */}
+      <PaidInLieuModal
+        isVisible={isPaidInLieuVisible}
+        onConfirm={handleConfirmPaidInLieu}
+        onCancel={handleCancelPaidInLieu}
+        stats={timeStats}
+        minDate={dateRange.minDate}
+        maxDate={dateRange.maxDate}
+      />
 
       <CancelRequestModal
-        isVisible={showCancelModal}
+        isVisible={isCancelModalVisible}
         request={selectedRequest}
         onConfirm={handleConfirmCancel}
         onCancel={() => {
-          setShowCancelModal(false);
+          setIsCancelModalVisible(false);
           setSelectedRequest(null);
         }}
-        isLoading={isCancelling}
+        isLoading={isCancellingRequest}
       />
     </>
   );
@@ -1230,6 +1142,7 @@ const styles = StyleSheet.create({
     height: 200, // Placeholder height
   },
   loadingContainer: {
+    flex: 1,
     padding: 16,
     alignItems: "center",
     justifyContent: "center",
@@ -1237,6 +1150,7 @@ const styles = StyleSheet.create({
   loadingText: {
     fontSize: 16,
     opacity: 0.7,
+    marginTop: 12,
   },
   modalContainer: {
     flex: 1,
@@ -1391,7 +1305,7 @@ const styles = StyleSheet.create({
   dateSeparator: {
     paddingVertical: 8,
     paddingHorizontal: 16,
-    backgroundColor: Colors.dark.background,
+    backgroundColor: Colors.dark.card,
     borderBottomWidth: 1,
     borderBottomColor: Colors.dark.border,
   },
@@ -1511,5 +1425,44 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     color: Colors.dark.background,
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  errorTitle: {
+    fontSize: 20,
+    fontWeight: "bold",
+    marginVertical: 10,
+  },
+  errorText: {
+    textAlign: "center",
+    marginBottom: 20,
+  },
+  retryButtonText: {
+    color: "#ffffff",
+    fontWeight: "bold",
+  },
+  subtitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.dark.border,
+  },
+  emptyText: {
+    fontSize: 16,
+    opacity: 0.7,
+    padding: 16,
+  },
+  moreRequestsText: {
+    fontSize: 14,
+    fontWeight: "bold",
+    color: Colors.dark.primary,
+    padding: 8,
+    textAlign: "center",
   },
 });
