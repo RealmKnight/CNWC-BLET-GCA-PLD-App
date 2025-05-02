@@ -11,6 +11,7 @@ import { handlePasswordResetURL } from "@/utils/authRedirects";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { ChangePasswordModal } from "@/components/ui/ChangePasswordModal";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 
 // Separate loading screen component
 function LoadingScreen() {
@@ -95,15 +96,17 @@ function AuthAwareRouteHandler() {
 // Export a stable component tree for the root
 export default function RootLayout() {
   return (
-    <GestureHandlerRootView style={styles.container}>
-      <ThemeProvider>
-        <AuthProvider>
-          <AuthAwareRouteHandler />
-          <ModalRenderer />
-          <ThemedToast />
-        </AuthProvider>
-      </ThemeProvider>
-    </GestureHandlerRootView>
+    <SafeAreaProvider>
+      <GestureHandlerRootView style={styles.container}>
+        <ThemeProvider>
+          <AuthProvider>
+            <AuthAwareRouteHandler />
+            <ModalRenderer />
+            <ThemedToast />
+          </AuthProvider>
+        </ThemeProvider>
+      </GestureHandlerRootView>
+    </SafeAreaProvider>
   );
 }
 
