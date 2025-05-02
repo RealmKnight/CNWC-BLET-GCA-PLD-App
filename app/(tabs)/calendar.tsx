@@ -587,13 +587,11 @@ function RequestDialog({
     if (viewMode === "past" || viewMode === "nearPast") {
       return filteredRequests;
     }
-    // Otherwise, use existing logic
+    // Only include approved, pending, and cancellation_pending (NOT waitlisted or paid_in_lieu)
     return filteredRequests.filter(
       (r) =>
-        r.status === "approved" ||
-        r.status === "pending" ||
-        r.status === "waitlisted" ||
-        r.status === "cancellation_pending"
+        (r.status === "approved" || r.status === "pending" || r.status === "cancellation_pending") &&
+        r.paid_in_lieu !== true // Exclude Paid In Lieu requests from active count
     );
   }, [filteredRequests, viewMode]);
 
@@ -769,25 +767,36 @@ function RequestDialog({
       approved: 0,
       pending: 1,
       cancellation_pending: 2, // Show cancellation pending with approved/pending
-      waitlisted: 3,
+      waitlisted: 3, // Add waitlisted priority
     };
 
-    return [...activeRequests].sort((a, b) => {
-      const aStatusPriority = statusPriority[a.status] ?? 999;
-      const bStatusPriority = statusPriority[b.status] ?? 999;
+    // *** CHANGE: Filter out Paid In Lieu requests before sorting for display ***
+    return [...localRequests]
+      .filter((r) => r.paid_in_lieu !== true)
+      .sort((a, b) => {
+        // *** Ensure statusPriority correctly handles potentially undefined statuses ***
+        const aStatusPriority = statusPriority[a.status] ?? 999;
+        const bStatusPriority = statusPriority[b.status] ?? 999;
 
-      // If status priorities are different, sort by priority
-      if (aStatusPriority !== bStatusPriority) return aStatusPriority - bStatusPriority;
+        // If status priorities are different, sort by priority
+        if (aStatusPriority !== bStatusPriority) return aStatusPriority - bStatusPriority;
 
-      // If both are waitlisted, sort by waitlist position (ascending)
-      if (a.status === "waitlisted" && b.status === "waitlisted") {
-        return (a.waitlist_position || 0) - (b.waitlist_position || 0);
-      }
+        // If both are waitlisted, sort by waitlist position (ascending)
+        // *** Ensure waitlist_position is handled safely (null/undefined checks) ***
+        if (a.status === "waitlisted" && b.status === "waitlisted") {
+          const aPos = a.waitlist_position ?? Infinity; // Treat null/undefined as last
+          const bPos = b.waitlist_position ?? Infinity;
+          return aPos - bPos;
+        }
 
-      // Otherwise, sort by requested time (ascending)
-      return new Date(a.requested_at || "").getTime() - new Date(b.requested_at || "").getTime();
-    });
-  }, [activeRequests]);
+        // Otherwise, sort by requested time (ascending)
+        // *** Ensure requested_at is handled safely ***
+        const aTime = a.requested_at ? new Date(a.requested_at).getTime() : 0;
+        const bTime = b.requested_at ? new Date(b.requested_at).getTime() : 0;
+        return aTime - bTime;
+      });
+    // *** CHANGE: Update dependency array to use localRequests ***
+  }, [localRequests]);
 
   // Split sorted requests into approved/pending/cancellation_pending and waitlisted
   const approvedPendingRequests = useMemo(() => {
@@ -828,7 +837,12 @@ function RequestDialog({
     }
 
     // Check if user has an existing request (regular or six-month request that became regular)
-    if (hasExistingRequest) {
+    if (hasExistingRequest && userRequest) {
+      // *** CHANGE: Customize message for Paid In Lieu requests ***
+      if (userRequest.paid_in_lieu === true) {
+        return `You have a Paid in Lieu request for this date (Status: ${userRequest.status})`;
+      }
+      // --- End Change ---
       const status = userRequest?.status === "cancellation_pending" ? "Cancellation Pending" : userRequest?.status;
       return `You have a request for this date (Status: ${status})`;
     }
