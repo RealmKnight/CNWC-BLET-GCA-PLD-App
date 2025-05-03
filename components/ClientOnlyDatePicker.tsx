@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { DatePicker } from "./DatePicker";
-import { StyleSheet, ViewStyle, TextStyle } from "react-native";
+import { StyleSheet, ViewStyle, TextStyle, Platform, View } from "react-native";
 import { useIsomorphicLayoutEffect } from "@/hooks/useIsomorphicLayoutEffect";
 
 interface ClientOnlyDatePickerProps {
@@ -37,17 +37,26 @@ export function ClientOnlyDatePicker({
   }, []);
 
   if (!isMounted) {
-    // Return an empty placeholder with the same dimensions during SSR
+    if (Platform.OS === "web") {
+      return (
+        <div
+          style={{
+            height: (style as any)?.height || 40,
+            width: "100%",
+            borderWidth: 1,
+            borderRadius: 8,
+            opacity: 0,
+          }}
+          aria-hidden="true"
+        />
+      );
+    }
+    // On native, return a View as a placeholder
     return (
-      <div
-        style={{
-          height: (style as any)?.height || 40,
-          width: "100%",
-          borderWidth: 1,
-          borderRadius: 8,
-          opacity: 0,
-        }}
-        aria-hidden="true"
+      <View
+        style={[{ height: (style as any)?.height || 40, width: "100%", opacity: 0 }, styles.placeholder]}
+        accessible={false}
+        importantForAccessibility="no"
       />
     );
   }
