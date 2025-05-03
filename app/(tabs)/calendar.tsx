@@ -673,7 +673,7 @@ function RequestDialog({
           }
 
           // Remove the setTimeout
-          onClose();
+          // onClose();
         } else {
           Toast.show({ type: "error", text1: "Failed to cancel request" });
         }
@@ -694,7 +694,7 @@ function RequestDialog({
           setSixMonthRequestId(null);
 
           // Remove the setTimeout
-          onClose();
+          // onClose();
         } else {
           Toast.show({ type: "error", text1: "Failed to cancel six-month request" });
         }
@@ -1104,8 +1104,10 @@ function RequestDialog({
   const isPastView = viewMode === "past" || viewMode === "nearPast";
 
   // Add loading indicator to the dialog content
+
+  // Removed from Modal below: onRequestClose={() => setTimeout(() => onClose(), 100)}
   return (
-    <Modal visible={isVisible} transparent animationType="fade" onRequestClose={() => setTimeout(() => onClose(), 100)}>
+    <Modal visible={isVisible} transparent animationType="fade">
       <View style={dialogStyles.modalOverlay}>
         <View style={dialogStyles.modalContent}>
           <ThemedText style={dialogStyles.modalTitle}>Request Day Off - {selectedDate}</ThemedText>
@@ -2241,7 +2243,7 @@ export default function CalendarScreen() {
         selectedDate &&
         (() => {
           const now = startOfDay(new Date());
-          const fortyEightHoursFromNow = startOfDay(addDays(now, 2));
+          const fortyEightHoursFromNow = startOfDay(addDays(now, 3));
           let selectedDateObj: Date | null = null;
           try {
             selectedDateObj = parseISO(selectedDate);

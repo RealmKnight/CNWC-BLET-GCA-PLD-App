@@ -1111,6 +1111,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: Colors.dark.border,
+    backgroundColor: Colors.dark.background,
   },
   label: {
     flex: 2,
@@ -1259,10 +1260,12 @@ const styles = StyleSheet.create({
   requestDate: {
     fontSize: 16,
     fontWeight: "600",
+    backgroundColor: "rgba(0, 0, 0, 0)",
   },
   requestDetails: {
     fontSize: 14,
     opacity: 0.7,
+    backgroundColor: "rgba(0, 0, 0, 0)",
   },
   statusBadge: {
     paddingHorizontal: 8,
@@ -1272,6 +1275,7 @@ const styles = StyleSheet.create({
   statusText: {
     fontSize: 12,
     fontWeight: "600",
+    backgroundColor: "rgba(0, 0, 0, 0)",
   },
   waitlistPosition: {
     fontSize: 16,

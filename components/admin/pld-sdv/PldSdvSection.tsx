@@ -509,7 +509,9 @@ export function PldSdvSection() {
           `Your ${selectedRequest.leave_type} request for ${format(
             parseISO(selectedRequest.request_date),
             "MMM d, yyyy"
-          )} has been denied. Please verify in CATS.`,
+          )} has been denied due to ${
+            selectedDenialReason.reason
+          }. Please contact your Division Administrator for more information.`,
           false,
           "denial"
         );
