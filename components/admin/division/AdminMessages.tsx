@@ -1,4 +1,4 @@
-import React, { useState, forwardRef, Ref, useEffect, useMemo } from "react";
+import React, { useState, forwardRef, Ref, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   StyleSheet,
   TouchableOpacity,
@@ -9,6 +9,7 @@ import {
   KeyboardAvoidingView,
   Modal,
   ActivityIndicator,
+  RefreshControl,
 } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -46,6 +47,12 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
   const [divisionsLoading, setDivisionsLoading] = useState<boolean>(false);
   const [divisionsError, setDivisionsError] = useState<string | null>(null);
   const [selectedDivisionName, setSelectedDivisionName] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Ref to track marked messages to prevent infinite loops
+  const markedMessagesRef = useRef<Set<string>>(new Set());
+  // Ref to track refresh interval
+  const refreshIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Get screen dimensions
   const { width } = useWindowDimensions();
@@ -64,10 +71,54 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
     acknowledgeMessage,
     setViewDivision,
     markThreadAsUnread,
+    unarchiveThread,
+    _fetchAndSetMessages,
   } = useAdminNotificationStore();
 
   const currentUser = useUserStore((state) => state.member);
   const effectiveRoles = useEffectiveRoles() ?? [];
+
+  // Manual refresh function
+  const refreshMessages = useCallback(async () => {
+    if (!currentUser?.id) return;
+
+    setRefreshing(true);
+    try {
+      console.log("[AdminMessages] Manually refreshing admin messages");
+      await _fetchAndSetMessages(currentUser.id, viewingDivisionId);
+    } catch (error) {
+      console.error("[AdminMessages] Error refreshing messages:", error);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [currentUser?.id, viewingDivisionId, _fetchAndSetMessages]);
+
+  // Setup polling as a fallback in case realtime isn't working
+  useEffect(() => {
+    if (!currentUser?.id) return;
+
+    // Clear any existing interval first
+    if (refreshIntervalRef.current) {
+      clearInterval(refreshIntervalRef.current);
+      refreshIntervalRef.current = null;
+    }
+
+    // Set up an interval to refresh data
+    refreshIntervalRef.current = setInterval(() => {
+      console.log("[AdminMessages] Running scheduled refresh");
+      refreshMessages();
+    }, 20000); // Check every 20 seconds (adjust as needed)
+
+    // Initial refresh when component mounts
+    refreshMessages();
+
+    return () => {
+      if (refreshIntervalRef.current) {
+        clearInterval(refreshIntervalRef.current);
+        refreshIntervalRef.current = null;
+      }
+    };
+  }, [currentUser?.id, viewingDivisionId, refreshMessages]);
 
   // Determine if user can select divisions
   const canSelectDivision = useMemo(
@@ -179,10 +230,17 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
   const handleSendReply = async () => {
     if (!replyText.trim() || !selectedThreadId || !currentUser?.id) return;
     console.log(`Attempting to send reply to thread ${selectedThreadId}...`);
+    const thread = filteredThreads.find((t) => getRootMessageId(t[0]) === selectedThreadId);
+    const isArchived = thread ? thread.some((msg) => msg.is_archived) : false;
+    if (isArchived) {
+      await unarchiveThread(selectedThreadId);
+    }
     try {
       await replyAsAdmin(selectedThreadId, replyText);
       console.log(`Reply Sent to thread ${selectedThreadId}!`);
       setReplyText("");
+      // Force refresh after sending a reply
+      setTimeout(refreshMessages, 1000);
     } catch (error: any) {
       console.error("Failed to send reply:", error);
     }
@@ -197,6 +255,8 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
     if (selectedThreadId === threadId) {
       setSelectedThreadId(null);
     }
+    // Force refresh after archiving
+    setTimeout(refreshMessages, 1000);
   };
 
   const handleMarkUnreadAction = (threadId: string | null) => {
@@ -386,6 +446,14 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
       renderItem={renderThreadItem}
       keyExtractor={(item) => getRootMessageId(item[0])}
       style={[styles.messageListContainer, !isWideScreen && styles.fullWidthPane, { backgroundColor: colors.card }]}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={refreshMessages}
+          colors={[colors.primary]}
+          tintColor={colors.primary}
+        />
+      }
       ListEmptyComponent={
         storeIsLoading ? (
           <ActivityIndicator style={{ marginTop: 50 }} size="large" color={colors.tint} />
@@ -414,16 +482,45 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
       : null;
 
     useEffect(() => {
+      console.log(
+        `[renderMessageDetails] useEffect triggered. Thread ID: ${currentThreadId}, Thread length: ${
+          selectedThread?.length || 0
+        }`
+      );
       if (selectedThread && selectedThread.length > 0) {
         const latestMessage = selectedThread.reduce((latest, current) =>
           new Date(current.created_at ?? 0) > new Date(latest.created_at ?? 0) ? current : latest
         );
+
+        // Check if already marked in this session or already read in the store
+        const isAlreadyMarked = markedMessagesRef.current.has(latestMessage.id) || readStatusMap[latestMessage.id];
+
         console.log(
-          `[renderMessageDetails] Viewing thread ${currentThreadId}, marking latest message ${latestMessage.id} as read.`
+          `[renderMessageDetails] Found latest message: ${latestMessage.id}, from: ${
+            latestMessage.sender_role
+          }, created: ${latestMessage.created_at}, read: ${
+            readStatusMap[latestMessage.id] ? "yes" : "no"
+          }, marked in session: ${markedMessagesRef.current.has(latestMessage.id)}`
         );
-        markMessageAsRead(latestMessage.id).catch((err: any) => {
-          console.error("Failed to mark message as read on view:", err);
-        });
+
+        // Only mark as read if not already read and not already marked in this session
+        if (!isAlreadyMarked) {
+          // Add to our ref to prevent re-marking
+          markedMessagesRef.current.add(latestMessage.id);
+
+          console.log(
+            `[renderMessageDetails] Viewing thread ${currentThreadId}, marking latest message ${latestMessage.id} as read.`
+          );
+          markMessageAsRead(latestMessage.id).catch((err: any) => {
+            console.error("Failed to mark message as read on view:", err);
+          });
+        } else {
+          console.log(
+            `[renderMessageDetails] Message ${latestMessage.id} already marked as read or marked in this session. Skipping.`
+          );
+        }
+      } else {
+        console.log(`[renderMessageDetails] No messages in thread to mark as read.`);
       }
     }, [currentThreadId, selectedThread, markMessageAsRead]);
 
@@ -528,43 +625,41 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
         </ThemedView>
 
         {/* Reply Input (moved above the FlatList) */}
-        {currentFilter !== "archived" && (
-          <View
-            style={[
-              styles.replyInputContainer,
-              {
-                padding: 10,
-                flexDirection: "row",
-                alignItems: "center",
-                minHeight: 60,
-                borderTopWidth: 1,
-              },
-            ]}
+        <View
+          style={[
+            styles.replyInputContainer,
+            {
+              padding: 10,
+              flexDirection: "row",
+              alignItems: "center",
+              minHeight: 60,
+              borderTopWidth: 1,
+            },
+          ]}
+        >
+          <ThemedTextInput
+            style={{
+              ...styles.replyTextInput,
+              borderColor: colors.border,
+              color: colors.text,
+              backgroundColor: colors.card,
+            }}
+            placeholder="Type your reply..."
+            placeholderTextColor={colors.textDim}
+            value={replyText}
+            onChangeText={setReplyText}
+            multiline
+          />
+          <TouchableOpacity
+            style={[styles.sendButton, { backgroundColor: !replyText.trim() ? disabledColor : colors.primary }]}
+            onPress={handleSendReply}
+            disabled={!replyText.trim()}
+            accessibilityRole="button"
+            accessibilityLabel="Send reply"
           >
-            <ThemedTextInput
-              style={{
-                ...styles.replyTextInput,
-                borderColor: colors.border,
-                color: colors.text,
-                backgroundColor: colors.card,
-              }}
-              placeholder="Type your reply..."
-              placeholderTextColor={colors.textDim}
-              value={replyText}
-              onChangeText={setReplyText}
-              multiline
-            />
-            <TouchableOpacity
-              style={[styles.sendButton, { backgroundColor: !replyText.trim() ? disabledColor : colors.primary }]}
-              onPress={handleSendReply}
-              disabled={!replyText.trim()}
-              accessibilityRole="button"
-              accessibilityLabel="Send reply"
-            >
-              <ThemedText style={{ color: primaryContrastColor }}>Send</ThemedText>
-            </TouchableOpacity>
-          </View>
-        )}
+            <ThemedText style={{ color: primaryContrastColor }}>Send</ThemedText>
+          </TouchableOpacity>
+        </View>
 
         {/* Message content FlatList */}
         <FlatList

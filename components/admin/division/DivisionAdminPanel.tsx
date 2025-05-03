@@ -39,7 +39,7 @@ interface SectionButton {
 const sections: SectionButton[] = [
   { key: "members", title: "Member Management", icon: "people", outlineIcon: "people-outline" },
   { key: "officers", title: "Division Officers", icon: "ribbon", outlineIcon: "ribbon-outline" },
-  { key: "messages", title: "Message Center", icon: "mail", outlineIcon: "mail-outline" },
+  { key: "messages", title: "Member Messages/News", icon: "mail", outlineIcon: "mail-outline" },
   { key: "adminMessages", title: "Admin Messages", icon: "chatbox", outlineIcon: "chatbox-outline" },
   { key: "calendar", title: "Calendar(s)", icon: "calendar", outlineIcon: "calendar-outline" },
 ];

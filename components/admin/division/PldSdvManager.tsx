@@ -35,6 +35,7 @@ import {
   RequestStatus,
   AuditEventType,
 } from "./constants";
+import { CalendarSelector } from "./CalendarSelector";
 
 // Types for our component
 type DatePreset = "3days" | "7days" | "30days" | "6months" | "alltime" | "custom";
@@ -66,7 +67,6 @@ interface MemberSearchResult {
 
 interface PldSdvManagerProps {
   selectedDivision: string;
-  selectedCalendarId?: string;
 }
 
 interface DynamicStyles extends Record<string, StyleProp<ViewStyle | TextStyle | ImageStyle>> {
@@ -93,7 +93,7 @@ interface DynamicStyles extends Record<string, StyleProp<ViewStyle | TextStyle |
   searchResultItem?: StyleProp<ViewStyle>;
 }
 
-export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelectedCalendarId }: PldSdvManagerProps) {
+export function PldSdvManager({ selectedDivision }: PldSdvManagerProps) {
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
 
   // Dynamic styles that depend on colorScheme
@@ -225,8 +225,11 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
   const [typeFilter, setTypeFilter] = useState<RequestType | "all">("all");
   const [isDivisionReady, setIsDivisionReady] = useState(false);
 
+  // Add internal state for selected calendar
+  const [selectedCalendarId, setSelectedCalendarId] = useState<string | null>(null);
+
   // Refs to hold the latest state for fetchRequests to avoid closure issues
-  const currentCalendarIdRef = useRef<string | null | undefined>(propSelectedCalendarId);
+  const currentCalendarIdRef = useRef<string | null | undefined>(selectedCalendarId);
   const currentStartDateRef = useRef<string>(startDate);
   const currentEndDateRef = useRef<string>(endDate);
   const currentSelectedMemberRef = useRef<MemberSearchResult | null>(selectedMember);
@@ -408,15 +411,14 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
   // Search members
   const searchMembers = useCallback(
     async (query: string) => {
-      if (!propSelectedCalendarId || query.length < 3) {
+      if (!selectedCalendarId || query.length < 3) {
         setSearchResults([]);
         return;
       }
-      // ... (rest of searchMembers implementation) ...
       try {
         setIsLoading(true);
         const searchTerm = query.toLowerCase();
-        const calendarMembers = membersByCalendar[propSelectedCalendarId] || [];
+        const calendarMembers = membersByCalendar[selectedCalendarId] || [];
 
         // Filter members locally since we already have them in the store
         const results = calendarMembers
@@ -442,7 +444,7 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
         setIsLoading(false);
       }
     },
-    [propSelectedCalendarId, membersByCalendar]
+    [selectedCalendarId, membersByCalendar]
   );
 
   // Handle search input changes
@@ -477,19 +479,14 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
     setIsDetailsModalVisible(true);
   }, []);
 
-  // Handle calendar change - This should now just inform the parent/store
-  // The actual state update comes via the propSelectedCalendarId prop change.
-  // We might need an action passed down from the parent to trigger the change.
-  // For now, let's assume the parent handles the Picker's onValueChange.
-  // If not, we need to adjust the parent component (e.g., CalendarManager).
-  // Let's stub it out for now, expecting the parent to handle the Picker/select change.
+  // Handle calendar change - Now properly implemented
   const handleCalendarChange = useCallback((calendarId: string | null) => {
-    console.warn(
-      "[PldSdvManager] handleCalendarChange called, but parent should handle the actual state update via prop.",
-      calendarId
-    );
-    // In a typical setup, you'd call a function passed via props, e.g.:
-    // onCalendarChange(calendarId);
+    console.log("[PldSdvManager] Calendar changed to:", calendarId);
+    setSelectedCalendarId(calendarId);
+    // Reset member selection when calendar changes
+    setSelectedMember(null);
+    setSearchQuery("");
+    setSearchResults([]);
   }, []);
 
   // Handle sort change
@@ -601,17 +598,17 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
 
   // Effect to fetch members when calendar changes
   useEffect(() => {
-    if (propSelectedCalendarId) {
-      console.log("[PldSdvManager] Fetching members for calendar:", propSelectedCalendarId);
-      fetchMembersByCalendarId(propSelectedCalendarId);
+    if (selectedCalendarId) {
+      console.log("[PldSdvManager] Fetching members for calendar:", selectedCalendarId);
+      fetchMembersByCalendarId(selectedCalendarId);
     }
-  }, [propSelectedCalendarId, fetchMembersByCalendarId]);
+  }, [selectedCalendarId, fetchMembersByCalendarId]);
 
   // Main Effect to Trigger Fetch Requests
   useEffect(() => {
     console.log("[PldSdvManager] Main Fetch trigger effect checking...", {
       isDivisionReady,
-      calendar: propSelectedCalendarId,
+      calendar: selectedCalendarId,
       start: startDate,
       end: endDate,
       member: currentSelectedMemberRef.current?.id, // Read from ref
@@ -619,7 +616,7 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
     });
 
     // Only fetch if the division is ready AND a calendar is selected AND dates are set
-    if (isDivisionReady && propSelectedCalendarId && startDate && endDate) {
+    if (isDivisionReady && selectedCalendarId && startDate && endDate) {
       // Use a small delay to allow state propagation and debounce rapid changes
       const timerId = setTimeout(() => {
         console.log("[PldSdvManager] Triggering fetch from main effect timeout (Division Ready)");
@@ -631,7 +628,7 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
       // Log why fetch is being skipped
       console.log("[PldSdvManager] Skipping fetch:", {
         isDivisionReady,
-        hasCalendar: !!propSelectedCalendarId,
+        hasCalendar: !!selectedCalendarId,
         hasStartDate: !!startDate,
         hasEndDate: !!endDate,
       });
@@ -640,7 +637,7 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
       if (!isDivisionReady) {
         console.log("[PldSdvManager] ... division not ready yet.");
         // Keep loading true if division change is in progress
-      } else if (!propSelectedCalendarId) {
+      } else if (!selectedCalendarId) {
         console.log("[PldSdvManager] ... no calendar selected.");
         setRequests([]);
         setIsLoading(false); // Division is ready, but no calendar
@@ -652,18 +649,18 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
     }
     // Watch the original state props/variables that indicate a fetch might be needed.
     // Add isDivisionReady to dependencies.
-  }, [isDivisionReady, propSelectedCalendarId, startDate, endDate, selectedMember, searchQuery, fetchRequests]); // Keep original deps + isDivisionReady
+  }, [isDivisionReady, selectedCalendarId, startDate, endDate, selectedMember, searchQuery, fetchRequests]); // Keep original deps + isDivisionReady
 
   // Effect for Real-time Updates (Commented out for debugging)
   // useEffect(() => {
-  //   if (!propSelectedCalendarId) return;
-  //   console.log("[PldSdvManager] Setting up realtime subscription for calendar:", propSelectedCalendarId);
+  //   if (!selectedCalendarId) return;
+  //   console.log("[PldSdvManager] Setting up realtime subscription for calendar:", selectedCalendarId);
   //   const channel = supabase
-  //     .channel(`pld-sdv-requests-${propSelectedCalendarId}`)
+  //     .channel(`pld-sdv-requests-${selectedCalendarId}`)
   //     .on(...)
   //     .subscribe();
   //   return () => { /* unsubscribe */ };
-  // }, [propSelectedCalendarId, fetchRequests]);
+  // }, [selectedCalendarId, fetchRequests]);
 
   // Effect for Component Unmount Cleanup
   useEffect(() => {
@@ -675,8 +672,8 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
 
   // Update refs whenever the corresponding state/prop changes
   useEffect(() => {
-    currentCalendarIdRef.current = propSelectedCalendarId;
-  }, [propSelectedCalendarId]);
+    currentCalendarIdRef.current = selectedCalendarId;
+  }, [selectedCalendarId]);
   useEffect(() => {
     currentStartDateRef.current = startDate;
   }, [startDate]);
@@ -991,37 +988,13 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId: propSelect
   return (
     <ThemedView style={styles.container}>
       <View style={styles.header}>
-        <View style={styles.selectorContainer}>
-          <ThemedText style={styles.label}>Calendar:</ThemedText>
-          {Platform.OS === "web" ? (
-            <select
-              value={propSelectedCalendarId || ""}
-              onChange={(e) => handleCalendarChange(e.target.value || null)}
-              style={dynamicStyles.webSelect as React.CSSProperties}
-              disabled={currentDivisionCalendars.length === 0}
-            >
-              <option value="">Select Calendar...</option>
-              {currentDivisionCalendars.map((calendar) => (
-                <option key={calendar.id} value={calendar.id}>
-                  {calendar.name}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <Picker
-              selectedValue={propSelectedCalendarId}
-              onValueChange={(itemValue) => handleCalendarChange(itemValue)}
-              style={dynamicStyles.picker as unknown as StyleProp<TextStyle>}
-              enabled={currentDivisionCalendars.length > 0}
-              dropdownIconColor={Colors[colorScheme].tint}
-            >
-              <Picker.Item label="Select Calendar..." value={null} />
-              {currentDivisionCalendars.map((calendar) => (
-                <Picker.Item key={calendar.id} label={calendar.name} value={calendar.id} />
-              ))}
-            </Picker>
-          )}
-        </View>
+        <CalendarSelector
+          calendars={currentDivisionCalendars}
+          selectedCalendarId={selectedCalendarId}
+          onSelectCalendar={handleCalendarChange}
+          disabled={currentDivisionCalendars.length === 0}
+          style={styles.selectorContainer}
+        />
         {renderDatePresetSelector()}
         {renderCustomDateRange()}
         {renderFilterControls()}

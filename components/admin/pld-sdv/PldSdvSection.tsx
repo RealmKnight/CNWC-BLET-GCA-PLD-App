@@ -510,8 +510,10 @@ export function PldSdvSection() {
             parseISO(selectedRequest.request_date),
             "MMM d, yyyy"
           )} has been denied due to ${
-            selectedDenialReason.reason
-          }. Please contact your Division Administrator for more information.`,
+            denialReasons.find((r) => r.id === selectedDenialReason)?.reason || "administrative reasons"
+          }. ${
+            denialComment ? `Additional comments: ${denialComment}.` : ""
+          } Please contact your Division Administrator for more information.`,
           false,
           "denial"
         );

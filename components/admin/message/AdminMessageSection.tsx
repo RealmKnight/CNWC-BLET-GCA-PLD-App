@@ -66,6 +66,7 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
     acknowledgeMessage,
     isLoading,
     error,
+    unarchiveThread,
   } = useAdminNotificationStore();
 
   // User & Roles
@@ -174,6 +175,11 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
   const handleSendReply = async () => {
     if (!replyText.trim() || !selectedThreadId || !currentUser?.id) return;
     console.log(`Attempting to send reply to thread ${selectedThreadId}...`);
+    const thread = filteredThreads.find((t) => getRootMessageId(t[0]) === selectedThreadId);
+    const isArchived = thread ? thread.some((msg) => msg.is_archived) : false;
+    if (isArchived) {
+      await unarchiveThread(selectedThreadId);
+    }
     try {
       await replyAsAdmin(selectedThreadId, replyText);
       console.log(`Reply Sent to thread ${selectedThreadId}!`);

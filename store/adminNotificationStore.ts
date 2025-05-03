@@ -29,8 +29,11 @@ interface AdminNotificationStore {
     viewingDivisionId: number | null; // Track the currently viewed division ID
     realtimeChannel: RealtimeChannel | null;
     effectiveRoles: UserRole[]; // <-- Add effective roles
+    _lastRefreshTime?: number; // Track the last time we refreshed data
+    _pendingRefreshTimeout?: NodeJS.Timeout | null; // Track any pending refresh
+    subscriptionStatus?: "none" | "subscribing" | "subscribed" | "error"; // Track subscription status
 
-    // Internal fetch/set helper
+    // Expose fetch helper to allow manual refresh from components
     _fetchAndSetMessages: (
         userId: string,
         divisionFilterId: number | null,
@@ -58,6 +61,7 @@ interface AdminNotificationStore {
     ) => Promise<AdminMessage | null>; // Keep for now
     archiveThread: (threadId: string) => Promise<void>; // Keep for now
     markThreadAsUnread: (threadId: string) => Promise<void>; // Needs RPC/adjustment
+    unarchiveThread: (threadId: string) => Promise<void>;
 }
 
 // Helper to get root ID
@@ -77,6 +81,9 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
     viewingDivisionId: null,
     realtimeChannel: null,
     effectiveRoles: [], // <-- Initialize roles state
+    _lastRefreshTime: 0,
+    _pendingRefreshTimeout: null,
+    subscriptionStatus: "none",
 
     // Internal Helper: Fetches messages and unread count based on filters
     _fetchAndSetMessages: async (userId, divisionFilterId) => {
@@ -115,7 +122,7 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
             if (divisionFilterId !== null) {
                 // Message is broadcast (recipient_division_ids is empty) OR targets the specific division
                 messageQuery = messageQuery.or(
-                    `recipient_division_ids.eq.{},recipient_division_ids.cs.{${divisionFilterId}}`,
+                    `recipient_division_ids.eq.{},recipient_division_ids.cs.{${divisionFilterId}},sender_user_id.eq.${userId}`,
                 );
             } else {
                 // If viewing "All" divisions (divisionFilterId is null), no specific division filter is needed.
@@ -285,6 +292,9 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
         set({ isLoading: true });
         get()._fetchAndSetMessages(userId, initialDivisionFilterId);
 
+        // Set subscription status to subscribing
+        set({ subscriptionStatus: "subscribing" });
+
         // --- Realtime Subscription ---
         const handleRealtimeUpdate = (
             payload: RealtimePostgresChangesPayload<any>,
@@ -300,10 +310,36 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
                 record?.id ?? record?.message_id ?? "(no ID)",
             );
 
-            const currentViewingDivision = get().viewingDivisionId;
-            setTimeout(() => {
+            // Limit duplicate refreshes by setting a minimum time between refreshes
+            const currentTime = Date.now();
+            const lastRefreshTime = get()._lastRefreshTime || 0;
+            const timeSinceLastRefresh = currentTime - lastRefreshTime;
+
+            // Only refresh if it's been at least 500ms since last refresh
+            if (timeSinceLastRefresh > 500) {
+                const currentViewingDivision = get().viewingDivisionId;
+                set({ _lastRefreshTime: currentTime });
+
+                // Immediate refresh for better responsiveness
                 get()._fetchAndSetMessages(userId, currentViewingDivision);
-            }, 500);
+            } else {
+                // If we're receiving updates too quickly, schedule a single refresh after delay
+                if (!get()._pendingRefreshTimeout) {
+                    const timeout = setTimeout(() => {
+                        const currentViewingDivision = get().viewingDivisionId;
+                        set({
+                            _pendingRefreshTimeout: null,
+                            _lastRefreshTime: Date.now(),
+                        });
+                        get()._fetchAndSetMessages(
+                            userId,
+                            currentViewingDivision,
+                        );
+                    }, 800);
+
+                    set({ _pendingRefreshTimeout: timeout });
+                }
+            }
         };
 
         // Cleanup previous channel if exists
@@ -369,7 +405,10 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
                             retryCount = 0; // Reset retry count on success
 
                             // Set a flag to indicate successful subscription
-                            set({ realtimeChannel: channel });
+                            set({
+                                realtimeChannel: channel,
+                                subscriptionStatus: "subscribed",
+                            });
 
                             // Trigger a final fetch to catch anything missed during setup
                             get()._fetchAndSetMessages(
@@ -391,6 +430,7 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
                                     err?.message ?? status
                                 }`,
                                 isLoading: false,
+                                subscriptionStatus: "error",
                             });
 
                             // Attempt to retry connection with backoff
@@ -443,6 +483,7 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
                                     realtimeChannel: null,
                                     // @ts-ignore - Adding a custom property for cleanup
                                     _pollInterval: pollInterval,
+                                    subscriptionStatus: "none",
                                 });
                             }
                         } else if (status === "CLOSED") {
@@ -464,6 +505,7 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
                     error: `Channel setup failed: ${
                         error instanceof Error ? error.message : "Unknown error"
                     }`,
+                    subscriptionStatus: "error",
                 });
                 return null;
             }
@@ -528,6 +570,14 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
 
     // Action to mark a message as read by calling the RPC
     markMessageAsRead: async (messageId) => {
+        // Get current readStatusMap
+        const readStatusMap = { ...get().readStatusMap };
+        const originalReadStatusMap = { ...readStatusMap };
+
+        // Optimistically update UI
+        readStatusMap[messageId] = true;
+        set({ readStatusMap });
+
         // console.log(
         //     `[markMessageAsRead] Attempting RPC call for message ${messageId}.`,
         // ); // REMOVE/COMMENT OUT
@@ -543,7 +593,9 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
             // ); // REMOVE/COMMENT OUT
         } catch (error: any) {
             console.error("[markMessageAsRead] Error during RPC call:", error);
+            // Revert optimistic update on error
             set({
+                readStatusMap: originalReadStatusMap,
                 error: `Mark read failed: ${error?.message ?? "Unknown error"}`,
             });
         } finally {
@@ -552,6 +604,8 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
                     "[markMessageAsRead] RPC returned error:",
                     rpcError.message,
                 );
+                // Revert optimistic update on RPC error
+                set({ readStatusMap: originalReadStatusMap });
             }
         }
     },
@@ -565,6 +619,13 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
                 console.error("Error removing channel on cleanup:", err)
             );
         }
+
+        // Clear any pending timeout
+        const pendingTimeout = get()._pendingRefreshTimeout;
+        if (pendingTimeout) {
+            clearTimeout(pendingTimeout);
+        }
+
         set({
             messages: [],
             readStatusMap: {}, // Reset read status map
@@ -574,6 +635,9 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
             isInitialized: false,
             viewingDivisionId: null,
             realtimeChannel: null,
+            _lastRefreshTime: 0,
+            _pendingRefreshTimeout: null,
+            subscriptionStatus: "none",
         });
     },
 
@@ -749,6 +813,36 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
                 );
             }
             set({ isLoading: false });
+        }
+    },
+
+    unarchiveThread: async (threadId) => {
+        // Optimistically update all messages in the thread to is_archived: false
+        const { messages } = get();
+        const originalMessages = [...messages];
+        set((state) => ({
+            messages: state.messages.map((msg) => {
+                // Unarchive all messages in the thread (parent or child)
+                const rootId = msg.parent_message_id || msg.id;
+                return rootId === threadId
+                    ? { ...msg, is_archived: false }
+                    : msg;
+            }),
+        }));
+        try {
+            // Update all messages in the thread in the backend
+            const { error } = await supabase
+                .from("admin_messages")
+                .update({ is_archived: false })
+                .or(`id.eq.${threadId},parent_message_id.eq.${threadId}`);
+            if (error) {
+                set({ messages: originalMessages, error: "Unarchive failed" });
+                throw error;
+            }
+            // Success: rely on realtime to update UI
+        } catch (error) {
+            set({ messages: originalMessages });
+            console.error("[unarchiveThread] Error:", error);
         }
     },
 }));

@@ -41,6 +41,7 @@ interface NotificationStore {
   isLoading: boolean;
   error: string | null;
   isInitialized: boolean;
+  subscriptionStatus: "none" | "subscribing" | "subscribed" | "error";
   setMessages: (messages: Message[]) => void;
   fetchMessages: (userId: string, recipientId: string) => Promise<void>;
   markAsRead: (messageId: string, pinNumber: number) => Promise<void>;
@@ -62,6 +63,7 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
   isLoading: false,
   error: null,
   isInitialized: false,
+  subscriptionStatus: "none",
 
   setIsInitialized: (initialized: boolean) => {
     console.log(`[NotificationStore] Setting isInitialized to ${initialized}`);
@@ -151,7 +153,7 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
 
       // Log the raw data and error *directly* after the query
       console.log("[NotificationStore] Raw Supabase query result:", {
-        data: messages,
+        data: messages?.length || 0,
         error: messagesError,
       });
 
@@ -175,8 +177,8 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
         );
         // Log the recipient identifiers from the raw data
         console.log(
-          "[NotificationStore] Raw recipient identifiers:",
-          messages.map((m) => ({
+          "[NotificationStore] Raw recipient identifiers sample:",
+          messages.slice(0, 2).map((m) => ({
             id: m.id,
             recipient_id: m.recipient_id,
             recipient_pin_number: m.recipient_pin_number,
@@ -379,8 +381,12 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
       `[NotificationStore] Starting subscription for user ID: ${userId}`,
     );
 
-    // Track initialization state
-    set({ isInitialized: true });
+    // Track initialization and subscription state
+    set({
+      isInitialized: true,
+      subscriptionStatus: "subscribing",
+      error: null,
+    });
 
     // We'll use member data in our subscriptions
     const getUserData = async () => {
@@ -401,103 +407,215 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
       }
     };
 
-    // Create unique channel IDs
-    const messagesChannelId = `messages-user-${userId}-${Date.now()}`;
-    const userPinChannelId = `messages-pin-${userId}-${Date.now()}`;
-    const deliveriesChannelId = `deliveries-${userId}-${Date.now()}`;
+    // Track active channels for cleanup
+    const activeChannels = {
+      messagesChannel: null,
+      userPinChannel: null,
+      deliveriesChannel: null,
+    };
 
-    // Create all channels
-    const messagesChannel = supabase.channel(messagesChannelId);
-    const userPinChannel = supabase.channel(userPinChannelId);
-    const deliveriesChannel = supabase.channel(deliveriesChannelId);
+    // Create unique channel IDs with current timestamp to avoid conflicts
+    const timestamp = Date.now();
+    const messagesChannelId = `messages-user-${userId}-${timestamp}`;
+    const userPinChannelId = `messages-pin-${userId}-${timestamp}`;
+    const deliveriesChannelId = `deliveries-${userId}-${timestamp}`;
 
-    // Subscribe to user ID messages
-    messagesChannel
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "messages",
-          filter: `recipient_id=eq.${userId}`,
-        },
-        async (payload) => {
+    try {
+      // Create all channels
+      const messagesChannel = supabase.channel(messagesChannelId);
+      const userPinChannel = supabase.channel(userPinChannelId);
+      const deliveriesChannel = supabase.channel(deliveriesChannelId);
+
+      // Track created channels
+      activeChannels.messagesChannel = messagesChannel;
+      activeChannels.userPinChannel = userPinChannel;
+      activeChannels.deliveriesChannel = deliveriesChannel;
+
+      // Subscribe to user ID messages
+      messagesChannel
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "messages",
+            filter: `recipient_id=eq.${userId}`,
+          },
+          async (payload) => {
+            console.log(
+              "[NotificationStore] Received realtime update for recipient_id:",
+              payload.eventType,
+              payload.new?.id || payload.old?.id,
+            );
+            // Get the user data to refresh messages
+            const userData = await getUserData();
+            if (userData?.pin_number) {
+              // Always refresh on realtime events
+              await get().refreshMessages(userData.pin_number, userId, true);
+            }
+          },
+        )
+        .subscribe((status) => {
           console.log(
-            "[NotificationStore] Received realtime update for recipient_id:",
-            payload,
+            `[NotificationStore] User ID subscription status: ${status}`,
           );
-          // Get the user data to refresh messages
-          const userData = await getUserData();
-          if (userData?.pin_number) {
-            await get().refreshMessages(userData.pin_number, userId);
+
+          // Update subscription status based on first channel
+          if (status === "SUBSCRIBED") {
+            // Only update overall status if all channels are good
+            set((state) => ({
+              ...state,
+              subscriptionStatus: state.error ? "error" : "subscribed",
+            }));
+          } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+            console.error(
+              `[NotificationStore] Channel error on messages channel: ${status}`,
+            );
+            set({
+              subscriptionStatus: "error",
+              error: `Realtime subscription error: ${status}`,
+            });
+
+            // Schedule a fallback data fetch in 2 seconds
+            setTimeout(async () => {
+              const userData = await getUserData();
+              if (userData?.pin_number) {
+                await get().refreshMessages(userData.pin_number, userId, true);
+              }
+            }, 2000);
           }
-        },
-      )
-      .subscribe((status) => {
-        console.log(
-          `[NotificationStore] User ID subscription status: ${status}`,
-        );
+        });
+
+      // Set up pin number subscription after getting the data
+      getUserData().then((userData) => {
+        if (userData?.pin_number) {
+          const pinNumber = userData.pin_number;
+
+          // Handle pin-based notifications
+          userPinChannel
+            .on(
+              "postgres_changes",
+              {
+                event: "*",
+                schema: "public",
+                table: "messages",
+                filter: `recipient_pin_number=eq.${pinNumber}`,
+              },
+              async (payload) => {
+                console.log(
+                  "[NotificationStore] Received realtime update for pin:",
+                  payload.eventType,
+                  payload.new?.id || payload.old?.id,
+                );
+                await get().refreshMessages(pinNumber, userId, true);
+              },
+            )
+            .subscribe((status) => {
+              console.log(
+                `[NotificationStore] Pin subscription status: ${status}`,
+              );
+
+              if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+                console.error(
+                  `[NotificationStore] Channel error on pin channel: ${status}`,
+                );
+                // Don't update overall status if already subscribed to at least one channel
+                if (get().subscriptionStatus !== "subscribed") {
+                  set({
+                    subscriptionStatus: "error",
+                    error: `Pin subscription error: ${status}`,
+                  });
+                }
+
+                // Schedule a fallback data fetch
+                setTimeout(() => {
+                  get().refreshMessages(pinNumber, userId, true);
+                }, 2000);
+              }
+            });
+
+          // Set up delivery notifications
+          deliveriesChannel
+            .on(
+              "postgres_changes",
+              {
+                event: "*",
+                schema: "public",
+                table: "push_notification_deliveries",
+                filter: `recipient_id=eq.${userId}`,
+              },
+              async (payload) => {
+                console.log(
+                  "[NotificationStore] Received delivery update:",
+                  payload.eventType,
+                  payload.new?.id || payload.old?.id,
+                );
+                await get().refreshMessages(pinNumber, userId, true);
+              },
+            )
+            .subscribe((status) => {
+              console.log(
+                `[NotificationStore] Deliveries subscription status: ${status}`,
+              );
+
+              if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+                console.error(
+                  `[NotificationStore] Channel error on deliveries channel: ${status}`,
+                );
+                // Only log the error, don't change state if already subscribed to other channels
+              }
+            });
+
+          // Initial data fetch after subscription setup
+          get().refreshMessages(pinNumber, userId, true);
+        }
+      });
+    } catch (error) {
+      console.error(
+        "[NotificationStore] Error setting up subscriptions:",
+        error,
+      );
+      set({
+        subscriptionStatus: "error",
+        error: `Failed to set up realtime subscriptions: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
       });
 
-    // Set up pin number subscription after getting the data
-    getUserData().then((userData) => {
-      if (userData?.pin_number) {
-        const pinNumber = userData.pin_number;
-
-        // Handle pin-based notifications
-        userPinChannel
-          .on(
-            "postgres_changes",
-            {
-              event: "*",
-              schema: "public",
-              table: "messages",
-              filter: `recipient_pin_number=eq.${pinNumber}`,
-            },
-            async (payload) => {
-              console.log(
-                "[NotificationStore] Received realtime update for pin:",
-                payload,
-              );
-              await get().refreshMessages(pinNumber, userId);
-            },
-          )
-          .subscribe((status) => {
-            console.log(
-              `[NotificationStore] Pin subscription status: ${status}`,
+      // Try to clean up any created channels
+      Object.values(activeChannels).forEach((channel) => {
+        if (channel) {
+          try {
+            supabase.removeChannel(channel);
+          } catch (e) {
+            console.error(
+              "[NotificationStore] Error removing channel during error cleanup:",
+              e,
             );
-          });
-
-        // Set up delivery notifications
-        deliveriesChannel
-          .on(
-            "postgres_changes",
-            {
-              event: "*",
-              schema: "public",
-              table: "push_notification_deliveries",
-              filter: `recipient_id=eq.${userId}`,
-            },
-            async (payload) => {
-              console.log(
-                "[NotificationStore] Received delivery update:",
-                payload,
-              );
-              await get().refreshMessages(pinNumber, userId);
-            },
-          )
-          .subscribe();
-      }
-    });
+          }
+        }
+      });
+    }
 
     // Return function to clean up all subscriptions
     return () => {
       console.log("[NotificationStore] Cleaning up all subscriptions");
 
+      // Reset subscription status
+      set({ subscriptionStatus: "none" });
+
       try {
-        supabase.removeChannel(messagesChannel);
-        supabase.removeChannel(userPinChannel);
-        supabase.removeChannel(deliveriesChannel);
+        // Clean up all channels that were created
+        Object.entries(activeChannels).forEach(([name, channel]) => {
+          if (channel) {
+            try {
+              supabase.removeChannel(channel);
+              console.log(`[NotificationStore] Removed ${name} successfully`);
+            } catch (e) {
+              console.error(`[NotificationStore] Error removing ${name}:`, e);
+            }
+          }
+        });
         console.log("[NotificationStore] All channels removed successfully");
       } catch (error) {
         console.error("[NotificationStore] Error removing channels:", error);
@@ -565,18 +683,24 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
       return;
     }
 
-    // If not forcing, we primarily rely on realtime subscriptions
-    if (!force) {
+    // Check subscription status - if we're not in a good state or force is true, always refresh
+    const subStatus = get().subscriptionStatus;
+    const shouldRefresh = force ||
+      subStatus === "error" ||
+      subStatus === "none" ||
+      get().messages.length === 0;
+
+    if (!shouldRefresh) {
       console.log(
-        "[NotificationStore] Skipping manual refresh, realtime subscriptions will handle updates",
+        "[NotificationStore] Skipping manual refresh, relying on realtime subscriptions. Set force=true to override.",
       );
       return;
     }
 
     try {
-      // Only update the UI loading state if forced
-      if (force) {
-        set((state) => ({ isLoading: true, error: null }));
+      // Only update the UI loading state if forced and not already loading
+      if (!get().isLoading) {
+        set({ isLoading: true, error: null });
       }
 
       const { data: messages, error: messagesError } = await supabase
