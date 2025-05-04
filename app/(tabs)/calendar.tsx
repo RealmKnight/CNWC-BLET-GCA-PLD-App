@@ -40,7 +40,21 @@ import { Ionicons } from "@expo/vector-icons";
 import { useAdminCalendarManagementStore } from "@/store/adminCalendarManagementStore";
 import { Calendar as RNCalendar } from "react-native-calendars";
 import { useTimeStore } from "@/store/timeStore";
-import { TimeOffRequest } from "@/types/time"; // Assuming TimeOffRequest includes paid_in_lieu
+// Define TimeOffRequest interface based on pld_sdv_requests schema
+interface TimeOffRequest {
+  id: string;
+  member_id: string;
+  calendar_id?: string;
+  request_date: string;
+  date?: string; // Add date field for backward compatibility
+  leave_type: "PLD" | "SDV";
+  status: "pending" | "approved" | "denied" | "waitlisted" | "cancellation_pending" | "cancelled";
+  requested_at?: string;
+  waitlist_position?: number;
+  responded_at?: string;
+  responded_by?: string;
+  paid_in_lieu?: boolean;
+}
 
 type ColorScheme = keyof typeof Colors;
 type CalendarType = "PLD/SDV" | "Vacation";
@@ -856,7 +870,19 @@ function RequestDialog({
             !hasExistingRequest &&
             !isSixMonthRequest &&
             !isExistingRequestPaidInLieu && // Explicitly check PIL status
-            (availablePld > 0 || availableSdv > 0) && (
+            (availablePld > 0 || availableSdv > 0) &&
+            (() => {
+              // Check if selected date is within 15 days of today
+              try {
+                const selectedDateObj = parseISO(selectedDate);
+                const today = startOfDay(new Date());
+                const fifteenDaysFromNow = addDays(today, 15);
+                return isBefore(selectedDateObj, fifteenDaysFromNow) && !isBefore(selectedDateObj, today);
+              } catch (e) {
+                console.error("[RequestDialog] Error checking date range for PIL toggle:", e);
+                return false;
+              }
+            })() && (
               <TouchableOpacity
                 style={dialogStyles.pilToggleContainer}
                 onPress={() => setRequestAsPaidInLieu(!requestAsPaidInLieu)}
@@ -1640,16 +1666,20 @@ export default function CalendarScreen() {
 
   // DEBUG: Check if we're receiving PIL requests in timeOffRequests
   if (selectedDate) {
-    const pilRequests = timeOffRequests.filter(
-      (req) => req.date === selectedDate && req.paid_in_lieu && req.member_id === member.id
-    );
+    // Check for timeOffRequests and filter safely
+    const pilRequests = timeOffRequests.filter((req) => {
+      const dateToCheck = req.request_date;
+      return dateToCheck === selectedDate && req.paid_in_lieu && req.member_id === member?.id;
+    });
 
     if (pilRequests.length > 0) {
       console.log(`[CalendarScreen] Found PIL requests for selected date ${selectedDate}:`, pilRequests);
 
       // Also check if these requests appear in calendarStore data
       const calendarRequests = pldRequests[selectedDate] || [];
-      const pilInCalendar = calendarRequests.filter((req) => req.member_id === member.id && req.paid_in_lieu);
+      const pilInCalendar = member?.id
+        ? calendarRequests.filter((req) => req.member_id === member?.id && req.paid_in_lieu)
+        : [];
 
       console.log(`[CalendarScreen] PIL requests in calendarStore:`, pilInCalendar);
     }
@@ -1744,7 +1774,7 @@ export default function CalendarScreen() {
 
       // Call the correct store action
       const success = isSixMonthRequestDate
-        ? await submitSixMonthRequest(leaveType, date, isPaidInLieu)
+        ? await submitSixMonthRequest(leaveType, date)
         : await submitRequest(leaveType, date, isPaidInLieu);
 
       if (success) {
@@ -1863,7 +1893,7 @@ export default function CalendarScreen() {
           <VacationCalendar
             key={calendarTypeKey}
             current={currentDate}
-            onDayActuallyPressed={(date) => updateCurrentCalendarView(date)}
+            // Remove onDayActuallyPressed which isn't in the component's props
           />
         )}
       </ScrollView>
@@ -1949,7 +1979,7 @@ export default function CalendarScreen() {
           // Use timeOffRequests from useMyTime, filter out PIL
           const currentRequestsForDialog = timeOffRequests.filter(
             (req) =>
-              req.date === selectedDate &&
+              req.request_date === selectedDate &&
               ["approved", "pending", "cancellation_pending"].includes(req.status) &&
               !req.paid_in_lieu
           ).length;
@@ -1978,7 +2008,7 @@ export default function CalendarScreen() {
               availablePld={timeStats?.available.pld ?? 0}
               availableSdv={timeStats?.available.sdv ?? 0}
               isExistingRequestPaidInLieu={isExistingRequestPaidInLieu} // Pass calculated flag
-              isSubmittingAction={isSubmittingAction} // Pass loading state map
+              isSubmittingAction={createActionMap(isSubmittingAction)} // Safe fallback
               error={timeStoreError} // Pass error from time store
               onClearError={clearError} // Pass clear action from time store
             />
@@ -1993,9 +2023,12 @@ export default function CalendarScreen() {
             // Just close the dialog without changing the calendar date
             setRequestDialogVisible(false);
           }}
-          onSubmitRequest={() => {
+          onSubmitRequest={async (leaveType, date, isPaidInLieu) => {
+            // Mock implementation that fulfills the Promise<void> type requirement
+            console.log(`[VacationCalendar] Request action not implemented: ${leaveType}, ${date}, ${isPaidInLieu}`);
             // Just close the dialog without changing the calendar date
             setRequestDialogVisible(false);
+            return Promise.resolve();
           }}
           onCancelRequest={cancelRequest} // Pass action from useMyTime
           onCancelSixMonthRequest={cancelSixMonthRequest} // Pass action from useMyTime
@@ -2019,7 +2052,7 @@ export default function CalendarScreen() {
           availablePld={timeStats?.available.pld ?? 0}
           availableSdv={timeStats?.available.sdv ?? 0}
           isExistingRequestPaidInLieu={false}
-          isSubmittingAction={isSubmittingAction}
+          isSubmittingAction={createActionMap(isSubmittingAction)} // Safe fallback
           error={timeStoreError}
           onClearError={clearError}
         />
@@ -2537,4 +2570,35 @@ const dialogStyles = StyleSheet.create({
     fontWeight: "500",
     color: Colors.dark.text,
   } as TextStyle,
+  // Add missing styles for error handling UI
+  clearErrorButton: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    padding: 8,
+    zIndex: 1,
+  } as ViewStyle,
+  errorContainer: {
+    marginVertical: 8,
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: Colors.dark.card,
+    width: "100%",
+    borderWidth: 1,
+    borderColor: Colors.light.error,
+  } as ViewStyle,
+  errorTextDisplay: {
+    color: Colors.light.error,
+    fontSize: 14,
+    textAlign: "center",
+  } as TextStyle,
 });
+
+// Create a helper function at the top of the file before any component definitions
+// to safely convert the isSubmittingAction value
+function createActionMap(source: any): Record<string, boolean> {
+  if (typeof source === "object" && source !== null) {
+    return source as Record<string, boolean>;
+  }
+  return {}; // Return empty object as fallback
+}
