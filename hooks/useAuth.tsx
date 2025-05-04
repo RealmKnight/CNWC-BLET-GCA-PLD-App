@@ -11,7 +11,7 @@ import { useCalendarStore, setupCalendarSubscriptions } from "@/store/calendarSt
 import { useVacationCalendarStore, setupVacationCalendarSubscriptions } from "@/store/vacationCalendarStore";
 import { useAdminNotificationStore } from "@/store/adminNotificationStore";
 import { format } from "date-fns";
-import { useMyTime } from "@/hooks/useMyTime";
+import { useTimeStore } from "@/store/timeStore";
 
 declare global {
   interface Window {
@@ -72,7 +72,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const notificationCleanupRef = useRef<(() => void) | null>(null);
   const calendarCleanupRef = useRef<(() => void) | null>(null);
   const vacationCalendarCleanupRef = useRef<(() => void) | null>(null);
-  const myTimeCleanupRef = useRef<(() => void) | null>(null); // Placeholder
   const adminNotificationCleanupRef = useRef<(() => void) | null>(null); // Add ref for admin store cleanup
   // Refs for state comparison in listeners
   const appStateRef = useRef(AppState.currentState);
@@ -135,18 +134,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
       vacationCalendarCleanupRef.current = null;
     }
 
-    // --- Cleanup for MyTime ---
-    if (myTimeCleanupRef.current) {
-      console.log("[Auth] Cleaning up MyTime...");
-      try {
-        myTimeCleanupRef.current();
-        console.log("[Auth] MyTime cleanup completed successfully");
-      } catch (error) {
-        console.error("[Auth] Error during MyTime cleanup:", error);
-      }
-      myTimeCleanupRef.current = null;
-    } else {
-      console.log("[Auth] No MyTime cleanup function stored, skipping cleanup");
+    // --- Cleanup for Time Store ---
+    console.log("[Auth] Cleaning up Time Store...");
+    try {
+      useTimeStore.getState().cleanup(); // Call the store's cleanup directly
+    } catch (error) {
+      console.error("[Auth] Error cleaning up Time Store:", error);
     }
 
     // --- Cleanup for Admin Notifications ---
@@ -164,6 +157,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     // Call explicit cleanup on admin notification store
     useAdminNotificationStore.getState().cleanupAdminNotifications();
+
+    // Reset initialized flag for Time Store
+    useTimeStore.getState().setIsInitialized(false);
 
     console.log("[Auth] Cleanup actions complete.");
   }, []);
@@ -212,9 +208,24 @@ export function AuthProvider({ children }: AuthProviderProps) {
           const vacationCalendarCleanup = setupVacationCalendarSubscriptions();
           vacationCalendarCleanupRef.current = vacationCalendarCleanup;
         }
+
+        // 3. Initialize Time Store
+        console.log("[Auth] Initializing time store...");
+        try {
+          // No need to check isInitialized here, the store's initialize handles it
+          await useTimeStore.getState().initialize(userId);
+          console.log("[Auth] Time store initialized successfully");
+          // Note: timeStore manages its own cleanup internally via its cleanup action
+        } catch (error) {
+          console.error("[Auth] Error initializing Time Store:", error);
+          // Decide how to handle store init error (e.g., log, set global error state?)
+          // For now, just logging.
+        }
+      } else {
+        console.log("[Auth] No calendar ID found for member, skipping calendar store initialization.");
       }
 
-      // 3. Initialize notification store for the user
+      // 4. Initialize notification store for the user
       const notificationStore = useNotificationStore.getState();
       if (!notificationStore.isInitialized) {
         console.log("[Auth] Initializing notification store...");
@@ -227,28 +238,16 @@ export function AuthProvider({ children }: AuthProviderProps) {
         console.log("[Auth] Notification store initialized");
       }
 
-      // 4. Initialize MyTime hook
-      console.log("[Auth] Initializing myTime hook...");
-      try {
-        // Don't call useMyTime() directly, which would cause a circular dependency
-        // Instead, import any initialization functions from the hook file if needed
-        const { initialize } = await import("./useMyTime");
-        if (initialize) {
-          const result = await initialize(userId);
-          if (result && typeof result.cleanup === "function") {
-            myTimeCleanupRef.current = result.cleanup;
-            console.log("[Auth] Stored MyTime cleanup function successfully");
-          } else {
-            console.log("[Auth] No MyTime cleanup function returned");
-          }
-          console.log("[Auth] MyTime initialized via function");
-        } else {
-          console.log("[Auth] MyTime initialize function not available, skipping");
-        }
-      } catch (error) {
-        console.error("[Auth] Error initializing MyTime:", error);
-      }
-      console.log("[Auth] MyTime hook initialization complete");
+      // 5. Initialize MyTime hook
+      // console.log("[Auth] Initializing myTime hook..."); // Remove old init call
+      // try {
+      // const { cleanup: myTimeCleanup } = await initializeMyTimeHook(userId, true); // Remove old init call
+      // myTimeCleanupRef.current = myTimeCleanup; // Remove old init call
+      // console.log("[Auth] MyTime hook initialized successfully"); // Remove old init call
+      // } catch (error) {
+      // console.error("[Auth] Error initializing MyTime hook:", error); // Remove old init call
+      // Handle error appropriately
+      // }
 
       console.log("[Auth] All stores initialized successfully");
     } catch (error) {
@@ -432,11 +431,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
                 useUserStore.getState().setUserRole(memberRole);
 
                 // Initialize all user-specific stores and hooks after confirming member data
-                // Ensure this only runs if needed (e.g., first time or after cleanup)
-                if (needsCleanup || !myTimeCleanupRef.current) {
-                  // Example condition
-                  await initializeUserStores(fetchedMemberData.id, fetchedMemberData.calendar_id);
-                }
+                // The initialize function within each store already prevents re-initialization
+                await initializeUserStores(fetchedMemberData.id, fetchedMemberData.calendar_id);
 
                 // Check if the member has an admin role (not "user") and initialize admin stores if needed
                 if (memberRole !== "user") {

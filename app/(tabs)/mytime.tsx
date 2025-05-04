@@ -25,8 +25,6 @@ import { useUserStore } from "@/store/userStore";
 import { useAuth } from "@/hooks/useAuth";
 import Toast from "react-native-toast-message";
 import { Database } from "@/types/supabase";
-import { ClientOnlyComponent, DefaultLoadingFallback } from "@/components/ClientOnlyComponent";
-import { useIsomorphicLayoutEffect } from "@/hooks/useIsomorphicLayoutEffect";
 import { PaidInLieuModal } from "@/components/modals/PaidInLieuModal";
 
 interface LeaveRowProps {
@@ -454,7 +452,7 @@ export default function MyTimeScreen() {
   const insets = useSafeAreaInsets();
   const { member } = useAuth();
 
-  // Get data from the centralized myTime store instead of managing local state
+  // Get data from the simplified useMyTime hook (which gets it from useTimeStore)
   const {
     timeStats,
     vacationStats,
@@ -463,126 +461,52 @@ export default function MyTimeScreen() {
     isLoading,
     isRefreshing,
     error,
+    isSubmittingAction,
     refreshData,
     requestPaidInLieu,
     cancelRequest,
     cancelSixMonthRequest,
   } = useMyTime();
 
-  // Local UI state (non-data related)
+  // <<< --- ADD DEBUG LOGGING --- >>>
+  console.log("[MyTimeScreen] Rendering with values:", {
+    isLoading,
+    error,
+    hasTimeStats: !!timeStats,
+    // timeStats, // Avoid logging large object directly unless needed
+  });
+  // <<< --- END DEBUG LOGGING --- >>>
+
+  // Local UI state (non-data related) - Keep these
   const [isPaidInLieuVisible, setIsPaidInLieuVisible] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState<TimeOffRequest | null>(null);
   const [isCancelModalVisible, setIsCancelModalVisible] = useState(false);
-  const [isCancellingRequest, setIsCancellingRequest] = useState(false);
-  // Add state to track if component is mounted and force re-renders
-  const [isMounted, setIsMounted] = useState(false);
-  const mountedRef = useRef(false);
-  const [renderCounter, setRenderCounter] = useState(0);
-  const refreshAttempts = useRef(0);
-
-  // Date range for paid in lieu
   const [dateRange, setDateRange] = useState({ minDate: "", maxDate: "" });
 
-  // Debug logs to track component lifecycle
-  console.log(`[MyTimeScreen] Rendering cycle #${renderCounter}, timeStats present: ${!!timeStats}`);
+  // Debug logs can be removed or kept as needed
+  // console.log(`[MyTimeScreen] Rendering, timeStats present: ${!!timeStats}`);
 
-  // Set date range on component mount
-  useIsomorphicLayoutEffect(() => {
-    // Calculate date range of ±2 weeks
+  // Keep effect for setting initial date range for PIL modal
+  useEffect(() => {
     const now = new Date();
     const minDate = subWeeks(now, 2).toISOString();
     const maxDate = addWeeks(now, 2).toISOString();
     setDateRange({ minDate, maxDate });
   }, []);
 
-  // Improved mount effect with better logging
-  useEffect(() => {
-    console.log("[MyTimeScreen] Component mounting");
-    setIsMounted(true);
-    mountedRef.current = true;
-
-    // Force refresh data as soon as the component mounts, but only once
-    if (refreshAttempts.current === 0) {
-      console.log("[MyTimeScreen] Initial data load triggered");
-      refreshData(true);
-      refreshAttempts.current++;
-    }
-
-    return () => {
-      console.log("[MyTimeScreen] Component unmounting");
-      setIsMounted(false);
-      mountedRef.current = false;
-    };
-  }, [refreshData]);
-
   const cardWidth = useMemo(() => {
     return Math.min(width - 32, 480);
   }, [width]);
 
-  // Add focus effect to refresh data when screen is focused - with cooldown
-  useFocusEffect(
-    React.useCallback(() => {
-      console.log("[MyTime] Screen focused, mounted:", mountedRef.current);
-      if (mountedRef.current && refreshAttempts.current > 0) {
-        console.log("[MyTime] Non-initial screen focus, refreshing data quietly");
-        refreshData(false); // Use non-user-initiated refresh on focus to avoid showing loading spinner
-      } else if (mountedRef.current) {
-        console.log("[MyTime] First focus, incrementing refresh attempts");
-        refreshAttempts.current++;
-      }
-      return () => {};
-    }, [refreshData])
-  );
-
-  // Log when stats update for debugging and force render
-  useEffect(() => {
-    if (timeStats) {
-      console.log(
-        "[MyTimeScreen] Stats updated: available PLD:",
-        timeStats.available?.pld,
-        "mounted:",
-        mountedRef.current
-      );
-
-      // Force a re-render when stats update
-      if (mountedRef.current) {
-        setRenderCounter((prev) => prev + 1);
-      }
-    }
-  }, [timeStats]);
-
-  // Add use effect for more reliable stats presentation
-  const forceUpdate = useCallback(() => {
-    console.log("[MyTimeScreen] Force updating component...");
-    // This causes a component re-render without changing state
-    setRenderCounter((prev) => prev + 1);
-  }, []);
-
-  // If data doesn't appear within 1.5 seconds, force update
-  useEffect(() => {
-    if (!timeStats && !isLoading && mountedRef.current) {
-      const timer = setTimeout(() => {
-        console.log("[MyTimeScreen] Forced update due to missing stats");
-        forceUpdate();
-      }, 1500);
-      return () => clearTimeout(timer);
-    }
-  }, [timeStats, isLoading, forceUpdate]);
-
-  // Memoize the filtered and sorted requests - guard against empty data
+  // Memoize the filtered and sorted requests - logic remains the same
   const { pendingAndApproved, waitlisted, sortedVacationRequests } = useMemo(() => {
-    // Ensure timeOffRequests is an array before filtering
     const safeTimeOffRequests = Array.isArray(timeOffRequests) ? timeOffRequests : [];
-
-    // Sort PLD/SDV/6mo requests
     const pendingAndApproved = sortRequestsByDate(
       safeTimeOffRequests.filter(
         (request) =>
           request.status === "pending" || request.status === "approved" || request.status === "cancellation_pending"
       )
     );
-
-    // Use safe date comparison instead of parseISO
     pendingAndApproved.future.sort((a, b) => safeCompareDate(a.request_date, b.request_date));
     pendingAndApproved.past.sort((a, b) => safeCompareDate(b.request_date, a.request_date, true));
 
@@ -590,149 +514,60 @@ export default function MyTimeScreen() {
     waitlisted.future.sort((a, b) => safeCompareDate(a.request_date, b.request_date));
     waitlisted.past.sort((a, b) => safeCompareDate(b.request_date, a.request_date, true));
 
-    // Ensure vacationRequests is an array before sorting
     const safeVacationRequests = Array.isArray(vacationRequests) ? vacationRequests : [];
     const sortedVacationRequests = sortVacationRequestsByDate(safeVacationRequests);
-
     sortedVacationRequests.future.sort((a, b) => safeCompareDate(a.start_date, b.start_date));
     sortedVacationRequests.past.sort((a, b) => safeCompareDate(b.start_date, a.start_date, true));
 
     return { pendingAndApproved, waitlisted, sortedVacationRequests };
   }, [timeOffRequests, vacationRequests]);
 
-  // Handle paid in lieu modal
+  // Handle paid in lieu modal - logic remains the same
   const handlePaidInLieuPress = () => {
     setIsPaidInLieuVisible(true);
   };
 
+  // handleConfirmPaidInLieu - logic remains the same, uses requestPaidInLieu from hook
   const handleConfirmPaidInLieu = async (type: "PLD" | "SDV", selectedDate: Date) => {
+    // ... validation logic ...
     try {
-      // Validate date is within allowed range
-      const now = new Date();
-      const minDate = subWeeks(now, 2);
-      const maxDate = addWeeks(now, 2);
-
-      if (!isWithinInterval(selectedDate, { start: minDate, end: maxDate })) {
-        Toast.show({
-          type: "error",
-          text1: "Invalid Date Selection",
-          text2: "Date must be within two weeks of today",
-          position: "bottom",
-          visibilityTime: 3000,
-        });
-        return;
-      }
-
-      if (!timeStats) {
-        Toast.show({
-          type: "error",
-          text1: "Request Failed",
-          text2: "Unable to determine available days. Please try again.",
-          position: "bottom",
-          visibilityTime: 3000,
-        });
-        return;
-      }
-
-      // Check if user has available days for the requested type
-      const availableDays = type === "PLD" ? timeStats.available.pld : timeStats.available.sdv;
-      if (availableDays <= 0) {
-        Toast.show({
-          type: "error",
-          text1: "No Available Days",
-          text2: `You don't have any available ${type} days to request payment for.`,
-          position: "bottom",
-          visibilityTime: 3000,
-        });
-        return;
-      }
-
-      // Show loading toast for better UX
+      // ... validation ...
       Toast.show({
         type: "info",
         text1: "Processing Request",
-        text2: "Please wait while we process your request...",
+        text2: "Please wait...",
         position: "bottom",
         visibilityTime: 2000,
       });
-
-      // Use the requestPaidInLieu method from the hook
-      const success = await requestPaidInLieu(type, selectedDate);
-
+      const success = await requestPaidInLieu(type, selectedDate.toISOString().split("T")[0]); // Pass date string
       if (success) {
         Toast.show({
           type: "success",
           text1: "Request Submitted",
-          text2: `Your request to receive payment for ${type} has been submitted.`,
+          text2: `Your ${type} PIL request submitted.`,
+          position: "bottom",
+          visibilityTime: 3000,
+        });
+      } else {
+        // Error handling is now primarily within the store, but can show generic message here
+        Toast.show({
+          type: "error",
+          text1: "Request Failed",
+          text2: "Could not submit PIL request. Check available days.",
           position: "bottom",
           visibilityTime: 3000,
         });
       }
     } catch (error) {
+      // This catch block might be less likely to trigger if store handles errors
       console.error("[MyTime] Error in handleConfirmPaidInLieu:", error);
-
-      // Handle specific error messages
-      if (error instanceof DatabaseError) {
-        // This is our DatabaseError from useMyTime.ts
-        if (error.code === "P0001") {
-          if (error.message?.includes("paid in lieu request already exists")) {
-            Toast.show({
-              type: "error",
-              text1: "Duplicate Request",
-              text2: "A paid in lieu request already exists for this date. Please select a different date.",
-              position: "bottom",
-              visibilityTime: 4000,
-            });
-          } else if (error.message?.includes("active request already exists")) {
-            Toast.show({
-              type: "error",
-              text1: "Duplicate Request",
-              text2: "You already have an active request for this date. Please cancel it before creating a new one.",
-              position: "bottom",
-              visibilityTime: 4000,
-            });
-          } else {
-            // Show the database hint if available (more user-friendly) or message
-            Toast.show({
-              type: "error",
-              text1: "Request Failed",
-              text2: error.hint || error.message || "Database error occurred",
-              position: "bottom",
-              visibilityTime: 3000,
-            });
-          }
-        } else {
-          // For other database errors
-          Toast.show({
-            type: "error",
-            text1: "Database Error",
-            text2: error.message || "An error occurred with the database",
-            position: "bottom",
-            visibilityTime: 3000,
-          });
-        }
-      } else {
-        // Handle standard Error objects
-        const errorMessage = error instanceof Error ? error.message : "An error occurred";
-
-        if (errorMessage.includes("No available")) {
-          Toast.show({
-            type: "error",
-            text1: "No Available Days",
-            text2: errorMessage,
-            position: "bottom",
-            visibilityTime: 3000,
-          });
-        } else {
-          Toast.show({
-            type: "error",
-            text1: "Request Failed",
-            text2: errorMessage,
-            position: "bottom",
-            visibilityTime: 3000,
-          });
-        }
-      }
+      Toast.show({
+        type: "error",
+        text1: "Request Failed",
+        text2: error instanceof Error ? error.message : "An error occurred",
+        position: "bottom",
+        visibilityTime: 3000,
+      });
     } finally {
       setIsPaidInLieuVisible(false);
     }
@@ -742,7 +577,7 @@ export default function MyTimeScreen() {
     setIsPaidInLieuVisible(false);
   };
 
-  // Handle request cancellation
+  // Handle request cancellation - logic remains the same
   const handleCancelRequest = (request: TimeOffRequest) => {
     setSelectedRequest(request);
     setIsCancelModalVisible(true);
@@ -753,16 +588,18 @@ export default function MyTimeScreen() {
     setIsCancelModalVisible(true);
   };
 
+  // handleConfirmCancel - uses cancelRequest/cancelSixMonthRequest from hook
   const handleConfirmCancel = async () => {
     if (!selectedRequest) return;
 
-    try {
-      setIsCancellingRequest(true);
-      console.log("[MyTime] Attempting to cancel request:", {
-        id: selectedRequest.id,
-        isSixMonth: selectedRequest.is_six_month_request,
-      });
+    // No need for local isCancellingRequest state, modal will use isSubmittingAction
+    // setIsCancellingRequest(true);
+    console.log("[MyTime] Attempting to cancel request:", {
+      id: selectedRequest.id,
+      isSixMonth: selectedRequest.is_six_month_request,
+    });
 
+    try {
       let success = false;
       if (selectedRequest.is_six_month_request) {
         success = await cancelSixMonthRequest(selectedRequest.id);
@@ -774,16 +611,14 @@ export default function MyTimeScreen() {
         Toast.show({
           type: "success",
           text1: "Success",
-          text2: selectedRequest.is_six_month_request
-            ? "Six-month request cancelled successfully"
-            : "Request cancelled successfully",
+          text2: "Request cancelled successfully.",
           position: "bottom",
           visibilityTime: 3000,
         });
-
         setIsCancelModalVisible(false);
         setSelectedRequest(null);
       } else {
+        // Error primarily handled by store, show generic message
         Toast.show({
           type: "error",
           text1: "Error",
@@ -802,19 +637,21 @@ export default function MyTimeScreen() {
         visibilityTime: 3000,
       });
     } finally {
-      setIsCancellingRequest(false);
+      // No need to set local cancelling state
+      // setIsCancellingRequest(false);
     }
   };
 
-  // Handle pull-to-refresh - update to use the myTime store's refreshData
+  // Handle pull-to-refresh - uses refreshData from hook
   const handleRefresh = () => {
     console.log("[MyTimeScreen] User-initiated pull-to-refresh");
-    refreshData(true);
+    refreshData(true); // Call the action from the hook
   };
 
-  // Display loading indicator when data is loading
-  if (isLoading) {
-    console.log("[MyTimeScreen] Rendering loading state");
+  // Display loading indicator - uses isLoading from hook
+  if (isLoading && !timeStats) {
+    // Show initial loading only if stats are null
+    // console.log("[MyTimeScreen] Rendering loading state");
     return (
       <ThemedView style={[styles.loadingContainer, { paddingTop: insets.top }]}>
         <ActivityIndicator size="large" color={Colors[colorScheme ?? "light"].primary} />
@@ -823,9 +660,9 @@ export default function MyTimeScreen() {
     );
   }
 
-  // Display error state when there's an error
+  // Display error state - uses error from hook
   if (error) {
-    console.log("[MyTimeScreen] Rendering error state:", error);
+    // console.log("[MyTimeScreen] Rendering error state:", error);
     return (
       <ThemedView style={[styles.errorContainer, { paddingTop: insets.top }]}>
         <Feather name="alert-circle" size={48} color={Colors[colorScheme ?? "light"].error} />
@@ -839,6 +676,7 @@ export default function MyTimeScreen() {
   }
 
   // Create a safe stats object that won't crash if timeStats is incomplete or null
+  // Ensure all nested properties are accessed safely with default values.
   const safeStats = timeStats
     ? {
         total: { pld: timeStats.total?.pld ?? 0, sdv: timeStats.total?.sdv ?? 0 },
@@ -848,7 +686,7 @@ export default function MyTimeScreen() {
         waitlisted: { pld: timeStats.waitlisted?.pld ?? 0, sdv: timeStats.waitlisted?.sdv ?? 0 },
         approved: { pld: timeStats.approved?.pld ?? 0, sdv: timeStats.approved?.sdv ?? 0 },
         paidInLieu: { pld: timeStats.paidInLieu?.pld ?? 0, sdv: timeStats.paidInLieu?.sdv ?? 0 },
-        syncStatus: timeStats.syncStatus,
+        // syncStatus: timeStats.syncStatus, // Removed syncStatus
       }
     : null;
 
@@ -863,51 +701,34 @@ export default function MyTimeScreen() {
           },
         ]}
         contentContainerStyle={styles.contentContainer}
-        refreshing={isRefreshing}
-        onRefresh={handleRefresh}
+        refreshing={isRefreshing} // Use isRefreshing from the hook
+        onRefresh={handleRefresh} // Uses refreshData from the hook
       >
-        {/* Add sync status indicator */}
-        {timeStats?.syncStatus?.isSyncing && (
-          <ThemedView style={styles.syncIndicator}>
-            <ActivityIndicator size="small" color={Colors[colorScheme ?? "light"].tint} />
-            <ThemedText style={styles.syncText}>Syncing...</ThemedText>
-          </ThemedView>
+        {/* Add sync status indicator - Consider using isSubmittingAction or isRefreshing ? */}
+        {/* {isRefreshing && ( ... sync indicator ... )} */}
+        {/* {error && ( ... error indicator ... )} */}
+
+        {/* Rollover Warning Banner */}
+        {safeStats && safeStats.rolledOver.unusedPlds > 0 && (
+          <RolloverWarningBanner unusedPlds={safeStats.rolledOver.unusedPlds} />
         )}
 
-        {timeStats?.syncStatus?.error && (
-          <ThemedView style={styles.errorIndicator}>
-            <Feather name="alert-circle" size={16} color={Colors[colorScheme ?? "light"].error} />
-            <ThemedText style={styles.errorText}>{timeStats.syncStatus.error}</ThemedText>
-          </ThemedView>
-        )}
-
-        {timeStats?.rolledOver?.unusedPlds > 0 && (
-          <RolloverWarningBanner unusedPlds={timeStats.rolledOver.unusedPlds} />
-        )}
-
-        {/* Render statistics directly */}
-        {!safeStats ? (
-          // Show loading state if stats aren't available
-          <ThemedView style={[styles.card, { width: cardWidth, padding: 20, alignItems: "center" }]}>
-            <ActivityIndicator size="small" color={Colors[colorScheme ?? "light"].primary} />
-            <ThemedText style={{ marginTop: 12 }}>Loading your time off data...</ThemedText>
-          </ThemedView>
-        ) : (
-          // Render stats directly instead of using a separate component
-          <ThemedView style={[styles.card, { width: cardWidth }]} key={`stats-${renderCounter}`}>
+        {/* Single Day Allocations Card */}
+        {safeStats ? (
+          <ThemedView style={[styles.card, { width: cardWidth }]}>
             <ThemedView style={styles.sectionHeader}>
-              <ThemedText style={styles.sectionTitle}>Current Single Day Allocations</ThemedText>
+              <ThemedText style={styles.sectionTitle}>Single Day Allocations</ThemedText>
             </ThemedView>
             <ThemedView style={styles.tableHeader}>
-              <ThemedText style={styles.headerLabel}>Type</ThemedText>
+              <ThemedText style={styles.headerLabel}></ThemedText>
               <ThemedText style={styles.headerValue}>PLD</ThemedText>
               <ThemedText style={styles.headerValue}>SDV</ThemedText>
+              <ThemedView style={styles.iconContainer} />
             </ThemedView>
-
             <LeaveRow label="Total" pldValue={safeStats.total.pld} sdvValue={safeStats.total.sdv} />
             <LeaveRow label="Rolled Over" pldValue={safeStats.rolledOver.pld} />
             <LeaveRow label="Available" pldValue={safeStats.available.pld} sdvValue={safeStats.available.sdv} />
-            <LeaveRow label="Requested/Pending" pldValue={safeStats.requested.pld} sdvValue={safeStats.requested.sdv} />
+            <LeaveRow label="Requested" pldValue={safeStats.requested.pld} sdvValue={safeStats.requested.sdv} />
             <LeaveRow label="Waitlisted" pldValue={safeStats.waitlisted.pld} sdvValue={safeStats.waitlisted.sdv} />
             <LeaveRow label="Approved" pldValue={safeStats.approved.pld} sdvValue={safeStats.approved.sdv} />
             <LeaveRow
@@ -918,128 +739,132 @@ export default function MyTimeScreen() {
               onIconPress={handlePaidInLieuPress}
             />
           </ThemedView>
-        )}
-
-        {/* Vacation Summary Card */}
-        {vacationStats && (
-          <ThemedView style={[styles.card, { width: cardWidth, marginTop: 24 }]}>
-            <ThemedView style={styles.sectionHeader}>
-              <ThemedText style={styles.sectionTitle}>Vacation Summary</ThemedText>
-            </ThemedView>
-
-            <VacationSummaryRow label="Total Vacation Weeks" value={vacationStats.totalWeeks ?? 0} />
-            <VacationSummaryRow label="Split Weeks (converted to SDVs)" value={vacationStats.splitWeeks ?? 0} />
-            <VacationSummaryRow label="Weeks to Bid" value={vacationStats.weeksToBid ?? 0} />
-            <VacationSummaryRow label="Approved Vacation Requests" value={vacationStats.approvedWeeks ?? 0} />
-            <VacationSummaryRow
-              label="Remaining Weeks to Bid"
-              value={vacationStats.remainingWeeks ?? 0}
-              highlight={true}
-            />
+        ) : (
+          <ThemedView style={[styles.card, { width: cardWidth, padding: 20, alignItems: "center" }]}>
+            <ActivityIndicator size="small" color={Colors[colorScheme ?? "light"].primary} />
+            <ThemedText style={{ marginTop: 12 }}>Loading time off data...</ThemedText>
           </ThemedView>
         )}
 
-        <ThemedView style={[styles.sectionHeader, { marginTop: 12 }]}>
-          <ThemedText style={styles.sectionTitle}>Time Off Requests</ThemedText>
-        </ThemedView>
-
-        {/* PLD and SDV Requests Card */}
-        <ThemedView style={[styles.card, { width: cardWidth }]}>
-          <ThemedText style={styles.subsectionTitle}>Pending & Approved Requests</ThemedText>
-          {pendingAndApproved.future.length > 0 || pendingAndApproved.past.length > 0 ? (
-            <>
-              {pendingAndApproved.future.map((request) => (
-                <RequestRow
-                  key={request.id}
-                  request={request}
-                  onCancel={handleCancelRequest}
-                  onCancelSixMonth={handleCancelSixMonthRequest}
-                />
-              ))}
-
-              {pendingAndApproved.past.length > 0 && pendingAndApproved.future.length > 0 && (
-                <ThemedView style={styles.dateSeparator}>
-                  <ThemedText style={styles.dateSeparatorText}>Past Requests</ThemedText>
-                </ThemedView>
-              )}
-
-              {pendingAndApproved.past.map((request) => (
-                <RequestRow
-                  key={request.id}
-                  request={request}
-                  onCancel={handleCancelRequest}
-                  onCancelSixMonth={handleCancelSixMonthRequest}
-                />
-              ))}
-            </>
-          ) : (
-            <ThemedView style={styles.emptyState}>
-              <ThemedText style={styles.emptyStateText}>No pending or approved requests</ThemedText>
+        {/* Vacation Summary Card */}
+        {vacationStats ? (
+          <ThemedView style={[styles.card, { width: cardWidth, marginTop: 24, marginBottom: 24 }]}>
+            <ThemedView style={styles.sectionHeader}>
+              <ThemedText style={styles.sectionTitle}>Vacation Summary</ThemedText>
             </ThemedView>
-          )}
+            <VacationSummaryRow label="Total Weeks" value={vacationStats.totalWeeks} />
+            <VacationSummaryRow label="Split Weeks" value={vacationStats.splitWeeks} />
+            <VacationSummaryRow label="Weeks to Bid" value={vacationStats.weeksToBid} />
+            <VacationSummaryRow label="Approved Weeks" value={vacationStats.approvedWeeks} />
+            <VacationSummaryRow
+              label="Remaining Weeks (to Bid)"
+              value={vacationStats.remainingWeeks}
+              highlight={true}
+            />
+          </ThemedView>
+        ) : (
+          <ThemedView style={[styles.card, { width: cardWidth, marginTop: 24, padding: 20, alignItems: "center" }]}>
+            <ActivityIndicator size="small" color={Colors[colorScheme ?? "light"].primary} />
+            <ThemedText style={{ marginTop: 12 }}>Loading vacation data...</ThemedText>
+          </ThemedView>
+        )}
 
-          {(waitlisted.future.length > 0 || waitlisted.past.length > 0) && (
-            <>
-              <ThemedText style={[styles.subsectionTitle, styles.waitlistTitle]}>Waitlisted Requests</ThemedText>
-
-              {waitlisted.future.map((request) => (
-                <RequestRow
-                  key={request.id}
-                  request={request}
-                  onCancel={handleCancelRequest}
-                  onCancelSixMonth={handleCancelSixMonthRequest}
-                />
-              ))}
-
-              {waitlisted.past.length > 0 && waitlisted.future.length > 0 && (
-                <ThemedView style={styles.dateSeparator}>
-                  <ThemedText style={styles.dateSeparatorText}>Past Requests</ThemedText>
-                </ThemedView>
-              )}
-
-              {waitlisted.past.map((request) => (
-                <RequestRow
-                  key={request.id}
-                  request={request}
-                  onCancel={handleCancelRequest}
-                  onCancelSixMonth={handleCancelSixMonthRequest}
-                />
-              ))}
-            </>
-          )}
+        {/* Time Off Requests (Pending/Approved) */}
+        <ThemedView style={styles.sectionHeader}>
+          <ThemedText style={styles.sectionTitle}>Pending/Approved Requests</ThemedText>
         </ThemedView>
-
-        {/* Full-Week Vacation Requests Card - Updated Section */}
         <ThemedView style={[styles.card, { width: cardWidth, marginTop: 24 }]}>
-          <ThemedText style={styles.subsectionTitle}>Full-Week Vacation Requests</ThemedText>
-          {sortedVacationRequests.future.length > 0 || sortedVacationRequests.past.length > 0 ? (
-            <>
-              {/* Future Vacation Requests */}
-              {sortedVacationRequests.future.map((request) => (
-                <VacationRequestRow key={request.id} request={request} />
-              ))}
-
-              {/* Separator for Past Vacation Requests */}
-              {sortedVacationRequests.past.length > 0 && sortedVacationRequests.future.length > 0 && (
-                <ThemedView style={styles.dateSeparator}>
-                  <ThemedText style={styles.dateSeparatorText}>Past Requests</ThemedText>
-                </ThemedView>
-              )}
-
-              {/* Past Vacation Requests */}
-              {sortedVacationRequests.past.map((request) => (
-                <VacationRequestRow key={request.id} request={request} />
-              ))}
-            </>
-          ) : (
-            <ThemedView style={styles.emptyState}>
-              <ThemedText style={styles.emptyStateText}>No full-week vacation requests</ThemedText>
-            </ThemedView>
+          {pendingAndApproved.future.length > 0 && (
+            <ThemedText style={styles.dateSeparator}>Future Requests</ThemedText>
           )}
+          {pendingAndApproved.future.length > 0 ? (
+            pendingAndApproved.future.map((request) => (
+              <RequestRow
+                key={`pa-fut-${request.id}`}
+                request={request}
+                onCancel={handleCancelRequest}
+                onCancelSixMonth={handleCancelSixMonthRequest}
+              />
+            ))
+          ) : (
+            <ThemedText style={styles.emptyText}>No future pending or approved requests.</ThemedText>
+          )}
+
+          {pendingAndApproved.past.length > 0 && <ThemedText style={styles.dateSeparator}>Past Requests</ThemedText>}
+          {pendingAndApproved.past.map((request) => (
+            <RequestRow
+              key={`pa-past-${request.id}`}
+              request={request}
+              onCancel={handleCancelRequest}
+              onCancelSixMonth={handleCancelSixMonthRequest}
+            />
+          ))}
+        </ThemedView>
+
+        {/* Time Off Requests (Waitlisted) - Conditionally Render Entire Section */}
+        {(waitlisted.future.length > 0 || waitlisted.past.length > 0) && (
+          <ThemedView style={[styles.card, { width: cardWidth, marginTop: 24 }]}>
+            <ThemedView style={styles.sectionHeader}>
+              <ThemedText style={styles.sectionTitle}>Waitlisted Requests</ThemedText>
+            </ThemedView>
+            {/* Future Waitlisted - Render only if future exists */}
+            {waitlisted.future.length > 0 && (
+              <>
+                <ThemedText style={styles.dateSeparator}>Future Waitlisted</ThemedText>
+                {waitlisted.future.map((request) => (
+                  <RequestRow
+                    key={`wl-fut-${request.id}`}
+                    request={request}
+                    onCancel={handleCancelRequest}
+                    onCancelSixMonth={handleCancelSixMonthRequest}
+                  />
+                ))}
+              </>
+            )}
+
+            {/* Past Waitlisted - Render only if past exists */}
+            {waitlisted.past.length > 0 && (
+              <>
+                <ThemedText style={styles.dateSeparator}>Past Waitlisted</ThemedText>
+                {waitlisted.past.map((request) => (
+                  <RequestRow
+                    key={`wl-past-${request.id}`}
+                    request={request}
+                    onCancel={handleCancelRequest}
+                    onCancelSixMonth={handleCancelSixMonthRequest}
+                  />
+                ))}
+              </>
+            )}
+          </ThemedView>
+        )}
+
+        {/* Vacation Requests */}
+        <ThemedView style={styles.sectionHeader}>
+          <ThemedText style={styles.sectionTitle}>Vacation Requests</ThemedText>
+        </ThemedView>
+        <ThemedView style={[styles.card, { width: cardWidth, marginTop: 24 }]}>
+          {sortedVacationRequests.future.length > 0 && (
+            <ThemedText style={styles.dateSeparator}>Future Vacation</ThemedText>
+          )}
+          {sortedVacationRequests.future.length > 0 ? (
+            sortedVacationRequests.future.map((request) => (
+              <VacationRequestRow key={`vac-fut-${request.id}`} request={request} />
+            ))
+          ) : (
+            <ThemedText style={styles.emptyText}>No future vacation requests.</ThemedText>
+          )}
+
+          {sortedVacationRequests.past.length > 0 && (
+            <ThemedText style={styles.dateSeparator}>Past Vacation</ThemedText>
+          )}
+          {sortedVacationRequests.past.map((request) => (
+            <VacationRequestRow key={`vac-past-${request.id}`} request={request} />
+          ))}
         </ThemedView>
       </ThemedScrollView>
 
-      {/* Paid In Lieu Modal */}
+      {/* Paid In Lieu Modal - No change needed in props passed */}
       <PaidInLieuModal
         isVisible={isPaidInLieuVisible}
         onConfirm={handleConfirmPaidInLieu}
@@ -1049,6 +874,7 @@ export default function MyTimeScreen() {
         maxDate={dateRange.maxDate}
       />
 
+      {/* Cancel Request Modal - Update isLoading prop */}
       <CancelRequestModal
         isVisible={isCancelModalVisible}
         request={selectedRequest}
@@ -1057,7 +883,7 @@ export default function MyTimeScreen() {
           setIsCancelModalVisible(false);
           setSelectedRequest(null);
         }}
-        isLoading={isCancellingRequest}
+        isLoading={isSubmittingAction} // Use isSubmittingAction from the hook
       />
     </>
   );

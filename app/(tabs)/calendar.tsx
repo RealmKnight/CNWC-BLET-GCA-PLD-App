@@ -39,6 +39,7 @@ import { RealtimePostgresChangesPayload, RealtimeChannel } from "@supabase/supab
 import { Ionicons } from "@expo/vector-icons";
 import { useAdminCalendarManagementStore } from "@/store/adminCalendarManagementStore";
 import { Calendar as RNCalendar } from "react-native-calendars";
+import { TimeOffRequest } from "@/types/time"; // Assuming TimeOffRequest includes paid_in_lieu
 
 type ColorScheme = keyof typeof Colors;
 type CalendarType = "PLD/SDV" | "Vacation";
@@ -46,79 +47,92 @@ type CalendarType = "PLD/SDV" | "Vacation";
 interface RequestDialogProps {
   isVisible: boolean;
   onClose: () => void;
-  onSubmit: (leaveType: "PLD" | "SDV") => void;
+  onSubmitRequest: (leaveType: "PLD" | "SDV", date: string, isPaidInLieu?: boolean) => Promise<void>; // New submit action
+  onCancelRequest: (requestId: string) => Promise<boolean>; // Use store action signature
+  onCancelSixMonthRequest: (requestId: string) => Promise<boolean>; // Use store action signature
   selectedDate: string;
-  allotments: {
-    max: number;
-    current: number;
-  };
-  requests: DayRequest[];
-  calendarType: CalendarType; // Add calendar type
-  calendarId: string; // Add calendar ID
-  onAdjustmentComplete: () => void; // Add new prop for reopening after adjustment
-  viewMode?: "past" | "request" | "nearPast"; // Add new prop for view mode
+  maxAllotment: number; // Pass max allotment
+  currentAllotment: number; // Pass current calculated allotment
+  requests: DayRequest[]; // Keep requests for display list
+  calendarType: CalendarType;
+  calendarId: string;
+  onAdjustmentComplete: () => void;
+  viewMode?: "past" | "request" | "nearPast";
+  availablePld: number;
+  availableSdv: number;
+  isExistingRequestPaidInLieu: boolean; // Flag for PIL status of user's request
+  isSubmittingAction: Record<string, boolean>; // Loading state map
+  error: string | null; // Error state from store
+  onClearError: () => void; // Action to clear store error
 }
 
+// --- Start Replace RequestDialog Here ---
 function RequestDialog({
   isVisible,
   onClose,
-  onSubmit,
+  onSubmitRequest, // Use this prop
+  onCancelRequest, // Use this prop
+  onCancelSixMonthRequest, // Use this prop
   selectedDate,
-  allotments,
-  requests: allRequests,
+  maxAllotment,
+  currentAllotment: propCurrentAllotment, // Renamed prop
+  requests: allRequests, // Renamed prop for clarity
   calendarType,
   calendarId,
   onAdjustmentComplete,
   viewMode,
+  availablePld, // Use this prop
+  availableSdv, // Use this prop
+  isExistingRequestPaidInLieu, // Use this prop
+  isSubmittingAction, // Use this prop
+  error: storeError, // Use this prop
+  onClearError, // Use this prop
 }: RequestDialogProps) {
   const theme = (useColorScheme() ?? "light") as ColorScheme;
-  const {
-    timeStats, // Correctly destructure timeStats
-    initialize: refreshMyTimeStats,
-    cancelSixMonthRequest,
-    invalidateCache,
-    isLoading: isMyTimeLoading,
-  } = useMyTime();
+  // Removed useMyTime hook call
+
   const { member } = useUserStore();
   const userRole = useUserStore((state) => state.userRole);
-  const checkSixMonthRequest = useCalendarStore((state) => state.checkSixMonthRequest);
-  const cancelRequest = useCalendarStore((state) => state.cancelRequest);
+  // Removed useCalendarStore calls for actions
+
   const updateDailyAllotment = useAdminCalendarManagementStore((state) => state.updateDailyAllotment);
   const updateWeeklyAllotment = useAdminCalendarManagementStore((state) => state.updateWeeklyAllotment);
 
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  // Removed isSubmitting state
   const [hasSixMonthRequest, setHasSixMonthRequest] = useState(false);
-  const [totalSixMonthRequests, setTotalSixMonthRequests] = useState(0);
+  // --- REINTRODUCE local state for six-month count ---
+  const [totalSixMonthRequestsState, setTotalSixMonthRequestsState] = useState(0);
   const [localRequests, setLocalRequests] = useState<DayRequest[]>([]);
   const realtimeChannelRef = useRef<RealtimeChannel | null>(null);
   const [sixMonthRequestId, setSixMonthRequestId] = useState<string | null>(null);
-  // Add state for cancel confirmation dialog
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelType, setCancelType] = useState<"regular" | "six-month">("regular");
-
-  // New state for allocation adjustment
   const [showAdjustmentModal, setShowAdjustmentModal] = useState(false);
   const [newAllotment, setNewAllotment] = useState("");
   const [isAdjusting, setIsAdjusting] = useState(false);
   const [adjustmentError, setAdjustmentError] = useState<string | null>(null);
+  const [localAllotments, setLocalAllotments] = useState({ max: maxAllotment, current: propCurrentAllotment });
 
-  // Add state for local tracking of allotments that can be updated by real-time events
-  const [localAllotments, setLocalAllotments] = useState(allotments);
+  // Added state for Paid In Lieu toggle
+  const [requestAsPaidInLieu, setRequestAsPaidInLieu] = useState(false);
 
-  // Admin check
   const isAdmin = userRole === "application_admin" || userRole === "union_admin" || userRole === "division_admin";
+
+  // Update local allotments when props change
+  useEffect(() => {
+    setLocalAllotments({ max: maxAllotment, current: propCurrentAllotment });
+  }, [maxAllotment, propCurrentAllotment]);
 
   // Initialize local state from props
   useEffect(() => {
     setLocalRequests(allRequests);
-    setLocalAllotments(allotments);
-  }, [allRequests, allotments]);
+  }, [allRequests]);
 
-  // Set up real-time subscription to handle active requests
+  // Set up real-time subscription (Uses props.calendarId and propCurrentAllotment)
   useEffect(() => {
-    if (!selectedDate || !member?.calendar_id || !isVisible) return;
+    if (!selectedDate || !calendarId || !isVisible) return;
 
-    // Clean up any existing subscription first
+    // Clean up existing subscription
     if (realtimeChannelRef.current) {
       console.log("[RequestDialog] Cleaning up existing real-time subscription");
       realtimeChannelRef.current.unsubscribe();
@@ -126,35 +140,19 @@ function RequestDialog({
     }
 
     console.log("[RequestDialog] Setting up real-time subscription for", selectedDate);
-
-    // Create a unique channel name with timestamp to prevent stale subscriptions
     const channelName = `request-dialog-${selectedDate}-${Date.now()}`;
     const channel = supabase
       .channel(channelName)
       .on(
         "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "pld_sdv_requests",
-          filter: `request_date=eq.${selectedDate}`,
-        },
+        { event: "*", schema: "public", table: "pld_sdv_requests", filter: `request_date=eq.${selectedDate}` },
         (payload: RealtimePostgresChangesPayload<any>) => {
-          console.log("[RequestDialog] Received realtime update:", payload);
-
+          console.log("[RequestDialog] Received pld_sdv_requests update:", payload);
           const { eventType, new: newRecord, old: oldRecord } = payload;
 
           if (eventType === "INSERT") {
-            // Check if this request already exists in our local state
-            // Use a function callback for setLocalRequests to get the latest state
             setLocalRequests((prev) => {
-              const requestAlreadyExists = prev.some((req) => req.id === newRecord.id);
-              if (requestAlreadyExists) {
-                console.log("[RequestDialog] Skipping INSERT for already existing request:", newRecord.id);
-                return prev;
-              }
-
-              // Fetch the member details for the new request
+              if (prev.some((req) => req.id === newRecord.id)) return prev;
               supabase
                 .from("members")
                 .select("id, first_name, last_name, pin_number")
@@ -164,94 +162,49 @@ function RequestDialog({
                   if (!error && memberData) {
                     const newRequest: DayRequest = {
                       ...newRecord,
-                      member: {
-                        id: memberData.id,
-                        first_name: memberData.first_name,
-                        last_name: memberData.last_name,
-                        pin_number: memberData.pin_number || 0,
-                      },
+                      member: { ...memberData, pin_number: memberData.pin_number || 0 },
                     };
-
-                    // Double-check again before adding inside the state setter
-                    setLocalRequests((currentPrev) => {
-                      if (currentPrev.some((req) => req.id === newRecord.id)) {
-                        console.log(
-                          "[RequestDialog] Request already added in state update, preventing duplicate:",
-                          newRecord.id
-                        );
-                        return currentPrev;
-                      }
-                      return [...currentPrev, newRequest];
-                    });
+                    setLocalRequests((currentPrev) =>
+                      currentPrev.some((req) => req.id === newRecord.id) ? currentPrev : [...currentPrev, newRequest]
+                    );
                   }
                 });
-              return prev; // Return the previous state while async fetch happens
+              return prev;
             });
           } else if (eventType === "UPDATE") {
-            // Carefully merge updates, preserving the existing member object
             setLocalRequests((prev) =>
-              prev.map((req) => {
-                if (req.id === newRecord.id) {
-                  // Preserve existing member data if not present in newRecord
-                  const updatedMember = newRecord.member || req.member;
-                  return {
-                    ...req,
-                    ...newRecord,
-                    member: updatedMember, // Ensure member data is preserved/updated
-                  };
-                }
-                return req;
-              })
+              prev.map((req) =>
+                req.id === newRecord.id ? { ...req, ...newRecord, member: newRecord.member || req.member } : req
+              )
             );
           } else if (eventType === "DELETE") {
             setLocalRequests((prev) => prev.filter((req) => req.id !== oldRecord.id));
           }
         }
       )
-      // Add subscription to pld_sdv_allotments to handle allocation changes
       .on(
         "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "pld_sdv_allotments",
-          filter: `date=eq.${selectedDate}`,
-        },
+        { event: "*", schema: "public", table: "pld_sdv_allotments", filter: `date=eq.${selectedDate}` },
         async (payload: RealtimePostgresChangesPayload<any>) => {
           console.log("[RequestDialog] Received allotment update:", payload);
           const { new: newRecord } = payload;
-
-          // Update the allotments state in the dialog
           if (newRecord && typeof newRecord === "object" && "max_allotment" in newRecord) {
-            // Fetch the updated allotments and requests to ensure UI is in sync
             try {
-              // Update local allotment state for immediate feedback
               const newAllotmentValue = {
                 max: newRecord.max_allotment,
-                current: newRecord.current_requests || localAllotments.current,
+                current: newRecord.current_requests ?? propCurrentAllotment,
               };
-
               console.log("[RequestDialog] Updating allotment:", newAllotmentValue);
-
-              // Update the dialog's local allotment state
               setLocalAllotments(newAllotmentValue);
-
-              // Now, fetch the latest requests to show any waitlist changes
+              // Fetch latest requests to show waitlist changes
               const { data, error } = await supabase
                 .from("pld_sdv_requests")
                 .select(
-                  `
-                  id, member_id, calendar_id, request_date, leave_type, status, requested_at, waitlist_position,
-                  member:members!inner (
-                    id, first_name, last_name, pin_number
-                  )
-                `
+                  `id, member_id, calendar_id, request_date, leave_type, status, requested_at, waitlist_position, paid_in_lieu, member:members!inner (id, first_name, last_name, pin_number)`
                 )
                 .eq("calendar_id", calendarId)
                 .eq("request_date", selectedDate);
-
               if (!error && data) {
-                // Update local requests
                 setLocalRequests(data as unknown as DayRequest[]);
                 console.log(`[RequestDialog] Updated requests after allotment change: ${data.length} requests`);
               }
@@ -262,12 +215,11 @@ function RequestDialog({
         }
       )
       .subscribe((status) => {
-        console.log("[RequestDialog] Subscription status (Requests Only Now):", status);
+        console.log("[RequestDialog] Subscription status:", status);
       });
 
     realtimeChannelRef.current = channel;
 
-    // Cleanup function
     return () => {
       console.log("[RequestDialog] Cleaning up real-time subscription on unmount/update");
       if (realtimeChannelRef.current) {
@@ -275,23 +227,15 @@ function RequestDialog({
         realtimeChannelRef.current = null;
       }
     };
-  }, [selectedDate, member?.calendar_id, isVisible, calendarId]);
+  }, [selectedDate, calendarId, isVisible, propCurrentAllotment]); // Added propCurrentAllotment
 
-  // Ensure we have the latest stats even if useMyTime updates elsewhere
-  // This ensures we're always showing accurate stats in the dialog
-  useEffect(() => {
-    // Log the entire timeStats object when it changes
-    console.log("[RequestDialog] timeStats object updated:", timeStats);
-  }, [timeStats]); // Depend on timeStats
+  // Removed effect logging timeStats
 
-  // Wrap the onSubmit handler to also refresh stats after a request
+  // Modified handleSubmit to use props.onSubmitRequest and PIL flag
   const handleSubmit = async (leaveType: "PLD" | "SDV") => {
-    setIsSubmitting(true);
+    // No local isSubmitting state needed
 
-    // Store the current real-time channel to temporarily pause updates
     const currentChannel = realtimeChannelRef.current;
-
-    // Temporarily disable real-time updates to prevent duplicates
     if (currentChannel) {
       console.log("[RequestDialog] Temporarily disabling real-time updates during submission");
       realtimeChannelRef.current = null;
@@ -299,45 +243,29 @@ function RequestDialog({
     }
 
     try {
-      // Call the original onSubmit passed from props
-      await onSubmit(leaveType);
+      // Use props.onSubmitRequest, passing the PIL flag
+      await onSubmitRequest(leaveType, selectedDate, requestAsPaidInLieu);
 
-      // Allow some time for the database to process the request before re-enabling real-time
+      // If successful, reset PIL toggle
+      setRequestAsPaidInLieu(false);
+
+      // Allow some time for DB processing before re-enabling real-time
       setTimeout(() => {
-        // Restart the real-time subscription if the dialog is still open
-        if (isVisible && selectedDate && member?.calendar_id) {
+        if (isVisible && selectedDate && calendarId) {
           console.log("[RequestDialog] Re-enabling real-time updates after successful submission");
-
-          // Set up a new subscription
+          // Re-setup subscription (logic is identical to the initial setup in useEffect)
+          const channelName = `request-dialog-${selectedDate}-${Date.now()}`;
           const channel = supabase
-            .channel(`request-dialog-${selectedDate}-${Date.now()}`) // Add timestamp to ensure unique channel
+            .channel(channelName)
             .on(
               "postgres_changes",
-              {
-                event: "*",
-                schema: "public",
-                table: "pld_sdv_requests",
-                filter: `request_date=eq.${selectedDate}`,
-              },
+              { event: "*", schema: "public", table: "pld_sdv_requests", filter: `request_date=eq.${selectedDate}` },
               (payload: RealtimePostgresChangesPayload<any>) => {
-                // Use the same handler as before, but with additional duplicate prevention
-                console.log("[RequestDialog] Received realtime update after resubscription:", payload);
-
+                console.log("[RequestDialog] Received pld_sdv_requests update (re-sub):", payload);
                 const { eventType, new: newRecord, old: oldRecord } = payload;
-
                 if (eventType === "INSERT") {
-                  // Use functional update to prevent stale closures
                   setLocalRequests((prev) => {
-                    const requestAlreadyExists = prev.some((req) => req.id === newRecord.id);
-                    if (requestAlreadyExists) {
-                      console.log(
-                        "[RequestDialog] Skipping INSERT for already existing request (resubscribe):",
-                        newRecord.id
-                      );
-                      return prev;
-                    }
-
-                    // Fetch the member details for the new request
+                    if (prev.some((req) => req.id === newRecord.id)) return prev;
                     supabase
                       .from("members")
                       .select("id, first_name, last_name, pin_number")
@@ -347,60 +275,80 @@ function RequestDialog({
                         if (!error && memberData) {
                           const newRequest: DayRequest = {
                             ...newRecord,
-                            member: {
-                              id: memberData.id,
-                              first_name: memberData.first_name,
-                              last_name: memberData.last_name,
-                              pin_number: memberData.pin_number || 0,
-                            },
+                            member: { ...memberData, pin_number: memberData.pin_number || 0 },
                           };
-
-                          // Double-check again before adding inside the state setter
-                          setLocalRequests((currentPrev) => {
-                            if (currentPrev.some((req) => req.id === newRecord.id)) {
-                              console.log(
-                                "[RequestDialog] Request already added, preventing duplicate (resubscribe):",
-                                newRecord.id
-                              );
-                              return currentPrev;
-                            }
-                            return [...currentPrev, newRequest];
-                          });
+                          setLocalRequests((currentPrev) =>
+                            currentPrev.some((req) => req.id === newRecord.id)
+                              ? currentPrev
+                              : [...currentPrev, newRequest]
+                          );
                         }
                       });
-                    return prev; // Return the previous state while async fetch happens
+                    return prev;
                   });
                 } else if (eventType === "UPDATE") {
                   setLocalRequests((prev) =>
-                    prev.map((req) => (req.id === newRecord.id ? { ...req, ...newRecord } : req))
+                    prev.map((req) =>
+                      req.id === newRecord.id ? { ...req, ...newRecord, member: newRecord.member || req.member } : req
+                    )
                   );
                 } else if (eventType === "DELETE") {
                   setLocalRequests((prev) => prev.filter((req) => req.id !== oldRecord.id));
                 }
-              }
-            )
-            .subscribe();
-
+              } // Closing parenthesis for requests handler function
+            ) // Closing parenthesis for requests .on() call
+            .on(
+              "postgres_changes",
+              { event: "*", schema: "public", table: "pld_sdv_allotments", filter: `date=eq.${selectedDate}` },
+              async (payload: RealtimePostgresChangesPayload<any>) => {
+                console.log("[RequestDialog] Received allotment update (re-sub):", payload);
+                const { new: newRecord } = payload;
+                if (newRecord && typeof newRecord === "object" && "max_allotment" in newRecord) {
+                  try {
+                    const newAllotmentValue = {
+                      max: newRecord.max_allotment,
+                      current: newRecord.current_requests ?? propCurrentAllotment,
+                    };
+                    console.log("[RequestDialog] Updating allotment (re-sub):", newAllotmentValue);
+                    setLocalAllotments(newAllotmentValue);
+                    const { data, error } = await supabase
+                      .from("pld_sdv_requests")
+                      .select(
+                        `id, member_id, calendar_id, request_date, leave_type, status, requested_at, waitlist_position, paid_in_lieu, member:members!inner (id, first_name, last_name, pin_number)`
+                      )
+                      .eq("calendar_id", calendarId)
+                      .eq("request_date", selectedDate);
+                    if (!error && data) {
+                      setLocalRequests(data as unknown as DayRequest[]);
+                      console.log(
+                        `[RequestDialog] Updated requests after allotment change (re-sub): ${data.length} requests`
+                      );
+                    }
+                  } catch (error) {
+                    console.error("[RequestDialog] Error refreshing after allotment update (re-sub):", error);
+                  }
+                } // Closing if
+              } // Closing parenthesis for allotments handler function
+            ) // Closing parenthesis for allotments .on() call
+            .subscribe((status) => console.log(`[RequestDialog] Re-subscription status (${channelName}):`, status)); // subscribe() chained correctly
           realtimeChannelRef.current = channel;
-        }
-      }, 1000); // Wait 1 second before re-enabling real-time updates
+        } // Closing if (isVisible && selectedDate && calendarId)
+      }, 1000); // Closing parenthesis for setTimeout
     } catch (err) {
       console.error("[RequestDialog] Error in handleSubmit:", err);
-      // Don't re-throw, let the original onSubmit handle its errors
     } finally {
-      setIsSubmitting(false);
+      // No local isSubmitting state to reset
     }
   };
 
+  // Updated useEffect for six-month check (uses member.id, no store dependency)
   useEffect(() => {
-    // Check if there is an existing six-month request for this date
-    if (selectedDate && isVisible) {
+    if (selectedDate && isVisible && member?.id) {
       const checkForSixMonthRequest = async () => {
-        // Check if the user has a six month request for this date and get its ID
         const { data: existingSixMonthReq, error } = await supabase
           .from("six_month_requests")
           .select("id")
-          .eq("member_id", member?.id || "")
+          .eq("member_id", member.id)
           .eq("request_date", selectedDate)
           .eq("processed", false)
           .maybeSingle();
@@ -413,448 +361,291 @@ function RequestDialog({
           const exists = !!existingSixMonthReq;
           setHasSixMonthRequest(exists);
           setSixMonthRequestId(existingSixMonthReq?.id || null);
-          console.log("[RequestDialog] Six month request check:", { exists, id: existingSixMonthReq?.id });
         }
       };
-
       checkForSixMonthRequest();
     } else {
       setHasSixMonthRequest(false);
+      setSixMonthRequestId(null);
     }
-  }, [selectedDate, isVisible, checkSixMonthRequest]);
+  }, [selectedDate, isVisible, member?.id]);
 
-  // Determine if the selected date is a six month request date
+  // --- Start Replace isSixMonthRequest Memo ---
   const isSixMonthRequest = useMemo(() => {
-    // *** ADDED CHECK: If calendarType is Vacation, it's never a six-month request date ***
-    if (calendarType === "Vacation") {
+    if (calendarType === "Vacation") return false;
+    // Add guard for selectedDate being a valid string
+    if (typeof selectedDate !== "string" || !selectedDate) {
       return false;
     }
+    try {
+      const now = new Date();
+      // Ensure selectedDate is parsed safely
+      const dateObj = parseISO(selectedDate);
+      // Use Date object directly from getSixMonthDate
+      const sixMonthDate = getSixMonthDate();
+      const isEndOfMonth = isLastDayOfMonth(now);
 
-    const now = new Date();
-    const dateObj = parseISO(selectedDate);
-    const isSixMonthDate = isSameDayWithFormat(selectedDate, getSixMonthDate(), "yyyy-MM-dd");
-    const isEndOfMonth = isLastDayOfMonth(now);
-    const sixMonthDate = getSixMonthDate();
+      // Compare dates using startOfDay to ignore time components
+      // Make sure startOfDay is imported from date-fns if not already
+      const isExactSixMonthDate = startOfDay(dateObj).getTime() === startOfDay(sixMonthDate).getTime();
 
-    // FIXED: Properly handle six-month requests according to business rules
-    // Six month requests are ONLY the exact 6-month date OR dates after it in the same month on month-end
-    const result =
-      isSixMonthDate ||
-      (isEndOfMonth &&
-        dateObj.getMonth() === sixMonthDate.getMonth() &&
-        dateObj.getFullYear() === sixMonthDate.getFullYear() &&
-        dateObj.getDate() >= sixMonthDate.getDate());
+      const result =
+        isExactSixMonthDate ||
+        (isEndOfMonth &&
+          dateObj.getMonth() === sixMonthDate.getMonth() &&
+          dateObj.getFullYear() === sixMonthDate.getFullYear() &&
+          dateObj.getDate() >= sixMonthDate.getDate());
 
-    // Log detailed information about six-month date detection but only in development
-    if (process.env.NODE_ENV === "development") {
-      console.log(`[RequestDialog] Six-month request detection for ${selectedDate}:`, {
-        isSixMonthDate,
-        isEndOfMonth,
-        sixMonthDate: format(sixMonthDate, "yyyy-MM-dd"),
-        selectedDateMonth: dateObj.getMonth(),
-        sixMonthDateMonth: sixMonthDate.getMonth(),
-        selectedDateYear: dateObj.getFullYear(),
-        sixMonthDateYear: sixMonthDate.getFullYear(),
-        selectedDateDay: dateObj.getDate(),
-        sixMonthDateDay: sixMonthDate.getDate(),
-        result,
-      });
+      return result;
+    } catch (e) {
+      console.error(`[isSixMonthRequest] Error parsing date: ${selectedDate}`, e);
+      return false; // Return false if parsing fails
     }
-
-    return result;
   }, [selectedDate, calendarType]);
+  // --- End Replace isSixMonthRequest Memo ---
 
-  // Fetch the total count of six-month requests for this date when dialog is shown
+  // --- Update useEffect for fetching total six-month requests ---
   useEffect(() => {
-    if (selectedDate && isVisible && isSixMonthRequest && member?.calendar_id) {
+    // Reset count when dependencies change
+    setTotalSixMonthRequestsState(0);
+
+    if (selectedDate && isVisible && isSixMonthRequest && calendarId) {
       const fetchTotalSixMonthRequests = async () => {
         try {
-          console.log(
-            `[RequestDialog] Fetching six-month requests for date: ${selectedDate}, calendar: ${member.calendar_id}`
-          );
-
-          // Use the RPC function to get the count of all six-month requests for this date and calendar
+          console.log(`[RequestDialog] Fetching six-month requests for date: ${selectedDate}, calendar: ${calendarId}`);
           const { data, error } = await supabase.rpc("count_six_month_requests_by_date", {
             p_request_date: selectedDate,
-            p_calendar_id: member.calendar_id,
+            p_calendar_id: calendarId,
           });
 
           if (error) {
-            console.error("[RequestDialog] Error counting six-month requests:", error);
-
-            // Fallback to direct query (will likely only show the user's own requests due to RLS)
-            console.log("[RequestDialog] Falling back to direct query...");
-            const { data: fallbackData, error: fallbackError } = await supabase
+            console.error("[RequestDialog] Error counting six-month requests via RPC:", error);
+            // Fallback logic...
+            const { count: fallbackCount, error: fallbackError } = await supabase
               .from("six_month_requests")
-              .select("*", { count: "exact" })
+              .select("*", { count: "exact", head: true })
               .eq("request_date", selectedDate)
-              .eq("calendar_id", member.calendar_id);
-
+              .eq("calendar_id", calendarId);
             if (fallbackError) {
               console.error("[RequestDialog] Fallback query error:", fallbackError);
-              setTotalSixMonthRequests(0);
-              return;
+              setTotalSixMonthRequestsState(0); // Set state on error
+            } else {
+              console.log(`[RequestDialog] Fallback found ${fallbackCount ?? 0} records.`);
+              setTotalSixMonthRequestsState(fallbackCount ?? 0); // Use local state setter
             }
-
-            console.log(
-              `[RequestDialog] Fallback found ${fallbackData.length} records (likely incomplete due to RLS)`,
-              fallbackData
-            );
-            setTotalSixMonthRequests(fallbackData.length);
             return;
           }
 
           const count = data || 0;
           console.log(`[RequestDialog] Found ${count} six-month requests for date ${selectedDate} via RPC`);
-          setTotalSixMonthRequests(count);
+          // --- Use local state setter ---
+          setTotalSixMonthRequestsState(count);
 
-          // Set up realtime subscription for six-month requests
+          // Setup realtime subscription for six_month_requests
+          const sixMonthChannelName = `request-dialog-six-month-${selectedDate}-${Date.now()}`;
           const sixMonthChannel = supabase
-            .channel(`request-dialog-six-month-${selectedDate}`)
+            .channel(sixMonthChannelName)
             .on(
               "postgres_changes",
-              {
-                event: "*",
-                schema: "public",
-                table: "six_month_requests",
-                filter: `request_date=eq.${selectedDate}`,
-              },
+              { event: "*", schema: "public", table: "six_month_requests", filter: `request_date=eq.${selectedDate}` },
               async (payload) => {
                 console.log("[RequestDialog] Received six-month request update:", payload);
-
-                // Refresh the count of six-month requests
+                // Refresh the count on update
                 try {
                   const { data: refreshData, error: refreshError } = await supabase.rpc(
                     "count_six_month_requests_by_date",
-                    {
-                      p_request_date: selectedDate,
-                      p_calendar_id: member.calendar_id,
-                    }
+                    { p_request_date: selectedDate, p_calendar_id: calendarId }
                   );
-
                   if (!refreshError) {
                     const newCount = refreshData || 0;
                     console.log(`[RequestDialog] Updated six-month request count: ${newCount}`);
-                    setTotalSixMonthRequests(newCount);
+                    // --- Use local state setter ---
+                    setTotalSixMonthRequestsState(newCount);
                   }
-                } catch (error) {
-                  console.error("[RequestDialog] Error refreshing six-month request count:", error);
+                } catch (refreshErr) {
+                  console.error("[RequestDialog] Error refreshing six-month request count:", refreshErr);
                 }
               }
             )
-            .subscribe();
+            .subscribe((status) => console.log(`Six-month sub status (${sixMonthChannelName}):`, status));
 
-          // Store this channel in the ref as well
+          // Combine cleanup if other channel exists (improved logic)
           const existingChannel = realtimeChannelRef.current;
-          if (existingChannel) {
-            // Create a combined cleanup function
-            realtimeChannelRef.current = {
-              unsubscribe: () => {
+          realtimeChannelRef.current = {
+            // Store the new channel or a combined unsubscriber
+            unsubscribe: () => {
+              console.log(`[RequestDialog] Unsubscribing six-month channel: ${sixMonthChannelName}`);
+              sixMonthChannel.unsubscribe();
+              if (existingChannel && existingChannel !== sixMonthChannel) {
+                console.log(`[RequestDialog] Unsubscribing previous channel during combine`);
                 existingChannel.unsubscribe();
-                sixMonthChannel.unsubscribe();
-              },
-            } as RealtimeChannel;
-          } else {
-            realtimeChannelRef.current = sixMonthChannel;
-          }
+              }
+            },
+          } as RealtimeChannel;
         } catch (error) {
           console.error("[RequestDialog] Exception in fetchTotalSixMonthRequests:", error);
-          setTotalSixMonthRequests(0);
+          // --- Use local state setter ---
+          setTotalSixMonthRequestsState(0);
         }
       };
-
       fetchTotalSixMonthRequests();
     }
-  }, [selectedDate, isVisible, isSixMonthRequest, member?.calendar_id]);
 
-  // For six month dates, we don't want to show other users' requests
-  // as they shouldn't count against the allotment
+    // Ensure cleanup runs if dependencies change while subscribed
+    return () => {
+      if (realtimeChannelRef.current && typeof realtimeChannelRef.current.unsubscribe === "function") {
+        console.log("[RequestDialog] Cleaning up six-month fetch effect subscription");
+        realtimeChannelRef.current.unsubscribe();
+        realtimeChannelRef.current = null; // Clear ref after unsubscribing
+      }
+    };
+  }, [selectedDate, isVisible, isSixMonthRequest, calendarId]);
+
+  // filteredRequests memo remains the same
   const filteredRequests = useMemo(() => {
-    // If viewing past dates, only show approved requests
     if (viewMode === "past" || viewMode === "nearPast") {
       return localRequests.filter((req) => req.status === "approved");
     }
-    if (isSixMonthRequest) {
-      // On six-month dates, don't show any requests in the dialog list
-      // Six-month requests should only be visible on the MyTime screen
-      return [];
-    }
-    return localRequests; // Use local requests that are updated in realtime
+    if (isSixMonthRequest) return [];
+    return localRequests;
   }, [localRequests, isSixMonthRequest, viewMode]);
 
+  // activeRequests memo remains the same
   const activeRequests = useMemo(() => {
-    // If viewing past dates, all filtered requests are considered 'active' for display
-    if (viewMode === "past" || viewMode === "nearPast") {
-      return filteredRequests;
-    }
-    // Only include approved, pending, and cancellation_pending (NOT waitlisted or paid_in_lieu)
+    if (viewMode === "past" || viewMode === "nearPast") return filteredRequests;
     return filteredRequests.filter(
       (r) =>
-        (r.status === "approved" || r.status === "pending" || r.status === "cancellation_pending") &&
-        r.paid_in_lieu !== true // Exclude Paid In Lieu requests from active count
+        (r.status === "approved" || r.status === "pending" || r.status === "cancellation_pending") && !r.paid_in_lieu
     );
   }, [filteredRequests, viewMode]);
 
-  // Find the user's specific request for the selected date
+  // userRequest memo remains the same
   const userRequest = useMemo(() => {
     if (!member?.id) return null;
-    // Look in localRequests, which is updated in realtime, not just activeRequests
     return localRequests.find(
       (req) =>
         req.member_id === member.id &&
-        (req.status === "approved" ||
-          req.status === "pending" ||
-          req.status === "waitlisted" ||
-          req.status === "cancellation_pending")
+        ["approved", "pending", "waitlisted", "cancellation_pending"].includes(req.status)
     );
   }, [localRequests, member?.id]);
 
+  // hasExistingRequest memo remains the same
   const hasExistingRequest = useMemo(() => {
-    // For six month requests, check the hasSixMonthRequest flag
-    if (isSixMonthRequest) {
-      return hasSixMonthRequest;
-    }
-    // For regular requests, check if we found a userRequest
+    if (isSixMonthRequest) return hasSixMonthRequest;
     return !!userRequest;
   }, [userRequest, isSixMonthRequest, hasSixMonthRequest]);
 
-  // Handler for cancelling a request
+  // Modified handleCancelRequest
   const handleCancelRequest = useCallback(() => {
     if (!userRequest || !selectedDate) return;
-    console.log("[RequestDialog] Initiating request cancellation for:", userRequest.id);
-
-    // Show confirmation dialog instead of immediately canceling
     setCancelType("regular");
     setShowCancelModal(true);
   }, [userRequest, selectedDate]);
 
-  // Handler for confirming cancellation
+  // Modified handleConfirmCancel to use props actions
   const handleConfirmCancel = useCallback(async () => {
-    setIsSubmitting(true);
+    // No local isSubmitting state
     try {
+      let success = false;
       if (cancelType === "regular") {
-        if (!userRequest || !selectedDate) {
+        if (!userRequest) {
           Toast.show({ type: "error", text1: "Cannot find request to cancel" });
           return;
         }
-
-        // Always use the regular cancellation function which uses the database function
-        // that handles all request types correctly, including waitlisted requests
-        console.log(
-          "[RequestDialog] Cancelling request using database function:",
-          userRequest.id,
-          "status:",
-          userRequest.status
-        );
-        const success = await cancelRequest(userRequest.id, selectedDate);
-
+        success = await onCancelRequest(userRequest.id); // Use prop
         if (success) {
-          // Force refresh stats immediately after successful cancellation
-          await refreshMyTimeStats(true);
-
-          // Show different messages based on the request status
-          if (userRequest.status === "waitlisted") {
-            Toast.show({
-              type: "success",
-              text1: "Request cancelled",
-              text2: "Your waitlisted request has been cancelled",
-            });
-          } else if (userRequest.status === "approved") {
-            Toast.show({
-              type: "success",
-              text1: "Request cancellation initiated",
-              text2: "Your approved request is now pending cancellation",
-            });
-          } else {
-            Toast.show({
-              type: "success",
-              text1: "Request cancelled",
-            });
-          }
-
-          // Remove the setTimeout
-          // onClose();
-        } else {
-          Toast.show({ type: "error", text1: "Failed to cancel request" });
-        }
+          if (userRequest.status === "waitlisted")
+            Toast.show({ type: "success", text1: "Request cancelled", text2: "Your waitlisted request was cancelled" });
+          else if (userRequest.status === "approved")
+            Toast.show({ type: "success", text1: "Cancellation Initiated", text2: "Request pending cancellation" });
+          else Toast.show({ type: "success", text1: "Request cancelled" });
+        } // Error handled by store
       } else if (cancelType === "six-month") {
-        // Six-month cancellation logic remains unchanged
         if (!sixMonthRequestId) {
           Toast.show({ type: "error", text1: "Cannot find six-month request to cancel" });
           return;
         }
-
-        const success = await cancelSixMonthRequest(sixMonthRequestId);
+        success = await onCancelSixMonthRequest(sixMonthRequestId); // Use prop
         if (success) {
-          // Force refresh stats immediately after successful cancellation
-          await refreshMyTimeStats(true);
-
           Toast.show({ type: "success", text1: "Six-month request cancelled" });
-          setHasSixMonthRequest(false); // Update local state
+          setHasSixMonthRequest(false);
           setSixMonthRequestId(null);
-
-          // Remove the setTimeout
-          // onClose();
-        } else {
-          Toast.show({ type: "error", text1: "Failed to cancel six-month request" });
-        }
+        } // Error handled by store
       }
     } catch (error) {
-      console.error("[RequestDialog] Error cancelling request:", error);
-      const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
-      Toast.show({
-        type: "error",
-        text1: "Error cancelling request",
-        text2: errorMessage,
-      });
+      console.error("[RequestDialog] Error confirming cancel (should be handled by store):", error);
     } finally {
-      setIsSubmitting(false);
       setShowCancelModal(false);
     }
-  }, [
-    cancelType,
-    userRequest,
-    selectedDate,
-    cancelRequest,
-    onClose,
-    sixMonthRequestId,
-    cancelSixMonthRequest,
-    refreshMyTimeStats,
-  ]);
+  }, [cancelType, userRequest, selectedDate, onCancelRequest, onClose, sixMonthRequestId, onCancelSixMonthRequest]);
 
-  // For six month dates, don't count other users' requests against the allotment
-  // But we do want to show the total count of six-month requests
-  const currentAllotment = useMemo(() => {
-    // Determine if this is truly a six-month request
-    const now = new Date();
-    const dateObj = parseISO(selectedDate);
-    const sixMonthDate = getSixMonthDate();
-    const isEndOfMonth = isLastDayOfMonth(now);
-    const isSixMonthRequestDate =
-      dateObj.getTime() === sixMonthDate.getTime() || // Exact date match
-      (isEndOfMonth &&
-        dateObj.getMonth() === sixMonthDate.getMonth() &&
-        dateObj.getFullYear() === sixMonthDate.getFullYear() &&
-        dateObj.getDate() >= sixMonthDate.getDate()); // Same month/year and day is at or after six-month date
-
+  // Modified displayAllotment calculation to use local state
+  const displayAllotment = useMemo(() => {
     const result = {
       max: localAllotments.max,
-      current: isSixMonthRequestDate
-        ? totalSixMonthRequests // Show total six-month requests instead of just the user's request
+      current: isSixMonthRequest
+        ? totalSixMonthRequestsState // Use local state
         : activeRequests.length,
     };
-
-    // Log the current allotment for debugging
-    if (isSixMonthRequestDate) {
-      console.log("[RequestDialog] Six-month allotment:", {
-        date: selectedDate,
-        max: result.max,
-        total: totalSixMonthRequests,
-        isEndOfMonth,
-        sixMonthDate: format(sixMonthDate, "yyyy-MM-dd"),
-      });
-    }
-
     return result;
-  }, [localAllotments.max, activeRequests.length, isSixMonthRequest, totalSixMonthRequests, selectedDate]);
+    // Use local state in dependency array
+  }, [localAllotments.max, activeRequests.length, isSixMonthRequest, totalSixMonthRequestsState, selectedDate]);
 
-  const isFull = currentAllotment.current >= currentAllotment.max;
-
-  // Only display requests that we're showing to the user
-  // (don't show six month requests from other users)
+  // sortedRequests, approvedPendingRequests, waitlistedRequests memos remain the same
   const sortedRequests = useMemo(() => {
-    const statusPriority: Record<string, number> = {
-      approved: 0,
-      pending: 1,
-      cancellation_pending: 2, // Show cancellation pending with approved/pending
-      waitlisted: 3, // Add waitlisted priority
-    };
-
-    // *** CHANGE: Filter out Paid In Lieu requests before sorting for display ***
+    const statusPriority: Record<string, number> = { approved: 0, pending: 1, cancellation_pending: 2, waitlisted: 3 };
     return [...localRequests]
-      .filter((r) => r.paid_in_lieu !== true)
+      .filter((r) => !r.paid_in_lieu)
       .sort((a, b) => {
-        // *** Ensure statusPriority correctly handles potentially undefined statuses ***
         const aStatusPriority = statusPriority[a.status] ?? 999;
         const bStatusPriority = statusPriority[b.status] ?? 999;
-
-        // If status priorities are different, sort by priority
         if (aStatusPriority !== bStatusPriority) return aStatusPriority - bStatusPriority;
-
-        // If both are waitlisted, sort by waitlist position (ascending)
-        // *** Ensure waitlist_position is handled safely (null/undefined checks) ***
         if (a.status === "waitlisted" && b.status === "waitlisted") {
-          const aPos = a.waitlist_position ?? Infinity; // Treat null/undefined as last
+          const aPos = a.waitlist_position ?? Infinity;
           const bPos = b.waitlist_position ?? Infinity;
           return aPos - bPos;
         }
-
-        // Otherwise, sort by requested time (ascending)
-        // *** Ensure requested_at is handled safely ***
         const aTime = a.requested_at ? new Date(a.requested_at).getTime() : 0;
         const bTime = b.requested_at ? new Date(b.requested_at).getTime() : 0;
         return aTime - bTime;
       });
-    // *** CHANGE: Update dependency array to use localRequests ***
   }, [localRequests]);
 
-  // Split sorted requests into approved/pending/cancellation_pending and waitlisted
-  const approvedPendingRequests = useMemo(() => {
-    return sortedRequests.filter(
-      (r) => r.status === "approved" || r.status === "pending" || r.status === "cancellation_pending"
-    );
-  }, [sortedRequests]);
+  const approvedPendingRequests = useMemo(
+    () => sortedRequests.filter((r) => ["approved", "pending", "cancellation_pending"].includes(r.status)),
+    [sortedRequests]
+  );
+  const waitlistedRequests = useMemo(() => sortedRequests.filter((r) => r.status === "waitlisted"), [sortedRequests]);
 
-  const waitlistedRequests = useMemo(() => {
-    return sortedRequests.filter((r) => r.status === "waitlisted");
-  }, [sortedRequests]);
+  // Modified filledSpotsCapped/waitlistCount to use displayAllotment
+  const filledSpotsCapped = useMemo(
+    () =>
+      isSixMonthRequest ? displayAllotment.current : Math.min(approvedPendingRequests.length, displayAllotment.max),
+    [approvedPendingRequests.length, displayAllotment, isSixMonthRequest]
+  );
+  const waitlistCount = useMemo(
+    () => (isSixMonthRequest ? 0 : waitlistedRequests.length),
+    [waitlistedRequests.length, isSixMonthRequest]
+  );
 
-  // Calculate capped filled spots and waitlist count
-  const filledSpotsCapped = useMemo(() => {
-    if (isSixMonthRequest) return currentAllotment.current;
-    return Math.min(approvedPendingRequests.length, currentAllotment.max);
-  }, [approvedPendingRequests.length, currentAllotment.max, currentAllotment.current, isSixMonthRequest]);
-
-  const waitlistCount = useMemo(() => {
-    if (isSixMonthRequest) return 0; // Waitlist doesn't apply to six-month view
-    return waitlistedRequests.length;
-  }, [waitlistedRequests.length, isSixMonthRequest]);
-
+  // Modified isFullMessage to use displayAllotment and props.isExistingRequestPaidInLieu
   const isFullMessage = useMemo(() => {
-    if (currentAllotment.max <= 0) {
-      return "No days allocated for this date";
-    }
-
-    // Show message about existing six-month request - only if user already submitted one
-    if (hasSixMonthRequest && isSixMonthRequest) {
-      // Don't show if userRequest exists (it implies a regular request which is handled below)
-      if (!userRequest) return "You already have a six-month request pending for this date";
-    }
-
-    // If this is a six month request, show special message (unless user has existing)
-    if (isSixMonthRequest && !hasExistingRequest) {
+    if (displayAllotment.max <= 0) return "No days allocated for this date";
+    if (hasSixMonthRequest && isSixMonthRequest && !userRequest)
+      return "You already have a six-month request pending for this date";
+    if (isSixMonthRequest && !hasExistingRequest)
       return "Six-month requests are processed by seniority and do not count against daily allotment";
-    }
-
-    // Check if user has an existing request (regular or six-month request that became regular)
     if (hasExistingRequest && userRequest) {
-      // *** CHANGE: Customize message for Paid In Lieu requests ***
-      if (userRequest.paid_in_lieu === true) {
+      if (isExistingRequestPaidInLieu)
         return `You have a Paid in Lieu request for this date (Status: ${userRequest.status})`;
-      }
-      // --- End Change ---
-      const status = userRequest?.status === "cancellation_pending" ? "Cancellation Pending" : userRequest?.status;
+      const status = userRequest.status === "cancellation_pending" ? "Cancellation Pending" : userRequest.status;
       return `You have a request for this date (Status: ${status})`;
     }
-
-    // Only show "day is full" if there are no waitlisted spots AND approved/pending is full
-    if (approvedPendingRequests.length >= currentAllotment.max && waitlistCount === 0) {
-      return `This day is full (${filledSpotsCapped}/${currentAllotment.max})`;
-    }
-
+    if (approvedPendingRequests.length >= displayAllotment.max && waitlistCount === 0)
+      return `This day is full (${filledSpotsCapped}/${displayAllotment.max})`;
     return null;
   }, [
-    currentAllotment.max,
+    displayAllotment.max,
     hasExistingRequest,
     hasSixMonthRequest,
     isSixMonthRequest,
@@ -862,274 +653,143 @@ function RequestDialog({
     waitlistCount,
     filledSpotsCapped,
     userRequest,
+    isExistingRequestPaidInLieu,
   ]);
 
-  // Ensure we clean up the subscription when the component unmounts or when dialog closes
+  // Cleanup effects remain the same
   useEffect(() => {
-    return () => {
-      if (realtimeChannelRef.current) {
-        console.log("[RequestDialog] Unmounting, cleaning up subscription");
-        realtimeChannelRef.current.unsubscribe();
-        realtimeChannelRef.current = null;
-      }
+    /* Unsubscribe on unmount */ return () => {
+      if (realtimeChannelRef.current) realtimeChannelRef.current.unsubscribe();
     };
   }, []);
-
-  // Also clean up when the dialog closes
   useEffect(() => {
-    if (!isVisible && realtimeChannelRef.current) {
-      console.log("[RequestDialog] Dialog closed, cleaning up subscription");
-      realtimeChannelRef.current.unsubscribe();
-      realtimeChannelRef.current = null;
-    }
+    /* Unsubscribe on close */ if (!isVisible && realtimeChannelRef.current) realtimeChannelRef.current.unsubscribe();
   }, [isVisible]);
 
+  // Modified submitButtonProps
   const submitButtonProps = useMemo(() => {
-    // For six-month requests, we allow submission even if the day is full
-    // as they are processed by seniority and will be waitlisted if needed
-    if (isSixMonthRequest) {
-      // Disable if there's already a six-month request or no available days
-      const isDisabled = (timeStats?.available.pld ?? 0) <= 0 || isSubmitting || hasSixMonthRequest;
-      return {
-        onPress: () => handleSubmit("PLD"),
-        disabled: isDisabled,
-        loadingState: isSubmitting,
-      };
-    }
+    const actionKey = isSixMonthRequest ? `${selectedDate}-PLD-6mo` : `${selectedDate}-PLD`;
+    const isLoading =
+      isSubmittingAction[actionKey] ||
+      isSubmittingAction["submitRequest"] ||
+      isSubmittingAction["submitSixMonthRequest"];
+    let isDisabled = availablePld <= 0 || isLoading;
+    if (isSixMonthRequest) isDisabled = isDisabled || hasSixMonthRequest;
+    return { onPress: () => handleSubmit("PLD"), disabled: isDisabled, loadingState: isLoading };
+  }, [availablePld, isSubmittingAction, handleSubmit, hasSixMonthRequest, isSixMonthRequest, selectedDate]);
 
-    // For regular requests, ONLY disable for:
-    // - No available PLD days
-    // - Submission in progress
-    // - User already has a request for this date (handled by showing Cancel button)
-    // DO NOT disable for full days as that prevents waitlisting
-    const isDisabled = (timeStats?.available.pld ?? 0) <= 0 || isSubmitting; // Remove hasExistingRequest check
-
-    return {
-      onPress: () => handleSubmit("PLD"),
-      disabled: isDisabled,
-      loadingState: isSubmitting,
-    };
-  }, [
-    timeStats?.available.pld, // Update dependency
-    isSubmitting,
-    handleSubmit,
-    hasSixMonthRequest, // Keep this for six-month logic
-    isSixMonthRequest,
-  ]);
-
+  // Modified sdvButtonProps
   const sdvButtonProps = useMemo(() => {
-    // For six-month requests, we allow submission even if the day is full
-    // as they are processed by seniority and will be waitlisted if needed
-    if (isSixMonthRequest) {
-      // Disable if there's already a six-month request or no available days
-      const isDisabled = (timeStats?.available.sdv ?? 0) <= 0 || isSubmitting || hasSixMonthRequest;
-      return {
-        onPress: () => handleSubmit("SDV"),
-        disabled: isDisabled,
-        loadingState: isSubmitting,
-      };
-    }
+    const actionKey = isSixMonthRequest ? `${selectedDate}-SDV-6mo` : `${selectedDate}-SDV`;
+    const isLoading =
+      isSubmittingAction[actionKey] ||
+      isSubmittingAction["submitRequest"] ||
+      isSubmittingAction["submitSixMonthRequest"];
+    let isDisabled = availableSdv <= 0 || isLoading;
+    if (isSixMonthRequest) isDisabled = isDisabled || hasSixMonthRequest;
+    return { onPress: () => handleSubmit("SDV"), disabled: isDisabled, loadingState: isLoading };
+  }, [availableSdv, isSubmittingAction, handleSubmit, hasSixMonthRequest, isSixMonthRequest, selectedDate]);
 
-    // For regular requests, ONLY disable for:
-    // - No available SDV days
-    // - Submission in progress
-    // - User already has a request for this date (handled by showing Cancel button)
-    // DO NOT disable for full days as that prevents waitlisting
-    const isDisabled = (timeStats?.available.sdv ?? 0) <= 0 || isSubmitting; // Remove hasExistingRequest check
+  // canCancelRequest memo remains the same
+  const canCancelRequest = useMemo(
+    () => userRequest && !["cancelled", "denied"].includes(userRequest.status),
+    [userRequest]
+  );
 
-    return {
-      onPress: () => handleSubmit("SDV"),
-      disabled: isDisabled,
-      loadingState: isSubmitting,
-    };
-  }, [
-    timeStats?.available.sdv, // Update dependency
-    isSubmitting,
-    handleSubmit,
-    hasSixMonthRequest, // Keep this for six-month logic
-    isSixMonthRequest,
-  ]);
-
-  // Determine if the user can cancel their request
-  const canCancelRequest = useMemo(() => {
-    // Can only cancel if there is an existing request and it's not already 'cancelled' or 'denied'
-    return userRequest && userRequest.status !== "cancelled" && userRequest.status !== "denied";
-  }, [userRequest]);
-
-  // Handler for cancelling a six-month request
+  // Modified handleCancelSixMonthRequest
   const handleCancelSixMonthRequest = useCallback(() => {
     if (!sixMonthRequestId) return;
-    console.log("[RequestDialog] Initiating six-month request cancellation");
-
-    // Show confirmation dialog instead of immediately canceling
     setCancelType("six-month");
     setShowCancelModal(true);
   }, [sixMonthRequestId]);
 
-  // Determine if the user can cancel their six-month request
-  const canCancelSixMonthRequest = useMemo(() => {
-    return hasSixMonthRequest && sixMonthRequestId; // Can cancel if it exists
-  }, [hasSixMonthRequest, sixMonthRequestId]);
+  // canCancelSixMonthRequest memo remains the same
+  const canCancelSixMonthRequest = useMemo(
+    () => hasSixMonthRequest && sixMonthRequestId,
+    [hasSixMonthRequest, sixMonthRequestId]
+  );
 
-  // Add new function to handle allocation adjustment
+  // handleAdjustAllocation remains the same
   const handleAdjustAllocation = () => {
     setNewAllotment(localAllotments.max.toString());
     setAdjustmentError(null);
     setShowAdjustmentModal(true);
   };
 
-  // Add function to save allocation adjustment
+  // Modified handleSaveAdjustment
   const handleSaveAdjustment = async () => {
     if (!member?.id) return;
-
-    // Validate input
     const allotmentValue = parseInt(newAllotment, 10);
     if (isNaN(allotmentValue) || allotmentValue < 0) {
       setAdjustmentError("Please enter a valid non-negative number");
       return;
     }
-
-    // Check if trying to reduce below approved+pending requests
     const pendingAndApprovedCount = approvedPendingRequests.length;
     if (allotmentValue < pendingAndApprovedCount) {
-      setAdjustmentError(
-        `Cannot reduce allocation below the current number of approved and pending requests (${pendingAndApprovedCount}).`
-      );
+      setAdjustmentError(`Cannot reduce allocation below approved/pending requests (${pendingAndApprovedCount}).`);
       return;
     }
-
     setIsAdjusting(true);
     setAdjustmentError(null);
-
     try {
-      // Call the appropriate store function based on calendar type
-      if (calendarType === "PLD/SDV") {
-        await updateDailyAllotment(calendarId, selectedDate, allotmentValue, member.id);
-        Toast.show({
-          type: "success",
-          text1: `Daily allocation updated to ${allotmentValue}`,
-          position: "bottom",
-        });
-      } else {
-        await updateWeeklyAllotment(calendarId, selectedDate, allotmentValue, member.id);
-        Toast.show({
-          type: "success",
-          text1: `Weekly allocation updated to ${allotmentValue}`,
-          position: "bottom",
-        });
-      }
-
-      // Close the adjustment modal first
+      if (calendarType === "PLD/SDV") await updateDailyAllotment(calendarId, selectedDate, allotmentValue, member.id);
+      else await updateWeeklyAllotment(calendarId, selectedDate, allotmentValue, member.id);
+      Toast.show({ type: "success", text1: `Allocation updated to ${allotmentValue}`, position: "bottom" });
       setShowAdjustmentModal(false);
-
-      // ** TEMP: Keep main dialog open, do not close/reopen **
-      // onClose();
-      // setTimeout(() => {
-      //   console.log("[RequestDialog] Triggering reopen after adjustment");
-      //   onAdjustmentComplete();
-      // }, 1000);
-
-      // Optional: Maybe trigger a manual refresh of local state ONLY if needed
-      // setLastAdjustmentTime(Date.now()); // If we still need this fallback
     } catch (error) {
       console.error("Error adjusting allocation:", error);
-
-      let errorMessage = "An error occurred updating the allocation";
-      if (error instanceof Error) {
-        // Check for specific Supabase error codes if possible (e.g., from validation trigger)
-        if (error.message.includes("check constraint violation")) {
-          // Example check
-          errorMessage = "Cannot reduce allocation below approved requests.";
-        } else {
-          errorMessage = error.message;
-        }
-      }
+      let errorMessage = error instanceof Error ? error.message : "An error occurred updating the allocation";
       setAdjustmentError(errorMessage);
-
-      // Show toast at bottom of screen
-      Toast.show({
-        type: "error",
-        text1: "Failed to update allocation",
-        text2: errorMessage,
-        position: "bottom",
-      });
+      Toast.show({ type: "error", text1: "Failed to update allocation", text2: errorMessage, position: "bottom" });
     } finally {
       setIsAdjusting(false);
     }
   };
 
-  // Add new state for dialog loading
-  // const [isDialogLoading, setIsDialogLoading] = useState(false);
-  // const initialLoadCompletedRef = useRef(false);
-
-  // Add a ref to track initial load
-  // const initialLoadCompletedRef = useRef(false);
-
-  // Modify the effect that handles dialog visibility
-  // useEffect(() => {
-  //   if (isVisible) {
-  //     const loadFreshStats = async () => {
-  //       // Only show loading and force refresh on initial open
-  //       if (!initialLoadCompletedRef.current) {
-  //         setIsDialogLoading(true);
-  //         try {
-  //           console.log("[RequestDialog] Dialog opened, performing initial stats refresh");
-  //           invalidateCache(); // Clear any cached stats
-  //           await refreshMyTimeStats(true); // Force fresh stats
-  //           initialLoadCompletedRef.current = true;
-  //         } catch (error) {
-  //           console.error("[RequestDialog] Error refreshing stats:", error);
-  //           Toast.show({
-  //             type: "error",
-  //             text1: "Error",
-  //             text2: "Failed to load current statistics",
-  //             position: "bottom",
-  //           });
-  //         } finally {
-  //           setIsDialogLoading(false);
-  //         }
-  //       } else {
-  //         console.log("[RequestDialog] Dialog reopened, using existing stats");
-  //       }
-  //     };
-  //
-  //     loadFreshStats();
-  //   } else {
-  //     // Reset the initial load flag when dialog closes
-  //     initialLoadCompletedRef.current = false;
-  //   }
-  // }, [isVisible, refreshMyTimeStats, invalidateCache]);
-
-  // Define isPastView based on viewMode
+  // isPastView definition remains the same
   const isPastView = viewMode === "past" || viewMode === "nearPast";
 
-  // Add loading indicator to the dialog content
-
-  // Removed from Modal below: onRequestClose={() => setTimeout(() => onClose(), 100)}
+  // --- Start of Render ---
   return (
-    <Modal visible={isVisible} transparent animationType="fade">
+    <Modal visible={isVisible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={dialogStyles.modalOverlay}>
         <View style={dialogStyles.modalContent}>
+          {/* Added Clear Error Button */}
+          {storeError && (
+            <TouchableOpacity onPress={onClearError} style={dialogStyles.clearErrorButton}>
+              <Ionicons name="close-circle" size={20} color={Colors[theme].text} />
+            </TouchableOpacity>
+          )}
           <ThemedText style={dialogStyles.modalTitle}>Request Day Off - {selectedDate}</ThemedText>
 
-          {/* Main content is always rendered */}
+          {/* Added Display Store Error */}
+          {storeError && (
+            <View style={dialogStyles.errorContainer}>
+              <ThemedText style={dialogStyles.errorTextDisplay}>{storeError}</ThemedText>
+            </View>
+          )}
+
+          {/* Main content (Uses displayAllotment, totalSixMonthRequests) */}
           <View style={dialogStyles.allotmentContainer}>
             <ThemedText style={dialogStyles.allotmentInfo}>
               {isSixMonthRequest
-                ? `${totalSixMonthRequests} six-month requests`
-                : `${filledSpotsCapped}/${localAllotments.max} spots filled`}{" "}
+                ? `${totalSixMonthRequestsState} six-month requests` // Use local state
+                : `${filledSpotsCapped}/${displayAllotment.max} spots filled`}
             </ThemedText>
             {waitlistCount > 0 && !isSixMonthRequest && (
               <ThemedText style={dialogStyles.waitlistInfo}>Waitlist: {waitlistCount}</ThemedText>
             )}
           </View>
 
+          {/* Updated message display logic (Uses isFullMessage) */}
           {isFullMessage && (
             <View style={dialogStyles.messageContainer}>
               <ThemedText
                 style={[
                   dialogStyles.allotmentInfo,
-                  { color: hasExistingRequest ? Colors[theme].tint : Colors[theme].error }, // Use tint color if user has request
+                  {
+                    color: hasExistingRequest || isExistingRequestPaidInLieu ? Colors[theme].tint : Colors[theme].error,
+                  },
                 ]}
               >
                 {isFullMessage}
@@ -1137,32 +797,40 @@ function RequestDialog({
             </View>
           )}
 
-          {/* Only show available days if NOT in past/near-past view mode */}
           {!isPastView && (
             <>
-              {/* Conditionally render stats or loading indicator */}
-              {isMyTimeLoading ? (
-                <View style={[dialogStyles.remainingDaysContainer, dialogStyles.loadingContainer]}>
-                  <ActivityIndicator size="small" color={Colors[theme].tint} />
-                  <ThemedText style={dialogStyles.loadingText}>Loading available days...</ThemedText>
-                </View>
-              ) : (
-                <View style={dialogStyles.remainingDaysContainer}>
-                  <ThemedText style={dialogStyles.remainingDaysText}>
-                    Available PLD Days: {timeStats?.available.pld ?? 0}
-                  </ThemedText>
-                  <ThemedText style={dialogStyles.remainingDaysText}>
-                    Available SDV Days: {timeStats?.available.sdv ?? 0}
-                  </ThemedText>
-                </View>
-              )}
+              {/* Uses props availablePld/availableSdv */}
+              <View style={dialogStyles.remainingDaysContainer}>
+                <ThemedText style={dialogStyles.remainingDaysText}>Available PLD Days: {availablePld}</ThemedText>
+                <ThemedText style={dialogStyles.remainingDaysText}>Available SDV Days: {availableSdv}</ThemedText>
+              </View>
             </>
           )}
 
+          {/* Added Paid In Lieu Toggle/Checkbox */}
+          {!isPastView && !hasExistingRequest && !isSixMonthRequest && (availablePld > 0 || availableSdv > 0) && (
+            <TouchableOpacity
+              style={dialogStyles.pilToggleContainer}
+              onPress={() => setRequestAsPaidInLieu(!requestAsPaidInLieu)}
+              activeOpacity={0.8}
+            >
+              <ThemedText style={dialogStyles.pilToggleText}>
+                <Ionicons
+                  name={requestAsPaidInLieu ? "checkbox" : "square-outline"}
+                  size={24}
+                  color={Colors[theme].tint}
+                  style={{ marginRight: 8 }}
+                />
+                Request as Paid In Lieu (uses day)
+              </ThemedText>
+            </TouchableOpacity>
+          )}
+
           <ScrollView style={dialogStyles.requestList}>
-            {/* Approved/Pending/Cancellation Pending Requests */}
+            {/* Render request list (logic uses approvedPendingRequests, displayAllotment, waitlistedRequests) */}
             {approvedPendingRequests.map((request, index) => (
               <View key={request.id} style={dialogStyles.requestSpot}>
+                {/* --- Restore content --- */}
                 <ThemedText style={dialogStyles.spotNumber}>#{index + 1}</ThemedText>
                 <View style={dialogStyles.spotInfo}>
                   <ThemedText>
@@ -1173,7 +841,7 @@ function RequestDialog({
                       dialogStyles.requestStatus,
                       request.status === "approved" && dialogStyles.approvedStatus,
                       request.status === "cancellation_pending" && dialogStyles.cancellationPendingStatus,
-                      request.status === "pending" && dialogStyles.pendingStatus, // Add style for pending
+                      request.status === "pending" && dialogStyles.pendingStatus,
                     ]}
                   >
                     {request.status === "cancellation_pending"
@@ -1183,21 +851,21 @@ function RequestDialog({
                 </View>
               </View>
             ))}
-
-            {/* Available Spots */}
             {!isSixMonthRequest &&
-              Array.from({
-                length: Math.max(0, currentAllotment.max - approvedPendingRequests.length),
-              }).map((_, index) => (
-                <View key={`empty-${index}`} style={dialogStyles.requestSpot}>
-                  <ThemedText style={dialogStyles.spotNumber}>#{approvedPendingRequests.length + index + 1}</ThemedText>
-                  <ThemedText style={dialogStyles.emptySpot}>Available</ThemedText>
-                </View>
-              ))}
-
-            {/* Waitlisted Requests */}
+              Array.from({ length: Math.max(0, displayAllotment.max - approvedPendingRequests.length) }).map(
+                (_, index) => (
+                  <View key={`empty-${index}`} style={dialogStyles.requestSpot}>
+                    {/* --- Restore content --- */}
+                    <ThemedText style={dialogStyles.spotNumber}>
+                      #{approvedPendingRequests.length + index + 1}
+                    </ThemedText>
+                    <ThemedText style={dialogStyles.emptySpot}>Available</ThemedText>
+                  </View>
+                )
+              )}
             {waitlistCount > 0 && !isSixMonthRequest && (
               <>
+                {/* --- Restore content --- */}
                 <ThemedText style={dialogStyles.waitlistHeader}>Waitlist</ThemedText>
                 {waitlistedRequests.map((request, index) => (
                   <View key={request.id} style={dialogStyles.requestSpot}>
@@ -1214,10 +882,9 @@ function RequestDialog({
                 ))}
               </>
             )}
-
-            {/* Note for Six Month Requests */}
             {isSixMonthRequest && (
               <View key="six-month-note" style={dialogStyles.requestSpot}>
+                {/* --- Restore content --- */}
                 <ThemedText style={{ ...dialogStyles.emptySpot, textAlign: "center", flex: 1 }}>
                   Six month requests are processed by seniority
                 </ThemedText>
@@ -1226,180 +893,150 @@ function RequestDialog({
           </ScrollView>
 
           <View style={dialogStyles.modalButtons}>
-            {Platform.OS === "web" ? (
-              <TouchableOpacity
-                style={[dialogStyles.modalButton, dialogStyles.cancelButton]}
-                onPress={onClose}
-                activeOpacity={0.7}
-              >
-                <ThemedText style={dialogStyles.closeButtonText}>Close</ThemedText>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity
-                style={[dialogStyles.modalButton, dialogStyles.cancelButton]}
-                onPress={onClose}
-                activeOpacity={0.7}
-              >
-                <ThemedText style={dialogStyles.closeButtonText}>Close</ThemedText>
-              </TouchableOpacity>
-            )}
+            {/* Close Button */}
+            <TouchableOpacity
+              style={[dialogStyles.modalButton, dialogStyles.cancelButton]}
+              onPress={onClose}
+              activeOpacity={0.7}
+            >
+              <ThemedText style={dialogStyles.closeButtonText}>Close</ThemedText>
+            </TouchableOpacity>
 
-            {/* --- Conditionally render action buttons only if not past view --- */}
             {!isPastView && (
               <>
-                {/* Conditional rendering for Request/Cancel buttons */}
-                {isSixMonthRequest ? (
-                  // --- SIX MONTH REQUEST DATE ---
-                  canCancelSixMonthRequest ? (
-                    // User has an existing, cancellable six-month request
-                    Platform.OS === "web" ? (
+                {
+                  isSixMonthRequest ? (
+                    canCancelSixMonthRequest ? (
+                      // Cancel Six Month Button (Uses props.isSubmittingAction)
                       <TouchableOpacity
                         style={[
                           dialogStyles.modalButton,
                           dialogStyles.cancelRequestButton,
-                          isSubmitting && dialogStyles.disabledButton,
+                          isSubmittingAction[sixMonthRequestId ?? ""] && dialogStyles.disabledButton,
                         ]}
                         onPress={handleCancelSixMonthRequest}
-                        disabled={isSubmitting}
+                        disabled={isSubmittingAction[sixMonthRequestId ?? ""]}
                         activeOpacity={0.7}
                       >
-                        <ThemedText style={dialogStyles.modalButtonText}>Cancel Six-Month Request</ThemedText>
+                        {isSubmittingAction[sixMonthRequestId ?? ""] ? (
+                          <ActivityIndicator color="#000" />
+                        ) : (
+                          <ThemedText style={dialogStyles.modalButtonText}>Cancel Six-Month Request</ThemedText>
+                        )}
                       </TouchableOpacity>
-                    ) : (
-                      <TouchableOpacity
-                        style={[
-                          dialogStyles.modalButton,
-                          dialogStyles.cancelRequestButton,
-                          isSubmitting && dialogStyles.disabledButton,
-                        ]}
-                        onPress={handleCancelSixMonthRequest}
-                        disabled={isSubmitting}
-                        activeOpacity={0.7}
-                      >
-                        <ThemedText style={dialogStyles.modalButtonText}>Cancel Six-Month Request</ThemedText>
-                      </TouchableOpacity>
-                    )
-                  ) : // User does NOT have an existing six-month request, show either one or both buttons
-                  (timeStats?.available.pld ?? 0) <= 0 && (timeStats?.available.sdv ?? 0) > 0 ? (
-                    // Only SDV is available, show one button that takes up full width
-                    <TouchableOpacity
-                      style={[
-                        dialogStyles.modalButton,
-                        dialogStyles.submitButton,
-                        { flex: 2 }, // Take up full width (space of both buttons)
-                        sdvButtonProps.disabled && dialogStyles.disabledButton,
-                      ]}
-                      onPress={sdvButtonProps.onPress}
-                      disabled={sdvButtonProps.disabled}
-                      activeOpacity={0.7}
-                    >
-                      <ThemedText style={dialogStyles.modalButtonText}>Request SDV (Six Month)</ThemedText>
-                    </TouchableOpacity>
-                  ) : (timeStats?.available.sdv ?? 0) <= 0 && (timeStats?.available.pld ?? 0) > 0 ? (
-                    // Only PLD is available, show one button that takes up full width
-                    <TouchableOpacity
-                      style={[
-                        dialogStyles.modalButton,
-                        dialogStyles.submitButton,
-                        { flex: 2 }, // Take up full width (space of both buttons)
-                        submitButtonProps.disabled && dialogStyles.disabledButton,
-                      ]}
-                      onPress={submitButtonProps.onPress}
-                      disabled={submitButtonProps.disabled}
-                      activeOpacity={0.7}
-                    >
-                      <ThemedText style={dialogStyles.modalButtonText}>Request PLD (Six Month)</ThemedText>
-                    </TouchableOpacity>
-                  ) : (
-                    // Both PLD and SDV are available or both are unavailable, show both buttons
-                    <>
+                    ) : // Request Six Month Buttons (PLD/SDV - Uses submitButtonProps, sdvButtonProps)
+                    availablePld <= 0 && availableSdv > 0 ? (
                       <TouchableOpacity
                         style={[
                           dialogStyles.modalButton,
                           dialogStyles.submitButton,
-                          submitButtonProps.disabled && dialogStyles.disabledButton,
-                        ]}
-                        onPress={submitButtonProps.onPress}
-                        disabled={submitButtonProps.disabled}
-                        activeOpacity={0.7}
-                      >
-                        <ThemedText style={dialogStyles.modalButtonText}>Request PLD (Six Month)</ThemedText>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        style={[
-                          dialogStyles.modalButton,
-                          dialogStyles.submitButton,
+                          { flex: 2 },
                           sdvButtonProps.disabled && dialogStyles.disabledButton,
                         ]}
                         onPress={sdvButtonProps.onPress}
                         disabled={sdvButtonProps.disabled}
                         activeOpacity={0.7}
                       >
-                        <ThemedText style={dialogStyles.modalButtonText}>Request SDV (Six Month)</ThemedText>
+                        {sdvButtonProps.loadingState ? (
+                          <ActivityIndicator color="#000" />
+                        ) : (
+                          <ThemedText style={dialogStyles.modalButtonText}>Request SDV (Six Month)</ThemedText>
+                        )}
                       </TouchableOpacity>
-                    </>
-                  )
-                ) : hasExistingRequest ? (
-                  // --- REGULAR REQUEST DATE ---
-                  // User has an existing regular request
-                  canCancelRequest ? (
-                    // Existing regular request IS cancellable
-                    Platform.OS === "web" ? (
+                    ) : availableSdv <= 0 && availablePld > 0 ? (
                       <TouchableOpacity
                         style={[
                           dialogStyles.modalButton,
-                          dialogStyles.cancelRequestButton,
-                          isSubmitting && dialogStyles.disabledButton,
+                          dialogStyles.submitButton,
+                          { flex: 2 },
+                          submitButtonProps.disabled && dialogStyles.disabledButton,
                         ]}
-                        onPress={handleCancelRequest}
-                        disabled={isSubmitting}
+                        onPress={submitButtonProps.onPress}
+                        disabled={submitButtonProps.disabled}
                         activeOpacity={0.7}
                       >
-                        <ThemedText style={dialogStyles.modalButtonText}>
-                          {userRequest?.status === "cancellation_pending"
-                            ? "Cancellation Pending..."
-                            : "Cancel My Request"}
-                        </ThemedText>
+                        {submitButtonProps.loadingState ? (
+                          <ActivityIndicator color="#000" />
+                        ) : (
+                          <ThemedText style={dialogStyles.modalButtonText}>Request PLD (Six Month)</ThemedText>
+                        )}
                       </TouchableOpacity>
                     ) : (
-                      <TouchableOpacity
-                        style={[
-                          dialogStyles.modalButton,
-                          dialogStyles.cancelRequestButton,
-                          isSubmitting && dialogStyles.disabledButton,
-                        ]}
-                        onPress={handleCancelRequest}
-                        disabled={isSubmitting}
-                        activeOpacity={0.7}
-                      >
-                        <ThemedText style={dialogStyles.modalButtonText}>
-                          {userRequest?.status === "cancellation_pending"
-                            ? "Cancellation Pending..."
-                            : "Cancel My Request"}
-                        </ThemedText>
-                      </TouchableOpacity>
-                    )
-                  ) : (
-                    // Existing regular request is NOT cancellable (e.g., denied/cancelled)
-                    <View style={dialogStyles.modalButtonDisabledPlaceholder}>
-                      <ThemedText style={dialogStyles.modalButtonTextDisabled}>Request Cannot Be Cancelled</ThemedText>
-                    </View>
-                  )
-                ) : (
-                  // --- REGULAR REQUEST DATE ---
-                  // User has NO existing regular request, show PLD/SDV buttons
-                  <>
-                    {Platform.OS === "web" ? (
-                      (timeStats?.available.pld ?? 0) <= 0 && (timeStats?.available.sdv ?? 0) > 0 ? (
-                        // Only SDV is available, show one button that takes up full width
+                      <>
                         <TouchableOpacity
                           style={[
                             dialogStyles.modalButton,
                             dialogStyles.submitButton,
-                            { flex: 2 }, // Take up full width (space of both buttons)
-                            approvedPendingRequests.length >= currentAllotment.max &&
-                            (timeStats?.available.sdv ?? 0) > 0
+                            submitButtonProps.disabled && dialogStyles.disabledButton,
+                          ]}
+                          onPress={submitButtonProps.onPress}
+                          disabled={submitButtonProps.disabled}
+                          activeOpacity={0.7}
+                        >
+                          {submitButtonProps.loadingState ? (
+                            <ActivityIndicator color="#000" />
+                          ) : (
+                            <ThemedText style={dialogStyles.modalButtonText}>Request PLD (Six Month)</ThemedText>
+                          )}
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[
+                            dialogStyles.modalButton,
+                            dialogStyles.submitButton,
+                            sdvButtonProps.disabled && dialogStyles.disabledButton,
+                          ]}
+                          onPress={sdvButtonProps.onPress}
+                          disabled={sdvButtonProps.disabled}
+                          activeOpacity={0.7}
+                        >
+                          {sdvButtonProps.loadingState ? (
+                            <ActivityIndicator color="#000" />
+                          ) : (
+                            <ThemedText style={dialogStyles.modalButtonText}>Request SDV (Six Month)</ThemedText>
+                          )}
+                        </TouchableOpacity>
+                      </>
+                    )
+                  ) : hasExistingRequest && !isExistingRequestPaidInLieu ? (
+                    canCancelRequest ? (
+                      // Cancel Regular Button (Uses props.isSubmittingAction)
+                      <TouchableOpacity
+                        style={[
+                          dialogStyles.modalButton,
+                          dialogStyles.cancelRequestButton,
+                          isSubmittingAction[userRequest?.id ?? ""] && dialogStyles.disabledButton,
+                        ]}
+                        onPress={handleCancelRequest}
+                        disabled={isSubmittingAction[userRequest?.id ?? ""]}
+                        activeOpacity={0.7}
+                      >
+                        {isSubmittingAction[userRequest?.id ?? ""] ? (
+                          <ActivityIndicator color="#000" />
+                        ) : (
+                          <ThemedText style={dialogStyles.modalButtonText}>
+                            {userRequest?.status === "cancellation_pending"
+                              ? "Cancellation Pending..."
+                              : "Cancel My Request"}
+                          </ThemedText>
+                        )}
+                      </TouchableOpacity>
+                    ) : (
+                      <View style={dialogStyles.modalButtonDisabledPlaceholder}>
+                        <ThemedText style={dialogStyles.modalButtonTextDisabled}>
+                          Request Cannot Be Cancelled
+                        </ThemedText>
+                      </View>
+                    )
+                  ) : !isExistingRequestPaidInLieu ? (
+                    // Request Regular Buttons (PLD/SDV - Uses submitButtonProps, sdvButtonProps, displayAllotment)
+                    <>
+                      {availablePld <= 0 && availableSdv > 0 ? (
+                        <TouchableOpacity
+                          style={[
+                            dialogStyles.modalButton,
+                            dialogStyles.submitButton,
+                            { flex: 2 },
+                            approvedPendingRequests.length >= displayAllotment.max && availableSdv > 0
                               ? dialogStyles.waitlistButton
                               : null,
                             sdvButtonProps.disabled && dialogStyles.disabledButton,
@@ -1408,21 +1045,23 @@ function RequestDialog({
                           disabled={sdvButtonProps.disabled}
                           activeOpacity={0.7}
                         >
-                          <ThemedText style={dialogStyles.modalButtonText}>
-                            {approvedPendingRequests.length >= currentAllotment.max
-                              ? "Join Waitlist (SDV)"
-                              : "Request SDV"}
-                          </ThemedText>
+                          {sdvButtonProps.loadingState ? (
+                            <ActivityIndicator color="#000" />
+                          ) : (
+                            <ThemedText style={dialogStyles.modalButtonText}>
+                              {approvedPendingRequests.length >= displayAllotment.max
+                                ? "Join Waitlist (SDV)"
+                                : "Request SDV"}
+                            </ThemedText>
+                          )}
                         </TouchableOpacity>
-                      ) : (timeStats?.available.sdv ?? 0) <= 0 && (timeStats?.available.pld ?? 0) > 0 ? (
-                        // Only PLD is available, show one button that takes up full width
+                      ) : availableSdv <= 0 && availablePld > 0 ? (
                         <TouchableOpacity
                           style={[
                             dialogStyles.modalButton,
                             dialogStyles.submitButton,
-                            { flex: 2 }, // Take up full width (space of both buttons)
-                            approvedPendingRequests.length >= currentAllotment.max &&
-                            (timeStats?.available.pld ?? 0) > 0
+                            { flex: 2 },
+                            approvedPendingRequests.length >= displayAllotment.max && availablePld > 0
                               ? dialogStyles.waitlistButton
                               : null,
                             submitButtonProps.disabled && dialogStyles.disabledButton,
@@ -1431,21 +1070,23 @@ function RequestDialog({
                           disabled={submitButtonProps.disabled}
                           activeOpacity={0.7}
                         >
-                          <ThemedText style={dialogStyles.modalButtonText}>
-                            {approvedPendingRequests.length >= currentAllotment.max
-                              ? "Join Waitlist (PLD)"
-                              : "Request PLD"}
-                          </ThemedText>
+                          {submitButtonProps.loadingState ? (
+                            <ActivityIndicator color="#000" />
+                          ) : (
+                            <ThemedText style={dialogStyles.modalButtonText}>
+                              {approvedPendingRequests.length >= displayAllotment.max
+                                ? "Join Waitlist (PLD)"
+                                : "Request PLD"}
+                            </ThemedText>
+                          )}
                         </TouchableOpacity>
                       ) : (
-                        // Both PLD and SDV are available or both are unavailable, show both buttons
                         <>
                           <TouchableOpacity
                             style={[
                               dialogStyles.modalButton,
                               dialogStyles.submitButton,
-                              approvedPendingRequests.length >= currentAllotment.max &&
-                              (timeStats?.available.pld ?? 0) > 0
+                              approvedPendingRequests.length >= displayAllotment.max && availablePld > 0
                                 ? dialogStyles.waitlistButton
                                 : null,
                               submitButtonProps.disabled && dialogStyles.disabledButton,
@@ -1454,19 +1095,21 @@ function RequestDialog({
                             disabled={submitButtonProps.disabled}
                             activeOpacity={0.7}
                           >
-                            <ThemedText style={dialogStyles.modalButtonText}>
-                              {approvedPendingRequests.length >= currentAllotment.max
-                                ? "Join Waitlist (PLD)"
-                                : "Request PLD"}
-                            </ThemedText>
+                            {submitButtonProps.loadingState ? (
+                              <ActivityIndicator color="#000" />
+                            ) : (
+                              <ThemedText style={dialogStyles.modalButtonText}>
+                                {approvedPendingRequests.length >= displayAllotment.max
+                                  ? "Join Waitlist (PLD)"
+                                  : "Request PLD"}
+                              </ThemedText>
+                            )}
                           </TouchableOpacity>
-
                           <TouchableOpacity
                             style={[
                               dialogStyles.modalButton,
                               dialogStyles.submitButton,
-                              approvedPendingRequests.length >= currentAllotment.max &&
-                              (timeStats?.available.sdv ?? 0) > 0
+                              approvedPendingRequests.length >= displayAllotment.max && availableSdv > 0
                                 ? dialogStyles.waitlistButton
                                 : null,
                               sdvButtonProps.disabled && dialogStyles.disabledButton,
@@ -1475,112 +1118,26 @@ function RequestDialog({
                             disabled={sdvButtonProps.disabled}
                             activeOpacity={0.7}
                           >
-                            <ThemedText style={dialogStyles.modalButtonText}>
-                              {approvedPendingRequests.length >= currentAllotment.max
-                                ? "Join Waitlist (SDV)"
-                                : "Request SDV"}
-                            </ThemedText>
+                            {sdvButtonProps.loadingState ? (
+                              <ActivityIndicator color="#000" />
+                            ) : (
+                              <ThemedText style={dialogStyles.modalButtonText}>
+                                {approvedPendingRequests.length >= displayAllotment.max
+                                  ? "Join Waitlist (SDV)"
+                                  : "Request SDV"}
+                              </ThemedText>
+                            )}
                           </TouchableOpacity>
                         </>
-                      )
-                    ) : (timeStats?.available.pld ?? 0) <= 0 && (timeStats?.available.sdv ?? 0) > 0 ? (
-                      // Only SDV is available, show one button that takes up full width
-                      <TouchableOpacity
-                        style={[
-                          dialogStyles.modalButton,
-                          dialogStyles.submitButton,
-                          { flex: 2 }, // Take up full width (space of both buttons)
-                          approvedPendingRequests.length >= currentAllotment.max && (timeStats?.available.sdv ?? 0) > 0
-                            ? dialogStyles.waitlistButton
-                            : null,
-                          sdvButtonProps.disabled && dialogStyles.disabledButton,
-                        ]}
-                        onPress={sdvButtonProps.onPress}
-                        disabled={sdvButtonProps.disabled}
-                        activeOpacity={0.7}
-                      >
-                        <ThemedText style={dialogStyles.modalButtonText}>
-                          {approvedPendingRequests.length >= currentAllotment.max
-                            ? "Join Waitlist (SDV)"
-                            : "Request SDV"}
-                        </ThemedText>
-                      </TouchableOpacity>
-                    ) : (timeStats?.available.sdv ?? 0) <= 0 && (timeStats?.available.pld ?? 0) > 0 ? (
-                      // Only PLD is available, show one button that takes up full width
-                      <TouchableOpacity
-                        style={[
-                          dialogStyles.modalButton,
-                          dialogStyles.submitButton,
-                          { flex: 2 }, // Take up full width (space of both buttons)
-                          approvedPendingRequests.length >= currentAllotment.max && (timeStats?.available.pld ?? 0) > 0
-                            ? dialogStyles.waitlistButton
-                            : null,
-                          submitButtonProps.disabled && dialogStyles.disabledButton,
-                        ]}
-                        onPress={submitButtonProps.onPress}
-                        disabled={submitButtonProps.disabled}
-                        activeOpacity={0.7}
-                      >
-                        <ThemedText style={dialogStyles.modalButtonText}>
-                          {approvedPendingRequests.length >= currentAllotment.max
-                            ? "Join Waitlist (PLD)"
-                            : "Request PLD"}
-                        </ThemedText>
-                      </TouchableOpacity>
-                    ) : (
-                      // Both PLD and SDV are available or both are unavailable, show both buttons
-                      <>
-                        <TouchableOpacity
-                          style={[
-                            dialogStyles.modalButton,
-                            dialogStyles.submitButton,
-                            approvedPendingRequests.length >= currentAllotment.max &&
-                            (timeStats?.available.pld ?? 0) > 0
-                              ? dialogStyles.waitlistButton
-                              : null,
-                            submitButtonProps.disabled && dialogStyles.disabledButton,
-                          ]}
-                          onPress={submitButtonProps.onPress}
-                          disabled={submitButtonProps.disabled}
-                          activeOpacity={0.7}
-                        >
-                          <ThemedText style={dialogStyles.modalButtonText}>
-                            {approvedPendingRequests.length >= currentAllotment.max
-                              ? "Join Waitlist (PLD)"
-                              : "Request PLD"}
-                          </ThemedText>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                          style={[
-                            dialogStyles.modalButton,
-                            dialogStyles.submitButton,
-                            approvedPendingRequests.length >= currentAllotment.max &&
-                            (timeStats?.available.sdv ?? 0) > 0
-                              ? dialogStyles.waitlistButton
-                              : null,
-                            sdvButtonProps.disabled && dialogStyles.disabledButton,
-                          ]}
-                          onPress={sdvButtonProps.onPress}
-                          disabled={sdvButtonProps.disabled}
-                          activeOpacity={0.7}
-                        >
-                          <ThemedText style={dialogStyles.modalButtonText}>
-                            {approvedPendingRequests.length >= currentAllotment.max
-                              ? "Join Waitlist (SDV)"
-                              : "Request SDV"}
-                          </ThemedText>
-                        </TouchableOpacity>
-                      </>
-                    )}
-                  </>
-                )}
+                      )}
+                    </>
+                  ) : null /* End of hasExistingRequest/isExistingRequestPaidInLieu checks */
+                }
               </>
             )}
-            {/* --- End conditional action buttons --- */}
           </View>
 
-          {/* Add the Adjust Allocation button for admins, conditionally based on viewMode */}
+          {/* Adjust Allocation Button */}
           {isAdmin && (viewMode === "request" || viewMode === "nearPast") && (
             <View style={dialogStyles.adminButtonContainer}>
               <TouchableOpacity
@@ -1595,7 +1152,7 @@ function RequestDialog({
         </View>
       </View>
 
-      {/* Allocation Adjustment Modal */}
+      {/* Allocation Adjustment Modal (Uses localAllotments) */}
       <Modal
         visible={showAdjustmentModal}
         transparent
@@ -1605,52 +1162,33 @@ function RequestDialog({
         <View style={dialogStyles.modalOverlay}>
           <View style={dialogStyles.modalContent}>
             <ThemedText style={dialogStyles.modalTitle}>Adjust {calendarType} Allocation</ThemedText>
-
-            <ThemedText style={dialogStyles.modalDescription}>
-              {calendarType === "PLD/SDV"
-                ? `Adjust available spots for ${selectedDate}`
-                : `Adjust available spots for the week of ${selectedDate}`}
-            </ThemedText>
-
+            <ThemedText style={dialogStyles.modalDescription}>...</ThemedText>
             <ThemedText style={dialogStyles.infoText}>
               Current allocation: {localAllotments.max} spots,{" "}
-              {isSixMonthRequest ? totalSixMonthRequests : approvedPendingRequests.length} spots used
+              {isSixMonthRequest ? totalSixMonthRequestsState : approvedPendingRequests.length} spots used
             </ThemedText>
-
             <ThemedText style={dialogStyles.infoText}>
-              Note: You cannot reduce allocation below the current number of approved and pending requests.
+              Note: You cannot reduce allocation below approved/pending requests.
             </ThemedText>
-
+            {/* Apply the correct style object */}
             <TextInput
-              style={{
-                width: "40%",
-                padding: 10,
-                borderRadius: 8,
-                borderWidth: 1,
-                borderColor: Colors[theme].border,
-                color: Colors[theme].text,
-                marginBottom: 16,
-                alignSelf: "center",
-                textAlign: "center",
-              }}
+              style={dialogStyles.textInput}
               keyboardType="numeric"
               value={newAllotment}
               onChangeText={setNewAllotment}
               placeholder="Enter new allocation"
               placeholderTextColor={Colors[theme].textDim}
             />
-
             {adjustmentError && <ThemedText style={dialogStyles.errorText}>{adjustmentError}</ThemedText>}
-
             <View style={dialogStyles.modalButtons}>
               <TouchableOpacity
                 style={[dialogStyles.modalButton, dialogStyles.cancelButton]}
                 onPress={() => setShowAdjustmentModal(false)}
                 disabled={isAdjusting}
               >
+                {/* --- Restore content --- */}
                 <ThemedText style={dialogStyles.closeButtonText}>Cancel</ThemedText>
               </TouchableOpacity>
-
               <TouchableOpacity
                 style={[
                   dialogStyles.modalButton,
@@ -1671,7 +1209,7 @@ function RequestDialog({
         </View>
       </Modal>
 
-      {/* Cancel Request Confirmation Modal */}
+      {/* Cancel Request Confirmation Modal (Uses props.isSubmittingAction) */}
       <Modal
         visible={showCancelModal}
         transparent
@@ -1681,29 +1219,31 @@ function RequestDialog({
         <View style={dialogStyles.modalOverlay}>
           <View style={dialogStyles.modalContent}>
             <ThemedText style={dialogStyles.modalTitle}>Confirm Cancellation</ThemedText>
-            <ThemedText style={dialogStyles.modalDescription}>
-              {cancelType === "regular"
-                ? `Are you sure you want to cancel your ${userRequest?.leave_type} request for ${selectedDate}?`
-                : "Are you sure you want to cancel your six-month request?"}
-            </ThemedText>
+            <ThemedText style={dialogStyles.modalDescription}>...</ThemedText>
             <View style={dialogStyles.modalButtons}>
               <TouchableOpacity
                 style={[dialogStyles.modalButton, dialogStyles.cancelButton]}
                 onPress={() => setShowCancelModal(false)}
-                disabled={isSubmitting}
+                disabled={
+                  isSubmittingAction[cancelType === "regular" ? userRequest?.id ?? "" : sixMonthRequestId ?? ""]
+                }
               >
+                {/* --- Restore content --- */}
                 <ThemedText style={dialogStyles.closeButtonText}>No, Keep It</ThemedText>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[
                   dialogStyles.modalButton,
                   dialogStyles.cancelRequestButton,
-                  isSubmitting && dialogStyles.disabledButton,
+                  isSubmittingAction[cancelType === "regular" ? userRequest?.id ?? "" : sixMonthRequestId ?? ""] &&
+                    dialogStyles.disabledButton,
                 ]}
                 onPress={handleConfirmCancel}
-                disabled={isSubmitting}
+                disabled={
+                  isSubmittingAction[cancelType === "regular" ? userRequest?.id ?? "" : sixMonthRequestId ?? ""]
+                }
               >
-                {isSubmitting ? (
+                {isSubmittingAction[cancelType === "regular" ? userRequest?.id ?? "" : sixMonthRequestId ?? ""] ? (
                   <ActivityIndicator color={Colors[theme].background} />
                 ) : (
                   <ThemedText style={dialogStyles.modalButtonText}>Yes, Cancel</ThemedText>
@@ -1716,6 +1256,7 @@ function RequestDialog({
     </Modal>
   );
 }
+// --- End Replace RequestDialog Here ---
 
 interface DateControlsProps {
   selectedDate: string | null;
@@ -1928,12 +1469,10 @@ export default function CalendarScreen() {
   const mountTimeRef = useRef(Date.now());
   const lastRefreshTimeRef = useRef(Date.now());
 
-  // PLD/SDV Calendar Store Hook
+  // PLD/SDV Calendar Store Hook (Keep for calendar-specific view state)
   const {
     selectedDate,
-    requests: pldRequests,
-    userSubmitRequest,
-    submitSixMonthRequest,
+    requests: pldRequests, // Calendar store's view of requests
     setSelectedDate,
     allotments: pldAllotments,
     yearlyAllotments,
@@ -1941,6 +1480,7 @@ export default function CalendarScreen() {
     isLoading: isPldLoading,
     isDateSelectable,
     error: pldError,
+    totalSixMonthRequestsByDate, // Assuming calendarStore tracks this
   } = useCalendarStore();
 
   // Vacation Calendar Store Hook
@@ -1955,13 +1495,49 @@ export default function CalendarScreen() {
   } = useVacationCalendarStore();
 
   // MyTime Hook
-  const { stats, initialize: refreshMyTimeStats } = useMyTime();
+  // const { stats, initialize: refreshMyTimeStats } = useMyTime(); // Remove old hook usage
 
-  // Combined store errors take precedence over component errors
-  const displayError = pldError || vacationError || error;
+  // --- Get data/actions from useMyTime (connected to useTimeStore) ---
+  const {
+    timeStats,
+    // vacationStats, // Not used directly here
+    timeOffRequests,
+    // vacationRequests: userVacationRequests, // Not used directly here
+    isLoading: isMyTimeLoading, // Loading state for time data specifically
+    isSubmittingAction, // Loading state for actions (request, cancel)
+    // isSubscribing, // Not used directly here
+    error: timeStoreError, // Error state from the time store
+    // lastRefreshed, // Not used directly here
+    // initialize: initializeTimeStore, // Called by useAuth
+    // cleanup: cleanupTimeStore, // Called by useAuth
+    // fetchTimeStats, // Actions can be called if needed, but usually triggered by initialize/refreshAll
+    // fetchVacationStats,
+    // fetchTimeOffRequests,
+    // fetchVacationRequests,
+    // handleRealtimeUpdate, // Handled internally by store
+    // requestPaidInLieu, // Action for PIL - handled by submit actions with flag
+    cancelRequest, // Action from time store
+    cancelSixMonthRequest, // Action from time store
+    // refreshAll: refreshTimeStore, // Can be used for manual refresh if needed
+    submitRequest, // Action from time store
+    submitSixMonthRequest, // Action from time store
+    clearError, // Action from time store
+  } = useMyTime();
+
+  // --- Combine errors (prioritize time store error) ---
+  const displayError = timeStoreError || pldError || vacationError;
 
   // Derive combined loading state from stores
-  const isLoading = isPldLoading || isVacationLoading;
+  const isInitialLoading = !isPldInitialized || !isVacationInitialized; // Base on calendar init
+  // const isLoading = isPldLoading || isVacationLoading; // Keep for specific calendar loading?
+
+  // --- Move isExistingRequestPaidInLieu calculation BEFORE early returns ---
+  const isExistingRequestPaidInLieu = useMemo(() => {
+    // Ensure member and selectedDate are accessed safely, return default if not ready
+    if (!selectedDate || !member?.id || !timeOffRequests) return false;
+    const userReq = timeOffRequests.find((req) => req.date === selectedDate && req.member_id === member.id);
+    return userReq?.paid_in_lieu ?? false;
+  }, [timeOffRequests, selectedDate, member?.id]); // Include timeOffRequests dependency
 
   // Effect to fetch calendar name (UI specific, can stay)
   useEffect(() => {
@@ -2001,88 +1577,85 @@ export default function CalendarScreen() {
 
       if (activeCalendar === "PLD/SDV") {
         setSelectedDate(date);
+        // Also update current view to stay on this month
+        updateCurrentCalendarView(date);
         // Always attempt to show the dialog for PLD/SDV if a date is pressed
         // The dialog itself will handle view modes (past/request)
         // The Calendar component should prevent pressing truly unavailable dates (>6 months)
         setRequestDialogVisible(true);
       } else if (activeCalendar === "Vacation") {
         setSelectedWeek(date);
+        // Also update current view to stay on this month
+        updateCurrentCalendarView(date);
         // Optionally open a dialog for vacation weeks too, if applicable
         // setRequestDialogVisible(true);
       }
     },
-    [activeCalendar, setSelectedDate, setSelectedWeek] // Removed isDateSelectable dependency
+    [activeCalendar, setSelectedDate, setSelectedWeek, updateCurrentCalendarView] // Add updateCurrentCalendarView to deps
   );
 
-  // Handler for submitting PLD/SDV requests
-  const handleRequestSubmit = async (leaveType: "PLD" | "SDV") => {
-    if (!selectedDate) return;
-
+  // --- Define wrapper function to call correct store submit action ---
+  const handleRequestSubmitWithStore = async (leaveType: "PLD" | "SDV", date: string, isPaidInLieu = false) => {
+    if (!date || !member?.id) {
+      Toast.show({ type: "error", text1: "Cannot submit request", text2: "Missing date or user info." });
+      return;
+    }
+    console.log(`[CalendarScreen] Submitting ${leaveType} request for ${date} (PIL: ${isPaidInLieu}) via TimeStore`);
     try {
-      console.log(`[CalendarScreen] Submitting ${leaveType} request for ${selectedDate}`);
-
       const now = new Date();
-      const dateObj = parseISO(selectedDate);
-      const isSixMonthDate = isSameDayWithFormat(selectedDate, getSixMonthDate(), "yyyy-MM-dd");
-      const isEndOfMonth = isLastDayOfMonth(now);
+      const dateObj = parseISO(date);
+      // --- Use Date object directly from getSixMonthDate ---
       const sixMonthDate = getSixMonthDate();
+      // Remove unnecessary parseISO call below:
+      // let sixMonthDate: Date | null = null;
+      // try {
+      //   sixMonthDate = parseISO(sixMonthRefDate);
+      // } catch (e) {
+      //   console.error("Failed to parse six month date:", sixMonthRefDate);
+      //   return;
+      // }
 
-      // Special debug for problematic dates
-      const isSpecialDate = selectedDate.includes("10-31") || selectedDate.includes("04-30");
-      if (isSpecialDate) {
-        console.log(`[CalendarScreen] Handling special date ${selectedDate}:`, {
-          isEndOfMonth,
-          sixMonthDate: format(sixMonthDate, "yyyy-MM-dd"),
-          selectedMonth: dateObj.getMonth(),
-          sixMonthMonth: sixMonthDate.getMonth(),
-          selectedYear: dateObj.getFullYear(),
-          sixMonthYear: sixMonthDate.getFullYear(),
-        });
-      }
+      const isEndOfMonth = isLastDayOfMonth(now);
+      // --- Compare against the Date object directly ---
+      const isExactSixMonthDate = startOfDay(dateObj).getTime() === startOfDay(sixMonthDate).getTime();
 
-      // Properly handle six-month requests: either exact date or dates beyond in same month when end-of-month
-      const isSixMonthRequest =
-        isSixMonthDate ||
+      const isSixMonthRequestDate =
+        isExactSixMonthDate ||
         (isEndOfMonth &&
           dateObj.getMonth() === sixMonthDate.getMonth() &&
           dateObj.getFullYear() === sixMonthDate.getFullYear() &&
           dateObj.getDate() >= sixMonthDate.getDate());
 
-      let result;
-      if (isSixMonthRequest) {
-        result = await submitSixMonthRequest(selectedDate, leaveType);
-      } else {
-        result = await userSubmitRequest(selectedDate, leaveType);
-      }
+      // Call the correct store action
+      const success = isSixMonthRequestDate
+        ? await submitSixMonthRequest(leaveType, date, isPaidInLieu)
+        : await submitRequest(leaveType, date, isPaidInLieu);
 
-      if (result) {
-        // Force refresh stats immediately after successful request
-        await refreshMyTimeStats(true);
-
+      if (success) {
         Toast.show({
           type: "success",
           text1: "Success",
-          text2: `Your ${leaveType} request has been submitted.`,
+          text2: `Request submitted successfully.`,
           position: "bottom",
           visibilityTime: 3000,
         });
-
-        // Simply close the dialog
+        // Close the dialog but don't update the current date
         setRequestDialogVisible(false);
-      }
+        // Don't reset currentDate here, preserve the current view
+      } // Error is handled by store state and displayed via displayError
     } catch (err) {
-      console.error("[CalendarScreen] Error submitting request:", err);
+      console.error("[CalendarScreen] Error calling submit action:", err);
       Toast.show({
         type: "error",
         text1: "Error",
-        text2: err instanceof Error ? err.message : "Failed to submit request",
+        text2: err instanceof Error ? err.message : "An unexpected error occurred.",
         position: "bottom",
         visibilityTime: 4000,
       });
     }
   };
 
-  // Handler for Today button
+  // handleTodayPress remains the same
   const handleTodayPress = () => {
     const today = format(new Date(), "yyyy-MM-dd");
     updateCurrentCalendarView(today); // Use the combined update function
@@ -2094,7 +1667,7 @@ export default function CalendarScreen() {
     // calendarKey update is now handled by updateCurrentCalendarView
   };
 
-  // Callback to reopen the dialog after adjustment
+  // handleAdjustmentComplete remains the same
   const handleAdjustmentComplete = async () => {
     console.log("[CalendarScreen] Adjustment complete. Reopening dialog.");
     setCalendarKey(Number(Date.now()));
@@ -2102,10 +1675,7 @@ export default function CalendarScreen() {
   };
 
   // --- Conditional Rendering ---
-
-  // Show loading indicator until both stores are initialized by useAuth
-  const showInitialLoading = isLoading && (!isPldInitialized || !isVacationInitialized);
-  if (showInitialLoading) {
+  if (isInitialLoading) {
     return (
       <ThemedView style={styles.centeredContainer}>
         <ActivityIndicator size="large" color={Colors[theme].tint} />
@@ -2113,18 +1683,17 @@ export default function CalendarScreen() {
       </ThemedView>
     );
   }
-
-  // Show error state if error occurred during loading
-  if (displayError) {
+  if (displayError && !requestDialogVisible) {
     return (
       <ThemedView style={styles.centeredContainer}>
         <Ionicons name="warning-outline" size={48} color={Colors[theme].error} />
         <ThemedText style={styles.errorText}>Error: {displayError}</ThemedText>
+        <TouchableOpacity onPress={clearError} style={styles.retryButton}>
+          <ThemedText style={styles.retryButtonText}>Dismiss Error</ThemedText>
+        </TouchableOpacity>
       </ThemedView>
     );
   }
-
-  // Check if calendar is assigned after initialization
   if (!member?.calendar_id) {
     return (
       <ThemedView style={styles.centeredContainer}>
@@ -2138,7 +1707,7 @@ export default function CalendarScreen() {
   // --- Main Render ---
   return (
     <ThemedView style={styles.container}>
-      {/* Header Section */}
+      {/* Header Section (remains the same) */}
       <ThemedView style={styles.headerContainer}>
         <ThemedText style={styles.calendarNameText}>{calendarName || "Loading Calendar..."}</ThemedText>
         <DateControls
@@ -2150,7 +1719,7 @@ export default function CalendarScreen() {
         />
       </ThemedView>
 
-      {/* Calendar Type Tabs */}
+      {/* Calendar Type Tabs (remains the same) */}
       <ThemedView style={styles.tabContainer}>
         <TouchableOpacity
           style={[styles.tab, activeCalendar === "PLD/SDV" && styles.activeTab]}
@@ -2170,9 +1739,9 @@ export default function CalendarScreen() {
         </TouchableOpacity>
       </ThemedView>
 
-      {/* Main Calendar Area */}
+      {/* Main Calendar Area (use isInitialLoading) */}
       <ScrollView style={styles.scrollView}>
-        {isLoading && <ActivityIndicator style={{ marginTop: 20 }} size="small" color={Colors[theme].textDim} />}
+        {isInitialLoading && <ActivityIndicator style={{ marginTop: 20 }} size="small" color={Colors[theme].textDim} />}
         {activeCalendar === "PLD/SDV" ? (
           <Calendar key={calendarTypeKey} current={currentDate} onDayActuallyPressed={handleDayPress} />
         ) : (
@@ -2184,7 +1753,7 @@ export default function CalendarScreen() {
         )}
       </ScrollView>
 
-      {/* Determine button and dialog behavior based on selected date */}
+      {/* Request Button Logic (remains the same) */}
       {activeCalendar === "PLD/SDV" &&
         selectedDate &&
         (() => {
@@ -2259,23 +1828,44 @@ export default function CalendarScreen() {
             viewMode = "nearPast";
           }
 
+          const maxAllotmentForDialog = selectedDate
+            ? pldAllotments[selectedDate] ?? yearlyAllotments[new Date(selectedDate).getFullYear()] ?? 0
+            : 0;
+          // Use timeOffRequests from useMyTime, filter out PIL
+          const currentRequestsForDialog = timeOffRequests.filter(
+            (req) =>
+              req.date === selectedDate &&
+              ["approved", "pending", "cancellation_pending"].includes(req.status) &&
+              !req.paid_in_lieu
+          ).length;
+          // Use pldRequests from calendarStore for display list
+          const displayRequests = pldRequests[selectedDate] ? pldRequests[selectedDate] : [];
+
           return (
             <RequestDialog
               isVisible={requestDialogVisible}
-              onClose={() => setRequestDialogVisible(false)}
-              onSubmit={handleRequestSubmit}
-              selectedDate={selectedDate || ""}
-              allotments={{
-                max: selectedDate
-                  ? pldAllotments[selectedDate] ?? yearlyAllotments[new Date(selectedDate).getFullYear()] ?? 0
-                  : 0,
-                current: selectedDate && pldRequests[selectedDate] ? pldRequests[selectedDate].length : 0,
+              onClose={() => {
+                // Just close the dialog without changing the calendar date
+                setRequestDialogVisible(false);
               }}
-              requests={selectedDate && pldRequests[selectedDate] ? pldRequests[selectedDate] : []}
+              onSubmitRequest={handleRequestSubmitWithStore} // Pass the wrapper function
+              onCancelRequest={cancelRequest} // Pass action from useMyTime
+              onCancelSixMonthRequest={cancelSixMonthRequest} // Pass action from useMyTime
+              selectedDate={selectedDate}
+              maxAllotment={maxAllotmentForDialog}
+              currentAllotment={currentRequestsForDialog} // Pass calculated current count
+              requests={displayRequests} // Pass requests for list display
               calendarType="PLD/SDV"
               calendarId={member?.calendar_id || ""}
               onAdjustmentComplete={handleAdjustmentComplete}
-              viewMode={viewMode} // Pass the viewMode prop
+              viewMode={viewMode}
+              // Pass state/actions from useMyTime
+              availablePld={timeStats?.available.pld ?? 0}
+              availableSdv={timeStats?.available.sdv ?? 0}
+              isExistingRequestPaidInLieu={isExistingRequestPaidInLieu} // Pass calculated flag
+              isSubmittingAction={isSubmittingAction} // Pass loading state map
+              error={timeStoreError} // Pass error from time store
+              onClearError={clearError} // Pass clear action from time store
             />
           );
         })()}
@@ -2284,18 +1874,25 @@ export default function CalendarScreen() {
       {activeCalendar === "Vacation" && (
         <RequestDialog
           isVisible={requestDialogVisible}
-          onClose={() => setRequestDialogVisible(false)}
-          onSubmit={() => {
+          onClose={() => {
+            // Just close the dialog without changing the calendar date
             setRequestDialogVisible(false);
           }}
-          selectedDate={selectedWeek || ""}
-          allotments={{
-            max: selectedWeek && vacationAllotments[selectedWeek] ? vacationAllotments[selectedWeek].max_allotment : 0,
-            current:
-              selectedWeek && vacationAllotments[selectedWeek]
-                ? vacationAllotments[selectedWeek].current_requests || 0
-                : 0,
+          onSubmitRequest={() => {
+            // Just close the dialog without changing the calendar date
+            setRequestDialogVisible(false);
           }}
+          onCancelRequest={cancelRequest} // Pass action from useMyTime
+          onCancelSixMonthRequest={cancelSixMonthRequest} // Pass action from useMyTime
+          selectedDate={selectedWeek || ""}
+          maxAllotment={
+            selectedWeek && vacationAllotments[selectedWeek] ? vacationAllotments[selectedWeek].max_allotment : 0
+          }
+          currentAllotment={
+            selectedWeek && vacationAllotments[selectedWeek]
+              ? vacationAllotments[selectedWeek].current_requests || 0
+              : 0
+          }
           requests={
             selectedWeek && vacationRequests[selectedWeek]
               ? (vacationRequests[selectedWeek] as any as DayRequest[])
@@ -2304,6 +1901,12 @@ export default function CalendarScreen() {
           calendarType="Vacation"
           calendarId={member?.calendar_id || ""}
           onAdjustmentComplete={handleAdjustmentComplete}
+          availablePld={timeStats?.available.pld ?? 0}
+          availableSdv={timeStats?.available.sdv ?? 0}
+          isExistingRequestPaidInLieu={false}
+          isSubmittingAction={isSubmittingAction}
+          error={timeStoreError}
+          onClearError={clearError}
         />
       )}
     </ThemedView>

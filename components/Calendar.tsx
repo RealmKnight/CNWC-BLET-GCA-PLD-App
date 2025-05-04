@@ -119,13 +119,15 @@ export function Calendar({ current, zoneId, isZoneSpecific = false, onDayActuall
 
   // Function to check if user has an active regular request for a specific date
   const hasUserRequestForDate = useCallback(
-    (dateStr: string) => {
-      if (!member?.id || !requests[dateStr]) return false;
+    (dateStr: string): DayRequest | null => {
+      if (!member?.id || !requests[dateStr]) return null;
 
-      return requests[dateStr].some(
-        (req) =>
-          req.member_id === member.id &&
-          ["approved", "pending", "waitlisted", "cancellation_pending"].includes(req.status)
+      return (
+        requests[dateStr].find(
+          (req) =>
+            req.member_id === member.id &&
+            ["approved", "pending", "waitlisted", "cancellation_pending"].includes(req.status)
+        ) || null
       );
     },
     [member?.id, requests]
@@ -191,11 +193,11 @@ export function Calendar({ current, zoneId, isZoneSpecific = false, onDayActuall
     allDates.forEach((date) => {
       const dateStr = format(date, "yyyy-MM-dd");
 
-      // Check if the user has a regular request for this date
-      const userHasRegularRequest = hasUserRequestForDate(dateStr);
-
-      // Check if the user has a six-month request for this date
+      // Check if the user has a request (regular or six-month)
+      const userRequest = hasUserRequestForDate(dateStr);
+      const userHasRegularRequest = !!userRequest;
       const userHasSixMonthRequest = sixMonthRequestDays[dateStr] === true;
+      const userHasAnyRequest = userHasRegularRequest || userHasSixMonthRequest;
 
       // CRITICAL FIX: Directly determine if this is a six-month request date
       // Same algorithm as in calendarStore.ts
@@ -223,17 +225,14 @@ export function Calendar({ current, zoneId, isZoneSpecific = false, onDayActuall
         });
       }
 
-      // User has any request (regular or six-month)
-      const userHasAnyRequest = userHasRegularRequest || userHasSixMonthRequest;
-
       // Determine availability
       let availability;
 
       if (userHasAnyRequest) {
-        // If user has any request, mark as userRequested
+        // If user has ANY request (regular or six-month), mark as userRequested
         availability = "userRequested";
       } else if (isSixMonthRequest) {
-        // If it's a six-month request date, always mark as available regardless of allotment
+        // If it's a six-month request date AND user doesn't have a request, mark available
         availability = "available";
       } else {
         // Otherwise use the standard getDateAvailability function

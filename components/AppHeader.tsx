@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { StyleSheet, TouchableOpacity, Image, View } from "react-native";
 import { usePathname, useRouter, useSegments, Redirect } from "expo-router";
 import { ThemedView } from "@/components/ThemedView";
@@ -9,6 +9,7 @@ import { useColorScheme } from "@/hooks/useColorScheme";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useAdminNotificationStore } from "@/store/adminNotificationStore";
 import { AdminMessageBadge } from "@/components/ui/AdminMessageBadge";
+import { useEffectiveRoles } from "@/hooks/useEffectiveRoles";
 
 export function AppHeader() {
   const pathname = usePathname();
@@ -17,10 +18,21 @@ export function AppHeader() {
   const router = useRouter();
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const isAdminRoute = segments[0] === "(admin)";
-  const isAdmin = userRole?.includes("admin");
+  const effectiveRoles = useEffectiveRoles() ?? [];
+  const isAdmin = effectiveRoles.some((role) =>
+    ["division_admin", "union_admin", "application_admin", "company_admin"].includes(role)
+  );
   const isProfileRoute = segments[0] === "(profile)";
   const isTabsRoute = segments[0] === "(tabs)";
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  // Track initialization state
+  const cleanupRef = useRef<(() => void) | null>(null);
+  const hasInitializedRef = useRef(false);
+
+  // Initialize the admin notification store
+  const { unreadCount, initializeAdminNotifications, cleanupAdminNotifications, isInitialized } =
+    useAdminNotificationStore();
 
   // Check if current route is one of the navigation card routes
   const isNavigationCardRoute = [
@@ -34,8 +46,49 @@ export function AppHeader() {
     "(training)",
   ].includes(segments[0]);
 
-  const unreadAdminMessageCount = useAdminNotificationStore((state) => state.unreadCount);
-  const showAdminBadge = isAdmin && !isAdminRoute && unreadAdminMessageCount > 0;
+  const showAdminBadge = isAdmin && !isAdminRoute && unreadCount > 0;
+
+  // Initialize admin notifications for admin users
+  useEffect(() => {
+    if (isAdmin && user?.id && !hasInitializedRef.current) {
+      console.log("[AppHeader] Initializing admin notifications store for badging");
+
+      const cleanup = initializeAdminNotifications(
+        user.id,
+        effectiveRoles,
+        member?.division_id || null,
+        effectiveRoles.includes("company_admin")
+      );
+
+      cleanupRef.current = cleanup;
+      hasInitializedRef.current = true;
+
+      return () => {
+        // Only clean up on unmount if we're actually unmounting the entire component
+        // or if the user/admin state changes
+        if (cleanupRef.current) {
+          console.log("[AppHeader] Cleaning up admin notifications store on unmount");
+          cleanupRef.current();
+          cleanupRef.current = null;
+          // Don't reset hasInitializedRef here to prevent re-initialization on re-renders
+        }
+      };
+    }
+  }, [isAdmin, user?.id]);
+
+  // Reset initialization tracking if user changes
+  useEffect(() => {
+    return () => {
+      // This will run when the component is fully unmounted
+      if (cleanupRef.current) {
+        console.log("[AppHeader] Component unmounting, doing final cleanup");
+        cleanupRef.current();
+        cleanupAdminNotifications();
+        cleanupRef.current = null;
+      }
+      hasInitializedRef.current = false;
+    };
+  }, []);
 
   console.log("[AppHeader] State:", {
     pathname,
@@ -45,10 +98,12 @@ export function AppHeader() {
     userRole,
     userId: user?.id,
     memberPinNumber: member?.pin_number,
-    unreadAdminMessageCount,
+    unreadAdminMessageCount: unreadCount,
     showAdminBadge,
     authStatus,
     isLoggingOut,
+    isStoreInitialized: isInitialized,
+    hasInitializedLocally: hasInitializedRef.current,
   });
 
   // If we've signOut out, let the redirect in index.tsx handle the navigation
