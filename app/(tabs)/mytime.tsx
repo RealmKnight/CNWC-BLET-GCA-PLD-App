@@ -751,29 +751,6 @@ export default function MyTimeScreen() {
           </ThemedView>
         )}
 
-        {/* Vacation Summary Card */}
-        {vacationStats ? (
-          <ThemedView style={[styles.card, { width: cardWidth, marginTop: 24, marginBottom: 24 }]}>
-            <ThemedView style={styles.sectionHeader}>
-              <ThemedText style={styles.sectionTitle}>Vacation Summary</ThemedText>
-            </ThemedView>
-            <VacationSummaryRow label="Total Weeks" value={vacationStats.totalWeeks} />
-            <VacationSummaryRow label="Split Weeks" value={vacationStats.splitWeeks} />
-            <VacationSummaryRow label="Weeks to Bid" value={vacationStats.weeksToBid} />
-            <VacationSummaryRow label="Approved Weeks" value={vacationStats.approvedWeeks} />
-            <VacationSummaryRow
-              label="Remaining Weeks (to Bid)"
-              value={vacationStats.remainingWeeks}
-              highlight={true}
-            />
-          </ThemedView>
-        ) : (
-          <ThemedView style={[styles.card, { width: cardWidth, marginTop: 24, padding: 20, alignItems: "center" }]}>
-            <ActivityIndicator size="small" color={Colors[colorScheme ?? "light"].primary} />
-            <ThemedText style={{ marginTop: 12 }}>Loading vacation data...</ThemedText>
-          </ThemedView>
-        )}
-
         {/* Time Off Requests (Pending/Approved) */}
         <ThemedView style={styles.sectionHeader}>
           <ThemedText style={styles.sectionTitle}>Pending/Approved Requests</ThemedText>
@@ -841,6 +818,29 @@ export default function MyTimeScreen() {
                 ))}
               </>
             )}
+          </ThemedView>
+        )}
+
+        {/* Vacation Summary Card */}
+        {vacationStats ? (
+          <ThemedView style={[styles.card, { width: cardWidth, marginTop: 24, marginBottom: 24 }]}>
+            <ThemedView style={styles.sectionHeader}>
+              <ThemedText style={styles.sectionTitle}>Vacation Summary</ThemedText>
+            </ThemedView>
+            <VacationSummaryRow label="Total Weeks" value={vacationStats.totalWeeks} />
+            <VacationSummaryRow label="Split Weeks" value={vacationStats.splitWeeks} />
+            <VacationSummaryRow label="Weeks to Bid" value={vacationStats.weeksToBid} />
+            <VacationSummaryRow label="Approved Weeks" value={vacationStats.approvedWeeks} />
+            <VacationSummaryRow
+              label="Remaining Weeks (to Bid)"
+              value={vacationStats.remainingWeeks}
+              highlight={true}
+            />
+          </ThemedView>
+        ) : (
+          <ThemedView style={[styles.card, { width: cardWidth, marginTop: 24, padding: 20, alignItems: "center" }]}>
+            <ActivityIndicator size="small" color={Colors[colorScheme ?? "light"].primary} />
+            <ThemedText style={{ marginTop: 12 }}>Loading vacation data...</ThemedText>
           </ThemedView>
         )}
 
