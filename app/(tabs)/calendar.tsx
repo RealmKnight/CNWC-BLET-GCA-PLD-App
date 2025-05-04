@@ -90,7 +90,17 @@ function RequestDialog({
   onClearError, // Use this prop
 }: RequestDialogProps) {
   const theme = (useColorScheme() ?? "light") as ColorScheme;
-  // Removed useMyTime hook call
+
+  // Log PIL status for debugging
+  useEffect(() => {
+    if (isVisible && selectedDate) {
+      console.log(`[RequestDialog] Opened dialog for ${selectedDate} with PIL status:`, {
+        isExistingRequestPaidInLieu,
+        viewMode,
+        calendarType,
+      });
+    }
+  }, [isVisible, selectedDate, isExistingRequestPaidInLieu, viewMode, calendarType]);
 
   const { member } = useUserStore();
   const userRole = useUserStore((state) => state.userRole);
@@ -128,36 +138,6 @@ function RequestDialog({
   useEffect(() => {
     setLocalRequests(allRequests);
   }, [allRequests]);
-
-  // Get timeOffRequests directly from timeStore to check for PIL
-  const timeOffRequests = useTimeStore((state) => state.timeOffRequests);
-
-  // Check for direct PIL request from timeStore
-  const directPilRequest = useMemo(() => {
-    if (!member?.id || !selectedDate || !timeOffRequests) return null;
-    return timeOffRequests.find(
-      (req) =>
-        req.date === selectedDate &&
-        req.member_id === member.id &&
-        req.paid_in_lieu === true &&
-        ["approved", "pending", "waitlisted", "cancellation_pending"].includes(req.status)
-    );
-  }, [member?.id, selectedDate, timeOffRequests]);
-
-  // Combine with passed flag to ensure we don't miss any PIL requests
-  const hasPilRequest = directPilRequest !== null || isExistingRequestPaidInLieu;
-
-  // Debug PIL request values
-  useEffect(() => {
-    if (isVisible && selectedDate) {
-      console.log("[RequestDialog] PIL Detection Values:", {
-        isExistingRequestPaidInLieu,
-        hasDirectPilRequest: directPilRequest !== null,
-        directPilRequest: directPilRequest,
-        hasPilRequest,
-      });
-    }
-  }, [isVisible, selectedDate, isExistingRequestPaidInLieu, directPilRequest, hasPilRequest]);
 
   // Set up real-time subscription (Uses props.calendarId and propCurrentAllotment)
   useEffect(() => {
@@ -553,23 +533,19 @@ function RequestDialog({
   // userRequest memo handles both regular and PIL requests
   const userRequest = useMemo(() => {
     if (!member?.id) return null;
-
-    // First check for a direct PIL request from timeStore
-    if (directPilRequest) return directPilRequest;
-
-    // Otherwise look in localRequests
     return localRequests.find(
       (req) =>
         req.member_id === member.id &&
         ["approved", "pending", "waitlisted", "cancellation_pending"].includes(req.status)
     );
-  }, [localRequests, member?.id, directPilRequest]);
+  }, [localRequests, member?.id]);
 
   // hasExistingRequest memo remains the same but handles PIL logic too
   const hasExistingRequest = useMemo(() => {
     if (isSixMonthRequest) return hasSixMonthRequest;
-    return !!userRequest || hasPilRequest;
-  }, [userRequest, isSixMonthRequest, hasSixMonthRequest, hasPilRequest]);
+    // Include isExistingRequestPaidInLieu in the check
+    return !!userRequest || isExistingRequestPaidInLieu;
+  }, [userRequest, isSixMonthRequest, hasSixMonthRequest, isExistingRequestPaidInLieu]);
 
   // Modified handleCancelRequest
   const handleCancelRequest = useCallback(() => {
@@ -665,43 +641,31 @@ function RequestDialog({
   );
 
   const isFullMessage = useMemo(() => {
-    // Debug what's happening here too
-    console.log("[isFullMessage] Running with:", {
-      isPILfromProps: isExistingRequestPaidInLieu,
-      hasPILdirect: directPilRequest !== null,
-      userHasRequest: hasExistingRequest && !!userRequest,
-    });
-
     if (displayAllotment.max <= 0) return "No days allocated for this date";
-
     if (hasSixMonthRequest && isSixMonthRequest && !userRequest)
       return "You already have a six-month request pending for this date";
-
     if (isSixMonthRequest && !hasExistingRequest)
       return "Six-month requests are processed by seniority and do not count against daily allotment";
 
-    // Simplest check: If either PIL source is true, show PIL message
-    if (isExistingRequestPaidInLieu === true || directPilRequest !== null) {
-      console.log("[isFullMessage] Showing PIL message");
+    // Added specific display for PIL requests - check isExistingRequestPaidInLieu FIRST
+    if (isExistingRequestPaidInLieu) {
+      // The user has a PIL request for this date
+      const status =
+        userRequest?.status === "cancellation_pending" ? "Cancellation Pending" : userRequest?.status || "Pending";
       return `You have a Paid in Lieu request for this date`;
-    }
-
-    // Now handle regular requests
-    if (hasExistingRequest && userRequest) {
-      console.log("[isFullMessage] Showing regular request message");
+    } else if (hasExistingRequest && userRequest) {
+      // Regular request
       const status = userRequest.status === "cancellation_pending" ? "Cancellation Pending" : userRequest.status;
       return `You have a request for this date (Status: ${status})`;
     }
 
     if (approvedPendingRequests.length >= displayAllotment.max && waitlistCount === 0)
       return `This day is full (${filledSpotsCapped}/${displayAllotment.max})`;
-
     return null;
   }, [
     displayAllotment.max,
     hasExistingRequest,
     hasSixMonthRequest,
-    directPilRequest,
     isExistingRequestPaidInLieu,
     isSixMonthRequest,
     approvedPendingRequests.length,
@@ -727,9 +691,8 @@ function RequestDialog({
       isSubmittingAction["submitRequest"] ||
       isSubmittingAction["submitSixMonthRequest"];
 
-    // Disable button if user doesn't have PLDs available, if loading, if they have a six-month request,
-    // or if they already have a PIL request for this date
-    let isDisabled = availablePld <= 0 || isLoading || hasPilRequest;
+    // Disable when user has a PIL request
+    let isDisabled = availablePld <= 0 || isLoading || isExistingRequestPaidInLieu;
     if (isSixMonthRequest) isDisabled = isDisabled || hasSixMonthRequest;
 
     return { onPress: () => handleSubmit("PLD"), disabled: isDisabled, loadingState: isLoading };
@@ -740,7 +703,7 @@ function RequestDialog({
     hasSixMonthRequest,
     isSixMonthRequest,
     selectedDate,
-    hasPilRequest,
+    isExistingRequestPaidInLieu,
   ]);
 
   // Modified sdvButtonProps to also be disabled when user has a PIL request
@@ -751,9 +714,8 @@ function RequestDialog({
       isSubmittingAction["submitRequest"] ||
       isSubmittingAction["submitSixMonthRequest"];
 
-    // Disable button if user doesn't have SDVs available, if loading, if they have a six-month request,
-    // or if they already have a PIL request for this date
-    let isDisabled = availableSdv <= 0 || isLoading || hasPilRequest;
+    // Disable when user has a PIL request
+    let isDisabled = availableSdv <= 0 || isLoading || isExistingRequestPaidInLieu;
     if (isSixMonthRequest) isDisabled = isDisabled || hasSixMonthRequest;
 
     return { onPress: () => handleSubmit("SDV"), disabled: isDisabled, loadingState: isLoading };
@@ -764,7 +726,7 @@ function RequestDialog({
     hasSixMonthRequest,
     isSixMonthRequest,
     selectedDate,
-    hasPilRequest,
+    isExistingRequestPaidInLieu,
   ]);
 
   // canCancelRequest memo remains the same
@@ -858,67 +820,26 @@ function RequestDialog({
             )}
           </View>
 
-          {/* Display messages for different conditions */}
-          {displayAllotment.max <= 0 && (
-            <View style={dialogStyles.messageContainer}>
-              <ThemedText style={[dialogStyles.allotmentInfo, { color: Colors[theme].error }]}>
-                No days allocated for this date
-              </ThemedText>
-            </View>
-          )}
-
-          {hasSixMonthRequest && isSixMonthRequest && !userRequest && (
-            <View style={dialogStyles.messageContainer}>
-              <ThemedText style={[dialogStyles.allotmentInfo, { color: Colors[theme].error }]}>
-                You already have a six-month request pending for this date
-              </ThemedText>
-            </View>
-          )}
-
-          {isSixMonthRequest && !hasExistingRequest && (
-            <View style={dialogStyles.messageContainer}>
-              <ThemedText style={[dialogStyles.allotmentInfo, { color: Colors[theme].tint }]}>
-                Six-month requests are processed by seniority and do not count against daily allotment
-              </ThemedText>
-            </View>
-          )}
-
-          {/* Check for ANY request and display the appropriate message */}
-          {hasExistingRequest && (
+          {/* Updated message display logic (Uses isFullMessage) */}
+          {isFullMessage && (
             <View style={dialogStyles.messageContainer}>
               <ThemedText
                 style={[
                   dialogStyles.allotmentInfo,
                   {
                     color:
-                      userRequest?.paid_in_lieu === true || isExistingRequestPaidInLieu
-                        ? Colors[theme].primary
-                        : Colors[theme].tint,
+                      hasExistingRequest || isExistingRequestPaidInLieu
+                        ? isExistingRequestPaidInLieu
+                          ? Colors[theme].primary // Use primary color for PIL
+                          : Colors[theme].tint // Use tint for regular requests
+                        : Colors[theme].error, // Use error for full/unavailable messages
                   },
                 ]}
               >
-                {userRequest?.paid_in_lieu === true || isExistingRequestPaidInLieu
-                  ? "You have a Paid in Lieu request for this date"
-                  : `You have a request for this date (Status: ${
-                      userRequest?.status === "cancellation_pending"
-                        ? "Cancellation Pending"
-                        : userRequest?.status || (hasPilRequest ? "PIL" : "Unknown")
-                    })`}
+                {isFullMessage}
               </ThemedText>
             </View>
           )}
-
-          {/* Show full message only if no other message applies */}
-          {!hasExistingRequest &&
-            !hasSixMonthRequest &&
-            approvedPendingRequests.length >= displayAllotment.max &&
-            waitlistCount === 0 && (
-              <View style={dialogStyles.messageContainer}>
-                <ThemedText style={[dialogStyles.allotmentInfo, { color: Colors[theme].error }]}>
-                  This day is full ({filledSpotsCapped}/{displayAllotment.max})
-                </ThemedText>
-              </View>
-            )}
 
           {!isPastView && (
             <>
@@ -934,7 +855,7 @@ function RequestDialog({
           {!isPastView &&
             !hasExistingRequest &&
             !isSixMonthRequest &&
-            !hasPilRequest &&
+            !isExistingRequestPaidInLieu && // Explicitly check PIL status
             (availablePld > 0 || availableSdv > 0) && (
               <TouchableOpacity
                 style={dialogStyles.pilToggleContainer}
@@ -1658,13 +1579,77 @@ export default function CalendarScreen() {
   const isInitialLoading = !isPldInitialized || !isVacationInitialized; // Base on calendar init
   // const isLoading = isPldLoading || isVacationLoading; // Keep for specific calendar loading?
 
-  // --- Move isExistingRequestPaidInLieu calculation BEFORE early returns ---
+  // --- Step 1: Create a pilRequestsByDate map in CalendarScreen ---
+  // Add this after the isInitialLoading calculation, around line 1250-1300
+
+  // Create a map of dates with PIL requests (similar to Calendar.tsx approach)
+  const pilRequestsByDate = useMemo(() => {
+    if (!member?.id || !timeOffRequests || timeOffRequests.length === 0) return {};
+
+    const pilMap: Record<string, boolean> = {};
+    timeOffRequests.forEach((request) => {
+      // Check for relevant debug data
+      if (request.member_id === member.id) {
+        console.log(`[CalendarScreen] Examining timeStore request:`, {
+          date: request.date,
+          requestDate: request.request_date,
+          isPIL: request.paid_in_lieu,
+          status: request.status,
+        });
+      }
+
+      if (
+        request.member_id === member.id &&
+        request.paid_in_lieu === true &&
+        ["approved", "pending", "waitlisted", "cancellation_pending"].includes(request.status)
+      ) {
+        // Use request_date as the primary field, fallback to date if needed
+        const dateField = request.request_date || request.date;
+        if (dateField) {
+          pilMap[dateField] = true;
+          console.log(`[CalendarScreen] Found PIL request in timeStore for ${dateField}:`, request);
+        }
+      }
+    });
+
+    console.log(`[CalendarScreen] Total PIL requests from timeStore: ${Object.keys(pilMap).length}`);
+    return pilMap;
+  }, [timeOffRequests, member?.id]);
+
+  // --- Step 2: Update isExistingRequestPaidInLieu calculation ---
+  // Replace the existing calculation with this:
   const isExistingRequestPaidInLieu = useMemo(() => {
-    // Ensure member and selectedDate are accessed safely, return default if not ready
-    if (!selectedDate || !member?.id || !timeOffRequests) return false;
-    const userReq = timeOffRequests.find((req) => req.date === selectedDate && req.member_id === member.id);
-    return userReq?.paid_in_lieu ?? false;
-  }, [timeOffRequests, selectedDate, member?.id]); // Include timeOffRequests dependency
+    if (!selectedDate || !member?.id) return false;
+
+    // Check if this date has a PIL request in our map
+    const hasPilRequest = pilRequestsByDate[selectedDate] === true;
+
+    if (hasPilRequest) {
+      console.log(`[CalendarScreen] Found PIL request for selected date ${selectedDate} in pilRequestsByDate map`);
+    }
+
+    return hasPilRequest;
+  }, [selectedDate, member?.id, pilRequestsByDate]);
+
+  // --- Step 3: Add additional debugging when opening RequestDialog ---
+  // In the code that determines ViewMode before showing RequestDialog, add:
+
+  // DEBUG: Check if we're receiving PIL requests in timeOffRequests
+  if (selectedDate) {
+    const pilRequests = timeOffRequests.filter(
+      (req) => req.date === selectedDate && req.paid_in_lieu && req.member_id === member.id
+    );
+
+    if (pilRequests.length > 0) {
+      console.log(`[CalendarScreen] Found PIL requests for selected date ${selectedDate}:`, pilRequests);
+
+      // Also check if these requests appear in calendarStore data
+      const calendarRequests = pldRequests[selectedDate] || [];
+      const pilInCalendar = calendarRequests.filter((req) => req.member_id === member.id && req.paid_in_lieu);
+
+      console.log(`[CalendarScreen] PIL requests in calendarStore:`, pilInCalendar);
+    }
+  }
 
   // Effect to fetch calendar name (UI specific, can stay)
   useEffect(() => {
@@ -1829,23 +1814,6 @@ export default function CalendarScreen() {
         <ThemedText style={{ textAlign: "center" }}>Please contact support or your division admin.</ThemedText>
       </ThemedView>
     );
-  }
-
-  // DEBUG: Check if we're receiving PIL requests in timeOffRequests
-  if (selectedDate) {
-    const pilRequests = timeOffRequests.filter(
-      (req) => req.date === selectedDate && req.paid_in_lieu && req.member_id === member.id
-    );
-
-    if (pilRequests.length > 0) {
-      console.log(`[CalendarScreen] Found PIL requests for selected date ${selectedDate}:`, pilRequests);
-
-      // Also check if these requests appear in calendarStore data
-      const calendarRequests = pldRequests[selectedDate] || [];
-      const pilInCalendar = calendarRequests.filter((req) => req.member_id === member.id && req.paid_in_lieu);
-
-      console.log(`[CalendarScreen] PIL requests in calendarStore:`, pilInCalendar);
-    }
   }
 
   // --- Main Render ---
@@ -2556,7 +2524,6 @@ const dialogStyles = StyleSheet.create({
     marginBottom: 16,
     padding: 12,
     borderWidth: 2,
-    borderColor: Colors.light.tint,
     borderRadius: 8,
     alignItems: "center",
   } as ViewStyle,
