@@ -20,6 +20,7 @@ import { Colors } from "@/constants/Colors";
 import { useUserStore } from "@/store/userStore";
 import Toast from "react-native-toast-message";
 import { supabase } from "@/utils/supabase";
+import { useTimeStore } from "@/store/timeStore";
 
 type ColorScheme = keyof typeof Colors;
 
@@ -90,6 +91,41 @@ export function Calendar({ current, zoneId, isZoneSpecific = false, onDayActuall
     checkSixMonthRequest,
   } = useCalendarStore();
 
+  const timeOffRequests = useTimeStore((state) => state.timeOffRequests);
+
+  const pilRequestsByDate = useMemo(() => {
+    if (!member?.id || !timeOffRequests || timeOffRequests.length === 0) return {};
+
+    const pilMap: Record<string, boolean> = {};
+    timeOffRequests.forEach((request) => {
+      // Debug log for each request's structure to verify field names
+      if (request.member_id === member.id) {
+        console.log(`[Calendar] Examining timeStore request:`, {
+          hasDate: !!request.date,
+          hasRequestDate: !!request.request_date,
+          isPIL: request.paid_in_lieu,
+          status: request.status,
+        });
+      }
+
+      if (
+        request.member_id === member.id &&
+        request.paid_in_lieu === true &&
+        ["approved", "pending", "waitlisted", "cancellation_pending"].includes(request.status)
+      ) {
+        // Use request_date as the primary field, fallback to date if needed
+        const dateField = request.request_date || request.date;
+        if (dateField) {
+          pilMap[dateField] = true;
+          console.log(`[Calendar] Found PIL request in timeStore for ${dateField}:`, request);
+        }
+      }
+    });
+
+    console.log(`[Calendar] Total PIL requests from timeStore: ${Object.keys(pilMap).length}`);
+    return pilMap;
+  }, [timeOffRequests, member?.id]);
+
   // Use a ref to track if marked dates were already generated
   const markedDatesGeneratedRef = useRef(false);
   // Use a ref to store the last generated mark dates
@@ -117,18 +153,68 @@ export function Calendar({ current, zoneId, isZoneSpecific = false, onDayActuall
     };
   }, []);
 
+  useEffect(() => {
+    console.log("[Calendar] Initializing with memberId:", member?.id);
+
+    // Debug: Check if there are any PIL requests in the request data
+    if (isInitialized && member?.id) {
+      const allDates = Object.keys(requests);
+      let pilRequestCount = 0;
+
+      allDates.forEach((date) => {
+        const dateRequests = requests[date] || [];
+        const userPilRequests = dateRequests.filter(
+          (req) =>
+            req.member_id === member.id &&
+            req.paid_in_lieu === true &&
+            ["approved", "pending", "waitlisted", "cancellation_pending"].includes(req.status)
+        );
+
+        pilRequestCount += userPilRequests.length;
+        if (userPilRequests.length > 0) {
+          console.log(
+            `[Calendar] Found ${userPilRequests.length} PIL requests for ${date}:`,
+            userPilRequests.map((r) => ({
+              status: r.status,
+              leave_type: r.leave_type,
+              paid_in_lieu: r.paid_in_lieu,
+            }))
+          );
+        }
+      });
+
+      console.log(`[Calendar] Total PIL requests found across all dates: ${pilRequestCount}`);
+    }
+  }, [isInitialized, member?.id, requests]);
+
   // Function to check if user has an active regular request for a specific date
   const hasUserRequestForDate = useCallback(
     (dateStr: string): DayRequest | null => {
       if (!member?.id || !requests[dateStr]) return null;
 
-      return (
-        requests[dateStr].find(
-          (req) =>
-            req.member_id === member.id &&
-            ["approved", "pending", "waitlisted", "cancellation_pending"].includes(req.status)
-        ) || null
+      // Make sure we're looking at ALL requests for this user on this date
+      const userRequests = requests[dateStr].filter(
+        (req) =>
+          req.member_id === member.id &&
+          ["approved", "pending", "waitlisted", "cancellation_pending"].includes(req.status)
       );
+
+      // Specifically check for PIL requests
+      const pilRequests = userRequests.filter((req) => req.paid_in_lieu === true);
+      if (pilRequests.length > 0) {
+        console.log(`[Calendar] hasUserRequestForDate found ${pilRequests.length} PIL requests for ${dateStr}`);
+      }
+
+      // Log all user requests for debugging
+      if (userRequests.length > 0) {
+        console.log(
+          `[Calendar] User has ${userRequests.length} requests for ${dateStr}:`,
+          userRequests.map((r) => ({ status: r.status, type: r.leave_type, isPIL: r.paid_in_lieu }))
+        );
+      }
+
+      // Return any matching request (including PIL ones)
+      return userRequests.length > 0 ? userRequests[0] : null;
     },
     [member?.id, requests]
   );
@@ -150,6 +236,7 @@ export function Calendar({ current, zoneId, isZoneSpecific = false, onDayActuall
       hasAllotments: Object.keys(allotments).length,
       hasYearlyAllotments: Object.keys(yearlyAllotments).length,
       hasSixMonthRequests: Object.keys(sixMonthRequestDays).length,
+      hasPilRequests: Object.keys(pilRequestsByDate).length,
       selectedDate,
     });
 
@@ -193,11 +280,23 @@ export function Calendar({ current, zoneId, isZoneSpecific = false, onDayActuall
     allDates.forEach((date) => {
       const dateStr = format(date, "yyyy-MM-dd");
 
-      // Check if the user has a request (regular or six-month)
+      // Check if the user has a request (Regular, PIL, or six-month)
       const userRequest = hasUserRequestForDate(dateStr);
-      const userHasRegularRequest = !!userRequest;
+
+      // Check for PIL requests from timeStore
+      const hasPilRequest = pilRequestsByDate[dateStr] === true;
+
+      // ANY user request should mark the day as "userRequested"
+      const userHasRequest = !!userRequest;
       const userHasSixMonthRequest = sixMonthRequestDays[dateStr] === true;
-      const userHasAnyRequest = userHasRegularRequest || userHasSixMonthRequest;
+      const userHasAnyRequest = userHasRequest || userHasSixMonthRequest || hasPilRequest;
+
+      // Debug PIL requests specifically
+      if (userRequest?.paid_in_lieu || hasPilRequest) {
+        console.log(
+          `[Calendar] User has a PIL request for ${dateStr} - from ${userRequest ? "calendarStore" : "timeStore"}`
+        );
+      }
 
       // CRITICAL FIX: Directly determine if this is a six-month request date
       // Same algorithm as in calendarStore.ts
@@ -229,7 +328,7 @@ export function Calendar({ current, zoneId, isZoneSpecific = false, onDayActuall
       let availability;
 
       if (userHasAnyRequest) {
-        // If user has ANY request (regular or six-month), mark as userRequested
+        // If user has ANY request (regular, PIL, or six-month), mark as userRequested
         availability = "userRequested";
       } else if (isSixMonthRequest) {
         // If it's a six-month request date AND user doesn't have a request, mark available
@@ -296,6 +395,7 @@ export function Calendar({ current, zoneId, isZoneSpecific = false, onDayActuall
     sixMonthRequestDays,
     getDateAvailability,
     hasUserRequestForDate,
+    pilRequestsByDate,
   ]);
 
   // Reset the marked dates generated flag when fundamental data changes

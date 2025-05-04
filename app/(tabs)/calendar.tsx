@@ -39,6 +39,7 @@ import { RealtimePostgresChangesPayload, RealtimeChannel } from "@supabase/supab
 import { Ionicons } from "@expo/vector-icons";
 import { useAdminCalendarManagementStore } from "@/store/adminCalendarManagementStore";
 import { Calendar as RNCalendar } from "react-native-calendars";
+import { useTimeStore } from "@/store/timeStore";
 import { TimeOffRequest } from "@/types/time"; // Assuming TimeOffRequest includes paid_in_lieu
 
 type ColorScheme = keyof typeof Colors;
@@ -127,6 +128,36 @@ function RequestDialog({
   useEffect(() => {
     setLocalRequests(allRequests);
   }, [allRequests]);
+
+  // Get timeOffRequests directly from timeStore to check for PIL
+  const timeOffRequests = useTimeStore((state) => state.timeOffRequests);
+
+  // Check for direct PIL request from timeStore
+  const directPilRequest = useMemo(() => {
+    if (!member?.id || !selectedDate || !timeOffRequests) return null;
+    return timeOffRequests.find(
+      (req) =>
+        req.date === selectedDate &&
+        req.member_id === member.id &&
+        req.paid_in_lieu === true &&
+        ["approved", "pending", "waitlisted", "cancellation_pending"].includes(req.status)
+    );
+  }, [member?.id, selectedDate, timeOffRequests]);
+
+  // Combine with passed flag to ensure we don't miss any PIL requests
+  const hasPilRequest = directPilRequest !== null || isExistingRequestPaidInLieu;
+
+  // Debug PIL request values
+  useEffect(() => {
+    if (isVisible && selectedDate) {
+      console.log("[RequestDialog] PIL Detection Values:", {
+        isExistingRequestPaidInLieu,
+        hasDirectPilRequest: directPilRequest !== null,
+        directPilRequest: directPilRequest,
+        hasPilRequest,
+      });
+    }
+  }, [isVisible, selectedDate, isExistingRequestPaidInLieu, directPilRequest, hasPilRequest]);
 
   // Set up real-time subscription (Uses props.calendarId and propCurrentAllotment)
   useEffect(() => {
@@ -519,21 +550,26 @@ function RequestDialog({
     );
   }, [filteredRequests, viewMode]);
 
-  // userRequest memo remains the same
+  // userRequest memo handles both regular and PIL requests
   const userRequest = useMemo(() => {
     if (!member?.id) return null;
+
+    // First check for a direct PIL request from timeStore
+    if (directPilRequest) return directPilRequest;
+
+    // Otherwise look in localRequests
     return localRequests.find(
       (req) =>
         req.member_id === member.id &&
         ["approved", "pending", "waitlisted", "cancellation_pending"].includes(req.status)
     );
-  }, [localRequests, member?.id]);
+  }, [localRequests, member?.id, directPilRequest]);
 
-  // hasExistingRequest memo remains the same
+  // hasExistingRequest memo remains the same but handles PIL logic too
   const hasExistingRequest = useMemo(() => {
     if (isSixMonthRequest) return hasSixMonthRequest;
-    return !!userRequest;
-  }, [userRequest, isSixMonthRequest, hasSixMonthRequest]);
+    return !!userRequest || hasPilRequest;
+  }, [userRequest, isSixMonthRequest, hasSixMonthRequest, hasPilRequest]);
 
   // Modified handleCancelRequest
   const handleCancelRequest = useCallback(() => {
@@ -628,32 +664,50 @@ function RequestDialog({
     [waitlistedRequests.length, isSixMonthRequest]
   );
 
-  // Modified isFullMessage to use displayAllotment and props.isExistingRequestPaidInLieu
   const isFullMessage = useMemo(() => {
+    // Debug what's happening here too
+    console.log("[isFullMessage] Running with:", {
+      isPILfromProps: isExistingRequestPaidInLieu,
+      hasPILdirect: directPilRequest !== null,
+      userHasRequest: hasExistingRequest && !!userRequest,
+    });
+
     if (displayAllotment.max <= 0) return "No days allocated for this date";
+
     if (hasSixMonthRequest && isSixMonthRequest && !userRequest)
       return "You already have a six-month request pending for this date";
+
     if (isSixMonthRequest && !hasExistingRequest)
       return "Six-month requests are processed by seniority and do not count against daily allotment";
+
+    // Simplest check: If either PIL source is true, show PIL message
+    if (isExistingRequestPaidInLieu === true || directPilRequest !== null) {
+      console.log("[isFullMessage] Showing PIL message");
+      return `You have a Paid in Lieu request for this date`;
+    }
+
+    // Now handle regular requests
     if (hasExistingRequest && userRequest) {
-      if (isExistingRequestPaidInLieu)
-        return `You have a Paid in Lieu request for this date (Status: ${userRequest.status})`;
+      console.log("[isFullMessage] Showing regular request message");
       const status = userRequest.status === "cancellation_pending" ? "Cancellation Pending" : userRequest.status;
       return `You have a request for this date (Status: ${status})`;
     }
+
     if (approvedPendingRequests.length >= displayAllotment.max && waitlistCount === 0)
       return `This day is full (${filledSpotsCapped}/${displayAllotment.max})`;
+
     return null;
   }, [
     displayAllotment.max,
     hasExistingRequest,
     hasSixMonthRequest,
+    directPilRequest,
+    isExistingRequestPaidInLieu,
     isSixMonthRequest,
     approvedPendingRequests.length,
     waitlistCount,
     filledSpotsCapped,
     userRequest,
-    isExistingRequestPaidInLieu,
   ]);
 
   // Cleanup effects remain the same
@@ -666,29 +720,52 @@ function RequestDialog({
     /* Unsubscribe on close */ if (!isVisible && realtimeChannelRef.current) realtimeChannelRef.current.unsubscribe();
   }, [isVisible]);
 
-  // Modified submitButtonProps
   const submitButtonProps = useMemo(() => {
     const actionKey = isSixMonthRequest ? `${selectedDate}-PLD-6mo` : `${selectedDate}-PLD`;
     const isLoading =
       isSubmittingAction[actionKey] ||
       isSubmittingAction["submitRequest"] ||
       isSubmittingAction["submitSixMonthRequest"];
-    let isDisabled = availablePld <= 0 || isLoading;
-    if (isSixMonthRequest) isDisabled = isDisabled || hasSixMonthRequest;
-    return { onPress: () => handleSubmit("PLD"), disabled: isDisabled, loadingState: isLoading };
-  }, [availablePld, isSubmittingAction, handleSubmit, hasSixMonthRequest, isSixMonthRequest, selectedDate]);
 
-  // Modified sdvButtonProps
+    // Disable button if user doesn't have PLDs available, if loading, if they have a six-month request,
+    // or if they already have a PIL request for this date
+    let isDisabled = availablePld <= 0 || isLoading || hasPilRequest;
+    if (isSixMonthRequest) isDisabled = isDisabled || hasSixMonthRequest;
+
+    return { onPress: () => handleSubmit("PLD"), disabled: isDisabled, loadingState: isLoading };
+  }, [
+    availablePld,
+    isSubmittingAction,
+    handleSubmit,
+    hasSixMonthRequest,
+    isSixMonthRequest,
+    selectedDate,
+    hasPilRequest,
+  ]);
+
+  // Modified sdvButtonProps to also be disabled when user has a PIL request
   const sdvButtonProps = useMemo(() => {
     const actionKey = isSixMonthRequest ? `${selectedDate}-SDV-6mo` : `${selectedDate}-SDV`;
     const isLoading =
       isSubmittingAction[actionKey] ||
       isSubmittingAction["submitRequest"] ||
       isSubmittingAction["submitSixMonthRequest"];
-    let isDisabled = availableSdv <= 0 || isLoading;
+
+    // Disable button if user doesn't have SDVs available, if loading, if they have a six-month request,
+    // or if they already have a PIL request for this date
+    let isDisabled = availableSdv <= 0 || isLoading || hasPilRequest;
     if (isSixMonthRequest) isDisabled = isDisabled || hasSixMonthRequest;
+
     return { onPress: () => handleSubmit("SDV"), disabled: isDisabled, loadingState: isLoading };
-  }, [availableSdv, isSubmittingAction, handleSubmit, hasSixMonthRequest, isSixMonthRequest, selectedDate]);
+  }, [
+    availableSdv,
+    isSubmittingAction,
+    handleSubmit,
+    hasSixMonthRequest,
+    isSixMonthRequest,
+    selectedDate,
+    hasPilRequest,
+  ]);
 
   // canCancelRequest memo remains the same
   const canCancelRequest = useMemo(
@@ -781,21 +858,67 @@ function RequestDialog({
             )}
           </View>
 
-          {/* Updated message display logic (Uses isFullMessage) */}
-          {isFullMessage && (
+          {/* Display messages for different conditions */}
+          {displayAllotment.max <= 0 && (
+            <View style={dialogStyles.messageContainer}>
+              <ThemedText style={[dialogStyles.allotmentInfo, { color: Colors[theme].error }]}>
+                No days allocated for this date
+              </ThemedText>
+            </View>
+          )}
+
+          {hasSixMonthRequest && isSixMonthRequest && !userRequest && (
+            <View style={dialogStyles.messageContainer}>
+              <ThemedText style={[dialogStyles.allotmentInfo, { color: Colors[theme].error }]}>
+                You already have a six-month request pending for this date
+              </ThemedText>
+            </View>
+          )}
+
+          {isSixMonthRequest && !hasExistingRequest && (
+            <View style={dialogStyles.messageContainer}>
+              <ThemedText style={[dialogStyles.allotmentInfo, { color: Colors[theme].tint }]}>
+                Six-month requests are processed by seniority and do not count against daily allotment
+              </ThemedText>
+            </View>
+          )}
+
+          {/* Check for ANY request and display the appropriate message */}
+          {hasExistingRequest && (
             <View style={dialogStyles.messageContainer}>
               <ThemedText
                 style={[
                   dialogStyles.allotmentInfo,
                   {
-                    color: hasExistingRequest || isExistingRequestPaidInLieu ? Colors[theme].tint : Colors[theme].error,
+                    color:
+                      userRequest?.paid_in_lieu === true || isExistingRequestPaidInLieu
+                        ? Colors[theme].primary
+                        : Colors[theme].tint,
                   },
                 ]}
               >
-                {isFullMessage}
+                {userRequest?.paid_in_lieu === true || isExistingRequestPaidInLieu
+                  ? "You have a Paid in Lieu request for this date"
+                  : `You have a request for this date (Status: ${
+                      userRequest?.status === "cancellation_pending"
+                        ? "Cancellation Pending"
+                        : userRequest?.status || (hasPilRequest ? "PIL" : "Unknown")
+                    })`}
               </ThemedText>
             </View>
           )}
+
+          {/* Show full message only if no other message applies */}
+          {!hasExistingRequest &&
+            !hasSixMonthRequest &&
+            approvedPendingRequests.length >= displayAllotment.max &&
+            waitlistCount === 0 && (
+              <View style={dialogStyles.messageContainer}>
+                <ThemedText style={[dialogStyles.allotmentInfo, { color: Colors[theme].error }]}>
+                  This day is full ({filledSpotsCapped}/{displayAllotment.max})
+                </ThemedText>
+              </View>
+            )}
 
           {!isPastView && (
             <>
@@ -807,24 +930,28 @@ function RequestDialog({
             </>
           )}
 
-          {/* Added Paid In Lieu Toggle/Checkbox */}
-          {!isPastView && !hasExistingRequest && !isSixMonthRequest && (availablePld > 0 || availableSdv > 0) && (
-            <TouchableOpacity
-              style={dialogStyles.pilToggleContainer}
-              onPress={() => setRequestAsPaidInLieu(!requestAsPaidInLieu)}
-              activeOpacity={0.8}
-            >
-              <ThemedText style={dialogStyles.pilToggleText}>
-                <Ionicons
-                  name={requestAsPaidInLieu ? "checkbox" : "square-outline"}
-                  size={24}
-                  color={Colors[theme].tint}
-                  style={{ marginRight: 8 }}
-                />
-                Request as Paid In Lieu (uses day)
-              </ThemedText>
-            </TouchableOpacity>
-          )}
+          {/* Only show PIL toggle when appropriate */}
+          {!isPastView &&
+            !hasExistingRequest &&
+            !isSixMonthRequest &&
+            !hasPilRequest &&
+            (availablePld > 0 || availableSdv > 0) && (
+              <TouchableOpacity
+                style={dialogStyles.pilToggleContainer}
+                onPress={() => setRequestAsPaidInLieu(!requestAsPaidInLieu)}
+                activeOpacity={0.8}
+              >
+                <ThemedText style={dialogStyles.pilToggleText}>
+                  <Ionicons
+                    name={requestAsPaidInLieu ? "checkbox" : "square-outline"}
+                    size={24}
+                    color={Colors[theme].tint}
+                    style={{ marginRight: 8 }}
+                  />
+                  Request as Paid In Lieu (uses day)
+                </ThemedText>
+              </TouchableOpacity>
+            )}
 
           <ScrollView style={dialogStyles.requestList}>
             {/* Render request list (logic uses approvedPendingRequests, displayAllotment, waitlistedRequests) */}
@@ -1704,6 +1831,23 @@ export default function CalendarScreen() {
     );
   }
 
+  // DEBUG: Check if we're receiving PIL requests in timeOffRequests
+  if (selectedDate) {
+    const pilRequests = timeOffRequests.filter(
+      (req) => req.date === selectedDate && req.paid_in_lieu && req.member_id === member.id
+    );
+
+    if (pilRequests.length > 0) {
+      console.log(`[CalendarScreen] Found PIL requests for selected date ${selectedDate}:`, pilRequests);
+
+      // Also check if these requests appear in calendarStore data
+      const calendarRequests = pldRequests[selectedDate] || [];
+      const pilInCalendar = calendarRequests.filter((req) => req.member_id === member.id && req.paid_in_lieu);
+
+      console.log(`[CalendarScreen] PIL requests in calendarStore:`, pilInCalendar);
+    }
+  }
+
   // --- Main Render ---
   return (
     <ThemedView style={styles.container}>
@@ -1738,7 +1882,6 @@ export default function CalendarScreen() {
           </ThemedText>
         </TouchableOpacity>
       </ThemedView>
-
       {/* Main Calendar Area (use isInitialLoading) */}
       <ScrollView style={styles.scrollView}>
         {isInitialLoading && <ActivityIndicator style={{ marginTop: 20 }} size="small" color={Colors[theme].textDim} />}
@@ -1912,7 +2055,6 @@ export default function CalendarScreen() {
     </ThemedView>
   );
 }
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -2410,4 +2552,17 @@ const dialogStyles = StyleSheet.create({
     flexDirection: "row",
     gap: 12,
   } as ViewStyle,
+  pilToggleContainer: {
+    marginBottom: 16,
+    padding: 12,
+    borderWidth: 2,
+    borderColor: Colors.light.tint,
+    borderRadius: 8,
+    alignItems: "center",
+  } as ViewStyle,
+  pilToggleText: {
+    fontSize: 16,
+    fontWeight: "500",
+    color: Colors.dark.text,
+  } as TextStyle,
 });

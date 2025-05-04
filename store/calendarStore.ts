@@ -246,6 +246,25 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
     // Check if user has any type of request first
     const member = useUserStore.getState().member;
     const hasSixMonthRequest = state.sixMonthRequestDays[date] === true;
+
+    // Add debug logging for PIL requests in this date
+    if (member?.id && state.requests[date]) {
+      const pilRequests = state.requests[date].filter(
+        (req) =>
+          req.member_id === member.id &&
+          ["approved", "pending", "waitlisted", "cancellation_pending"]
+            .includes(req.status) &&
+          req.paid_in_lieu === true,
+      );
+
+      if (pilRequests.length > 0) {
+        console.log(
+          `[CalendarStore] Found PIL requests for date ${date}:`,
+          pilRequests,
+        );
+      }
+    }
+
     const hasRegularRequest = member?.id && state.requests[date]?.some(
       (req) =>
         req.member_id === member.id &&
@@ -432,7 +451,7 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       const { data, error } = await supabase
         .from("pld_sdv_requests")
         .select(`
-          *,
+          id, member_id, calendar_id, request_date, leave_type, status, requested_at, waitlist_position, paid_in_lieu,
           member:members(id, first_name, last_name, pin_number)
         `)
         .eq("calendar_id", calendarId)
@@ -444,6 +463,20 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       if (error) {
         console.error("[CalendarStore] Error fetching requests:", error);
         return {};
+      }
+
+      // Check for PIL requests in the fetched data
+      const pilRequests = data?.filter((req) => req.paid_in_lieu === true) ||
+        [];
+      if (pilRequests.length > 0) {
+        console.log(
+          `[CalendarStore] Found ${pilRequests.length} PIL requests in fetch:`,
+          pilRequests.map((r) => ({
+            date: r.request_date,
+            status: r.status,
+            member_id: r.member_id,
+          })),
+        );
       }
 
       // Group requests by date
