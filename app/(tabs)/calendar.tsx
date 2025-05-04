@@ -1210,7 +1210,9 @@ function RequestDialog({
         <View style={dialogStyles.modalOverlay}>
           <View style={dialogStyles.modalContent}>
             <ThemedText style={dialogStyles.modalTitle}>Adjust {calendarType} Allocation</ThemedText>
-            <ThemedText style={dialogStyles.modalDescription}>...</ThemedText>
+            <ThemedText style={dialogStyles.modalDescription}>
+              Adjust the number of spots available for {selectedDate}.
+            </ThemedText>
             <ThemedText style={dialogStyles.infoText}>
               Current allocation: {localAllotments.max} spots,{" "}
               {isSixMonthRequest ? totalSixMonthRequestsState : approvedPendingRequests.length} spots used
@@ -1267,7 +1269,9 @@ function RequestDialog({
         <View style={dialogStyles.modalOverlay}>
           <View style={dialogStyles.modalContent}>
             <ThemedText style={dialogStyles.modalTitle}>Confirm Cancellation</ThemedText>
-            <ThemedText style={dialogStyles.modalDescription}>...</ThemedText>
+            <ThemedText style={dialogStyles.modalDescription}>
+              Are you sure you want to cancel the request for {selectedDate}?
+            </ThemedText>
             <View style={dialogStyles.modalButtons}>
               <TouchableOpacity
                 style={[dialogStyles.modalButton, dialogStyles.cancelButton]}
@@ -1448,7 +1452,7 @@ const controlStyles = StyleSheet.create({
     ...(Platform.OS === "web" && {
       position: "sticky",
       top: 0,
-      zIndex: 1,
+      zIndex: 10,
     }),
   } as ViewStyle,
   datePickerContainer: Platform.select({
@@ -2475,13 +2479,14 @@ const dialogStyles = StyleSheet.create({
     textAlign: "center",
   } as TextStyle,
   textInput: {
-    width: "100%",
+    width: "40%",
     padding: 10,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: Colors.dark.border,
     color: Colors.dark.text,
     marginBottom: 16,
+    textAlign: "center",
   } as TextStyle,
   errorText: {
     color: Colors.light.error,
