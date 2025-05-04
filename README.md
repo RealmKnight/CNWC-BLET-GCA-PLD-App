@@ -1,50 +1,124 @@
-# Welcome to your Expo app 👋
+# PLD Cross-Platform Application
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+A comprehensive cross-platform application built for both mobile (Android, iOS) and web platforms using Expo and React Native.
 
-## Get started
+## Technology Stack
 
-1. Install dependencies
+- **Frontend**: React Native, Expo, TypeScript
+- **Navigation**: Expo Router with file-based routing
+- **State Management**: Zustand with Supabase realtime sync
+- **Backend**: Supabase (PostgreSQL, Auth, Storage)
+- **Styling**: Styled components inspired by shadcn/ui
+- **Testing**: Jest, React Native Testing Library
 
-   ```bash
-   npm install
-   ```
+## Getting Started
 
-2. Start the app
+### Prerequisites
 
-   ```bash
-    npx expo start
-   ```
+- Node.js 18+
+- npm or yarn
+- Expo CLI
+- Android Studio (for Android development)
+- Xcode (for iOS development)
 
-In the output, you'll find options to open the app in a
+### Installation
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+1. Clone the repository
 
 ```bash
-npm run reset-project
+git clone [repository-url]
+cd pld-app-cnwc-gca-blet
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+2. Install dependencies
 
-## Learn more
+```bash
+npm install
+```
 
-To learn more about developing your project with Expo, look at the following resources:
+3. Set up environment variables
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+```bash
+cp .env.example .env
+# Add your Supabase URL and anon key to .env
+```
 
-## Join the community
+4. Run the development server
 
-Join our community of developers creating universal apps.
+```bash
+npx expo start
+```
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+### Available Scripts
+
+- `npx expo start` - Start the development server
+- `npm run android` - Start the app on Android
+- `npm run ios` - Start the app on iOS
+- `npm run web` - Start the app in web browser
+- `npm test` - Run tests
+
+## Project Structure
+
+```
+pld-app-cnwc-gca-blet/
+├── app/                 # Main application code with file-based routing
+│   ├── (admin)/         # Admin-related screens and functionality
+│   ├── (auth)/          # Authentication flows
+│   ├── (claims)/        # Claims management features
+│   └── ...              # Other app sections
+├── components/          # Reusable UI components
+│   ├── admin/           # Admin-specific components
+│   ├── modals/          # Modal components
+│   └── ui/              # Common UI components
+├── store/               # Zustand stores for state management
+├── hooks/               # Custom React hooks
+├── utils/               # Utility functions
+├── types/               # TypeScript type definitions
+└── assets/              # Static assets (images, fonts, sounds)
+```
+
+## Development Guidelines
+
+- **TypeScript**: Use strict TypeScript for all code; prefer interfaces over types
+- **Components**: Create functional components with TypeScript interfaces
+- **State Management**: Use Zustand for local state and Supabase for realtime data sync
+- **Styling**: Implement responsive design with Flexbox and React Native's styling system
+- **Navigation**: Leverage Expo Router's file-based routing system
+- **Performance**: Optimize rendering with useMemo and useCallback where appropriate
+- **Testing**: Write unit tests for critical functionality using Jest
+
+## Deployment
+
+### Mobile (Android/iOS)
+
+1. Configure app.json with appropriate settings
+2. Build the application:
+
+```bash
+eas build --platform android
+eas build --platform ios
+```
+
+3. Submit to app stores:
+
+```bash
+eas submit --platform android
+eas submit --platform ios
+```
+
+### Web
+
+1. Build the web version:
+
+```bash
+npx expo export:web
+```
+
+2. Deploy the `web-build` directory to your hosting provider of choice
+
+## Resources
+
+- [Expo Documentation](https://docs.expo.dev/)
+- [React Native Documentation](https://reactnative.dev/docs/getting-started)
+- [Supabase Documentation](https://supabase.com/docs/)
+- [Expo Router Documentation](https://docs.expo.dev/router/introduction/)

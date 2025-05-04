@@ -2526,8 +2526,8 @@ const dialogStyles = StyleSheet.create({
     gap: 12,
   } as ViewStyle,
   pilToggleContainer: {
-    marginBottom: 16,
-    padding: 12,
+    marginBottom: 0,
+    padding: 2,
     borderWidth: 2,
     borderRadius: 8,
     alignItems: "center",

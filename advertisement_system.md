@@ -11,9 +11,10 @@ This document outlines the implementation plan for a custom advertising system w
 3. [Backend Implementation](#backend-implementation)
 4. [Frontend Components](#frontend-components)
 5. [Admin Interface](#admin-interface)
-6. [Analytics System](#analytics-system)
-7. [Required Packages](#required-packages)
-8. [Implementation Phases](#implementation-phases)
+6. [Integration with Existing Components](#integration-with-existing-components)
+7. [Analytics System](#analytics-system)
+8. [Required Packages](#required-packages)
+9. [Implementation Phases](#implementation-phases)
 
 ## System Components
 
@@ -24,6 +25,69 @@ The advertisement system will consist of the following core components:
 3. **Backend Storage**: Supabase tables and storage for ad assets and metadata
 4. **Analytics System**: For tracking impressions, views, and clicks
 5. **Ad Rotation Logic**: To manage which ads are shown when and where
+
+## Integration with Existing Components
+
+The advertisement system will be integrated with existing components in the application:
+
+### UnionAdminPanel Component
+
+The `UnionAdminPanel.tsx` component already provides a tab-based interface for union administrators to manage various aspects of the union. One of the tabs is dedicated to the `AdvertisementManager` component, which will be enhanced to support all advertisement management functionality.
+
+### AdvertisementManager Component
+
+Currently, the `AdvertisementManager.tsx` has a basic tab structure with placeholders:
+
+```tsx
+const tabs: Tab[] = [
+  { key: "create", title: "Create", icon: "add-circle", outlineIcon: "add-circle-outline" },
+  { key: "manage", title: "Manage", icon: "list", outlineIcon: "list-outline" },
+  { key: "analytics", title: "Analytics", icon: "analytics", outlineIcon: "analytics-outline" },
+  { key: "settings", title: "Settings", icon: "settings", outlineIcon: "settings-outline" },
+];
+```
+
+This structure will be refined based on actual implementation needs:
+
+#### Tab Refinements
+
+1. **Create & Edit** (modify existing "create" tab):
+
+   - Combined form for creating and editing advertisements
+   - Image/file upload capabilities
+   - Targeting options (device type, member status, etc.)
+   - Date range selection
+   - Status management
+
+2. **Campaigns** (modify existing "manage" tab):
+
+   - List view of all advertisements with filtering options
+   - Quick status toggle controls
+   - Performance summary for each campaign
+   - Bulk actions for multiple campaigns
+
+3. **Analytics** (existing tab):
+
+   - Performance metrics dashboard
+   - Charts and visualizations
+   - Date range filtering
+   - Export functionality
+
+4. **Preview** (replace "settings" tab):
+   - Visual preview of advertisements in different app locations
+   - Device type simulation (mobile vs web view)
+   - Interactive testing environment
+
+### Implementation Approach
+
+Rather than creating separate screens in the app/(admin) routes, we'll focus on enhancing the `AdvertisementManager` component to handle all advertisement management functionality through its tab interface. This approach:
+
+1. Maintains UI consistency with the existing admin panel
+2. Reduces navigation complexity
+3. Keeps related functionality grouped together
+4. Leverages existing component structure
+
+The components defined in the remainder of this document will be adapted to work within this tab-based interface rather than as standalone screens.
 
 ## Database Schema
 
@@ -1864,26 +1928,55 @@ npx expo install react-native-chart-kit expo-image-picker expo-document-picker r
 4. Add the banner to the home page (index.tsx) underneath the logo in ParallaxScrollView
 5. Add ads to the notifications page (top for all devices, sidebar for web, bottom for mobile)
 
-### Phase 3: Admin Interface
+### Phase 3: Admin Interface Implementation
 
-1. Create the advertisement management screen
-2. Implement image/PDF upload functionality
-3. Build the ad creation/editing forms
-4. Add status toggle functionality for ad activation/deactivation
-5. Implement preview capabilities to test ads in different placement locations and device types
-6. Add validation for required fields and date ranges
+1. Update the `AdvertisementManager.tsx` component with the refined tab structure
 
-### Phase 4: Analytics System
+   - Modify tab definitions to match our implementation plan
+   - Implement tab switching logic with state management
+   - Set up advertisement selection and editing flow
 
-1. Implement event tracking (impressions, views, clicks)
-2. Create analytics dashboard with:
-   - Summary metrics (impressions, clicks, CTR)
-   - Time-series data visualization
-   - Device type breakdown
-   - Placement location analysis
-3. Add filtering by date range
-4. Add CSV export functionality
-5. Implement real-time updates for active campaign metrics
+2. Implement the "Create & Edit" tab first
+
+   - Build the `CreateEditAdvertisement.tsx` component
+   - Implement form with image upload capabilities
+   - Add validation and error handling
+   - Connect to Supabase for saving advertisements
+
+3. Implement the "Campaigns" tab next
+
+   - Build the `AdvertisementCampaigns.tsx` component
+   - Create list view of all campaigns
+   - Implement status toggle controls
+   - Add edit, delete, and duplicate functionality
+
+4. Implement the "Analytics" tab
+
+   - Build the `AdvertisementAnalytics.tsx` component
+   - Implement charts and visualizations
+   - Add date range filtering
+   - Add export functionality
+
+5. Implement the "Preview" tab last
+
+   - Build the `AdvertisementPreview.tsx` component
+   - Create preview environment for different app locations
+   - Implement device type simulation
+   - Add interactive controls for testing
+
+6. Implement shared components
+   - Create reusable components for status toggles, cards, etc.
+   - Ensure consistent styling across all tabs
+   - Add loading states and error handling
+
+### Phase 4: Integration and Testing
+
+1. Test the integration with the `UnionAdminPanel`
+2. Verify all tab transitions and state management
+3. Test on different devices and platforms
+4. Optimize performance and UI responsiveness
+5. Add comprehensive error handling
+6. Implement automated tests for critical functionality
 
 ### Phase 5: Advanced Features
 
@@ -1896,13 +1989,13 @@ npx expo install react-native-chart-kit expo-image-picker expo-document-picker r
 4. Implement intelligent ad rotation based on performance metrics
 5. Add notification system for campaign start/end and performance alerts
 
-### Phase 6: Testing and Refinement
+### Phase 6: Documentation and Refinement
 
-1. Test on different devices and platforms
-2. Optimize ad loading performance
-3. Implement lazy loading for advertisements
-4. Refine UI/UX based on feedback
-5. Add comprehensive error handling
+1. Add in-app help and tooltips
+2. Create user documentation for administrators
+3. Refine UI/UX based on feedback
+4. Optimize ad loading performance
+5. Implement lazy loading for advertisements
 6. Ensure accessibility compliance
 
 ## Integration Points
@@ -1991,6 +2084,149 @@ This implementation plan provides a comprehensive framework for developing the a
 6. Responsive layouts that adapt to different devices and screen sizes
 
 By following the outlined phases, we can ensure a systematic and efficient development process that delivers a powerful advertising system while maintaining the integrity and performance of the existing application.
+
+## Implementation Strategy Using Existing Components
+
+Instead of creating standalone screens in the `app/(admin)` routes as shown in some of the initial component examples, we'll implement all advertisement management functionality within the existing `AdvertisementManager.tsx` component's tab structure. This will ensure a consistent user experience within the `UnionAdminPanel` and reduce navigation complexity.
+
+### Modifying AdvertisementManager.tsx
+
+We'll update the `AdvertisementManager.tsx` component to implement the functionality described throughout this document. The current placeholder tabs will be enhanced with the full implementation:
+
+```tsx
+// components/admin/union/AdvertisementManager.tsx
+import React, { useState } from "react";
+import { StyleSheet } from "react-native";
+import { ThemedView } from "@/components/ThemedView";
+import { ThemedText } from "@/components/ThemedText";
+import { Colors } from "@/constants/Colors";
+import { useColorScheme } from "@/hooks/useColorScheme";
+import { TabBar, Tab } from "@/components/admin/TabBar";
+
+// Import tab content components
+import { CreateEditAdvertisement } from "./advertisements/CreateEditAdvertisement";
+import { AdvertisementCampaigns } from "./advertisements/AdvertisementCampaigns";
+import { AdvertisementAnalytics } from "./advertisements/AdvertisementAnalytics";
+import { AdvertisementPreview } from "./advertisements/AdvertisementPreview";
+
+export function AdvertisementManager() {
+  const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
+  const [activeTab, setActiveTab] = useState("create");
+  const [selectedAdvertisementId, setSelectedAdvertisementId] = useState<string | null>(null);
+
+  // Define the main tabs
+  const tabs: Tab[] = [
+    { key: "create", title: "Create & Edit", icon: "create", outlineIcon: "create-outline" },
+    { key: "campaigns", title: "Campaigns", icon: "list", outlineIcon: "list-outline" },
+    { key: "analytics", title: "Analytics", icon: "analytics", outlineIcon: "analytics-outline" },
+    { key: "preview", title: "Preview", icon: "eye", outlineIcon: "eye-outline" },
+  ];
+
+  // Handle advertisement selection for editing
+  const handleEditAdvertisement = (id: string) => {
+    setSelectedAdvertisementId(id);
+    setActiveTab("create");
+  };
+
+  const renderContent = () => {
+    switch (activeTab) {
+      case "create":
+        return (
+          <CreateEditAdvertisement
+            advertisementId={selectedAdvertisementId}
+            onSave={() => {
+              setSelectedAdvertisementId(null);
+              setActiveTab("campaigns");
+            }}
+          />
+        );
+      case "campaigns":
+        return <AdvertisementCampaigns onEditAdvertisement={handleEditAdvertisement} />;
+      case "analytics":
+        return <AdvertisementAnalytics />;
+      case "preview":
+        return <AdvertisementPreview />;
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <ThemedView style={styles.container}>
+      <ThemedView style={styles.header}>
+        <ThemedText type="title">Advertisement Management</ThemedText>
+      </ThemedView>
+
+      <TabBar tabs={tabs} activeTab={activeTab} onTabChange={setActiveTab} />
+
+      {renderContent()}
+    </ThemedView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
+  },
+  header: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+});
+```
+
+### Tab Component Implementation Strategy
+
+Each tab will be implemented as a separate component:
+
+1. **CreateEditAdvertisement.tsx**: Combined component for both creating new ads and editing existing ones, with different behavior based on whether an `advertisementId` is provided.
+
+2. **AdvertisementCampaigns.tsx**: List view of all campaigns with status toggle controls, performance summaries, and actions.
+
+3. **AdvertisementAnalytics.tsx**: Complete analytics dashboard with charts and filtering options.
+
+4. **AdvertisementPreview.tsx**: Interactive preview environment for testing ads in different contexts.
+
+### Shared Components
+
+The shared components defined earlier in this document (e.g., `AdvertisementStatusToggle`, `AdvertisementCard`, etc.) will be reused across these tab implementations to maintain consistency and reduce code duplication.
+
+### Key Implementation Differences
+
+Some key differences from the original plan:
+
+1. **No Modal Dialogs**: Instead of using modal dialogs for creation/editing, these will be implemented as inline forms within the tabs.
+
+2. **Shared State**: The `AdvertisementManager` component will manage shared state like the selected advertisement ID, allowing for seamless transitions between tabs.
+
+3. **Unified Navigation**: All advertisement management will happen within the UnionAdminPanel's tab structure rather than as separate routes in the app.
+
+4. **Consistent UI**: All advertisement management features will maintain the same visual style and interaction patterns as the rest of the admin panel.
+
+### Directory Structure
+
+The implementation will follow this directory structure:
+
+```
+components/
+  admin/
+    union/
+      AdvertisementManager.tsx
+      advertisements/
+        CreateEditAdvertisement.tsx
+        AdvertisementCampaigns.tsx
+        AdvertisementAnalytics.tsx
+        AdvertisementPreview.tsx
+        components/
+          AdvertisementCard.tsx
+          AdvertisementStatusToggle.tsx
+          AdvertisementForm.tsx
+          ... other shared components
+```
+
+This structure organizes all advertisement-related components logically while keeping them within the existing admin component hierarchy.
 
 ## Analytics System
 
