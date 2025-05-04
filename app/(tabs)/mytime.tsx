@@ -131,6 +131,11 @@ function RequestRow({ request, onCancel, onCancelSixMonth }: RequestRowProps) {
     return isBefore(requestDate, fortyEightHoursFromNow);
   }, [request.request_date]);
 
+  // Check if this is an approved paid in lieu request
+  const isApprovedPaidInLieu = useMemo(() => {
+    return request.paid_in_lieu && request.status === "approved";
+  }, [request.paid_in_lieu, request.status]);
+
   useEffect(() => {
     if (request.waitlist_position !== prevPosition.current) {
       positionAnim.setValue(0);
@@ -198,7 +203,7 @@ function RequestRow({ request, onCancel, onCancelSixMonth }: RequestRowProps) {
         <ThemedText style={styles.type}>{request.leave_type}</ThemedText>
       </ThemedView>
       {(request.status === "pending" ||
-        request.status === "approved" ||
+        (request.status === "approved" && !request.paid_in_lieu) ||
         request.status === "waitlisted" ||
         request.is_six_month_request) &&
         parseISO(request.request_date) > new Date() &&
@@ -211,7 +216,7 @@ function RequestRow({ request, onCancel, onCancelSixMonth }: RequestRowProps) {
           </ThemedTouchableOpacity>
         )}
       {isWithin48Hours &&
-        (request.status === "pending" || request.status === "approved") &&
+        (request.status === "pending" || (request.status === "approved" && !request.paid_in_lieu)) &&
         parseISO(request.request_date) > new Date() && (
           <ThemedView style={styles.infoContainer}>
             <ThemedText style={styles.infoText}>Cannot cancel within 48 hours</ThemedText>
