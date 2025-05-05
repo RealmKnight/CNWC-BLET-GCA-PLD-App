@@ -18,10 +18,10 @@ export default function HomeScreen() {
     <ParallaxScrollView
       headerBackgroundColor={{ light: "#A1CEDC", dark: Colors.dark.card }}
       headerImage={
-        <>
+        <ThemedView style={styles.headerContainer}>
           <Image source={require("@/assets/images/BLETblackgold.png")} style={styles.reactLogo} />
-          <AdvertisementBanner location="home" style={styles.adBanner} maxHeight={80} />
-        </>
+          <AdvertisementBanner location="home" style={styles.adBanner} maxHeight={70} />
+        </ThemedView>
       }
     >
       <ThemedView style={styles.container}>
@@ -93,20 +93,23 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     gap: 12,
   },
+  headerContainer: {
+    width: "100%",
+    height: 250,
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 10,
+    backgroundColor: Colors.dark.card,
+  },
   reactLogo: {
-    width: 180,
-    height: 226,
-    position: "absolute",
-    top: 10,
-    left: "50%",
-    transform: [{ translateX: -90 }],
+    width: 120,
+    height: 150,
+    backgroundColor: Colors.dark.card,
   },
   adBanner: {
-    position: "absolute",
-    bottom: 10,
-    left: 0,
-    right: 0,
-    marginHorizontal: 16,
+    width: 640,
+    backgroundColor: Colors.dark.card,
+    maxHeight: 70,
   },
   welcomeContainer: {
     flexDirection: "row",

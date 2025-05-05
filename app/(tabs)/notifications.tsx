@@ -753,7 +753,7 @@ const styles = StyleSheet.create({
   sidebar: {
     flex: 1,
     minWidth: 200,
-    maxWidth: 300,
+    maxWidth: 340,
     padding: 16,
     borderLeftWidth: 1,
     borderLeftColor: "rgba(128, 128, 128, 0.1)",

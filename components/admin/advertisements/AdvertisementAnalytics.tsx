@@ -157,7 +157,9 @@ export function AdvertisementAnalytics() {
         style={[styles.dateRangeButton, isActive && { backgroundColor: Colors[colorScheme].tint }]}
         onPress={() => setDateRange(value)}
       >
-        <ThemedText style={[styles.dateRangeButtonText, isActive && { color: "#fff" }]}>{label}</ThemedText>
+        <ThemedText style={[styles.dateRangeButtonText, isActive && { color: Colors[colorScheme].buttonText }]}>
+          {label}
+        </ThemedText>
       </ThemedTouchableOpacity>
     );
   };
@@ -323,19 +325,19 @@ const styles = StyleSheet.create({
   adSelectorContainer: {
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(128, 128, 128, 0.1)",
+    borderBottomColor: Colors.dark.border,
   },
   adButton: {
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
     marginRight: 8,
-    backgroundColor: "rgba(128, 128, 128, 0.1)",
+    backgroundColor: Colors.dark.card,
     flexDirection: "row",
     alignItems: "center",
   },
   adButtonSelected: {
-    backgroundColor: Colors.light.tint + "30",
+    backgroundColor: Colors.dark.tint + "30",
   },
   adButtonText: {
     fontSize: 14,
@@ -344,7 +346,7 @@ const styles = StyleSheet.create({
   },
   adButtonTextSelected: {
     fontWeight: "600",
-    color: Colors.light.tint,
+    color: Colors.dark.tint,
   },
   adStatusIndicator: {
     width: 8,
@@ -369,13 +371,13 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 16,
     marginRight: 8,
-    backgroundColor: "rgba(128, 128, 128, 0.1)",
+    backgroundColor: Colors.dark.card,
   },
   dateRangeButtonText: {
     fontSize: 14,
   },
   card: {
-    backgroundColor: Colors.light.card,
+    backgroundColor: Colors.dark.card,
     borderRadius: 8,
     padding: 16,
     marginBottom: 16,
@@ -413,7 +415,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(128, 128, 128, 0.1)",
+    borderBottomColor: Colors.dark.border,
   },
   breakdownLabel: {
     fontSize: 14,
@@ -430,7 +432,7 @@ const styles = StyleSheet.create({
   dailyItem: {
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(128, 128, 128, 0.1)",
+    borderBottomColor: Colors.dark.border,
   },
   dailyDate: {
     fontSize: 14,

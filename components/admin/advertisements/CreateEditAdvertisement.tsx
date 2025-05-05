@@ -39,7 +39,7 @@ export function CreateEditAdvertisement({ advertisementId, onSave }: CreateEditA
     start_date: new Date(),
     end_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // Default to 30 days from now
     status: "draft" as "draft" | "active" | "inactive",
-    placement_locations: ["home", "notifications"],
+    placement_locations: ["home", "notifications_top", "notifications_sidebar", "notifications_bottom"],
     target_devices: ["mobile", "web"],
     weight: 1,
   });
@@ -415,19 +415,65 @@ export function CreateEditAdvertisement({ advertisementId, onSave }: CreateEditA
             <ThemedTouchableOpacity
               style={[
                 styles.optionButton,
-                advertisement.placement_locations.includes("notifications") && styles.optionButtonSelected,
+                advertisement.placement_locations.includes("notifications_top") && styles.optionButtonSelected,
               ]}
-              onPress={() => toggleLocationSelection("notifications")}
+              onPress={() => toggleLocationSelection("notifications_top")}
             >
               <Ionicons
                 name="notifications"
                 size={20}
-                color={advertisement.placement_locations.includes("notifications") ? "#000000" : Colors.dark.text}
+                color={advertisement.placement_locations.includes("notifications_top") ? "#000000" : Colors.dark.text}
               />
               <ThemedText
-                style={advertisement.placement_locations.includes("notifications") ? styles.optionTextSelected : {}}
+                style={advertisement.placement_locations.includes("notifications_top") ? styles.optionTextSelected : {}}
               >
-                Notifications
+                Notifications Top
+              </ThemedText>
+            </ThemedTouchableOpacity>
+
+            <ThemedTouchableOpacity
+              style={[
+                styles.optionButton,
+                advertisement.placement_locations.includes("notifications_sidebar") && styles.optionButtonSelected,
+              ]}
+              onPress={() => toggleLocationSelection("notifications_sidebar")}
+            >
+              <Ionicons
+                name="desktop"
+                size={20}
+                color={
+                  advertisement.placement_locations.includes("notifications_sidebar") ? "#000000" : Colors.dark.text
+                }
+              />
+              <ThemedText
+                style={
+                  advertisement.placement_locations.includes("notifications_sidebar") ? styles.optionTextSelected : {}
+                }
+              >
+                Notifications Sidebar
+              </ThemedText>
+            </ThemedTouchableOpacity>
+
+            <ThemedTouchableOpacity
+              style={[
+                styles.optionButton,
+                advertisement.placement_locations.includes("notifications_bottom") && styles.optionButtonSelected,
+              ]}
+              onPress={() => toggleLocationSelection("notifications_bottom")}
+            >
+              <Ionicons
+                name="arrow-down"
+                size={20}
+                color={
+                  advertisement.placement_locations.includes("notifications_bottom") ? "#000000" : Colors.dark.text
+                }
+              />
+              <ThemedText
+                style={
+                  advertisement.placement_locations.includes("notifications_bottom") ? styles.optionTextSelected : {}
+                }
+              >
+                Notifications Bottom
               </ThemedText>
             </ThemedTouchableOpacity>
           </ThemedView>

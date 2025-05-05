@@ -28,6 +28,22 @@ export function AdvertisementCard({ advertisement, onEdit, onDelete, onStatusCha
 
   const isActive = new Date() >= new Date(advertisement.start_date) && new Date() <= new Date(advertisement.end_date);
 
+  // Get icon for placement location
+  const getLocationIcon = (location: string) => {
+    switch (location) {
+      case "home":
+        return "home";
+      case "notifications_top":
+        return "arrow-up";
+      case "notifications_sidebar":
+        return "desktop";
+      case "notifications_bottom":
+        return "arrow-down";
+      default:
+        return "apps";
+    }
+  };
+
   return (
     <ThemedView style={[styles.container, { backgroundColor: Colors[colorScheme].card }]}>
       <ThemedView style={styles.header}>
@@ -67,6 +83,21 @@ export function AdvertisementCard({ advertisement, onEdit, onDelete, onStatusCha
               {isActive ? "In Date Range" : "Out of Date Range"}
             </ThemedText>
           </ThemedView>
+        </ThemedView>
+      </ThemedView>
+
+      {/* Display placement locations as badges */}
+      <ThemedView style={styles.placementContainer}>
+        <ThemedText style={styles.placementLabel}>Placement:</ThemedText>
+        <ThemedView style={styles.badges}>
+          {advertisement.placement_locations.map((location, index) => (
+            <ThemedView key={index} style={styles.badge}>
+              <Ionicons name={getLocationIcon(location) as any} size={14} color={Colors[colorScheme].tint} />
+              <ThemedText style={styles.badgeText}>
+                {location.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase())}
+              </ThemedText>
+            </ThemedView>
+          ))}
         </ThemedView>
       </ThemedView>
 
@@ -143,6 +174,36 @@ const styles = StyleSheet.create({
   activeStatus: {
     fontSize: 12,
     fontWeight: "500",
+  },
+  placementContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+  },
+  placementLabel: {
+    fontSize: 12,
+    opacity: 0.7,
+    marginRight: 8,
+  },
+  badges: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  badge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(0, 112, 243, 0.1)",
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+    gap: 4,
+  },
+  badgeText: {
+    fontSize: 12,
+    color: Colors.light.tint,
   },
   actions: {
     flexDirection: "row",
