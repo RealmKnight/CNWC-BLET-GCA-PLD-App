@@ -461,7 +461,7 @@ export default function NotificationsScreen() {
 
           {/* Sidebar advertisement for web */}
           <ThemedView style={styles.sidebar}>
-            <AdvertisementBanner location="notifications_sidebar" style={styles.sidebarAd} maxHeight={600} />
+            <AdvertisementBanner location="notifications_sidebar" style={styles.sidebarAd} />
           </ThemedView>
         </ThemedView>
       ) : (

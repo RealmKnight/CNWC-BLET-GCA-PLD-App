@@ -29,7 +29,7 @@ interface AdvertisementState {
     ) => Promise<void>;
     logAdvertisementEvent: (
         adId: string,
-        eventType: "impression" | "view" | "click",
+        eventType: "impression" | "view" | "click" | "cancel",
         location: string,
     ) => Promise<void>;
     getNextRotationAd: (location: string) => Advertisement | null;
@@ -130,7 +130,7 @@ export const useAdvertisementStore = create<AdvertisementState>((set, get) => ({
 
     logAdvertisementEvent: async (
         adId: string,
-        eventType: "impression" | "view" | "click",
+        eventType: "impression" | "view" | "click" | "cancel",
         location: string,
     ) => {
         try {

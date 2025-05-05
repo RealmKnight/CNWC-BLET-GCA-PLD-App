@@ -14,21 +14,27 @@ interface AnalyticsSummary {
   impressions: number;
   views: number;
   clicks: number;
+  cancels: number;
   ctr: number;
+  conversion_rate: number;
 }
 
 interface DeviceBreakdown {
   device_type: string;
   impressions: number;
   clicks: number;
+  cancels: number;
   ctr: number;
+  conversion_rate: number;
 }
 
 interface LocationBreakdown {
   location: string;
   impressions: number;
   clicks: number;
+  cancels: number;
   ctr: number;
+  conversion_rate: number;
 }
 
 interface DailyStats {
@@ -191,6 +197,19 @@ export function AdvertisementAnalytics() {
             <ThemedText style={styles.metricLabel}>CTR</ThemedText>
           </ThemedView>
         </ThemedView>
+
+        <ThemedView style={[styles.metricsContainer, { marginTop: 16 }]}>
+          <ThemedView style={styles.metricItem}>
+            <ThemedText style={styles.metricValue}>{summary.cancels.toLocaleString()}</ThemedText>
+            <ThemedText style={styles.metricLabel}>Cancels</ThemedText>
+          </ThemedView>
+
+          <ThemedView style={styles.metricItem}>
+            <ThemedText style={styles.metricValue}>{(summary.conversion_rate * 100).toFixed(2)}%</ThemedText>
+            <ThemedText style={styles.metricLabel}>Conversion</ThemedText>
+            <ThemedText style={styles.metricHint}>clicks → visits</ThemedText>
+          </ThemedView>
+        </ThemedView>
       </ThemedView>
     );
   };
@@ -210,7 +229,9 @@ export function AdvertisementAnalytics() {
               <ThemedView style={styles.breakdownValues}>
                 <ThemedText style={styles.breakdownValue}>{item.impressions} imp</ThemedText>
                 <ThemedText style={styles.breakdownValue}>{item.clicks} clicks</ThemedText>
+                <ThemedText style={styles.breakdownValue}>{item.cancels} cancels</ThemedText>
                 <ThemedText style={styles.breakdownValue}>{(item.ctr * 100).toFixed(2)}% CTR</ThemedText>
+                <ThemedText style={styles.breakdownValue}>{(item.conversion_rate * 100).toFixed(2)}% conv</ThemedText>
               </ThemedView>
             </ThemedView>
           )}
@@ -471,5 +492,10 @@ const styles = StyleSheet.create({
     textAlign: "center",
     opacity: 0.7,
     marginTop: 8,
+  },
+  metricHint: {
+    fontSize: 10,
+    opacity: 0.5,
+    marginTop: 2,
   },
 });
