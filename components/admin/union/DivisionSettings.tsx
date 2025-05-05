@@ -71,7 +71,10 @@ export const DivisionSettings = () => {
                 onPress={() => setSelectedDivisionId(division.id)}
               >
                 <ThemedText
-                  style={[styles.divisionButtonText, selectedDivisionId === division.id && { color: "#FFFFFF" }]}
+                  style={[
+                    styles.divisionButtonText,
+                    selectedDivisionId === division.id && { color: Colors.dark.buttonText },
+                  ]}
                 >
                   {division.name}
                 </ThemedText>
@@ -217,12 +220,13 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderRadius: 20,
-    backgroundColor: "rgba(0,0,0,0.05)",
+    backgroundColor: Colors.dark.card,
     marginRight: 8,
     marginBottom: 8,
   },
   divisionButtonText: {
     fontSize: 14,
+    color: Colors.dark.text,
   },
   settingsScrollContainer: {
     flex: 1,
@@ -248,7 +252,7 @@ const styles = StyleSheet.create({
   warningBanner: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(255, 193, 7, 0.1)",
+    backgroundColor: Colors.dark.card,
     padding: 12,
     borderRadius: 8,
     marginBottom: 16,
@@ -262,7 +266,8 @@ const styles = StyleSheet.create({
     marginBottom: 24,
     paddingBottom: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(0,0,0,0.05)",
+    borderBottomColor: Colors.dark.border,
+    backgroundColor: Colors.dark.card,
   },
   settingSectionTitle: {
     fontSize: 18,

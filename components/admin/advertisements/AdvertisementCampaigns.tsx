@@ -201,8 +201,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 16,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
     gap: 8,
-    backgroundColor: "rgba(128, 128, 128, 0.1)",
+    backgroundColor: Colors.dark.card,
     color: Colors.dark.buttonText,
   },
   filterButtonText: {

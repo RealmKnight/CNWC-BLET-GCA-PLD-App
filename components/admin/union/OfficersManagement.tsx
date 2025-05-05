@@ -67,7 +67,10 @@ export const OfficersManagement = () => {
               onPress={() => setSelectedDivisionId(division.id)}
             >
               <ThemedText
-                style={[styles.divisionButtonText, selectedDivisionId === division.id && { color: "#FFFFFF" }]}
+                style={[
+                  styles.divisionButtonText,
+                  selectedDivisionId === division.id && { color: Colors.dark.buttonText },
+                ]}
               >
                 {division.name}
               </ThemedText>
@@ -180,7 +183,7 @@ const styles = StyleSheet.create({
   divisionSelector: {
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(0,0,0,0.1)",
+    borderBottomColor: Colors.dark.border,
   },
   selectorLabel: {
     fontSize: 16,
@@ -195,12 +198,13 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderRadius: 20,
-    backgroundColor: "rgba(0,0,0,0.05)",
+    backgroundColor: Colors.dark.card,
     marginRight: 8,
     marginBottom: 8,
   },
   divisionButtonText: {
     fontSize: 14,
+    color: Colors.dark.text,
   },
   selectPrompt: {
     flex: 1,
@@ -224,10 +228,14 @@ const styles = StyleSheet.create({
   addButton: {
     flexDirection: "row",
     alignItems: "center",
+    backgroundColor: Colors.dark.card,
+    borderRadius: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
   },
   addButtonText: {
     marginLeft: 4,
-    color: "#3498db",
+    color: Colors.dark.text,
   },
   officersList: {
     paddingBottom: 20,
