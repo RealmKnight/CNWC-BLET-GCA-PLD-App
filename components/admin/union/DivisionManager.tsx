@@ -5,26 +5,20 @@ import { ThemedText } from "@/components/ThemedText";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { TabBar, Tab } from "@/components/admin/TabBar";
+import { DivisionsList } from "@/components/admin/union/DivisionsList";
+import { CreateForm } from "@/components/admin/union/CreateForm";
+import { OfficersManagement } from "@/components/admin/union/OfficersManagement";
+import { DivisionSettings } from "@/components/admin/union/DivisionSettings";
 
-// Placeholder components for division management tabs
-const DivisionsListTab = () => (
-  <ThemedView style={styles.tabContent}>
-    <ThemedText>Divisions List Management Coming Soon</ThemedText>
-  </ThemedView>
-);
+// Define tab keys as constants to avoid string typos
+export const TABS = {
+  LIST: "list",
+  CREATE: "create",
+  OFFICERS: "officers",
+  SETTINGS: "settings",
+};
 
-const CreateDivisionTab = () => (
-  <ThemedView style={styles.tabContent}>
-    <ThemedText>Create Division Form Coming Soon</ThemedText>
-  </ThemedView>
-);
-
-const DivisionOfficersTab = () => (
-  <ThemedView style={styles.tabContent}>
-    <ThemedText>Division Officers Management Coming Soon</ThemedText>
-  </ThemedView>
-);
-
+// Placeholder component for settings tab
 const DivisionSettingsTab = () => (
   <ThemedView style={styles.tabContent}>
     <ThemedText>Division Settings Coming Soon</ThemedText>
@@ -33,25 +27,30 @@ const DivisionSettingsTab = () => (
 
 export function DivisionManager() {
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
-  const [activeTab, setActiveTab] = useState("list");
+  const [activeTab, setActiveTab] = useState(TABS.LIST);
 
   const tabs: Tab[] = [
-    { key: "list", title: "Divisions", icon: "list", outlineIcon: "list-outline" },
-    { key: "create", title: "Create", icon: "add-circle", outlineIcon: "add-circle-outline" },
-    { key: "officers", title: "Officers", icon: "people", outlineIcon: "people-outline" },
-    { key: "settings", title: "Settings", icon: "settings", outlineIcon: "settings-outline" },
+    { key: TABS.LIST, title: "Divisions", icon: "list", outlineIcon: "list-outline" },
+    { key: TABS.CREATE, title: "Create", icon: "add-circle", outlineIcon: "add-circle-outline" },
+    { key: TABS.OFFICERS, title: "Officers", icon: "people", outlineIcon: "people-outline" },
+    { key: TABS.SETTINGS, title: "Settings", icon: "settings", outlineIcon: "settings-outline" },
   ];
+
+  // Method to change tabs and perform any necessary setup
+  const switchToTab = (tabKey: string) => {
+    setActiveTab(tabKey);
+  };
 
   const renderContent = () => {
     switch (activeTab) {
-      case "list":
-        return <DivisionsListTab />;
-      case "create":
-        return <CreateDivisionTab />;
-      case "officers":
-        return <DivisionOfficersTab />;
-      case "settings":
-        return <DivisionSettingsTab />;
+      case TABS.LIST:
+        return <DivisionsList onSwitchTab={switchToTab} />;
+      case TABS.CREATE:
+        return <CreateForm />;
+      case TABS.OFFICERS:
+        return <OfficersManagement />;
+      case TABS.SETTINGS:
+        return <DivisionSettings />;
       default:
         return null;
     }
