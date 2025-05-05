@@ -170,7 +170,12 @@ function RequestDialog({
       .channel(channelName)
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "pld_sdv_requests", filter: `request_date=eq.${selectedDate}` },
+        {
+          event: "*",
+          schema: "public",
+          table: "pld_sdv_requests",
+          filter: `request_date=eq.${selectedDate} AND calendar_id=eq.${calendarId}`,
+        },
         (payload: RealtimePostgresChangesPayload<any>) => {
           console.log("[RequestDialog] Received pld_sdv_requests update:", payload);
           const { eventType, new: newRecord, old: oldRecord } = payload;
@@ -202,6 +207,15 @@ function RequestDialog({
                 req.id === newRecord.id ? { ...req, ...newRecord, member: newRecord.member || req.member } : req
               )
             );
+
+            // Only update time stats if it affects the current user
+            if (member && newRecord.member_id === member.id) {
+              // Do a targeted update instead of refreshing the entire time store
+              if (newRecord.status !== oldRecord.status) {
+                console.log(`[RequestDialog] Request status changed: ${oldRecord.status} -> ${newRecord.status}`);
+                // Only update the specific piece of state that changed instead of refreshing everything
+              }
+            }
           } else if (eventType === "DELETE") {
             setLocalRequests((prev) => prev.filter((req) => req.id !== oldRecord.id));
           }
@@ -209,7 +223,12 @@ function RequestDialog({
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "pld_sdv_allotments", filter: `date=eq.${selectedDate}` },
+        {
+          event: "*",
+          schema: "public",
+          table: "pld_sdv_allotments",
+          filter: `date=eq.${selectedDate}`,
+        },
         async (payload: RealtimePostgresChangesPayload<any>) => {
           console.log("[RequestDialog] Received allotment update:", payload);
           const { new: newRecord } = payload;
@@ -221,17 +240,20 @@ function RequestDialog({
               };
               console.log("[RequestDialog] Updating allotment:", newAllotmentValue);
               setLocalAllotments(newAllotmentValue);
-              // Fetch latest requests to show waitlist changes
-              const { data, error } = await supabase
-                .from("pld_sdv_requests")
-                .select(
-                  `id, member_id, calendar_id, request_date, leave_type, status, requested_at, waitlist_position, paid_in_lieu, member:members!inner (id, first_name, last_name, pin_number)`
-                )
-                .eq("calendar_id", calendarId)
-                .eq("request_date", selectedDate);
-              if (!error && data) {
-                setLocalRequests(data as unknown as DayRequest[]);
-                console.log(`[RequestDialog] Updated requests after allotment change: ${data.length} requests`);
+
+              // Only fetch requests if allotment changed significantly
+              if (newAllotmentValue.max !== localAllotments.max) {
+                const { data, error } = await supabase
+                  .from("pld_sdv_requests")
+                  .select(
+                    `id, member_id, calendar_id, request_date, leave_type, status, requested_at, waitlist_position, paid_in_lieu, member:members!inner (id, first_name, last_name, pin_number)`
+                  )
+                  .eq("calendar_id", calendarId)
+                  .eq("request_date", selectedDate);
+                if (!error && data) {
+                  setLocalRequests(data as unknown as DayRequest[]);
+                  console.log(`[RequestDialog] Updated requests after allotment change: ${data.length} requests`);
+                }
               }
             } catch (error) {
               console.error("[RequestDialog] Error refreshing after allotment update:", error);
@@ -252,11 +274,9 @@ function RequestDialog({
         realtimeChannelRef.current = null;
       }
     };
-  }, [selectedDate, calendarId, isVisible, propCurrentAllotment]); // Added propCurrentAllotment
+  }, [selectedDate, calendarId, isVisible, propCurrentAllotment, member?.id]);
 
-  // Removed effect logging timeStats
-
-  // Modified handleSubmit to use props.onSubmitRequest and PIL flag
+  // Modified handleSubmit to avoid unnecessary refreshes
   const handleSubmit = async (leaveType: "PLD" | "SDV") => {
     // No local isSubmitting state needed
 
@@ -274,7 +294,10 @@ function RequestDialog({
       // If successful, reset PIL toggle
       setRequestAsPaidInLieu(false);
 
-      // Allow some time for DB processing before re-enabling real-time
+      // The stores already have their own realtime subscriptions
+      // No need to manually refresh them here
+
+      // Re-enable realtime for this dialog
       setTimeout(() => {
         if (isVisible && selectedDate && calendarId) {
           console.log("[RequestDialog] Re-enabling real-time updates after successful submission");
@@ -284,7 +307,12 @@ function RequestDialog({
             .channel(channelName)
             .on(
               "postgres_changes",
-              { event: "*", schema: "public", table: "pld_sdv_requests", filter: `request_date=eq.${selectedDate}` },
+              {
+                event: "*",
+                schema: "public",
+                table: "pld_sdv_requests",
+                filter: `request_date=eq.${selectedDate} AND calendar_id=eq.${calendarId}`,
+              },
               (payload: RealtimePostgresChangesPayload<any>) => {
                 console.log("[RequestDialog] Received pld_sdv_requests update (re-sub):", payload);
                 const { eventType, new: newRecord, old: oldRecord } = payload;
@@ -317,14 +345,24 @@ function RequestDialog({
                       req.id === newRecord.id ? { ...req, ...newRecord, member: newRecord.member || req.member } : req
                     )
                   );
+
+                  // Only update if status changed
+                  if (newRecord.status !== oldRecord.status) {
+                    console.log(`[RequestDialog] Request status changed: ${oldRecord.status} -> ${newRecord.status}`);
+                  }
                 } else if (eventType === "DELETE") {
                   setLocalRequests((prev) => prev.filter((req) => req.id !== oldRecord.id));
                 }
-              } // Closing parenthesis for requests handler function
-            ) // Closing parenthesis for requests .on() call
+              }
+            )
             .on(
               "postgres_changes",
-              { event: "*", schema: "public", table: "pld_sdv_allotments", filter: `date=eq.${selectedDate}` },
+              {
+                event: "*",
+                schema: "public",
+                table: "pld_sdv_allotments",
+                filter: `date=eq.${selectedDate}`,
+              },
               async (payload: RealtimePostgresChangesPayload<any>) => {
                 console.log("[RequestDialog] Received allotment update (re-sub):", payload);
                 const { new: newRecord } = payload;
@@ -336,33 +374,35 @@ function RequestDialog({
                     };
                     console.log("[RequestDialog] Updating allotment (re-sub):", newAllotmentValue);
                     setLocalAllotments(newAllotmentValue);
-                    const { data, error } = await supabase
-                      .from("pld_sdv_requests")
-                      .select(
-                        `id, member_id, calendar_id, request_date, leave_type, status, requested_at, waitlist_position, paid_in_lieu, member:members!inner (id, first_name, last_name, pin_number)`
-                      )
-                      .eq("calendar_id", calendarId)
-                      .eq("request_date", selectedDate);
-                    if (!error && data) {
-                      setLocalRequests(data as unknown as DayRequest[]);
-                      console.log(
-                        `[RequestDialog] Updated requests after allotment change (re-sub): ${data.length} requests`
-                      );
+
+                    // Only fetch if value changed significantly
+                    if (newAllotmentValue.max !== localAllotments.max) {
+                      const { data, error } = await supabase
+                        .from("pld_sdv_requests")
+                        .select(
+                          `id, member_id, calendar_id, request_date, leave_type, status, requested_at, waitlist_position, paid_in_lieu, member:members!inner (id, first_name, last_name, pin_number)`
+                        )
+                        .eq("calendar_id", calendarId)
+                        .eq("request_date", selectedDate);
+                      if (!error && data) {
+                        setLocalRequests(data as unknown as DayRequest[]);
+                        console.log(
+                          `[RequestDialog] Updated requests after allotment change (re-sub): ${data.length} requests`
+                        );
+                      }
                     }
                   } catch (error) {
                     console.error("[RequestDialog] Error refreshing after allotment update (re-sub):", error);
                   }
-                } // Closing if
-              } // Closing parenthesis for allotments handler function
-            ) // Closing parenthesis for allotments .on() call
-            .subscribe((status) => console.log(`[RequestDialog] Re-subscription status (${channelName}):`, status)); // subscribe() chained correctly
+                }
+              }
+            )
+            .subscribe((status) => console.log(`[RequestDialog] Re-subscription status (${channelName}):`, status));
           realtimeChannelRef.current = channel;
-        } // Closing if (isVisible && selectedDate && calendarId)
-      }, 1000); // Closing parenthesis for setTimeout
+        }
+      }, 1000);
     } catch (err) {
       console.error("[RequestDialog] Error in handleSubmit:", err);
-    } finally {
-      // No local isSubmitting state to reset
     }
   };
 
@@ -585,6 +625,8 @@ function RequestDialog({
           else if (userRequest.status === "approved")
             Toast.show({ type: "success", text1: "Cancellation Initiated", text2: "Request pending cancellation" });
           else Toast.show({ type: "success", text1: "Request cancelled" });
+
+          // No need to manually refresh - the realtime handlers will update the UI
         } // Error handled by store
       } else if (cancelType === "six-month") {
         if (!sixMonthRequestId) {
@@ -596,6 +638,8 @@ function RequestDialog({
           Toast.show({ type: "success", text1: "Six-month request cancelled" });
           setHasSixMonthRequest(false);
           setSixMonthRequestId(null);
+
+          // No need to manually refresh - the realtime handlers will update the UI
         } // Error handled by store
       }
     } catch (error) {
@@ -1586,7 +1630,7 @@ export default function CalendarScreen() {
     // isSubscribing, // Not used directly here
     error: timeStoreError, // Error state from the time store
     // lastRefreshed, // Not used directly here
-    // initialize: initializeTimeStore, // Called by useAuth
+    initialize: initializeTimeStore, // Called by useAuth
     // cleanup: cleanupTimeStore, // Called by useAuth
     // fetchTimeStats, // Actions can be called if needed, but usually triggered by initialize/refreshAll
     // fetchVacationStats,
@@ -1601,6 +1645,36 @@ export default function CalendarScreen() {
     submitSixMonthRequest, // Action from time store
     clearError, // Action from time store
   } = useMyTime();
+
+  // Set up timeStore initialization and cleanup
+  useEffect(() => {
+    if (member?.id && !useTimeStore.getState().isInitialized) {
+      console.log("[CalendarScreen] Initializing timeStore for member:", member.id);
+      initializeTimeStore(member.id)
+        .then(() => {
+          console.log("[CalendarScreen] timeStore initialized successfully");
+          useTimeStore.getState().setIsInitialized(true);
+        })
+        .catch((err) => {
+          console.error("[CalendarScreen] Failed to initialize timeStore:", err);
+        });
+    }
+
+    return () => {
+      // We won't call cleanup here as it might be used elsewhere
+      // That should be handled at the app level (i.e., in AuthProvider)
+    };
+  }, [member?.id, initializeTimeStore]);
+
+  // Set up calendar subscriptions
+  useEffect(() => {
+    if (member?.id && member?.calendar_id) {
+      console.log("[CalendarScreen] Setting up calendar subscriptions");
+      const cleanupFn = setupCalendarSubscriptions();
+
+      return cleanupFn; // Return the cleanup function directly
+    }
+  }, [member?.id, member?.calendar_id]);
 
   // --- Combine errors (prioritize time store error) ---
   const displayError = timeStoreError || pldError || vacationError;
@@ -1716,6 +1790,24 @@ export default function CalendarScreen() {
     fetchCalendarName();
   }, [member?.calendar_id]);
 
+  // Refresh timeStore when screen gains focus only if it's been more than a minute
+  useFocusEffect(
+    useCallback(() => {
+      if (member?.id && useTimeStore.getState().isInitialized) {
+        const lastRefreshed = useTimeStore.getState().lastRefreshed;
+        const now = new Date();
+
+        // Only refresh if it's been more than a minute since the last refresh
+        if (!lastRefreshed || now.getTime() - lastRefreshed.getTime() > 60000) {
+          console.log("[CalendarScreen] Screen focused after inactivity, refreshing timeStore");
+          useTimeStore.getState().refreshAll(member.id);
+        } else {
+          console.log("[CalendarScreen] Screen focused, but timeStore was recently refreshed");
+        }
+      }
+    }, [member?.id])
+  );
+
   // Create a stable key for calendar type switching
   const calendarTypeKey = useMemo(
     () => `${activeCalendar}-calendar-${member?.calendar_id}`,
@@ -1764,14 +1856,6 @@ export default function CalendarScreen() {
       const dateObj = parseISO(date);
       // --- Use Date object directly from getSixMonthDate ---
       const sixMonthDate = getSixMonthDate();
-      // Remove unnecessary parseISO call below:
-      // let sixMonthDate: Date | null = null;
-      // try {
-      //   sixMonthDate = parseISO(sixMonthRefDate);
-      // } catch (e) {
-      //   console.error("Failed to parse six month date:", sixMonthRefDate);
-      //   return;
-      // }
 
       const isEndOfMonth = isLastDayOfMonth(now);
       // --- Compare against the Date object directly ---
@@ -1797,6 +1881,10 @@ export default function CalendarScreen() {
           position: "bottom",
           visibilityTime: 3000,
         });
+
+        // No need to refresh stores manually - the realtime subscriptions will handle it
+        // The stores have their own realtime subscriptions that will update them
+
         // Close the dialog but don't update the current date
         setRequestDialogVisible(false);
         // Don't reset currentDate here, preserve the current view
