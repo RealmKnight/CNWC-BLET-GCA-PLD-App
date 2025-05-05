@@ -45,7 +45,7 @@ export function AdvertisementCard({ advertisement, onEdit, onDelete, onStatusCha
   };
 
   return (
-    <ThemedView style={[styles.container, { backgroundColor: Colors[colorScheme].card }]}>
+    <ThemedView style={[styles.container, { backgroundColor: Colors.dark.card }]}>
       <ThemedView style={styles.header}>
         <ThemedText style={styles.title}>{advertisement.title}</ThemedText>
         <AdvertisementStatusToggle
@@ -126,6 +126,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 2,
+    backgroundColor: Colors.dark.card,
   },
   header: {
     flexDirection: "row",

@@ -212,6 +212,7 @@ const styles = StyleSheet.create({
   },
   listContent: {
     padding: 16,
+    backgroundColor: Colors.dark.card,
   },
   emptyContainer: {
     padding: 32,
