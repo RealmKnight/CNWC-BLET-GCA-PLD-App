@@ -66,6 +66,13 @@
           "color": "#635A17",
           "sounds": ["./assets/sounds/notification.wav"]
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "The app accesses your photos to let you select images for advertisements.",
+          "cameraPermission": false
+        }
       ]
     ],
     "experiments": {
