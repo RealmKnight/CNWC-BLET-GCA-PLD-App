@@ -933,7 +933,9 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: Colors.dark.border,
-    backgroundColor: Colors.dark.background,
+    backgroundColor: Colors.dark.card,
+    borderBottomEndRadius: 12,
+    borderBottomStartRadius: 12,
   },
   label: {
     flex: 2,
@@ -942,6 +944,7 @@ const styles = StyleSheet.create({
   valueContainer: {
     flex: 1,
     alignItems: "center",
+    backgroundColor: Colors.dark.card,
   },
   value: {
     fontSize: 16,
@@ -1034,9 +1037,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     width: "100%",
+    backgroundColor: Colors.dark.card,
   },
   cancelButton: {
-    backgroundColor: Colors.dark.background,
+    backgroundColor: Colors.dark.card,
     paddingVertical: 12,
     paddingHorizontal: 24,
     borderRadius: 8,
@@ -1069,41 +1073,46 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     borderBottomWidth: 1,
     borderBottomColor: Colors.dark.border,
+    backgroundColor: Colors.dark.card,
   },
   requestInfo: {
     flex: 1,
+    backgroundColor: Colors.dark.card,
   },
   requestHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 4,
+    backgroundColor: Colors.dark.card,
   },
   requestDate: {
     fontSize: 16,
     fontWeight: "600",
-    backgroundColor: "rgba(0, 0, 0, 0)",
+    backgroundColor: Colors.dark.card,
   },
   requestDetails: {
     fontSize: 14,
     opacity: 0.7,
-    backgroundColor: "rgba(0, 0, 0, 0)",
+    backgroundColor: Colors.dark.card,
   },
   statusBadge: {
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
+    backgroundColor: Colors.dark.card,
   },
   statusText: {
     fontSize: 12,
     fontWeight: "600",
-    backgroundColor: "rgba(0, 0, 0, 0)",
+    backgroundColor: Colors.dark.card,
   },
   waitlistPosition: {
     fontSize: 16,
     fontWeight: "bold",
     color: Colors.dark.warning,
     marginTop: 4,
+    backgroundColor: Colors.dark.card,
   },
   subsectionTitle: {
     fontSize: 18,
@@ -1112,6 +1121,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: Colors.dark.border,
+    backgroundColor: Colors.dark.card,
   },
   waitlistTitle: {
     marginTop: 16,
@@ -1148,6 +1158,7 @@ const styles = StyleSheet.create({
   },
   dateContainer: {
     flex: 1,
+    backgroundColor: Colors.dark.card,
   },
   date: {
     fontSize: 16,
@@ -1155,6 +1166,7 @@ const styles = StyleSheet.create({
   },
   typeContainer: {
     flex: 1,
+    backgroundColor: Colors.dark.card,
   },
   type: {
     fontSize: 16,
@@ -1210,6 +1222,7 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
     justifyContent: "center",
     paddingRight: 16,
+    backgroundColor: Colors.dark.card,
   },
   infoText: {
     fontSize: 12,
@@ -1220,10 +1233,12 @@ const styles = StyleSheet.create({
     flex: 2,
     alignItems: "flex-end",
     paddingRight: 16,
+    backgroundColor: Colors.dark.card,
   },
   vacationValue: {
     fontSize: 16,
     fontWeight: "500",
+    backgroundColor: Colors.dark.card,
   },
   warningContainer: {
     flexDirection: "row",

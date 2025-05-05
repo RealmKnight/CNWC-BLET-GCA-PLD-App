@@ -779,25 +779,26 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: Colors.light.border,
+    borderColor: Colors.dark.border,
     marginRight: 8,
+    backgroundColor: Colors.dark.card,
   },
   selectedYearButton: {
-    backgroundColor: Colors.light.tint,
-    borderColor: Colors.light.tint,
+    backgroundColor: Colors.dark.tint,
+    borderColor: Colors.dark.tint,
   },
   yearButtonText: {
     fontSize: 14,
     fontWeight: "500",
   },
   selectedYearButtonText: {
-    color: Colors.light.background,
+    color: Colors.dark.buttonText,
   },
   searchContainer: {
     flexDirection: "row",
     alignItems: "center",
     borderWidth: 1,
-    borderColor: Colors.light.border,
+    borderColor: Colors.dark.border,
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -816,7 +817,7 @@ const styles = StyleSheet.create({
   tableContainer: {
     flex: 1,
     borderWidth: 1,
-    borderColor: Colors.light.border,
+    borderColor: Colors.dark.border,
     borderRadius: 8,
     overflow: "hidden",
     display: "flex",
@@ -824,11 +825,11 @@ const styles = StyleSheet.create({
   },
   tableHeader: {
     flexDirection: "row",
-    backgroundColor: Colors.light.background,
+    backgroundColor: Colors.dark.card,
     paddingVertical: 12,
     paddingHorizontal: 8,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.light.border,
+    borderBottomColor: Colors.dark.border,
   },
   headerCell: {
     flex: 1,
@@ -841,7 +842,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 8,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.light.border,
+    borderBottomColor: Colors.dark.border,
   },
   cell: {
     flex: 1,
@@ -854,7 +855,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderColor: Colors.light.border,
+    borderColor: Colors.dark.border,
     borderRadius: 4,
     minWidth: 60,
     width: "70%",
@@ -876,28 +877,28 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 14,
-    color: Colors.light.textDim,
+    color: Colors.dark.textDim,
   },
   errorContainer: {
     padding: 24,
     alignItems: "center",
   },
   errorText: {
-    color: Colors.light.error,
+    color: Colors.dark.error,
     marginBottom: 12,
   },
   retryButton: {
     paddingHorizontal: 16,
     paddingVertical: 8,
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.dark.tint,
     borderRadius: 8,
   },
   retryButtonText: {
-    color: Colors.light.background,
+    color: Colors.dark.buttonText,
     fontWeight: "500",
   },
   rowSaveButton: {
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.dark.tint,
     borderRadius: 4,
     width: 36,
     height: 36,
@@ -913,7 +914,7 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   rowSaveButtonDisabled: {
-    backgroundColor: Colors.light.border,
+    backgroundColor: Colors.dark.border,
   },
   calendarFilter: {
     marginBottom: 16,
@@ -921,23 +922,23 @@ const styles = StyleSheet.create({
   saveAllButton: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.dark.tint,
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 8,
     marginLeft: 16,
   } as const,
   saveAllButtonDisabled: {
-    backgroundColor: Colors.light.border,
+    backgroundColor: Colors.dark.border,
   } as const,
   saveAllButtonText: {
-    color: Colors.light.background,
+    color: Colors.dark.buttonText,
     marginLeft: 8,
     fontSize: 14,
     fontWeight: "500",
   } as const,
   saveAllButtonTextDisabled: {
-    color: Colors.light.textDim,
+    color: Colors.dark.textDim,
   } as const,
   bottomSaveButtonContainer: {
     position: "relative",

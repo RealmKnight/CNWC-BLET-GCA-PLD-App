@@ -16,7 +16,7 @@ export default function HomeScreen() {
 
   return (
     <ParallaxScrollView
-      headerBackgroundColor={{ light: "#A1CEDC", dark: "#000000FF" }}
+      headerBackgroundColor={{ light: "#A1CEDC", dark: Colors.dark.card }}
       headerImage={
         <>
           <Image source={require("@/assets/images/BLETblackgold.png")} style={styles.reactLogo} />

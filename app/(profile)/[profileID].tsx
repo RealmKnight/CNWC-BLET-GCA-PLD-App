@@ -841,17 +841,21 @@ const styles = StyleSheet.create({
     marginBottom: 24,
     padding: 16,
     gap: 16,
+    backgroundColor: Colors.dark.card,
+    borderRadius: 12,
   },
   infoRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     paddingVertical: 8,
+    backgroundColor: Colors.dark.card,
   },
   editRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
+    backgroundColor: Colors.dark.card,
   },
   iconButton: {
     padding: 8,
@@ -863,6 +867,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
+    backgroundColor: Colors.dark.card,
   },
   pushNotificationContainer: {
     width: "100%",

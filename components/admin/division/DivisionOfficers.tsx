@@ -335,6 +335,8 @@ const styles = StyleSheet.create({
   },
   positionItem: {
     borderRadius: 8,
+    borderColor: Colors.dark.border,
+    borderWidth: 1,
     backgroundColor: Colors.dark.card,
     elevation: 1,
     shadowColor: Colors.dark.border,

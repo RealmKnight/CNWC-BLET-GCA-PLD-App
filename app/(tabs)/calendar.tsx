@@ -1472,9 +1472,7 @@ const controlStyles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 16,
     paddingVertical: 8,
-    backgroundColor: Colors.dark.background,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.dark.border,
+    backgroundColor: Colors.dark.card,
     ...(Platform.OS === "web" && {
       position: "sticky",
       top: 0,
@@ -1485,7 +1483,9 @@ const controlStyles = StyleSheet.create({
     web: {
       marginRight: 16,
     },
-    default: {},
+    default: {
+      backgroundColor: Colors.dark.card,
+    },
   }) as ViewStyle,
   dateButton: {
     paddingVertical: 8,
@@ -2132,10 +2132,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: Colors.dark.card,
   } as ViewStyle,
   activeTab: {
-    backgroundColor: Colors.light.tint,
-    borderColor: Colors.light.tint,
+    backgroundColor: Colors.dark.tint,
+    borderColor: Colors.dark.tint,
   } as ViewStyle,
   tabText: {
     fontSize: 14,
@@ -2165,7 +2166,7 @@ const styles = StyleSheet.create({
   headerContainer: {
     width: "100%",
     padding: 16,
-    backgroundColor: Colors.dark.background,
+    backgroundColor: Colors.dark.card,
     borderBottomWidth: 1,
     borderBottomColor: Colors.dark.border,
   } as ViewStyle,

@@ -513,12 +513,12 @@ const styles = StyleSheet.create({
   controls: {
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(128, 128, 128, 0.1)",
+    borderBottomColor: Colors.dark.border,
   },
   searchContainer: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(128, 128, 128, 0.1)",
+    backgroundColor: Colors.dark.card,
     borderRadius: 8,
     padding: 8,
     marginBottom: 12,
@@ -542,16 +542,17 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 16,
     marginRight: 8,
-    backgroundColor: "rgba(128, 128, 128, 0.1)",
+    backgroundColor: Colors.dark.card,
   },
   filterButtonActive: {
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.dark.tint,
+    color: Colors.dark.buttonText,
   },
   filterButtonText: {
     fontSize: 14,
   },
   filterButtonTextActive: {
-    color: "#fff",
+    color: Colors.dark.buttonText,
   },
   actionRow: {
     flexDirection: "row",
@@ -561,6 +562,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     padding: 8,
+    backgroundColor: Colors.dark.card,
+    borderRadius: 8,
   },
   actionButtonText: {
     marginLeft: 4,
@@ -603,6 +606,7 @@ const styles = StyleSheet.create({
     shadowRadius: 3.84,
     borderLeftWidth: 4,
     borderLeftColor: "transparent",
+    backgroundColor: Colors.dark.card,
   },
   unreadItem: {
     backgroundColor: Colors.light.primary + "15",
@@ -612,12 +616,13 @@ const styles = StyleSheet.create({
     padding: 16,
     alignItems: "center",
     justifyContent: "flex-start",
+    backgroundColor: Colors.dark.card,
   },
   iconWrapper: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: "rgba(128, 128, 128, 0.1)",
+    backgroundColor: Colors.dark.card,
     alignItems: "center",
     justifyContent: "center",
     opacity: 0.7,
@@ -630,17 +635,20 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 16,
     paddingLeft: 0,
+    backgroundColor: Colors.dark.card,
   },
   messageHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 8,
+    backgroundColor: Colors.dark.card,
   },
   headerLeft: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
+    backgroundColor: Colors.dark.card,
   },
   messageType: {
     fontSize: 12,
@@ -675,6 +683,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
     marginTop: 8,
+    backgroundColor: Colors.dark.card,
   },
   acknowledgeButton: {
     flexDirection: "row",
@@ -683,6 +692,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 16,
     gap: 4,
+    backgroundColor: Colors.dark.card,
   },
   acknowledgeButtonText: {
     color: "#fff",
@@ -716,6 +726,7 @@ const styles = StyleSheet.create({
   actionButtons: {
     flexDirection: "row",
     gap: 8,
+    backgroundColor: Colors.dark.card,
   },
   iconButton: {
     padding: 8,

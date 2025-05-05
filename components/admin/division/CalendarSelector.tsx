@@ -24,7 +24,7 @@ export function CalendarSelector({
 }: CalendarSelectorProps) {
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const tintColor = Colors[colorScheme].tint;
-  const backgroundColor = Colors[colorScheme].background;
+  const backgroundColor = Colors[colorScheme].card;
   const textColor = Colors[colorScheme].text;
   const selectedTextColor = Colors[colorScheme].background; // Or contrast color
   const borderColor = Colors[colorScheme].border;
@@ -80,6 +80,7 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderBottomWidth: 1,
     borderColor: Colors.dark.border, // Adjust color
+    backgroundColor: Colors.dark.card,
   },
   title: {
     fontSize: 16,
@@ -91,6 +92,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
+    backgroundColor: Colors.dark.card,
   },
   calendarButton: {
     paddingVertical: 8,

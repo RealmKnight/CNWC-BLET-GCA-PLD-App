@@ -23,7 +23,7 @@ export function CalendarFilter({
 }: CalendarFilterProps) {
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const tintColor = Colors[colorScheme].tint;
-  const backgroundColor = Colors[colorScheme].background;
+  const backgroundColor = Colors[colorScheme].card;
   const textColor = Colors[colorScheme].text;
   const selectedTextColor = Colors[colorScheme].background;
   const borderColor = Colors[colorScheme].border;

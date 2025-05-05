@@ -774,12 +774,13 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderRadius: 8,
     overflow: "hidden",
+    backgroundColor: Colors.dark.card,
   },
   tab: {
     flex: 1,
     padding: 12,
     alignItems: "center",
-    backgroundColor: Colors.dark.background,
+    backgroundColor: Colors.dark.card,
   },
   activeTab: {
     backgroundColor: Colors.dark.tint,
@@ -795,7 +796,9 @@ const styles = StyleSheet.create({
     marginBottom: 24,
     padding: 16,
     borderRadius: 8,
-    backgroundColor: Colors.dark.background,
+    backgroundColor: Colors.dark.card,
+    borderColor: Colors.dark.border,
+    borderWidth: 1,
   },
   sectionTitle: {
     fontSize: 18,
@@ -813,6 +816,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     marginBottom: 12,
+    backgroundColor: Colors.dark.card,
   },
   yearText: {
     fontSize: 16,
@@ -867,6 +871,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     flexWrap: "wrap",
     gap: 8,
+    backgroundColor: Colors.dark.card,
   },
   datePicker: {
     flex: 1,
@@ -965,6 +970,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderBottomWidth: 1,
     borderBottomColor: Colors.dark.border,
+    backgroundColor: Colors.dark.card,
   },
   noDataText: {
     color: Colors.dark.textDim,
@@ -974,8 +980,6 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 8,
     backgroundColor: Colors.dark.card,
-    borderWidth: 1,
-    borderColor: Colors.dark.border,
   },
   allotmentSummaryText: {
     fontSize: 14,
