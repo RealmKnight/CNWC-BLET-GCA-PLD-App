@@ -453,14 +453,14 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     padding: 16,
     borderWidth: 1,
-    borderColor: "#ccc",
+    borderColor: Colors.dark.border,
     borderRadius: 8,
     marginBottom: 8,
-    backgroundColor: Colors.light.background,
+    backgroundColor: Colors.dark.card,
   },
   inactiveMemberItem: {
     opacity: 0.6,
-    backgroundColor: Colors.light.border,
+    backgroundColor: Colors.dark.border,
   },
   inactiveText: {
     fontSize: 12,

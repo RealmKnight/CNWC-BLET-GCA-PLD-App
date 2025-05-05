@@ -335,7 +335,7 @@ const styles = StyleSheet.create({
   },
   positionItem: {
     borderRadius: 8,
-    backgroundColor: Colors.dark.background,
+    backgroundColor: Colors.dark.card,
     elevation: 1,
     shadowColor: Colors.dark.border,
     shadowOffset: { width: 0, height: 1 },
@@ -376,9 +376,11 @@ const styles = StyleSheet.create({
   positionDetails: {
     padding: 16,
     borderTopWidth: 1,
+    borderBottomLeftRadius: 8,
+    borderBottomRightRadius: 8,
     borderTopColor: Colors.dark.border,
     borderBottomColor: Colors.dark.border,
-    backgroundColor: Colors.dark.background,
+    backgroundColor: Colors.dark.card,
     color: Colors.dark.text,
   },
   officerInfo: {

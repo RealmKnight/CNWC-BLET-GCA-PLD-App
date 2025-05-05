@@ -1404,6 +1404,8 @@ const styles = StyleSheet.create({
   },
   formContainer: {
     flex: 1,
+    backgroundColor: Colors.dark.card,
+    borderColor: Colors.dark.border,
   },
   formContent: {
     padding: 16,
@@ -1536,6 +1538,8 @@ const styles = StyleSheet.create({
     padding: 12,
     borderWidth: 1,
     borderRadius: 8,
+    backgroundColor: Colors.dark.card,
+    borderColor: Colors.dark.border,
   },
   authUserInfoLabel: {
     fontSize: 16,

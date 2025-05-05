@@ -265,9 +265,11 @@ const styles = StyleSheet.create({
   settingSection: {
     marginBottom: 24,
     paddingBottom: 16,
+    borderRadius: 16,
     borderBottomWidth: 1,
     borderBottomColor: Colors.dark.border,
     backgroundColor: Colors.dark.card,
+    padding: 8,
   },
   settingSectionTitle: {
     fontSize: 18,
