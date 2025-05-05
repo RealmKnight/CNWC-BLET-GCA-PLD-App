@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo, useCallback } from "react";
-import { StyleSheet, RefreshControl, Platform, TouchableOpacity, Image, TextInput } from "react-native";
+import { StyleSheet, RefreshControl, Platform, TouchableOpacity, Image, TextInput, Dimensions } from "react-native";
 import { useRouter } from "expo-router";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
@@ -12,6 +12,8 @@ import { useUserStore } from "@/store/userStore";
 import { Ionicons } from "@expo/vector-icons";
 import { MessageModal } from "@/components/MessageModal";
 import Toast from "react-native-toast-message";
+import { AdvertisementBanner } from "@/components/AdvertisementBanner";
+import { AdvertisementCarousel } from "@/components/AdvertisementCarousel";
 
 type ColorScheme = keyof typeof Colors;
 
@@ -182,6 +184,9 @@ export default function NotificationsScreen() {
   const { member } = useUserStore();
   const router = useRouter();
   const theme = (useColorScheme() ?? "light") as ColorScheme;
+  const isWeb = Platform.OS === "web";
+  const windowWidth = Dimensions.get("window").width;
+  const isMobileWeb = isWeb && windowWidth < 768; // 768px is a common breakpoint for tablets/desktops
 
   const { messages, isLoading, error, fetchMessages, markAsRead, deleteMessage, subscribeToMessages } =
     useNotificationStore();
@@ -233,7 +238,7 @@ export default function NotificationsScreen() {
   const handleRefresh = useCallback(async () => {
     if (!member?.pin_number || !member?.id) return;
     setRefreshing(true);
-    await fetchMessages(member.pin_number, member.id);
+    await fetchMessages(String(member.pin_number), member.id);
     setRefreshing(false);
   }, [member, fetchMessages]);
 
@@ -283,7 +288,7 @@ export default function NotificationsScreen() {
         // Refresh messages list - Fix the type safety issue
         if (member?.pin_number && member?.id) {
           console.log("[Notifications] Refreshing messages list");
-          await fetchMessages(member.pin_number, member.id);
+          await fetchMessages(String(member.pin_number), member.id);
         }
 
         Toast.show({
@@ -373,6 +378,9 @@ export default function NotificationsScreen() {
       style={styles.container}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
     >
+      {/* Top Advertisement Banner for all devices */}
+      <AdvertisementBanner location="notifications_top" style={styles.topAdBanner} maxHeight={80} />
+
       <ThemedView style={styles.controls}>
         <ThemedView style={styles.searchContainer}>
           <Ionicons name="search" size={20} color={Colors[theme].text} style={styles.searchIcon} />
@@ -423,27 +431,68 @@ export default function NotificationsScreen() {
         </ThemedView>
       </ThemedView>
 
-      {messages.length === 0 ? (
-        <ThemedView style={styles.emptyState}>
-          <Ionicons name="notifications-off" size={48} color={Colors[theme].text} />
-          <ThemedText style={styles.emptyText}>No notifications</ThemedText>
+      {/* Content with sidebar layout for web */}
+      {isWeb && !isMobileWeb ? (
+        <ThemedView style={styles.webLayout}>
+          <ThemedView style={styles.mainContent}>
+            {messages.length === 0 ? (
+              <ThemedView style={styles.emptyState}>
+                <Ionicons name="notifications-off" size={48} color={Colors[theme].text} />
+                <ThemedText style={styles.emptyText}>No notifications</ThemedText>
+              </ThemedView>
+            ) : (
+              Object.entries(filteredAndGroupedMessages).map(([key, groupMessages]) => (
+                <ThemedView key={key} style={styles.group}>
+                  <ThemedText style={styles.groupHeader}>{key}</ThemedText>
+                  {groupMessages.map((message) => (
+                    <NotificationItem
+                      key={message.id}
+                      message={message}
+                      onPress={() => handleMessagePress(message)}
+                      onAcknowledge={() => handleAcknowledge(message)}
+                      handleDelete={handleDelete}
+                      handleArchive={handleArchive}
+                    />
+                  ))}
+                </ThemedView>
+              ))
+            )}
+          </ThemedView>
+
+          {/* Sidebar advertisement for web */}
+          <ThemedView style={styles.sidebar}>
+            <AdvertisementBanner location="notifications_sidebar" style={styles.sidebarAd} maxHeight={600} />
+          </ThemedView>
         </ThemedView>
       ) : (
-        Object.entries(filteredAndGroupedMessages).map(([key, groupMessages]) => (
-          <ThemedView key={key} style={styles.group}>
-            <ThemedText style={styles.groupHeader}>{key}</ThemedText>
-            {groupMessages.map((message) => (
-              <NotificationItem
-                key={message.id}
-                message={message}
-                onPress={() => handleMessagePress(message)}
-                onAcknowledge={() => handleAcknowledge(message)}
-                handleDelete={handleDelete}
-                handleArchive={handleArchive}
-              />
-            ))}
-          </ThemedView>
-        ))
+        /* Mobile layout (stacked) */
+        <>
+          {messages.length === 0 ? (
+            <ThemedView style={styles.emptyState}>
+              <Ionicons name="notifications-off" size={48} color={Colors[theme].text} />
+              <ThemedText style={styles.emptyText}>No notifications</ThemedText>
+            </ThemedView>
+          ) : (
+            Object.entries(filteredAndGroupedMessages).map(([key, groupMessages]) => (
+              <ThemedView key={key} style={styles.group}>
+                <ThemedText style={styles.groupHeader}>{key}</ThemedText>
+                {groupMessages.map((message) => (
+                  <NotificationItem
+                    key={message.id}
+                    message={message}
+                    onPress={() => handleMessagePress(message)}
+                    onAcknowledge={() => handleAcknowledge(message)}
+                    handleDelete={handleDelete}
+                    handleArchive={handleArchive}
+                  />
+                ))}
+              </ThemedView>
+            ))
+          )}
+
+          {/* Bottom advertisement for mobile */}
+          <AdvertisementBanner location="notifications_bottom" style={styles.bottomAdBanner} maxHeight={80} />
+        </>
       )}
 
       <MessageModal
@@ -673,5 +722,32 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     justifyContent: "center",
     alignItems: "center",
+  },
+  // Advertisement banner styles
+  topAdBanner: {
+    marginHorizontal: 16,
+    marginTop: 16,
+  },
+  bottomAdBanner: {
+    marginHorizontal: 16,
+    marginBottom: 16,
+  },
+  webLayout: {
+    flexDirection: "row",
+    flex: 1,
+  },
+  mainContent: {
+    flex: 3,
+  },
+  sidebar: {
+    flex: 1,
+    minWidth: 200,
+    maxWidth: 300,
+    padding: 16,
+    borderLeftWidth: 1,
+    borderLeftColor: "rgba(128, 128, 128, 0.1)",
+  },
+  sidebarAd: {
+    marginBottom: 16,
   },
 });

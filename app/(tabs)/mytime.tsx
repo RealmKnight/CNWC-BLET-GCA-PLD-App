@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Platform,
   AppState,
+  RefreshControl,
 } from "react-native";
 import { useColorScheme } from "react-native";
 import { ThemedText } from "@/components/ThemedText";
@@ -17,7 +18,8 @@ import { ThemedTouchableOpacity } from "@/components/ThemedTouchableOpacity";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Colors } from "@/constants/Colors";
 import { Feather } from "@expo/vector-icons";
-import { useMyTime, UserVacationRequest, DatabaseError } from "@/hooks/useMyTime";
+import { useMyTime } from "@/hooks/useMyTime";
+import { TimeOffRequest, UserVacationRequest } from "@/store/timeStore";
 import { format } from "date-fns-tz";
 import { parseISO, isWithinInterval, isBefore, addDays, subWeeks, addWeeks } from "date-fns";
 import { useFocusEffect } from "@react-navigation/native";
@@ -100,17 +102,7 @@ function LeaveRow({ label, pldValue, sdvValue = undefined, showIcon, onIconPress
 }
 
 // Interface for PLD/SDV/6mo requests (used by RequestRow)
-interface TimeOffRequest {
-  id: string;
-  request_date: string;
-  leave_type: "PLD" | "SDV";
-  status: "pending" | "approved" | "denied" | "waitlisted" | "cancellation_pending" | "cancelled";
-  requested_at: string;
-  waitlist_position?: number;
-  paid_in_lieu?: boolean;
-  is_six_month_request?: boolean;
-  calendar_id?: string;
-}
+// TimeOffRequest is now imported from store/timeStore.ts
 
 interface RequestRowProps {
   request: TimeOffRequest;
@@ -650,7 +642,7 @@ export default function MyTimeScreen() {
   // Handle pull-to-refresh - uses refreshData from hook
   const handleRefresh = () => {
     console.log("[MyTimeScreen] User-initiated pull-to-refresh");
-    refreshData(true); // Call the action from the hook
+    refreshData(""); // Since we don't need to pass memberId from component
   };
 
   // Display loading indicator - uses isLoading from hook
@@ -672,8 +664,8 @@ export default function MyTimeScreen() {
       <ThemedView style={[styles.errorContainer, { paddingTop: insets.top }]}>
         <Feather name="alert-circle" size={48} color={Colors[colorScheme ?? "light"].error} />
         <ThemedText style={styles.errorTitle}>Error Loading Data</ThemedText>
-        <ThemedText style={styles.errorText}>{error}</ThemedText>
-        <ThemedTouchableOpacity style={styles.retryButton} onPress={() => refreshData(true)}>
+        <ThemedText style={styles.errorDescription}>{error}</ThemedText>
+        <ThemedTouchableOpacity style={styles.retryButton} onPress={() => refreshData("")}>
           <ThemedText style={styles.retryButtonText}>Retry</ThemedText>
         </ThemedTouchableOpacity>
       </ThemedView>
@@ -706,8 +698,7 @@ export default function MyTimeScreen() {
           },
         ]}
         contentContainerStyle={styles.contentContainer}
-        refreshing={isRefreshing} // Use isRefreshing from the hook
-        onRefresh={handleRefresh} // Uses refreshData from the hook
+        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
       >
         {/* Add sync status indicator - Consider using isSubmittingAction or isRefreshing ? */}
         {/* {isRefreshing && ( ... sync indicator ... )} */}
@@ -1272,7 +1263,7 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     marginVertical: 10,
   },
-  errorText: {
+  errorDescription: {
     textAlign: "center",
     marginBottom: 20,
   },

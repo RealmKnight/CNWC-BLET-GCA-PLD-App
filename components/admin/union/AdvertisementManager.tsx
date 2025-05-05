@@ -5,53 +5,39 @@ import { ThemedText } from "@/components/ThemedText";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { TabBar, Tab } from "@/components/admin/TabBar";
-
-// Placeholder components for advertisement tabs
-const CreateAdvertisementTab = () => (
-  <ThemedView style={styles.tabContent}>
-    <ThemedText>Create Advertisement Form Coming Soon</ThemedText>
-  </ThemedView>
-);
-
-const ManageAdvertisementsTab = () => (
-  <ThemedView style={styles.tabContent}>
-    <ThemedText>Manage Advertisements Coming Soon</ThemedText>
-  </ThemedView>
-);
-
-const AnalyticsTab = () => (
-  <ThemedView style={styles.tabContent}>
-    <ThemedText>Advertisement Analytics Coming Soon</ThemedText>
-  </ThemedView>
-);
-
-const SettingsTab = () => (
-  <ThemedView style={styles.tabContent}>
-    <ThemedText>Advertisement Settings Coming Soon</ThemedText>
-  </ThemedView>
-);
+import { CreateEditAdvertisement } from "@/components/admin/advertisements/CreateEditAdvertisement";
+import { AdvertisementCampaigns } from "@/components/admin/advertisements/AdvertisementCampaigns";
+import { AdvertisementAnalytics } from "@/components/admin/advertisements/AdvertisementAnalytics";
 
 export function AdvertisementManager() {
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
-  const [activeTab, setActiveTab] = useState("create");
+  const [activeTab, setActiveTab] = useState("manage");
+  const [editingAdId, setEditingAdId] = useState<string | undefined>(undefined);
 
   const tabs: Tab[] = [
     { key: "create", title: "Create", icon: "add-circle", outlineIcon: "add-circle-outline" },
     { key: "manage", title: "Manage", icon: "list", outlineIcon: "list-outline" },
     { key: "analytics", title: "Analytics", icon: "analytics", outlineIcon: "analytics-outline" },
-    { key: "settings", title: "Settings", icon: "settings", outlineIcon: "settings-outline" },
   ];
+
+  const handleAdCreated = () => {
+    setActiveTab("manage");
+    setEditingAdId(undefined);
+  };
+
+  const handleEditAd = (id: string) => {
+    setEditingAdId(id);
+    setActiveTab("create");
+  };
 
   const renderContent = () => {
     switch (activeTab) {
       case "create":
-        return <CreateAdvertisementTab />;
+        return <CreateEditAdvertisement advertisementId={editingAdId} onSave={handleAdCreated} />;
       case "manage":
-        return <ManageAdvertisementsTab />;
+        return <AdvertisementCampaigns onEditAdvertisement={handleEditAd} />;
       case "analytics":
-        return <AnalyticsTab />;
-      case "settings":
-        return <SettingsTab />;
+        return <AdvertisementAnalytics />;
       default:
         return null;
     }
@@ -61,6 +47,15 @@ export function AdvertisementManager() {
     <ThemedView style={styles.container}>
       <ThemedView style={styles.header}>
         <ThemedText type="title">Advertisement Management</ThemedText>
+        <ThemedText style={styles.subtitle}>
+          {activeTab === "create"
+            ? editingAdId
+              ? "Edit Existing Advertisement"
+              : "Create New Advertisement"
+            : activeTab === "manage"
+            ? "Manage Advertisement Campaigns"
+            : "View Advertisement Analytics"}
+        </ThemedText>
       </ThemedView>
 
       <TabBar tabs={tabs} activeTab={activeTab} onTabChange={setActiveTab} />
@@ -80,10 +75,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
   },
-  tabContent: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 20,
+  subtitle: {
+    opacity: 0.7,
+    marginTop: 4,
   },
 });

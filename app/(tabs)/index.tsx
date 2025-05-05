@@ -1,3 +1,4 @@
+import React from "react";
 import { Image, StyleSheet, Platform } from "react-native";
 import ParallaxScrollView from "@/components/ParallaxScrollView";
 import { ThemedView } from "@/components/ThemedView";
@@ -7,6 +8,7 @@ import { useUserStore } from "@/store/userStore";
 import { ThemedText } from "@/components/ThemedText";
 import { HelloWave } from "@/components/HelloWave";
 import { Colors } from "@/constants/Colors";
+import { AdvertisementBanner } from "@/components/AdvertisementBanner";
 
 export default function HomeScreen() {
   const { member } = useAuth();
@@ -15,60 +17,58 @@ export default function HomeScreen() {
   return (
     <ParallaxScrollView
       headerBackgroundColor={{ light: "#A1CEDC", dark: "#000000FF" }}
-      headerImage={<Image source={require("@/assets/images/BLETblackgold.png")} style={styles.reactLogo} />}
+      headerImage={
+        <>
+          <Image source={require("@/assets/images/BLETblackgold.png")} style={styles.reactLogo} />
+          <AdvertisementBanner location="home" style={styles.adBanner} maxHeight={80} />
+        </>
+      }
     >
       <ThemedView style={styles.container}>
         <ThemedView style={styles.cardContainer}>
           <ThemedView style={styles.welcomeContainer}>
             <HelloWave />
-            <ThemedText style={styles.welcomeText}>Welcome, {member?.first_name}</ThemedText>
+            <ThemedText style={styles.welcomeText}>
+              {member?.first_name ? `Hello, ${member.first_name}!` : "Welcome!"}
+            </ThemedText>
           </ThemedView>
-          <ThemedText style={styles.noticeText}>
-            Most of the links below are only placeholders for future functionality of the app. They work, but the
-            subsequent links on the pages they lead to do not.
-          </ThemedText>
+
+          {!division && (
+            <ThemedText style={styles.noticeText}>
+              You aren't assigned to a division. Contact your local chairman to get set up.
+            </ThemedText>
+          )}
+
           <NavigationCard
-            title="My Division"
-            description="View your division information, officers, and members"
+            title="GCA/Local Profile"
+            description="View your GCA and local information"
             icon="people"
-            href={division ? `/(division)/${division}` : "/(division)"}
+            href="/(gca)/profile"
           />
+
           <NavigationCard
-            title="Rosters"
-            description="Access division rosters and schedules"
+            title="Division Calendar"
+            description="View and manage your division calendar"
             icon="calendar"
-            href="/(rosters)"
+            href="/(division)/calendar"
           />
+
           <NavigationCard
-            title="Agreements"
-            description="View and search through union agreements and contracts"
-            icon="document-text"
-            href="/(agreements)"
+            title="Time Management"
+            description="Vacation and personal leave management"
+            icon="time"
+            href="/(tabs)/mytime"
           />
-          <NavigationCard
-            title="Claims"
-            description="File and track claims and grievances"
-            icon="file-tray-full"
-            href="/(claims)"
-          />
-          <NavigationCard
-            title="GCA"
-            description="Access GCA resources and information"
-            icon="business"
-            href="/(gca)"
-          />
-          <NavigationCard
-            title="Tools & Links"
-            description="Access helpful tools and important links"
-            icon="construct"
-            href="/(tools)"
-          />
+
+          <NavigationCard title="Tools" description="Helpful BLET tools and calculators" icon="build" href="/(tools)" />
+
           <NavigationCard
             title="Safety"
-            description="Report safety concerns and access safety resources"
+            description="Report safety issues and concerns"
             icon="shield-checkmark"
             href="/(safety)"
           />
+
           <NavigationCard
             title="Training"
             description="Access training materials and resources"
@@ -100,6 +100,13 @@ const styles = StyleSheet.create({
     top: 10,
     left: "50%",
     transform: [{ translateX: -90 }],
+  },
+  adBanner: {
+    position: "absolute",
+    bottom: 10,
+    left: 0,
+    right: 0,
+    marginHorizontal: 16,
   },
   welcomeContainer: {
     flexDirection: "row",

@@ -855,7 +855,7 @@ function RequestDialog({
             </View>
           )}
 
-          {!isPastView && (
+          {!isPastView && !isExistingRequestPaidInLieu && (
             <>
               {/* Uses props availablePld/availableSdv */}
               <View style={dialogStyles.remainingDaysContainer}>
@@ -1558,7 +1558,7 @@ export default function CalendarScreen() {
     isLoading: isPldLoading,
     isDateSelectable,
     error: pldError,
-    totalSixMonthRequestsByDate, // Assuming calendarStore tracks this
+    sixMonthRequestDays, // Use this correctly named property from the store
   } = useCalendarStore();
 
   // Vacation Calendar Store Hook
@@ -1621,7 +1621,7 @@ export default function CalendarScreen() {
       // Check for relevant debug data
       if (request.member_id === member.id) {
         console.log(`[CalendarScreen] Examining timeStore request:`, {
-          date: request.date,
+          date: request.request_date, // Just use request_date
           requestDate: request.request_date,
           isPIL: request.paid_in_lieu,
           status: request.status,
@@ -1633,8 +1633,8 @@ export default function CalendarScreen() {
         request.paid_in_lieu === true &&
         ["approved", "pending", "waitlisted", "cancellation_pending"].includes(request.status)
       ) {
-        // Use request_date as the primary field, fallback to date if needed
-        const dateField = request.request_date || request.date;
+        // Just use request_date (we know it exists because it's required)
+        const dateField = request.request_date;
         if (dateField) {
           pilMap[dateField] = true;
           console.log(`[CalendarScreen] Found PIL request in timeStore for ${dateField}:`, request);
@@ -1660,6 +1660,18 @@ export default function CalendarScreen() {
 
     return hasPilRequest;
   }, [selectedDate, member?.id, pilRequestsByDate]);
+
+  // Check if the user has a six-month request for the selected date
+  const hasSixMonthRequestForSelectedDate = useMemo(() => {
+    if (!selectedDate || !sixMonthRequestDays) return false;
+
+    const hasSixMonthRequest = !!sixMonthRequestDays[selectedDate];
+    if (hasSixMonthRequest) {
+      console.log(`[CalendarScreen] Found six-month request for selected date ${selectedDate} in sixMonthRequestDays`);
+    }
+
+    return hasSixMonthRequest;
+  }, [selectedDate, sixMonthRequestDays]);
 
   // --- Step 3: Add additional debugging when opening RequestDialog ---
   // In the code that determines ViewMode before showing RequestDialog, add:
