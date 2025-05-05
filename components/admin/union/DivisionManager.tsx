@@ -9,14 +9,7 @@ import { DivisionsList } from "@/components/admin/union/DivisionsList";
 import { CreateForm } from "@/components/admin/union/CreateForm";
 import { OfficersManagement } from "@/components/admin/union/OfficersManagement";
 import { DivisionSettings } from "@/components/admin/union/DivisionSettings";
-
-// Define tab keys as constants to avoid string typos
-export const TABS = {
-  LIST: "list",
-  CREATE: "create",
-  OFFICERS: "officers",
-  SETTINGS: "settings",
-};
+import { TABS } from "./DivisionConstants";
 
 // Placeholder component for settings tab
 const DivisionSettingsTab = () => (

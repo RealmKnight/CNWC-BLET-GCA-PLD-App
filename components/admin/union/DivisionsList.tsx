@@ -9,7 +9,7 @@ import { useColorScheme } from "@/hooks/useColorScheme";
 import { EditDivisionForm } from "./EditDivisionForm";
 import { EditZoneForm } from "./EditZoneForm";
 import { CreateZoneForm } from "./CreateZoneForm";
-import { TABS } from "./DivisionManager";
+import { TABS } from "./DivisionConstants";
 
 interface DivisionsListProps {
   onSwitchTab?: (tabKey: string) => void;
