@@ -13,9 +13,9 @@ const OfficersTab = () => (
   </ThemedView>
 );
 
-const ElectionsTab = () => (
+const SettingsTab = () => (
   <ThemedView style={styles.tabContent}>
-    <ThemedText>GCA Elections Management Coming Soon</ThemedText>
+    <ThemedText>GCA Settings Management Coming Soon</ThemedText>
   </ThemedView>
 );
 
@@ -37,7 +37,7 @@ export function GCAManager() {
 
   const tabs: Tab[] = [
     { key: "officers", title: "Officers", icon: "people", outlineIcon: "people-outline" },
-    { key: "elections", title: "Elections", icon: "checkbox", outlineIcon: "checkbox-outline" },
+    { key: "settings", title: "Settings", icon: "settings", outlineIcon: "settings-outline" },
     { key: "meetings", title: "Meetings", icon: "calendar", outlineIcon: "calendar-outline" },
     { key: "documents", title: "Documents", icon: "document-text", outlineIcon: "document-text-outline" },
   ];
@@ -46,8 +46,8 @@ export function GCAManager() {
     switch (activeTab) {
       case "officers":
         return <OfficersTab />;
-      case "elections":
-        return <ElectionsTab />;
+      case "settings":
+        return <SettingsTab />;
       case "meetings":
         return <MeetingsTab />;
       case "documents":

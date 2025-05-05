@@ -855,7 +855,7 @@ function RequestDialog({
             </View>
           )}
 
-          {!isPastView && !isExistingRequestPaidInLieu && (
+          {!isPastView && !isExistingRequestPaidInLieu && !hasExistingRequest && !isSixMonthRequest && (
             <>
               {/* Uses props availablePld/availableSdv */}
               <View style={dialogStyles.remainingDaysContainer}>
