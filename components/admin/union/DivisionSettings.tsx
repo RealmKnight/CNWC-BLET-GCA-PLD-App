@@ -10,6 +10,7 @@ import { useColorScheme } from "@/hooks/useColorScheme";
 export const DivisionSettings = () => {
   const colorScheme = useColorScheme() ?? "light";
   const themeColor = Colors[colorScheme as keyof typeof Colors];
+  const [isDivisionListVisible, setIsDivisionListVisible] = useState(false);
 
   const {
     divisions,
@@ -21,6 +22,9 @@ export const DivisionSettings = () => {
     fetchZonesForDivision,
   } = useDivisionManagementStore();
 
+  // Get the selected division
+  const selectedDivision = divisions.find((div) => div.id === selectedDivisionId);
+
   useEffect(() => {
     fetchDivisions();
   }, [fetchDivisions]);
@@ -31,6 +35,10 @@ export const DivisionSettings = () => {
       fetchZonesForDivision(selectedDivisionId);
     }
   }, [selectedDivisionId, fetchZonesForDivision]);
+
+  const toggleDivisionList = () => {
+    setIsDivisionListVisible(!isDivisionListVisible);
+  };
 
   if (isLoadingDivisions && divisions.length === 0) {
     return (
@@ -54,34 +62,43 @@ export const DivisionSettings = () => {
   return (
     <ThemedView style={styles.container}>
       <ThemedView style={styles.divisionSelector}>
-        <ThemedText style={styles.selectorLabel}>Select Division:</ThemedText>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.divisionButtonsContainer}
-        >
-          <View style={styles.divisionButtons}>
-            {divisions.map((division) => (
-              <TouchableOpacity
-                key={division.id}
-                style={[
-                  styles.divisionButton,
-                  selectedDivisionId === division.id && { backgroundColor: themeColor.tint },
-                ]}
-                onPress={() => setSelectedDivisionId(division.id)}
-              >
-                <ThemedText
-                  style={[
-                    styles.divisionButtonText,
-                    selectedDivisionId === division.id && { color: Colors.dark.buttonText },
-                  ]}
+        <TouchableOpacity onPress={toggleDivisionList} style={styles.filterHeader}>
+          <ThemedView style={styles.filterLabelContainer}>
+            <ThemedText style={styles.selectorLabel}>Select Division:</ThemedText>
+            {!isDivisionListVisible && (
+              <ThemedText style={styles.selectedDivisionText}>
+                {selectedDivisionId ? selectedDivision?.name : "Select a division"}
+              </ThemedText>
+            )}
+          </ThemedView>
+          <Ionicons name={isDivisionListVisible ? "chevron-up" : "chevron-down"} size={20} color={themeColor.text} />
+        </TouchableOpacity>
+
+        {isDivisionListVisible && (
+          <ThemedView style={styles.divisionListWrapper}>
+            <View style={styles.divisionList}>
+              {divisions.map((division) => (
+                <TouchableOpacity
+                  key={division.id}
+                  style={[styles.divisionChip, selectedDivisionId === division.id && styles.divisionChipSelected]}
+                  onPress={() => {
+                    setSelectedDivisionId(division.id);
+                    setIsDivisionListVisible(false);
+                  }}
                 >
-                  {division.name}
-                </ThemedText>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </ScrollView>
+                  <ThemedText
+                    style={[
+                      styles.divisionChipText,
+                      selectedDivisionId === division.id && styles.divisionChipTextSelected,
+                    ]}
+                  >
+                    {division.name}
+                  </ThemedText>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </ThemedView>
+        )}
       </ThemedView>
 
       {selectedDivisionId ? (
@@ -204,10 +221,53 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "rgba(0,0,0,0.1)",
   },
+  filterHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  filterLabelContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
   selectorLabel: {
     fontSize: 16,
     fontWeight: "500",
-    marginBottom: 12,
+  },
+  selectedDivisionText: {
+    fontSize: 15,
+    marginLeft: 8,
+    color: Colors.dark.tint,
+    fontWeight: "500",
+  },
+  divisionListWrapper: {
+    marginTop: 12,
+  },
+  divisionList: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  divisionChip: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    backgroundColor: Colors.dark.card,
+    marginRight: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+  },
+  divisionChipSelected: {
+    backgroundColor: Colors.dark.tint,
+    borderColor: Colors.dark.tint,
+  },
+  divisionChipText: {
+    fontSize: 14,
+    color: Colors.dark.text,
+  },
+  divisionChipTextSelected: {
+    color: Colors.dark.buttonText,
   },
   divisionButtonsContainer: {
     paddingRight: 16,
