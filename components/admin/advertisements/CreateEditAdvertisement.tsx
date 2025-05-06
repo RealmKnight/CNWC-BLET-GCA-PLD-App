@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { StyleSheet, ScrollView, Platform, View, Image, ActivityIndicator } from "react-native";
+import { StyleSheet, ScrollView, Platform, View, Image, ActivityIndicator, Alert } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedTextInput } from "@/components/ThemedTextInput";
@@ -99,17 +99,43 @@ export function CreateEditAdvertisement({ advertisementId, onSave }: CreateEditA
       input.click();
       document.body.removeChild(input);
     } else {
-      // Use ImagePicker for native platforms
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [16, 9],
-        quality: 0.8,
-      });
+      // For native platforms, show a choice between camera and gallery
+      Alert.alert("Choose Image Source", "Would you like to take a new photo or select from your gallery?", [
+        {
+          text: "Cancel",
+          style: "cancel",
+        },
+        {
+          text: "Take Photo",
+          onPress: async () => {
+            const result = await ImagePicker.launchCameraAsync({
+              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+              allowsEditing: true,
+              aspect: [16, 9],
+              quality: 0.8,
+            });
 
-      if (!result.canceled && result.assets && result.assets.length > 0) {
-        setImageFile(result.assets[0].uri);
-      }
+            if (!result.canceled && result.assets && result.assets.length > 0) {
+              setImageFile(result.assets[0].uri);
+            }
+          },
+        },
+        {
+          text: "Choose from Gallery",
+          onPress: async () => {
+            const result = await ImagePicker.launchImageLibraryAsync({
+              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+              allowsEditing: true,
+              aspect: [16, 9],
+              quality: 0.8,
+            });
+
+            if (!result.canceled && result.assets && result.assets.length > 0) {
+              setImageFile(result.assets[0].uri);
+            }
+          },
+        },
+      ]);
     }
   };
 

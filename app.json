@@ -70,8 +70,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "The app accesses your photos to let you select images for advertisements.",
-          "cameraPermission": false
+          "photosPermission": "Allow BLET PLD App to access your photos to let you select images for uploading to use for advertisements.",
+          "cameraPermission": "Allow BLET PLD App to access your camera to take photos for uploading to use for advertisements."
         }
       ]
     ],

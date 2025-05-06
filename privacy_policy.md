@@ -10,13 +10,13 @@ This privacy policy explains how the BLET PLD App collects, uses, and protects y
 
 ### Photo Gallery Access
 
-- We request access to your device's photo gallery to allow you to select images for advertisements within the app.
+- We request access to your device's photo gallery to allow you (as an Admin user) to select images for advertisements to upload to the app.
 - We only access photos that you explicitly select through the system's photo picker.
 
 ### Camera Access
 
 - Our app may request camera access to allow you to take photos directly within the app for creating advertisements or other content.
-- Any photos taken using our app are stored on your device and are not automatically transmitted to our servers.
+- Any photos taken using our app are stored on your device and are not automatically transmitted to our servers unless you explicitly upload them.
 
 ## How We Use Information
 
@@ -49,17 +49,5 @@ This privacy policy explains how the BLET PLD App collects, uses, and protects y
 ## Contact Us
 
 - If you have questions about this privacy policy or our data practices, please contact us at:
-  - Email: <privacy@bletpldapp.com>
-  - Mail: GCA 910 Privacy Officer, 1234 Railroad Ave, Suite 100, Chicago, IL 60600
-
-<!-- To use this privacy policy with Google Play Console:
-You'll need to host this file on a publicly accessible website. Options include:
-Hosting it on your organization's website
-Using GitHub Pages to host it
-Using a service like Netlify or Vercel to host the markdown file
-Once hosted, take the URL and add it to Google Play Console:
-Log in to Google Play Console
-Go to "App content" in the left menu
-Find the "Privacy policy" section
-Enter the URL where your privacy policy is hosted
-Make sure to update the contact information and the "Last Updated" date when you make any changes. Also, you should customize any placeholder information (like the email address and mailing address) with your actual contact details before hosting the file. -->
+  - Email: <privacy@bletcnwcgca.org>
+  - Mail: GCA 910 Privacy Officer, 404 4th St, Fond du Lac, WI 54935
