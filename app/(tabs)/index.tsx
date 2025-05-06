@@ -28,47 +28,54 @@ export default function HomeScreen() {
         <ThemedView style={styles.cardContainer}>
           <ThemedView style={styles.welcomeContainer}>
             <HelloWave />
-            <ThemedText style={styles.welcomeText}>
-              {member?.first_name ? `Hello, ${member.first_name}!` : "Welcome!"}
-            </ThemedText>
+            <ThemedText style={styles.welcomeText}>Welcome, {member?.first_name}</ThemedText>
           </ThemedView>
-
-          {!division && (
-            <ThemedText style={styles.noticeText}>
-              You aren't assigned to a division. Contact your local chairman to get set up.
-            </ThemedText>
-          )}
-
+          <ThemedText style={styles.noticeText}>
+            Most of the links below are only placeholders for future functionality of the app. They work, but the
+            subsequent links on the pages they lead to do not.
+          </ThemedText>
           <NavigationCard
-            title="GCA/Local Profile"
-            description="View your GCA and local information"
+            title="My Division"
+            description="View your division information, officers, and members"
             icon="people"
-            href="/(gca)/profile"
+            href={division ? `/(division)/${division}` : "/(division)"}
           />
-
           <NavigationCard
-            title="Division Calendar"
-            description="View and manage your division calendar"
+            title="Rosters"
+            description="Access division rosters and schedules"
             icon="calendar"
-            href="/(division)/calendar"
+            href="/(rosters)"
           />
-
           <NavigationCard
-            title="Time Management"
-            description="Vacation and personal leave management"
-            icon="time"
-            href="/(tabs)/mytime"
+            title="Agreements"
+            description="View and search through union agreements and contracts"
+            icon="document-text"
+            href="/(agreements)"
           />
-
-          <NavigationCard title="Tools" description="Helpful BLET tools and calculators" icon="build" href="/(tools)" />
-
+          <NavigationCard
+            title="Claims"
+            description="File and track claims and grievances"
+            icon="file-tray-full"
+            href="/(claims)"
+          />
+          <NavigationCard
+            title="GCA"
+            description="Access GCA resources and information"
+            icon="business"
+            href="/(gca)"
+          />
+          <NavigationCard
+            title="Tools & Links"
+            description="Access helpful tools and important links"
+            icon="construct"
+            href="/(tools)"
+          />
           <NavigationCard
             title="Safety"
-            description="Report safety issues and concerns"
+            description="Report safety concerns and access safety resources"
             icon="shield-checkmark"
             href="/(safety)"
           />
-
           <NavigationCard
             title="Training"
             description="Access training materials and resources"
