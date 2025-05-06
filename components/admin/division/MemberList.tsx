@@ -124,6 +124,7 @@ const MemberItem = React.memo(
 
 export function MemberList({ onEditMember }: MemberListProps) {
   const { width } = useWindowDimensions();
+  const isMobileView = width < 768;
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const themeTintColor = useThemeColor({}, "tint");
   const listRef = useRef<VirtualizedList<MemberData>>(null);
@@ -306,8 +307,8 @@ export function MemberList({ onEditMember }: MemberListProps) {
 
   return (
     <ThemedView style={styles.container}>
-      <View style={styles.controls}>
-        <View style={styles.searchInputWrapper}>
+      <View style={[styles.controls, isMobileView && styles.mobileControls]}>
+        <View style={[styles.searchInputWrapper, isMobileView && styles.mobileSearchInputWrapper]}>
           <TextInput
             style={[styles.searchInput, { color: Colors[colorScheme].text }]}
             placeholder="Search members..."
@@ -325,7 +326,7 @@ export function MemberList({ onEditMember }: MemberListProps) {
             </TouchableOpacityComponent>
           )}
         </View>
-        <View style={styles.toggleWrapper}>
+        <View style={[styles.toggleWrapper, isMobileView && styles.mobileToggleWrapper]}>
           <ThemedText style={styles.toggleLabel}>Show In-Active</ThemedText>
           <Switch
             trackColor={{ false: Colors[colorScheme].border, true: themeTintColor }}
@@ -389,22 +390,32 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 16,
   },
+  mobileControls: {
+    flexDirection: "column",
+    alignItems: "stretch",
+    paddingTop: 12,
+    gap: 1,
+  },
   searchInputWrapper: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
     position: "relative",
   },
+  mobileSearchInputWrapper: {
+    flex: 0,
+    paddingTop: 8,
+  },
   searchInput: {
     flex: 1,
     height: 40,
     borderWidth: 1,
-    borderColor: "#ccc",
+    borderColor: Colors.dark.border,
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingRight: 40,
     ...(Platform.OS === "web" && {
-      outlineColor: Colors.light.tint,
+      outlineColor: Colors.dark.border,
       outlineWidth: 0,
     }),
   },
@@ -429,6 +440,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "flex-end",
     paddingRight: 8,
+  },
+  mobileToggleWrapper: {
+    flex: 0,
+    justifyContent: "space-between",
+    paddingRight: 0,
   },
   toggleLabel: {
     marginRight: 10,
@@ -504,8 +520,8 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: Colors.light.border,
-    backgroundColor: Colors.light.background,
+    borderColor: Colors.dark.border,
+    backgroundColor: Colors.dark.card,
     flexDirection: "column",
     alignItems: "stretch",
   },
