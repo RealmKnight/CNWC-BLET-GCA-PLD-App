@@ -1025,6 +1025,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     padding: 16,
+    backgroundColor: Colors.dark.card,
   } as ViewStyle,
   header: {
     marginBottom: 20,
@@ -1058,7 +1059,7 @@ const styles = StyleSheet.create({
       width: "100%",
       overflowX: "auto",
       borderWidth: 1,
-      borderColor: Colors.light.border,
+      borderColor: Colors.dark.border,
       borderRadius: 8,
       marginTop: 16,
     } as ViewStyle,
@@ -1068,7 +1069,7 @@ const styles = StyleSheet.create({
     web: {
       width: "100%",
       borderCollapse: "collapse",
-      backgroundColor: Colors.light.background,
+      backgroundColor: Colors.dark.background,
     } as ViewStyle,
     default: {} as ViewStyle,
   }),
@@ -1077,9 +1078,9 @@ const styles = StyleSheet.create({
       transition: "background-color 0.3s ease",
       cursor: "pointer",
       borderBottomWidth: 1,
-      borderBottomColor: Colors.light.border,
+      borderBottomColor: Colors.dark.border,
       "&:hover": {
-        backgroundColor: Colors.light.secondary,
+        backgroundColor: Colors.dark.secondary,
       },
     } as ViewStyle,
     default: {} as ViewStyle,
@@ -1087,11 +1088,11 @@ const styles = StyleSheet.create({
   listItem: {
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.light.border,
+    borderBottomColor: Colors.dark.border,
     cursor: "pointer",
   } as ViewStyle,
   highlightedListItem: {
-    backgroundColor: Colors.light.secondary,
+    backgroundColor: Colors.dark.secondary,
   } as ViewStyle,
   listItemContent: {
     flexDirection: "row",
@@ -1114,7 +1115,7 @@ const styles = StyleSheet.create({
     marginTop: 20,
   } as ViewStyle,
   error: {
-    color: Colors.light.error,
+    color: Colors.dark.error,
     textAlign: "center",
     marginTop: 20,
   } as TextStyle,
@@ -1125,10 +1126,10 @@ const styles = StyleSheet.create({
     cursor: "pointer",
     userSelect: "none",
     padding: 8,
-    backgroundColor: Colors.light.background,
+    backgroundColor: Colors.dark.background,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.light.border,
-    color: Colors.light.text,
+    borderBottomColor: Colors.dark.border,
+    color: Colors.dark.text,
     fontWeight: "bold",
     textAlign: "left",
   } as ViewStyle,
@@ -1137,7 +1138,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.light.border,
+    borderBottomColor: Colors.dark.border,
   } as ViewStyle,
   listHeaderItem: {
     flex: 1,
@@ -1147,7 +1148,7 @@ const styles = StyleSheet.create({
   tableCell: Platform.select({
     web: {
       padding: 12,
-      color: Colors.light.text,
+      color: Colors.dark.text,
     } as ViewStyle,
     default: {} as ViewStyle,
   }),
@@ -1163,14 +1164,14 @@ const styles = StyleSheet.create({
     height: 24,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: Colors.light.textDim,
+    borderColor: Colors.dark.textDim,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "transparent",
   } as ViewStyle,
   clearIconText: {
     fontSize: 14,
-    color: Colors.light.textDim,
+    color: Colors.dark.textDim,
     fontWeight: "bold",
   } as TextStyle,
   noResultsContainer: {
@@ -1185,7 +1186,7 @@ const styles = StyleSheet.create({
   } as TextStyle,
   noResultsSubText: {
     fontSize: 16,
-    color: Colors.light.textDim,
+    color: Colors.dark.textDim,
   } as TextStyle,
 });
 
