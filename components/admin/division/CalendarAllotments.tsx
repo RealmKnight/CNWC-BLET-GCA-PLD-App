@@ -814,6 +814,7 @@ const styles = StyleSheet.create({
   },
   yearContainer: {
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
     marginBottom: 12,
     backgroundColor: Colors.dark.card,

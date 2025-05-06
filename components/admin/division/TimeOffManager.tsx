@@ -320,30 +320,30 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
         <View style={styles.yearSelectorAndButtonContainer}>
           <View style={styles.yearSelectorContent}>
             <ThemedText style={styles.yearSelectorLabel}>View/Edit Time Off for:</ThemedText>
-            <View style={styles.yearButtonsContainer}>
-              <TouchableOpacity
-                style={[styles.yearButton, selectedTimeOffYear === "current" && styles.selectedYearButton]}
-                onPress={() => handleYearChange("current")}
-                disabled={isTimeOffLoading}
+          </View>
+          <View style={styles.yearButtonsContainer}>
+            <TouchableOpacity
+              style={[styles.yearButton, selectedTimeOffYear === "current" && styles.selectedYearButton]}
+              onPress={() => handleYearChange("current")}
+              disabled={isTimeOffLoading}
+            >
+              <ThemedText
+                style={[styles.yearButtonText, selectedTimeOffYear === "current" && styles.selectedYearButtonText]}
               >
-                <ThemedText
-                  style={[styles.yearButtonText, selectedTimeOffYear === "current" && styles.selectedYearButtonText]}
-                >
-                  {currentYear} (Current)
-                </ThemedText>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.yearButton, selectedTimeOffYear === "next" && styles.selectedYearButton]}
-                onPress={() => handleYearChange("next")}
-                disabled={isTimeOffLoading}
+                {currentYear} (Current)
+              </ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.yearButton, selectedTimeOffYear === "next" && styles.selectedYearButton]}
+              onPress={() => handleYearChange("next")}
+              disabled={isTimeOffLoading}
+            >
+              <ThemedText
+                style={[styles.yearButtonText, selectedTimeOffYear === "next" && styles.selectedYearButtonText]}
               >
-                <ThemedText
-                  style={[styles.yearButtonText, selectedTimeOffYear === "next" && styles.selectedYearButtonText]}
-                >
-                  {currentYear + 1} (Next)
-                </ThemedText>
-              </TouchableOpacity>
-            </View>
+                {currentYear + 1} (Next)
+              </ThemedText>
+            </TouchableOpacity>
           </View>
           <TouchableOpacity
             style={[styles.saveAllButton, !hasChanges && styles.saveAllButtonDisabled]}
@@ -758,6 +758,7 @@ const styles = StyleSheet.create({
   yearSelectorAndButtonContainer: {
     flexDirection: "row",
     alignItems: "center",
+    flexWrap: "wrap",
     justifyContent: "space-between",
     width: "100%",
   } as const,
@@ -773,6 +774,8 @@ const styles = StyleSheet.create({
   },
   yearButtonsContainer: {
     flexDirection: "row",
+    flexWrap: "wrap",
+    paddingBottom: 4,
   },
   yearButton: {
     paddingHorizontal: 16,

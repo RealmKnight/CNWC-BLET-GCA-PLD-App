@@ -120,6 +120,87 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
     };
   }, [currentUser?.id, viewingDivisionId, refreshMessages]);
 
+  // --- Thread Grouping and Filtering ---
+  const getRootMessageId = (msg: AdminMessage): string => msg.parent_message_id || msg.id;
+
+  const filteredThreads = useMemo(() => {
+    const grouped = messages.reduce((acc, msg) => {
+      const rootId = getRootMessageId(msg);
+      if (!acc[rootId]) acc[rootId] = [];
+      acc[rootId].push(msg);
+      return acc;
+    }, {} as Record<string, AdminMessage[]>);
+
+    Object.values(grouped).forEach((thread) =>
+      thread.sort((a, b) => new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime())
+    );
+
+    return Object.values(grouped)
+      .filter((thread) => {
+        if (!thread || thread.length === 0) return false;
+        const isArchived = thread.some((msg) => msg.is_archived);
+        if (currentFilter === "archived") {
+          return isArchived;
+        } else {
+          return !isArchived;
+        }
+      })
+      .sort((threadA, threadB) => {
+        const lastMsgA = threadA[threadA.length - 1];
+        const lastMsgB = threadB[threadB.length - 1];
+        return new Date(lastMsgB.created_at ?? 0).getTime() - new Date(lastMsgA.created_at ?? 0).getTime();
+      });
+  }, [messages, currentFilter]);
+
+  // Effect to mark the latest message as read when a thread is selected
+  useEffect(() => {
+    const currentThreadId = selectedThreadId;
+    const selectedThread = currentThreadId
+      ? filteredThreads.find((t) => getRootMessageId(t[0]) === currentThreadId)
+      : null;
+
+    console.log(
+      `[renderMessageDetails] useEffect triggered. Thread ID: ${currentThreadId}, Thread length: ${
+        selectedThread?.length || 0
+      }`
+    );
+    if (selectedThread && selectedThread.length > 0) {
+      const latestMessage = selectedThread.reduce((latest, current) =>
+        new Date(current.created_at ?? 0) > new Date(latest.created_at ?? 0) ? current : latest
+      );
+
+      // Check if already marked in this session or already read in the store
+      const isAlreadyMarked = markedMessagesRef.current.has(latestMessage.id) || readStatusMap[latestMessage.id];
+
+      console.log(
+        `[renderMessageDetails] Found latest message: ${latestMessage.id}, from: ${
+          latestMessage.sender_role
+        }, created: ${latestMessage.created_at}, read: ${
+          readStatusMap[latestMessage.id] ? "yes" : "no"
+        }, marked in session: ${markedMessagesRef.current.has(latestMessage.id)}`
+      );
+
+      // Only mark as read if not already read and not already marked in this session
+      if (!isAlreadyMarked) {
+        // Add to our ref to prevent re-marking
+        markedMessagesRef.current.add(latestMessage.id);
+
+        console.log(
+          `[renderMessageDetails] Viewing thread ${currentThreadId}, marking latest message ${latestMessage.id} as read.`
+        );
+        markMessageAsRead(latestMessage.id).catch((err: any) => {
+          console.error("Failed to mark message as read on view:", err);
+        });
+      } else {
+        console.log(
+          `[renderMessageDetails] Message ${latestMessage.id} already marked as read or marked in this session. Skipping.`
+        );
+      }
+    } else {
+      console.log(`[renderMessageDetails] No messages in thread to mark as read.`);
+    }
+  }, [selectedThreadId, filteredThreads, markMessageAsRead, readStatusMap]);
+
   // Determine if user can select divisions
   const canSelectDivision = useMemo(
     () =>
@@ -170,38 +251,6 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
       fetchDivisions();
     }
   }, [canSelectDivision, viewingDivisionId]);
-
-  // --- Thread Grouping and Filtering ---
-  const getRootMessageId = (msg: AdminMessage): string => msg.parent_message_id || msg.id;
-
-  const filteredThreads = useMemo(() => {
-    const grouped = messages.reduce((acc, msg) => {
-      const rootId = getRootMessageId(msg);
-      if (!acc[rootId]) acc[rootId] = [];
-      acc[rootId].push(msg);
-      return acc;
-    }, {} as Record<string, AdminMessage[]>);
-
-    Object.values(grouped).forEach((thread) =>
-      thread.sort((a, b) => new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime())
-    );
-
-    return Object.values(grouped)
-      .filter((thread) => {
-        if (!thread || thread.length === 0) return false;
-        const isArchived = thread.some((msg) => msg.is_archived);
-        if (currentFilter === "archived") {
-          return isArchived;
-        } else {
-          return !isArchived;
-        }
-      })
-      .sort((threadA, threadB) => {
-        const lastMsgA = threadA[threadA.length - 1];
-        const lastMsgB = threadB[threadB.length - 1];
-        return new Date(lastMsgB.created_at ?? 0).getTime() - new Date(lastMsgA.created_at ?? 0).getTime();
-      });
-  }, [messages, currentFilter]);
 
   // --- Handlers ---
   const handleSelectThread = (threadId: string) => {
@@ -480,49 +529,6 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
     const selectedThread = currentThreadId
       ? filteredThreads.find((t) => getRootMessageId(t[0]) === currentThreadId)
       : null;
-
-    useEffect(() => {
-      console.log(
-        `[renderMessageDetails] useEffect triggered. Thread ID: ${currentThreadId}, Thread length: ${
-          selectedThread?.length || 0
-        }`
-      );
-      if (selectedThread && selectedThread.length > 0) {
-        const latestMessage = selectedThread.reduce((latest, current) =>
-          new Date(current.created_at ?? 0) > new Date(latest.created_at ?? 0) ? current : latest
-        );
-
-        // Check if already marked in this session or already read in the store
-        const isAlreadyMarked = markedMessagesRef.current.has(latestMessage.id) || readStatusMap[latestMessage.id];
-
-        console.log(
-          `[renderMessageDetails] Found latest message: ${latestMessage.id}, from: ${
-            latestMessage.sender_role
-          }, created: ${latestMessage.created_at}, read: ${
-            readStatusMap[latestMessage.id] ? "yes" : "no"
-          }, marked in session: ${markedMessagesRef.current.has(latestMessage.id)}`
-        );
-
-        // Only mark as read if not already read and not already marked in this session
-        if (!isAlreadyMarked) {
-          // Add to our ref to prevent re-marking
-          markedMessagesRef.current.add(latestMessage.id);
-
-          console.log(
-            `[renderMessageDetails] Viewing thread ${currentThreadId}, marking latest message ${latestMessage.id} as read.`
-          );
-          markMessageAsRead(latestMessage.id).catch((err: any) => {
-            console.error("Failed to mark message as read on view:", err);
-          });
-        } else {
-          console.log(
-            `[renderMessageDetails] Message ${latestMessage.id} already marked as read or marked in this session. Skipping.`
-          );
-        }
-      } else {
-        console.log(`[renderMessageDetails] No messages in thread to mark as read.`);
-      }
-    }, [currentThreadId, selectedThread, markMessageAsRead]);
 
     if (!isWideScreen && !selectedThread) {
       return null;
