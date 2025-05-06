@@ -814,7 +814,7 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
             <tfoot>
               <tr>
                 <td colspan="5" style="text-align: right; font-weight: bold;">TOTALS:</td>
-                <td style="text-align: center;">${totals.rawWeeksToBid} (${totals.ratioWeeksToBid})</td>
+                <td style="text-align: center;">Total weeks/weeks in the year: ${totals.rawWeeksToBid} (${totals.ratioWeeksToBid})</td>
                 <td style="text-align: center;"></td> <!-- Empty cell for PLDs total -->
                 <td style="text-align: center;">${totals.rawSingleDays} (${totals.ratioSingleDays}) (Total Single Days)</td>
               </tr>

@@ -41,47 +41,56 @@ function calculateVacationWeeks(
     companyHireDate: string | null | undefined,
     referenceDate: Date = new Date(),
 ): number {
-    if (!companyHireDate) return 0;
-    const hireDate = parseISO(companyHireDate);
-    if (!isValid(hireDate)) return 0;
-    const refDate = referenceDate;
-    let yearsOfService = refDate.getFullYear() - hireDate.getFullYear();
-    const hireMonth = hireDate.getMonth();
-    const refMonth = refDate.getMonth();
-    const hireDay = hireDate.getDate();
-    const refDay = refDate.getDate();
-    if (refMonth < hireMonth || (refMonth === hireMonth && refDay < hireDay)) {
-        yearsOfService--;
+    if (!companyHireDate) {
+        return 0; // Default value if no hire date is provided
     }
-    if (yearsOfService < 1) return 0;
-    if (yearsOfService >= 1 && yearsOfService <= 5) return 2;
-    if (yearsOfService >= 6 && yearsOfService <= 10) return 3;
-    if (yearsOfService >= 11 && yearsOfService <= 15) return 4;
-    if (yearsOfService >= 16 && yearsOfService <= 20) return 5;
-    if (yearsOfService >= 21) return 6;
-    return 0;
+
+    const hireDate = new Date(companyHireDate);
+    const referenceYear = referenceDate.getFullYear();
+
+    // Calculate years of service completed *at the end* of the reference year.
+    // If the anniversary falls within the reference year, this grants the higher entitlement for the whole year.
+    const yearsOfService = referenceYear - hireDate.getFullYear();
+
+    // Apply vacation week rules
+    if (yearsOfService < 2) return 1;
+    if (yearsOfService < 5) return 2;
+    if (yearsOfService < 14) return 3;
+    if (yearsOfService < 23) return 4;
+    return 5;
 }
 
 function calculatePLDs(
     companyHireDate: string | null | undefined,
     referenceDate: Date = new Date(),
 ): number {
-    if (!companyHireDate) return 0;
-    const hireDate = parseISO(companyHireDate);
-    if (!isValid(hireDate)) return 0;
-    const refDate = referenceDate;
-    let yearsOfService = refDate.getFullYear() - hireDate.getFullYear();
-    const hireMonth = hireDate.getMonth();
-    const refMonth = refDate.getMonth();
-    const hireDay = hireDate.getDate();
-    const refDay = refDate.getDate();
-    if (refMonth < hireMonth || (refMonth === hireMonth && refDay < hireDay)) {
-        yearsOfService--;
+    if (!companyHireDate) {
+        return 0; // Default value if no hire date is provided
     }
-    if (yearsOfService >= 1 && yearsOfService <= 5) return 2;
-    if (yearsOfService >= 6 && yearsOfService <= 10) return 3;
-    if (yearsOfService >= 11) return 4;
-    return 0;
+
+    const hireDate = new Date(companyHireDate);
+
+    // Calculate base years of service
+    let yearsOfService = referenceDate.getFullYear() - hireDate.getFullYear();
+
+    // Adjust if the anniversary in the reference year hasn't occurred yet
+    // compared to the reference date.
+    if (
+        referenceDate.getMonth() < hireDate.getMonth() ||
+        (referenceDate.getMonth() === hireDate.getMonth() &&
+            referenceDate.getDate() < hireDate.getDate())
+    ) {
+        yearsOfService--; // Decrement if anniversary is later in the year than referenceDate
+    }
+
+    // Ensure yearsOfService is not negative if hire date is in the future relative to referenceDate (edge case)
+    yearsOfService = Math.max(0, yearsOfService);
+
+    // Apply PLD rules based on completed years of service as of the reference date
+    if (yearsOfService < 3) return 5;
+    if (yearsOfService < 6) return 8;
+    if (yearsOfService < 10) return 11;
+    return 13;
 }
 
 function calculateWeeksToBid(
@@ -205,27 +214,27 @@ export async function generateWebPdf(
         ];
     });
 
+    // Create a single footer row that matches the TimeOffManager chart format exactly
     const footerRow: TableCell[] = [
-        {
-            text: "TOTALS:",
-            colSpan: 5,
-            style: "tableFooter",
-            alignment: "right",
-        },
-        {},
-        {},
-        {},
-        {},
+        { text: "TOTALS", style: "tableFooter" },
+        { text: "(Allocations)", style: "tableFooter", alignment: "center" },
+        { text: "", style: "tableFooter" },
+        { text: "Total", style: "tableFooter", alignment: "center" },
+        { text: "Weeks to Bid", style: "tableFooter", alignment: "center" },
         {
             text:
                 `${finalTotalsForPdf.rawWeeksToBid} (${finalTotalsForPdf.ratioWeeksToBid})`,
             style: "tableFooter",
             alignment: "center",
         },
-        { text: " ", style: "tableFooter" }, // Placeholder for PLDs column if individual total was needed
+        {
+            text: "Total\nSingle Days",
+            style: "tableFooter",
+            alignment: "center",
+        },
         {
             text:
-                `${finalTotalsForPdf.rawSingleDays} (${finalTotalsForPdf.ratioSingleDays}) (Total Single Days)`,
+                `${finalTotalsForPdf.rawSingleDays} (${finalTotalsForPdf.ratioSingleDays})`,
             style: "tableFooter",
             alignment: "center",
         },
