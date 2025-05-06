@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Platform,
   useWindowDimensions,
+  Alert,
 } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -24,13 +25,15 @@ import type { Member } from "@/store/adminCalendarManagementStore";
 import type { Calendar } from "@/types/calendar";
 import { CalendarFilter } from "./CalendarFilter";
 import { supabase } from "@/utils/supabase";
+import * as Print from "expo-print";
+import * as Sharing from "expo-sharing";
 
 interface TimeOffManagerProps {
   selectedDivision: string;
   selectedCalendarId: string | null;
 }
 
-type YearType = "current" | "next";
+export type YearType = "current" | "next";
 
 export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOffManagerProps) {
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
@@ -45,6 +48,7 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
   const [availableCalendars, setAvailableCalendars] = useState<Calendar[]>([]);
   const [isCalendarsLoading, setIsCalendarsLoading] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
   // Use store state and actions
   const {
@@ -414,7 +418,7 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
 
   // Render table rows
   const renderTableRows = () => {
-    if (isTimeOffLoading) {
+    if (isTimeOffLoading && !isGeneratingPdf) {
       return (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={Colors[colorScheme].tint} />
@@ -433,7 +437,11 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
       );
     }
 
-    return filteredMembers.map((member: Member) => {
+    // Track totals as we iterate through members
+    let totalWeeksToBid = 0;
+    let totalSingleDays = 0;
+
+    const memberRows = filteredMembers.map((member: Member) => {
       const isCurrentYear = selectedTimeOffYear === "current";
       const pinChanges = timeOffChanges[member.pin_number] || {};
 
@@ -482,6 +490,10 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
       // Determine displayed PLDs (use calculated value for the selected year)
       // Assuming PLDs aren't directly editable here, so no need to check timeOffChanges
       const displayPlds = calculatedPlds;
+
+      // Add to running totals
+      totalWeeksToBid += weeksToBid;
+      totalSingleDays += displayPlds + sdvs;
 
       // Check if this member has any changes
       const hasChangesForMember = !!timeOffChanges[member.pin_number];
@@ -583,6 +595,40 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
         </View>
       );
     });
+
+    // Calculate totals as requested
+    const calculatedWeeksToBidRatio = Math.ceil((totalWeeksToBid / 52) * 100) / 100;
+    const calculatedSingleDaysRatio = Math.ceil((totalSingleDays / 365) * 100) / 100;
+
+    // Store these for PDF generation as well
+    const overallTotalsForPdf = {
+      rawWeeksToBid: totalWeeksToBid,
+      ratioWeeksToBid: calculatedWeeksToBidRatio,
+      rawSingleDays: totalSingleDays,
+      ratioSingleDays: calculatedSingleDaysRatio,
+    };
+
+    // Add totals row
+    return [
+      ...memberRows,
+      <View key="totals-row" style={[styles.tableRow, styles.totalsRow]}>
+        <ThemedText style={[styles.cell, styles.totalsCell, { flex: isMobile ? 2.5 : 2, fontWeight: "bold" }]}>
+          TOTALS
+        </ThemedText>
+        {!isMobile && <ThemedText style={[styles.cell, { textAlign: "center" }]}>(Allocations)</ThemedText>}
+        {!isMobile && <ThemedText style={[styles.cell, { flex: 1.5 }]}></ThemedText>}
+        <ThemedText style={[styles.cell, { textAlign: "center" }]}>Total </ThemedText>
+        <ThemedText style={[styles.cell, { textAlign: "center" }]}>Weeks to Bid</ThemedText>
+        <ThemedText style={[styles.cell, styles.totalsCell, { textAlign: "center" }]}>
+          {`${totalWeeksToBid} (${calculatedWeeksToBidRatio})`}
+        </ThemedText>
+        <ThemedText style={[styles.cell, { textAlign: "center" }]}>Total </ThemedText>
+        <ThemedText style={[styles.cell, { textAlign: "center" }]}>Single Days</ThemedText>
+        <ThemedText style={[styles.cell, styles.totalsCell, { width: 60, textAlign: "center" }]}>
+          {`${totalSingleDays} (${calculatedSingleDaysRatio})`}
+        </ThemedText>
+      </View>,
+    ];
   };
 
   // Add this new handler function before the return statement
@@ -668,6 +714,237 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
     setSelectedTimeOffYear(year);
   };
 
+  // Helper function to generate HTML for PDF
+  const generatePdfHtml = (
+    title: string,
+    membersToPrint: Member[],
+    yearForPdf: YearType,
+    currentChanges: Record<number, any>,
+    totals: { rawWeeksToBid: number; ratioWeeksToBid: number; rawSingleDays: number; ratioSingleDays: number }
+  ): string => {
+    let tableRowsHtml = "";
+    membersToPrint.forEach((member) => {
+      const isCurrent = yearForPdf === "current";
+      const pinChanges = currentChanges[member.pin_number] || {};
+
+      const currentReferenceDate = new Date();
+      const nextReferenceDate = new Date();
+      nextReferenceDate.setFullYear(currentReferenceDate.getFullYear() + 1);
+      const referenceDate = isCurrent ? currentReferenceDate : nextReferenceDate;
+
+      const calculatedVacationWeeksVal = calculateVacationWeeks(member.company_hire_date, referenceDate);
+      const calculatedPldsVal = calculatePLDs(member.company_hire_date, referenceDate);
+
+      const vacationWeeksVal = isCurrent
+        ? pinChanges.curr_vacation_weeks !== undefined
+          ? pinChanges.curr_vacation_weeks
+          : calculatedVacationWeeksVal
+        : pinChanges.next_vacation_weeks !== undefined
+        ? pinChanges.next_vacation_weeks
+        : calculatedVacationWeeksVal;
+
+      const originalVacationSplitVal = isCurrent ? member.curr_vacation_split : member.next_vacation_split;
+      const vacationSplitVal = isCurrent
+        ? pinChanges.curr_vacation_split !== undefined
+          ? pinChanges.curr_vacation_split
+          : originalVacationSplitVal
+        : pinChanges.next_vacation_split !== undefined
+        ? pinChanges.next_vacation_split
+        : originalVacationSplitVal;
+
+      let sdvsVal: number;
+      if (isCurrent) {
+        sdvsVal = pinChanges.sdv_entitlement !== undefined ? pinChanges.sdv_entitlement : member.sdv_entitlement;
+      } else {
+        sdvsVal = pinChanges.sdv_election !== undefined ? pinChanges.sdv_election : member.sdv_election;
+      }
+      const weeksToBidVal = calculateWeeksToBid(vacationWeeksVal, vacationSplitVal);
+      const displayPldsVal = calculatedPldsVal;
+
+      tableRowsHtml += `
+        <tr>
+          <td>${member.first_name} ${member.last_name}</td>
+          <td style="text-align: center;">${member.pin_number}</td>
+          <td style="text-align: center;">${new Date(member.company_hire_date).toLocaleDateString()}</td>
+          <td style="text-align: center;">${vacationWeeksVal}</td>
+          <td style="text-align: center;">${vacationSplitVal}</td>
+          <td style="text-align: center;">${weeksToBidVal}</td>
+          <td style="text-align: center;">${displayPldsVal}</td>
+          <td style="text-align: center;">${sdvsVal}</td>
+        </tr>
+      `;
+    });
+
+    return `
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <title>${title}</title>
+          <style>
+            body { font-family: Helvetica, Arial, sans-serif; margin: 20px; background-color: #ffffff; color: #000000; }
+            h1 { text-align: center; margin-bottom: 20px; font-size: 18px; }
+            table { width: 100%; border-collapse: collapse; font-size: 10px; }
+            th, td { border: 1px solid #cccccc; padding: 6px; text-align: left; }
+            th { background-color: #f0f0f0; font-weight: bold; }
+            tfoot td { font-weight: bold; background-color: #f9f9f9; }
+            @media print {
+              thead { display: table-header-group; } /* Repeat header on each page */
+              tfoot { display: table-footer-group; } /* Repeat footer on each page if needed, though sums are usually at the end */
+            }
+          </style>
+        </head>
+        <body>
+          <h1>${title}</h1>
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th style="text-align: center;">PIN</th>
+                <th style="text-align: center;">Hire Date</th>
+                <th style="text-align: center;">Vac Weeks</th>
+                <th style="text-align: center;">Vac Split</th>
+                <th style="text-align: center;">Weeks to Bid</th>
+                <th style="text-align: center;">PLDs</th>
+                <th style="text-align: center;">SDVs</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tableRowsHtml}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colspan="5" style="text-align: right; font-weight: bold;">TOTALS:</td>
+                <td style="text-align: center;">${totals.rawWeeksToBid} (${totals.ratioWeeksToBid})</td>
+                <td style="text-align: center;"></td> <!-- Empty cell for PLDs total -->
+                <td style="text-align: center;">${totals.rawSingleDays} (${totals.ratioSingleDays}) (Total Single Days)</td>
+              </tr>
+            </tfoot>
+          </table>
+        </body>
+      </html>
+    `;
+  };
+
+  // Handle PDF Download
+  const handleDownloadPdf = async () => {
+    setIsGeneratingPdf(true);
+
+    // Confirmation dialog
+    if (!selectedFilterCalendarId && availableCalendars.length > 1) {
+      const userConfirmed = await new Promise<boolean>((resolve) => {
+        Alert.alert(
+          "Confirm PDF Scope",
+          "You have not selected a specific calendar, and this division has multiple calendars. The PDF will include data for all calendars in this division. Do you want to proceed?",
+          [
+            { text: "Cancel", onPress: () => resolve(false), style: "cancel" },
+            { text: "Proceed", onPress: () => resolve(true) },
+          ],
+          { cancelable: false }
+        );
+      });
+      if (!userConfirmed) {
+        setIsGeneratingPdf(false);
+        return;
+      }
+    }
+
+    let pdfTitle = `${selectedDivision} Calendar`;
+    if (selectedFilterCalendarId) {
+      const calendar = availableCalendars.find((c) => c.id === selectedFilterCalendarId);
+      if (calendar) {
+        pdfTitle = `${selectedDivision} - ${calendar.name} Calendar`;
+      }
+    }
+    pdfTitle += ` (${selectedTimeOffYear === "current" ? new Date().getFullYear() : new Date().getFullYear() + 1})`;
+
+    // Recalculate totals based on the currently filtered members for the PDF
+    let currentTotalWeeksToBid = 0;
+    let currentTotalSingleDays = 0;
+
+    filteredMembers.forEach((member: Member) => {
+      const isCurrent = selectedTimeOffYear === "current";
+      const pinChanges = timeOffChanges[member.pin_number] || {};
+      const currentReferenceDate = new Date();
+      const nextReferenceDate = new Date();
+      nextReferenceDate.setFullYear(currentReferenceDate.getFullYear() + 1);
+      const referenceDate = isCurrent ? currentReferenceDate : nextReferenceDate;
+
+      const calculatedVacationWeeksVal = calculateVacationWeeks(member.company_hire_date, referenceDate);
+      const calculatedPldsVal = calculatePLDs(member.company_hire_date, referenceDate);
+
+      const vacationWeeksVal = isCurrent
+        ? pinChanges.curr_vacation_weeks !== undefined
+          ? pinChanges.curr_vacation_weeks
+          : calculatedVacationWeeksVal
+        : pinChanges.next_vacation_weeks !== undefined
+        ? pinChanges.next_vacation_weeks
+        : calculatedVacationWeeksVal;
+      const originalVacationSplitVal = isCurrent ? member.curr_vacation_split : member.next_vacation_split;
+      const vacationSplitVal = isCurrent
+        ? pinChanges.curr_vacation_split !== undefined
+          ? pinChanges.curr_vacation_split
+          : originalVacationSplitVal
+        : pinChanges.next_vacation_split !== undefined
+        ? pinChanges.next_vacation_split
+        : originalVacationSplitVal;
+      let sdvsVal: number;
+      if (isCurrent) {
+        sdvsVal = pinChanges.sdv_entitlement !== undefined ? pinChanges.sdv_entitlement : member.sdv_entitlement;
+      } else {
+        sdvsVal = pinChanges.sdv_election !== undefined ? pinChanges.sdv_election : member.sdv_election;
+      }
+      const weeksToBidVal = calculateWeeksToBid(vacationWeeksVal, vacationSplitVal);
+      const displayPldsVal = calculatedPldsVal;
+
+      currentTotalWeeksToBid += weeksToBidVal;
+      currentTotalSingleDays += displayPldsVal + sdvsVal;
+    });
+
+    const finalTotalsForPdf = {
+      rawWeeksToBid: currentTotalWeeksToBid,
+      ratioWeeksToBid: Math.ceil((currentTotalWeeksToBid / 52) * 100) / 100,
+      rawSingleDays: currentTotalSingleDays,
+      ratioSingleDays: Math.ceil((currentTotalSingleDays / 365) * 100) / 100,
+    };
+
+    const htmlContent = generatePdfHtml(
+      pdfTitle,
+      filteredMembers,
+      selectedTimeOffYear,
+      timeOffChanges,
+      finalTotalsForPdf
+    );
+
+    try {
+      if (Platform.OS === "web") {
+        // Web: Use jsPDF and jspdf-autotable for better PDF generation
+        // Dynamically import the web-specific PDF generator
+        // @ts-expect-error Metro will resolve this to pdfGenerator.web.ts for web builds
+        const { generateWebPdf } = await import("./pdfGenerator");
+        await generateWebPdf(pdfTitle, filteredMembers, selectedTimeOffYear, timeOffChanges, finalTotalsForPdf);
+      } else {
+        // Native (iOS/Android) - use existing expo-print with HTML
+        const { uri } = await Print.printToFileAsync({ html: htmlContent });
+        console.log("File has been saved to:", uri);
+        if (!(await Sharing.isAvailableAsync())) {
+          alert("Uh oh, sharing isn't available on your platform");
+          setIsGeneratingPdf(false);
+          return;
+        }
+        await Sharing.shareAsync(uri, {
+          mimeType: "application/pdf",
+          dialogTitle: "Download Time Off Data",
+          UTI: ".pdf",
+        });
+      }
+    } catch (error) {
+      console.error("Error generating PDF:", error);
+      Alert.alert("Error", "Could not generate PDF. Please try again.");
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  };
+
   return (
     <ThemedView style={styles.container}>
       <View style={styles.header}>
@@ -708,10 +985,25 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
                 </ScrollView>
               </View>
             </View>
-            <View style={styles.bottomSaveButtonContainer}>
+            <View style={styles.bottomActionContainer}>
               <TouchableOpacity
-                style={[styles.saveAllButton, !hasChanges && styles.saveAllButtonDisabled]}
-                disabled={!hasChanges || isTimeOffLoading}
+                style={[styles.downloadPdfButton, isGeneratingPdf && styles.downloadPdfButtonDisabled]}
+                disabled={isGeneratingPdf || isTimeOffLoading}
+                onPress={handleDownloadPdf}
+              >
+                {isGeneratingPdf ? (
+                  <ActivityIndicator size="small" color={Colors[colorScheme].text} />
+                ) : (
+                  <>
+                    <Ionicons name="download-outline" size={18} color={Colors[colorScheme].text} />
+                    <ThemedText style={styles.downloadPdfButtonText}>Download PDF</ThemedText>
+                  </>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.saveAllButton, (!hasChanges || isGeneratingPdf) && styles.saveAllButtonDisabled]}
+                disabled={!hasChanges || isTimeOffLoading || isGeneratingPdf}
                 onPress={handleSaveAllChanges}
               >
                 {isTimeOffLoading ? (
@@ -943,9 +1235,39 @@ const styles = StyleSheet.create({
   saveAllButtonTextDisabled: {
     color: Colors.dark.textDim,
   } as const,
-  bottomSaveButtonContainer: {
+  bottomActionContainer: {
     position: "relative",
-    alignItems: "flex-end",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     paddingTop: 16,
   } as const,
+  totalsRow: {
+    backgroundColor: Colors.dark.card,
+    borderTopWidth: 1,
+    borderTopColor: Colors.dark.border,
+  },
+  totalsCell: {
+    fontWeight: "600",
+  },
+  downloadPdfButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: Colors.dark.card,
+    borderColor: Colors.dark.tint,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  downloadPdfButtonDisabled: {
+    backgroundColor: Colors.dark.border,
+    borderColor: Colors.dark.border,
+  },
+  downloadPdfButtonText: {
+    color: Colors.dark.text,
+    marginLeft: 8,
+    fontSize: 14,
+    fontWeight: "500",
+  },
 });
