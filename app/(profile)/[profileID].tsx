@@ -20,7 +20,7 @@ import Toast from "react-native-toast-message";
 import { ChangePasswordModal } from "@/components/ui/ChangePasswordModal";
 
 type Member = Database["public"]["Tables"]["members"]["Row"];
-type ContactPreference = "phone" | "text" | "email" | "push";
+type ContactPreference = "in_app" | "phone" | "text" | "email" | "push";
 type ColorScheme = keyof typeof Colors;
 
 interface UserPreferences {
@@ -33,22 +33,26 @@ interface UserPreferences {
   updated_at: string;
 }
 
-// SMS Confirmation Modal
-function SMSConfirmationModal({
+// Base Confirmation Modal component to be reused for all notification types
+function NotificationConfirmationModal({
   visible,
   onClose,
   onConfirm,
+  title,
+  children,
 }: {
   visible: boolean;
   onClose: () => void;
   onConfirm: () => void;
+  title: string;
+  children: React.ReactNode;
 }) {
   const theme = (useColorScheme() ?? "light") as ColorScheme;
   const [hasScrolledToBottom, setHasScrolledToBottom] = useState(false);
 
   const handleScroll = (event: any) => {
     const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
-    const paddingToBottom = 20; // Add some padding to the bottom
+    const paddingToBottom = 20;
     const isScrolledToBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - paddingToBottom;
 
     if (isScrolledToBottom && !hasScrolledToBottom) {
@@ -56,7 +60,6 @@ function SMSConfirmationModal({
     }
   };
 
-  // Reset scroll state when modal closes
   useEffect(() => {
     if (!visible) {
       setHasScrolledToBottom(false);
@@ -68,44 +71,14 @@ function SMSConfirmationModal({
       <ThemedView style={styles.modalOverlay}>
         <ThemedView style={styles.modalContent}>
           <ThemedView style={styles.modalHeader}>
-            <ThemedText type="title">SMS Notifications Opt-In</ThemedText>
+            <ThemedText type="title">{title}</ThemedText>
             <TouchableOpacity onPress={onClose} style={styles.closeButton}>
               <Ionicons name="close" size={24} color={Colors[theme].text} />
             </TouchableOpacity>
           </ThemedView>
 
           <ScrollView style={styles.confirmationScrollContent} onScroll={handleScroll} scrollEventThrottle={16}>
-            <ThemedText style={styles.confirmationTitle}>
-              By enabling SMS notifications, you agree to receive:
-            </ThemedText>
-
-            <ThemedView style={styles.bulletContainer}>
-              <ThemedText style={styles.bulletItem}>• Alerts and important union announcements</ThemedText>
-              <ThemedText style={styles.bulletItem}>• Request approval/denial notifications</ThemedText>
-              <ThemedText style={styles.bulletItem}>• Waitlist position changes</ThemedText>
-              <ThemedText style={styles.bulletItem}>• Meeting notices and reminders</ThemedText>
-              <ThemedText style={styles.bulletItem}>• Other important app-related notifications</ThemedText>
-            </ThemedView>
-
-            <ThemedText style={styles.confirmationText}>
-              You may receive up to 10 (or more) messages per month. In some cases, multiple messages may be sent in a
-              single day.
-            </ThemedText>
-
-            <ThemedText style={styles.confirmationText}>
-              Message and data rates may apply based on your wireless carrier plan. No additional fees are charged by
-              our service.
-            </ThemedText>
-
-            <ThemedText style={styles.confirmationText}>
-              You can opt-out at any time by replying STOP to any message or by changing your contact preference in the
-              app.
-            </ThemedText>
-
-            <ThemedText style={styles.confirmationText}>
-              By tapping "I Agree" below, you consent to receive SMS messages from BLET PLD App for the purposes
-              described above.
-            </ThemedText>
+            {children}
 
             {!hasScrolledToBottom && (
               <ThemedView style={styles.scrollIndicatorContainer}>
@@ -134,6 +107,112 @@ function SMSConfirmationModal({
         </ThemedView>
       </ThemedView>
     </Modal>
+  );
+}
+
+// SMS Confirmation Modal Content
+function SMSConfirmationContent() {
+  return (
+    <>
+      <ThemedText style={styles.confirmationTitle}>By enabling SMS notifications, you agree to receive:</ThemedText>
+
+      <ThemedView style={styles.bulletContainer}>
+        <ThemedText style={styles.bulletItem}>• Alerts and important union announcements</ThemedText>
+        <ThemedText style={styles.bulletItem}>• Request approval/denial notifications</ThemedText>
+        <ThemedText style={styles.bulletItem}>• Waitlist position changes</ThemedText>
+        <ThemedText style={styles.bulletItem}>• Meeting notices and reminders</ThemedText>
+        <ThemedText style={styles.bulletItem}>• Other important app-related notifications</ThemedText>
+      </ThemedView>
+
+      <ThemedText style={styles.confirmationText}>
+        You may receive up to 10 (or more) messages per month. In some cases, multiple messages may be sent in a single
+        day.
+      </ThemedText>
+
+      <ThemedText style={styles.confirmationText}>
+        Message and data rates may apply based on your wireless carrier plan. No additional fees are charged by our
+        service.
+      </ThemedText>
+
+      <ThemedText style={styles.confirmationText}>
+        You can opt-out at any time by replying STOP to any message or by changing your contact preference in the app.
+      </ThemedText>
+
+      <ThemedText style={styles.confirmationText}>
+        By tapping "I Agree" below, you consent to receive SMS messages from BLET PLD App for the purposes described
+        above.
+      </ThemedText>
+    </>
+  );
+}
+
+// Email Confirmation Modal Content
+function EmailConfirmationContent() {
+  return (
+    <>
+      <ThemedText style={styles.confirmationTitle}>By enabling Email notifications, you agree to receive:</ThemedText>
+
+      <ThemedView style={styles.bulletContainer}>
+        <ThemedText style={styles.bulletItem}>• Alerts and important union announcements</ThemedText>
+        <ThemedText style={styles.bulletItem}>• Request approval/denial notifications</ThemedText>
+        <ThemedText style={styles.bulletItem}>• Waitlist position changes</ThemedText>
+        <ThemedText style={styles.bulletItem}>• Meeting notices and reminders</ThemedText>
+        <ThemedText style={styles.bulletItem}>• Other important app-related notifications</ThemedText>
+      </ThemedView>
+
+      <ThemedText style={styles.confirmationText}>
+        You may receive up to 10 (or more) emails per month. In some cases, multiple emails may be sent in a single day.
+      </ThemedText>
+
+      <ThemedText style={styles.confirmationText}>
+        Emails will be sent from notifications@bletcnwcgca.org using our email service provider.
+      </ThemedText>
+
+      <ThemedText style={styles.confirmationText}>
+        You can opt-out at any time by clicking the unsubscribe link in any email or by changing your contact preference
+        in the app.
+      </ThemedText>
+
+      <ThemedText style={styles.confirmationText}>
+        By tapping "I Agree" below, you consent to receive emails from BLET PLD App for the purposes described above.
+      </ThemedText>
+    </>
+  );
+}
+
+// Push Confirmation Modal Content
+function PushConfirmationContent() {
+  return (
+    <>
+      <ThemedText style={styles.confirmationTitle}>By enabling Push notifications, you agree to receive:</ThemedText>
+
+      <ThemedView style={styles.bulletContainer}>
+        <ThemedText style={styles.bulletItem}>• Alerts and important union announcements</ThemedText>
+        <ThemedText style={styles.bulletItem}>• Request approval/denial notifications</ThemedText>
+        <ThemedText style={styles.bulletItem}>• Waitlist position changes</ThemedText>
+        <ThemedText style={styles.bulletItem}>• Meeting notices and reminders</ThemedText>
+        <ThemedText style={styles.bulletItem}>• Other important app-related notifications</ThemedText>
+      </ThemedView>
+
+      <ThemedText style={styles.confirmationText}>
+        You may receive up to 10 (or more) push notifications per month. In some cases, multiple notifications may be
+        sent in a single day.
+      </ThemedText>
+
+      <ThemedText style={styles.confirmationText}>
+        Push notifications require granting notification permissions to this app on your device.
+      </ThemedText>
+
+      <ThemedText style={styles.confirmationText}>
+        You can opt-out at any time by changing your device notification settings or by changing your contact preference
+        in the app.
+      </ThemedText>
+
+      <ThemedText style={styles.confirmationText}>
+        By tapping "I Agree" below, you consent to receive push notifications from BLET PLD App for the purposes
+        described above.
+      </ThemedText>
+    </>
   );
 }
 
@@ -533,8 +612,14 @@ export default function ProfileScreen() {
   const [isDateOfBirthModalVisible, setIsDateOfBirthModalVisible] = useState(false);
   const [isDeviceMobile] = useState(Platform.OS !== "web");
   const [isPasswordModalVisible, setIsPasswordModalVisible] = useState(false);
+
+  // Notification confirmation modals
   const [isSMSConfirmationVisible, setIsSMSConfirmationVisible] = useState(false);
-  const [pendingSMSConfirmation, setPendingSMSConfirmation] = useState(false);
+  const [isEmailConfirmationVisible, setIsEmailConfirmationVisible] = useState(false);
+  const [isPushConfirmationVisible, setIsPushConfirmationVisible] = useState(false);
+
+  // Pending preference selection
+  const [pendingPreference, setPendingPreference] = useState<ContactPreference | null>(null);
 
   // Determine if the logged-in user is viewing their own profile
   const isOwnProfile = session?.user?.id === profile?.id;
@@ -654,7 +739,7 @@ export default function ProfileScreen() {
         .insert({
           user_id: userId,
           pin_number: pinNumber,
-          contact_preference: "email", // Default preference
+          contact_preference: "in_app", // Default to in-app only
           push_token: null,
         })
         .select()
@@ -665,14 +750,22 @@ export default function ProfileScreen() {
       console.log("[ProfileScreen] Default preferences created.");
     } catch (error) {
       console.error("Error creating default preferences:", error);
-      // Don't alert here, handle silently or show subtle error
     }
   };
 
   const handleUpdatePreference = async (preference: ContactPreference) => {
     if (!isOwnProfile || !profile || !profile.pin_number || !session?.user?.id) return;
 
-    // If user selected text preference, show the confirmation dialog
+    // Set the pending preference
+    setPendingPreference(preference);
+
+    // For in-app, immediately apply the change without confirmation
+    if (preference === "in_app") {
+      await applyPreferenceChange(preference);
+      return;
+    }
+
+    // For text preference, validate phone number first
     if (preference === "text") {
       // Check if user has phone number
       if (!phoneNumber || phoneNumber.length !== 10) {
@@ -685,12 +778,40 @@ export default function ProfileScreen() {
       }
 
       // Show SMS confirmation modal
-      setPendingSMSConfirmation(true);
       setIsSMSConfirmationVisible(true);
       return;
     }
 
-    // For other preferences (email, push), continue with the regular flow
+    // For email preference
+    if (preference === "email") {
+      // Validate email
+      if (!user?.email) {
+        Alert.alert("Email Required", "A valid email is required to receive email notifications.");
+        return;
+      }
+
+      // Show email confirmation modal
+      setIsEmailConfirmationVisible(true);
+      return;
+    }
+
+    // For push preference
+    if (preference === "push") {
+      if (!isDeviceMobile) {
+        Alert.alert("Error", "Push notifications are only available on mobile devices");
+        return;
+      }
+
+      // Show push confirmation modal
+      setIsPushConfirmationVisible(true);
+      return;
+    }
+  };
+
+  // Function to apply the preference change after confirmation
+  const applyPreferenceChange = async (preference: ContactPreference) => {
+    if (!profile || !session?.user?.id) return;
+
     const userId = session.user.id;
     const pinNumber = profile.pin_number;
     let updatedToken: string | null = userPreferences?.push_token || null;
@@ -698,11 +819,8 @@ export default function ProfileScreen() {
     console.log(`[ProfileScreen] Updating preference to ${preference} for user ${userId}`);
 
     try {
+      // Handle push notifications differently
       if (preference === "push") {
-        if (!isDeviceMobile) {
-          Alert.alert("Error", "Push notifications are only available on mobile devices");
-          return;
-        }
         const token = await registerForPushNotificationsAsync();
         if (!token) {
           Alert.alert("Error", "Failed to setup push notifications. Please check settings.");
@@ -718,13 +836,11 @@ export default function ProfileScreen() {
         .from("user_preferences")
         .upsert(
           {
-            // Use upsert to handle both create and update
             user_id: userId,
             pin_number: pinNumber,
             contact_preference: preference,
             push_token: updatedToken,
             updated_at: new Date().toISOString(),
-            // id and created_at are handled by DB/RLS/Defaults
           },
           { onConflict: "user_id" }
         )
@@ -734,61 +850,63 @@ export default function ProfileScreen() {
       if (error) throw error;
 
       setUserPreferences(data as UserPreferences);
-      Alert.alert("Success", "Contact preference updated successfully!");
+
+      // Show appropriate success message
+      let successMessage = "Contact preference updated successfully!";
+
+      if (preference === "text") {
+        successMessage =
+          "You've successfully opted-in to SMS notifications. Reply STOP to any message to opt-out at any time.";
+      } else if (preference === "email") {
+        successMessage =
+          "You've successfully opted-in to Email notifications. You can unsubscribe from any email or change your preferences here.";
+      } else if (preference === "push") {
+        successMessage =
+          "You've successfully opted-in to Push notifications. You can manage notification settings in your device settings.";
+      } else if (preference === "in_app") {
+        successMessage = "You will now only receive notifications when using the app.";
+      }
+
+      Alert.alert("Success", successMessage);
     } catch (error: any) {
       console.error("Error updating preference:", error);
       Alert.alert("Error", "Failed to update contact preference. Please try again.");
+    } finally {
+      // Reset pending preference
+      setPendingPreference(null);
     }
   };
 
-  // Handle SMS confirmation
+  // Handle confirmation for each notification type
   const handleSMSConfirmation = async () => {
     setIsSMSConfirmationVisible(false);
-    setPendingSMSConfirmation(false);
-
-    // Proceed with updating the preference to text
-    if (!isOwnProfile || !profile || !profile.pin_number || !session?.user?.id) return;
-
-    const userId = session.user.id;
-    const pinNumber = profile.pin_number;
-
-    try {
-      // Clear any existing push token
-      const updatedToken = null;
-
-      // Upsert preferences for text
-      const { data, error } = await supabase
-        .from("user_preferences")
-        .upsert(
-          {
-            user_id: userId,
-            pin_number: pinNumber,
-            contact_preference: "text",
-            push_token: updatedToken,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "user_id" }
-        )
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      setUserPreferences(data as UserPreferences);
-      Alert.alert(
-        "Success",
-        "You've successfully opted-in to SMS notifications. Reply STOP to any message to opt-out at any time."
-      );
-    } catch (error: any) {
-      console.error("Error updating SMS preference:", error);
-      Alert.alert("Error", "Failed to update contact preference. Please try again.");
-    }
+    await applyPreferenceChange("text");
   };
 
-  // Cancel SMS confirmation
+  const handleEmailConfirmation = async () => {
+    setIsEmailConfirmationVisible(false);
+    await applyPreferenceChange("email");
+  };
+
+  const handlePushConfirmation = async () => {
+    setIsPushConfirmationVisible(false);
+    await applyPreferenceChange("push");
+  };
+
+  // Cancel handlers for each confirmation
   const handleCancelSMSConfirmation = () => {
     setIsSMSConfirmationVisible(false);
-    setPendingSMSConfirmation(false);
+    setPendingPreference(null);
+  };
+
+  const handleCancelEmailConfirmation = () => {
+    setIsEmailConfirmationVisible(false);
+    setPendingPreference(null);
+  };
+
+  const handleCancelPushConfirmation = () => {
+    setIsPushConfirmationVisible(false);
+    setPendingPreference(null);
   };
 
   const handlePhoneUpdateSuccess = (newPhone: string) => {
@@ -857,12 +975,33 @@ export default function ProfileScreen() {
         />
       )}
 
-      {/* SMS Confirmation Modal */}
-      <SMSConfirmationModal
+      {/* Notification Confirmation Modals */}
+      <NotificationConfirmationModal
         visible={isSMSConfirmationVisible}
         onClose={handleCancelSMSConfirmation}
         onConfirm={handleSMSConfirmation}
-      />
+        title="SMS Notifications Opt-In"
+      >
+        <SMSConfirmationContent />
+      </NotificationConfirmationModal>
+
+      <NotificationConfirmationModal
+        visible={isEmailConfirmationVisible}
+        onClose={handleCancelEmailConfirmation}
+        onConfirm={handleEmailConfirmation}
+        title="Email Notifications Opt-In"
+      >
+        <EmailConfirmationContent />
+      </NotificationConfirmationModal>
+
+      <NotificationConfirmationModal
+        visible={isPushConfirmationVisible}
+        onClose={handleCancelPushConfirmation}
+        onConfirm={handlePushConfirmation}
+        title="Push Notifications Opt-In"
+      >
+        <PushConfirmationContent />
+      </NotificationConfirmationModal>
 
       {/* Personal Info Section */}
       <ThemedView style={styles.section}>
@@ -904,8 +1043,29 @@ export default function ProfileScreen() {
       {isOwnProfile && (
         <ThemedView style={styles.section}>
           <ThemedText type="title">Contact Preferences</ThemedText>
+          <ThemedText style={styles.preferencesDescription}>
+            Choose how you want to receive notifications from the app:
+          </ThemedText>
           <ThemedView style={styles.preferenceContainer}>
             <ThemedView style={styles.preferenceButtons}>
+              {/* In-App Only Button */}
+              <TouchableOpacity
+                style={[
+                  styles.preferenceButton,
+                  userPreferences?.contact_preference === "in_app" && styles.preferenceButtonActive,
+                ]}
+                onPress={() => handleUpdatePreference("in_app")}
+              >
+                <ThemedText
+                  style={[
+                    styles.preferenceButtonText,
+                    userPreferences?.contact_preference === "in_app" && styles.preferenceButtonTextActive,
+                  ]}
+                >
+                  In-App Only
+                </ThemedText>
+              </TouchableOpacity>
+
               {/* Text Preference Button */}
               <TouchableOpacity
                 style={[
@@ -923,6 +1083,7 @@ export default function ProfileScreen() {
                   Text Message
                 </ThemedText>
               </TouchableOpacity>
+
               {/* Email Preference Button */}
               <TouchableOpacity
                 style={[
@@ -941,6 +1102,7 @@ export default function ProfileScreen() {
                 </ThemedText>
               </TouchableOpacity>
             </ThemedView>
+
             {/* Push Notification Button (Mobile Only) */}
             {isDeviceMobile && (
               <ThemedView style={styles.pushNotificationContainer}>
@@ -1202,5 +1364,9 @@ const styles = StyleSheet.create({
   },
   scrollIndicatorText: {
     marginRight: 8,
+  },
+  preferencesDescription: {
+    marginBottom: 12,
+    fontSize: 14,
   },
 });

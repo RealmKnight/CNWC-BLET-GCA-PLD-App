@@ -32,10 +32,10 @@ export default function PrivacyPolicyScreen() {
 
         <ThemedText style={styles.title}>Privacy Policy for BLET PLD App</ThemedText>
 
-        <ThemedText style={styles.lastUpdated}>Last Updated: May 5, 2025</ThemedText>
-        <ThemedText style={styles.lastUpdated} onPress={() => Linking.openURL("https://www.bletcnwcgca.org/privacy")}>
+        <ThemedText style={styles.lastUpdated}>Last Updated: May 7, 2025</ThemedText>
+        {/* <ThemedText style={styles.lastUpdated} onPress={() => Linking.openURL("https://www.bletcnwcgca.org/privacy")}>
           https://www.bletcnwcgca.org/privacy
-        </ThemedText>
+        </ThemedText> */}
 
         <ThemedText style={styles.sectionTitle}>Introduction</ThemedText>
         <ThemedText style={styles.paragraph}>
@@ -98,7 +98,26 @@ export default function PrivacyPolicyScreen() {
           </ThemedText>
         </View>
 
-        <ThemedText style={styles.sectionTitle}>SMS Notifications</ThemedText>
+        <ThemedText style={styles.sectionTitle}>Notification Preferences</ThemedText>
+        <ThemedText style={styles.paragraph}>
+          Our app provides multiple ways to receive notifications. You can choose your preferred communication method in
+          your profile settings. All notification methods require explicit opt-in consent.
+        </ThemedText>
+
+        <ThemedText style={styles.subSectionTitle}>In-App Notifications</ThemedText>
+        <View style={styles.bulletContainer}>
+          <ThemedText style={styles.bulletItem}>
+            • By default, notifications are only shown when using the app.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • No personal information is shared with third parties for in-app notifications.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • You can view all your notifications in the notifications section of the app.
+          </ThemedText>
+        </View>
+
+        <ThemedText style={styles.subSectionTitle}>SMS Notifications</ThemedText>
         <ThemedText style={styles.paragraph}>
           If you opt in to receive SMS notifications, the following applies:
         </ThemedText>
@@ -132,6 +151,56 @@ export default function PrivacyPolicyScreen() {
               privacy policy
             </ThemedText>{" "}
             available at twilio.com.
+          </ThemedText>
+        </View>
+
+        <ThemedText style={styles.subSectionTitle}>Email Notifications</ThemedText>
+        <ThemedText style={styles.paragraph}>
+          If you opt in to receive Email notifications, the following applies:
+        </ThemedText>
+        <View style={styles.bulletContainer}>
+          <ThemedText style={styles.bulletItem}>
+            • We will send email notifications for important app updates, alerts, request approvals/denials, waitlist
+            position changes, meeting notices, and other important union communications.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • Email frequency varies, typically 5-10 emails per month, but may be more frequent during busy periods or
+            important events.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • Emails will be sent from notifications@bletcnwcgca.org using our email service provider, Resend.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • You can opt out at any time by clicking the unsubscribe link in any email or by changing your contact
+            preference in the app.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • All emails comply with the CAN-SPAM Act and include our physical mailing address and unsubscribe options.
+          </ThemedText>
+        </View>
+
+        <ThemedText style={styles.subSectionTitle}>Push Notifications</ThemedText>
+        <ThemedText style={styles.paragraph}>
+          If you opt in to receive Push notifications, the following applies:
+        </ThemedText>
+        <View style={styles.bulletContainer}>
+          <ThemedText style={styles.bulletItem}>
+            • We will send push notifications for important app updates, alerts, request approvals/denials, waitlist
+            position changes, meeting notices, and other important union communications.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • Push notification frequency varies, typically 5-10 notifications per month, but may be more frequent
+            during busy periods or important events.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • Push notifications require granting notification permissions to this app on your device.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • You can opt out at any time by changing your device notification settings or by changing your contact
+            preference in the app.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • We use Expo's push notification service to deliver notifications to your device.
           </ThemedText>
         </View>
 
@@ -170,6 +239,9 @@ export default function PrivacyPolicyScreen() {
           </ThemedText>
           <ThemedText style={styles.bulletItem}>
             • We use Twilio for SMS communications if you opt in to text notifications.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • We use Resend as our email service provider for sending email notifications.
           </ThemedText>
         </View>
 
