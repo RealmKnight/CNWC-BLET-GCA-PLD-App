@@ -24,12 +24,32 @@ export default function DivisionDetailsScreen() {
   const [division, setDivision] = useState<DivisionDetails | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isUUID, setIsUUID] = useState(false);
+
+  // Add a separate effect to handle UUID detection and navigation
+  useEffect(() => {
+    // Check if divisionName looks like a UUID (which would be a user ID mistakenly routed here)
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (divisionName && typeof divisionName === "string" && uuidRegex.test(divisionName)) {
+      console.log("[DivisionDetails] UUID detected as division name, likely a profile ID:", divisionName);
+      setIsUUID(true);
+      // Use setTimeout to ensure navigation happens after component is fully mounted
+      setTimeout(() => {
+        router.replace("/(tabs)");
+      }, 100);
+    }
+  }, [divisionName, router]);
 
   useEffect(() => {
     // Check if user is authenticated
     if (!session) {
       console.log("[DivisionDetails] No active session, redirecting to login");
       router.replace("/(auth)/login");
+      return;
+    }
+
+    // Skip fetching if we detected a UUID
+    if (isUUID) {
       return;
     }
 
@@ -49,6 +69,9 @@ export default function DivisionDetailsScreen() {
           console.error("[DivisionDetails] Invalid or missing divisionName parameter:", divisionName);
           throw new Error("Invalid division name provided.");
         }
+
+        // Remove the UUID check from here (moved to separate useEffect)
+
         // Always treat divisionName as a string for lookup AFTER validation
         const divisionNameString = divisionName.trim();
         // ---------------------------
@@ -106,7 +129,7 @@ export default function DivisionDetailsScreen() {
     }
 
     fetchDivisionDetails();
-  }, [divisionName, router, session]);
+  }, [divisionName, router, session, isUUID]);
 
   if (isLoading) {
     return (

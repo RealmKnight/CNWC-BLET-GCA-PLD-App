@@ -18,6 +18,7 @@ import { DatePicker } from "@/components/DatePicker";
 import { parseISO, format, differenceInYears, isAfter } from "date-fns";
 import Toast from "react-native-toast-message";
 import { ChangePasswordModal } from "@/components/ui/ChangePasswordModal";
+import { MemberMessageModal } from "@/components/MemberMessageModal";
 
 type Member = Database["public"]["Tables"]["members"]["Row"];
 type ContactPreference = "in_app" | "phone" | "text" | "email" | "push";
@@ -621,6 +622,9 @@ export default function ProfileScreen() {
   // Pending preference selection
   const [pendingPreference, setPendingPreference] = useState<ContactPreference | null>(null);
 
+  // Add new state for contact admin modal
+  const [showContactAdminModal, setShowContactAdminModal] = useState(false);
+
   // Determine if the logged-in user is viewing their own profile
   const isOwnProfile = session?.user?.id === profile?.id;
   // Permissions: can edit basic info only if it's their own profile
@@ -1146,8 +1150,20 @@ export default function ProfileScreen() {
       />
       {/* Union Information Section */}
       <ThemedView style={styles.section}>
-        <ThemedText type="title">Union Information</ThemedText>
-        {!isOwnProfile && <ThemedText type="subtitle">Contact division admin to change this information</ThemedText>}
+        <ThemedView style={styles.sectionHeader}>
+          <ThemedText type="title">Union Information</ThemedText>
+          {isOwnProfile && (
+            <TouchableOpacity style={styles.contactAdminButton} onPress={() => setShowContactAdminModal(true)}>
+              <Ionicons name="chatbubble-ellipses" size={18} color={Colors[theme].buttonText} />
+              <ThemedText style={styles.contactAdminText}>Contact Admin</ThemedText>
+            </TouchableOpacity>
+          )}
+        </ThemedView>
+        {isOwnProfile && (
+          <ThemedText type="subtitle" style={styles.preferencesDescription}>
+            Contact division admin to change this information if any of it is wrong.
+          </ThemedText>
+        )}
         <ThemedView style={styles.infoRow}>
           <ThemedText type="subtitle">PIN:</ThemedText>
           <ThemedText>{profile.pin_number}</ThemedText>
@@ -1173,6 +1189,17 @@ export default function ProfileScreen() {
           </ThemedText>
         </ThemedView>
       </ThemedView>
+
+      {/* Contact Admin Modal */}
+      {profile && (
+        <MemberMessageModal
+          visible={showContactAdminModal}
+          onClose={() => setShowContactAdminModal(false)}
+          memberPin={profile.pin_number ? profile.pin_number.toString() : ""}
+          memberEmail=""
+          division={divisionName || ""}
+        />
+      )}
     </ScrollView>
   );
 }
@@ -1368,5 +1395,26 @@ const styles = StyleSheet.create({
   preferencesDescription: {
     marginBottom: 12,
     fontSize: 14,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+    backgroundColor: Colors.dark.card,
+  },
+  contactAdminButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: Colors.dark.buttonBackground,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    gap: 6,
+  },
+  contactAdminText: {
+    color: Colors.dark.buttonText,
+    fontWeight: "600",
+    fontSize: 12,
   },
 });

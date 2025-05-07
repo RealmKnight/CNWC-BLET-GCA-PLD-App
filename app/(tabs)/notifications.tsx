@@ -14,6 +14,7 @@ import { MessageModal } from "@/components/MessageModal";
 import Toast from "react-native-toast-message";
 import { AdvertisementBanner } from "@/components/AdvertisementBanner";
 import { AdvertisementCarousel } from "@/components/AdvertisementCarousel";
+import { MemberMessageModal } from "@/components/MemberMessageModal";
 
 type ColorScheme = keyof typeof Colors;
 
@@ -181,7 +182,8 @@ export default function NotificationsScreen() {
   const [filterType, setFilterType] = useState<FilterType>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
-  const { member } = useUserStore();
+  const [showContactAdminModal, setShowContactAdminModal] = useState(false);
+  const { member, division } = useUserStore();
   const router = useRouter();
   const theme = (useColorScheme() ?? "light") as ColorScheme;
   const isWeb = Platform.OS === "web";
@@ -381,6 +383,14 @@ export default function NotificationsScreen() {
       {/* Top Advertisement Banner for all devices */}
       <AdvertisementBanner location="notifications_top" style={styles.topAdBanner} maxHeight={80} />
 
+      <ThemedView style={styles.headerRow}>
+        <ThemedText style={styles.headerTitle}>Messages</ThemedText>
+        <TouchableOpacity style={styles.contactAdminButton} onPress={() => setShowContactAdminModal(true)}>
+          <Ionicons name="chatbubble-ellipses" size={20} color={Colors[theme].buttonText} />
+          <ThemedText style={styles.contactAdminText}>Contact Admin</ThemedText>
+        </TouchableOpacity>
+      </ThemedView>
+
       <ThemedView style={styles.controls}>
         <ThemedView style={styles.searchContainer}>
           <Ionicons name="search" size={20} color={Colors[theme].text} style={styles.searchIcon} />
@@ -502,6 +512,17 @@ export default function NotificationsScreen() {
         onAcknowledge={handleAcknowledge}
         onDelete={handleDelete}
       />
+
+      {/* Contact Admin Modal */}
+      {member && (
+        <MemberMessageModal
+          visible={showContactAdminModal}
+          onClose={() => setShowContactAdminModal(false)}
+          memberPin={member.pin_number ? member.pin_number.toString() : ""}
+          memberEmail=""
+          division={division || ""}
+        />
+      )}
     </PlatformScrollView>
   );
 }
@@ -760,5 +781,31 @@ const styles = StyleSheet.create({
   },
   sidebarAd: {
     marginBottom: 16,
+  },
+  headerRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
+  },
+  headerTitle: {
+    fontSize: 24,
+    fontWeight: "700",
+  },
+  contactAdminButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: Colors.light.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    gap: 6,
+  },
+  contactAdminText: {
+    color: Colors.light.buttonText,
+    fontWeight: "600",
+    fontSize: 14,
   },
 });
