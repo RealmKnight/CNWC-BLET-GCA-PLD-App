@@ -98,6 +98,67 @@ export default function PrivacyPolicyScreen() {
           </ThemedText>
         </View>
 
+        <ThemedText style={styles.sectionTitle}>SMS Notifications</ThemedText>
+        <ThemedText style={styles.paragraph}>
+          If you opt in to receive SMS notifications, the following applies:
+        </ThemedText>
+        <View style={styles.bulletContainer}>
+          <ThemedText style={styles.bulletItem}>
+            • We will send SMS notifications for important app updates, alerts, request approvals/denials, waitlist
+            position changes, meeting notices, and other important union communications.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • Message frequency varies, typically 5-10 messages per month, but may be more frequent during busy periods
+            or important events.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • Message and data rates may apply based on your wireless carrier plan. No additional fees are charged by
+            our service.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • You can opt out at any time by replying STOP to any message or by changing your contact preference in the
+            app.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • When you opt in to receive SMS notifications through the app, we collect your phone number and store it
+            securely.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • We use Twilio as our SMS service provider, which has its own{" "}
+            <ThemedText
+              style={{ color: "#b8860b" }}
+              onPress={() => Linking.openURL("https://www.twilio.com/legal/privacy")}
+            >
+              privacy policy
+            </ThemedText>{" "}
+            available at twilio.com.
+          </ThemedText>
+        </View>
+
+        <ThemedText style={styles.subSectionTitle}>SMS Opt-In Verification</ThemedText>
+        <ThemedText style={styles.paragraph}>
+          When users opt for SMS notifications, they are presented with a clear opt-in confirmation dialog that explains
+          the type of messages, frequency, rates, and opt-out options as shown below:
+        </ThemedText>
+
+        <View style={styles.imageContainer}>
+          <ThemedText style={styles.imageCaption}>SMS Opt-In Dialog (Part 1)</ThemedText>
+          <Image
+            source={require("@/assets/images/Opt_in_Notice_1.png")}
+            style={styles.screenshotImage}
+            resizeMode="contain"
+          />
+        </View>
+
+        <View style={styles.imageContainer}>
+          <ThemedText style={styles.imageCaption}>SMS Opt-In Dialog (Part 2)</ThemedText>
+          <Image
+            source={require("@/assets/images/Opt_in_Notice_2.png")}
+            style={styles.screenshotImage}
+            resizeMode="contain"
+          />
+        </View>
+
         <ThemedText style={styles.sectionTitle}>Third-Party Services</ThemedText>
         <View style={styles.bulletContainer}>
           <ThemedText style={styles.bulletItem}>• We use Firebase for app analytics and notifications.</ThemedText>
@@ -106,6 +167,9 @@ export default function PrivacyPolicyScreen() {
           </ThemedText>
           <ThemedText style={styles.bulletItem}>
             • These services may collect anonymous usage data according to their respective privacy policies.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • We use Twilio for SMS communications if you opt in to text notifications.
           </ThemedText>
         </View>
 
@@ -215,5 +279,18 @@ const styles = StyleSheet.create({
     marginTop: 10,
     marginBottom: 30,
     borderWidth: 1,
+  },
+  imageContainer: {
+    alignItems: "center",
+    marginBottom: 20,
+  },
+  imageCaption: {
+    fontSize: 14,
+    fontWeight: "bold",
+    marginBottom: 5,
+  },
+  screenshotImage: {
+    width: 300,
+    height: 400,
   },
 });

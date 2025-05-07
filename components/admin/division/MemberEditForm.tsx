@@ -414,30 +414,12 @@ export function MemberEditForm({ member, onClose }: MemberEditFormProps) {
   // Format date for display
   const formatDate = (dateString: string | null) => {
     if (!dateString) return "";
-    try {
-      // Attempt to create a date, handle potential invalid date strings
-      // If the string contains timezone info, Date() might adjust it.
-      // We want to preserve the YYYY-MM-DD part as is.
-      // Check if the string looks like YYYY-MM-DD format already.
-      if (/^\\d{4}-\\d{2}-\\d{2}$/.test(dateString)) {
-        return dateString;
-      }
-      // Otherwise, try parsing and formatting, but be cautious of timezones
-      const date = new Date(dateString);
-      // Check if the date is valid before formatting
-      if (isNaN(date.getTime())) {
-        return ""; // Return empty string for invalid dates
-      }
-      // Extract year, month, day parts carefully to avoid timezone shifts
-      const year = date.getFullYear();
-      const month = (date.getMonth() + 1).toString().padStart(2, "0"); // Month is 0-indexed
-      const day = date.getDate().toString().padStart(2, "0");
-      // Construct the YYYY-MM-DD string manually
-      return `${year}-${month}-${day}`;
-    } catch (e) {
-      console.warn("Error formatting date:", dateString, e);
-      return ""; // Return empty string on error
-    }
+    // If already in YYYY-MM-DD, return as is
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) return dateString;
+    // If ISO string, extract the date part
+    if (/^\d{4}-\d{2}-\d{2}T/.test(dateString)) return dateString.slice(0, 10);
+    // Fallback: just return the string (or empty if not valid)
+    return dateString;
   };
 
   // Handle date field click

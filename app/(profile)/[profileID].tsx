@@ -33,6 +33,110 @@ interface UserPreferences {
   updated_at: string;
 }
 
+// SMS Confirmation Modal
+function SMSConfirmationModal({
+  visible,
+  onClose,
+  onConfirm,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const theme = (useColorScheme() ?? "light") as ColorScheme;
+  const [hasScrolledToBottom, setHasScrolledToBottom] = useState(false);
+
+  const handleScroll = (event: any) => {
+    const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+    const paddingToBottom = 20; // Add some padding to the bottom
+    const isScrolledToBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - paddingToBottom;
+
+    if (isScrolledToBottom && !hasScrolledToBottom) {
+      setHasScrolledToBottom(true);
+    }
+  };
+
+  // Reset scroll state when modal closes
+  useEffect(() => {
+    if (!visible) {
+      setHasScrolledToBottom(false);
+    }
+  }, [visible]);
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <ThemedView style={styles.modalOverlay}>
+        <ThemedView style={styles.modalContent}>
+          <ThemedView style={styles.modalHeader}>
+            <ThemedText type="title">SMS Notifications Opt-In</ThemedText>
+            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+              <Ionicons name="close" size={24} color={Colors[theme].text} />
+            </TouchableOpacity>
+          </ThemedView>
+
+          <ScrollView style={styles.confirmationScrollContent} onScroll={handleScroll} scrollEventThrottle={16}>
+            <ThemedText style={styles.confirmationTitle}>
+              By enabling SMS notifications, you agree to receive:
+            </ThemedText>
+
+            <ThemedView style={styles.bulletContainer}>
+              <ThemedText style={styles.bulletItem}>• Alerts and important union announcements</ThemedText>
+              <ThemedText style={styles.bulletItem}>• Request approval/denial notifications</ThemedText>
+              <ThemedText style={styles.bulletItem}>• Waitlist position changes</ThemedText>
+              <ThemedText style={styles.bulletItem}>• Meeting notices and reminders</ThemedText>
+              <ThemedText style={styles.bulletItem}>• Other important app-related notifications</ThemedText>
+            </ThemedView>
+
+            <ThemedText style={styles.confirmationText}>
+              You may receive up to 10 (or more) messages per month. In some cases, multiple messages may be sent in a
+              single day.
+            </ThemedText>
+
+            <ThemedText style={styles.confirmationText}>
+              Message and data rates may apply based on your wireless carrier plan. No additional fees are charged by
+              our service.
+            </ThemedText>
+
+            <ThemedText style={styles.confirmationText}>
+              You can opt-out at any time by replying STOP to any message or by changing your contact preference in the
+              app.
+            </ThemedText>
+
+            <ThemedText style={styles.confirmationText}>
+              By tapping "I Agree" below, you consent to receive SMS messages from BLET PLD App for the purposes
+              described above.
+            </ThemedText>
+
+            {!hasScrolledToBottom && (
+              <ThemedView style={styles.scrollIndicatorContainer}>
+                <ThemedText style={styles.scrollIndicatorText}>Please scroll to the bottom to continue</ThemedText>
+                <Ionicons name="chevron-down" size={20} color={Colors[theme].tint} />
+              </ThemedView>
+            )}
+          </ScrollView>
+
+          <ThemedView style={styles.confirmationButtonContainer}>
+            <TouchableOpacity onPress={onClose} style={styles.secondaryButton}>
+              <ThemedText style={styles.secondaryButtonText}>Cancel</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={onConfirm}
+              style={[
+                styles.primaryButton,
+                !hasScrolledToBottom && styles.buttonDisabled,
+                { backgroundColor: hasScrolledToBottom ? Colors[theme].buttonBackground : "#888888" },
+              ]}
+              disabled={!hasScrolledToBottom}
+            >
+              <ThemedText style={[styles.buttonText, !hasScrolledToBottom && { color: "#999999" }]}>I Agree</ThemedText>
+            </TouchableOpacity>
+          </ThemedView>
+        </ThemedView>
+      </ThemedView>
+    </Modal>
+  );
+}
+
 async function registerForPushNotificationsAsync() {
   let token;
   let errorMessage = "";
@@ -429,6 +533,8 @@ export default function ProfileScreen() {
   const [isDateOfBirthModalVisible, setIsDateOfBirthModalVisible] = useState(false);
   const [isDeviceMobile] = useState(Platform.OS !== "web");
   const [isPasswordModalVisible, setIsPasswordModalVisible] = useState(false);
+  const [isSMSConfirmationVisible, setIsSMSConfirmationVisible] = useState(false);
+  const [pendingSMSConfirmation, setPendingSMSConfirmation] = useState(false);
 
   // Determine if the logged-in user is viewing their own profile
   const isOwnProfile = session?.user?.id === profile?.id;
@@ -565,6 +671,26 @@ export default function ProfileScreen() {
 
   const handleUpdatePreference = async (preference: ContactPreference) => {
     if (!isOwnProfile || !profile || !profile.pin_number || !session?.user?.id) return;
+
+    // If user selected text preference, show the confirmation dialog
+    if (preference === "text") {
+      // Check if user has phone number
+      if (!phoneNumber || phoneNumber.length !== 10) {
+        Alert.alert(
+          "Phone Number Required",
+          "A valid phone number is required to receive text messages. Please update your phone number first.",
+          [{ text: "OK", onPress: () => setIsPhoneModalVisible(true) }]
+        );
+        return;
+      }
+
+      // Show SMS confirmation modal
+      setPendingSMSConfirmation(true);
+      setIsSMSConfirmationVisible(true);
+      return;
+    }
+
+    // For other preferences (email, push), continue with the regular flow
     const userId = session.user.id;
     const pinNumber = profile.pin_number;
     let updatedToken: string | null = userPreferences?.push_token || null;
@@ -613,6 +739,56 @@ export default function ProfileScreen() {
       console.error("Error updating preference:", error);
       Alert.alert("Error", "Failed to update contact preference. Please try again.");
     }
+  };
+
+  // Handle SMS confirmation
+  const handleSMSConfirmation = async () => {
+    setIsSMSConfirmationVisible(false);
+    setPendingSMSConfirmation(false);
+
+    // Proceed with updating the preference to text
+    if (!isOwnProfile || !profile || !profile.pin_number || !session?.user?.id) return;
+
+    const userId = session.user.id;
+    const pinNumber = profile.pin_number;
+
+    try {
+      // Clear any existing push token
+      const updatedToken = null;
+
+      // Upsert preferences for text
+      const { data, error } = await supabase
+        .from("user_preferences")
+        .upsert(
+          {
+            user_id: userId,
+            pin_number: pinNumber,
+            contact_preference: "text",
+            push_token: updatedToken,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "user_id" }
+        )
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      setUserPreferences(data as UserPreferences);
+      Alert.alert(
+        "Success",
+        "You've successfully opted-in to SMS notifications. Reply STOP to any message to opt-out at any time."
+      );
+    } catch (error: any) {
+      console.error("Error updating SMS preference:", error);
+      Alert.alert("Error", "Failed to update contact preference. Please try again.");
+    }
+  };
+
+  // Cancel SMS confirmation
+  const handleCancelSMSConfirmation = () => {
+    setIsSMSConfirmationVisible(false);
+    setPendingSMSConfirmation(false);
   };
 
   const handlePhoneUpdateSuccess = (newPhone: string) => {
@@ -680,6 +856,13 @@ export default function ProfileScreen() {
           targetUserId={profile.id} // Safe to use profile.id here
         />
       )}
+
+      {/* SMS Confirmation Modal */}
+      <SMSConfirmationModal
+        visible={isSMSConfirmationVisible}
+        onClose={handleCancelSMSConfirmation}
+        onConfirm={handleSMSConfirmation}
+      />
 
       {/* Personal Info Section */}
       <ThemedView style={styles.section}>
@@ -944,10 +1127,17 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   } as any,
   secondaryButton: {
-    backgroundColor: "transparent",
+    flex: 1,
+    padding: 12,
+    borderRadius: 8,
+    alignItems: "center",
     borderWidth: 1,
-    borderColor: Colors.light.tint,
-  } as any,
+    borderColor: Colors.dark.buttonBorder,
+    marginRight: 8,
+  },
+  secondaryButtonText: {
+    color: Colors.dark.buttonTextSecondary,
+  },
   buttonText: {
     color: Colors.dark.buttonText,
     fontWeight: "600",
@@ -968,5 +1158,49 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
+  },
+  confirmationScrollContent: {
+    maxHeight: 300,
+    marginBottom: 16,
+  },
+  confirmationTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    marginBottom: 12,
+  },
+  confirmationText: {
+    marginBottom: 12,
+    lineHeight: 20,
+  },
+  confirmationButtonContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 8,
+  },
+  primaryButton: {
+    flex: 1,
+    backgroundColor: Colors.dark.buttonBackground,
+    padding: 12,
+    borderRadius: 8,
+    alignItems: "center",
+    marginLeft: 8,
+  },
+  bulletContainer: {
+    marginLeft: 5,
+    marginBottom: 15,
+  },
+  bulletItem: {
+    fontSize: 14,
+    marginBottom: 10,
+    lineHeight: 20,
+  },
+  scrollIndicatorContainer: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 12,
+  },
+  scrollIndicatorText: {
+    marginRight: 8,
   },
 });
