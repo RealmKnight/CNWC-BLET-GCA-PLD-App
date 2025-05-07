@@ -95,7 +95,21 @@ export function ContactAdminModal({ visible, onClose }: ContactAdminModalProps) 
 
   // Calculate responsive dimensions
   const isSmallScreen = windowWidth < 380;
-  const modalWidth = windowWidth > 700 ? 600 : windowWidth * 0.92;
+  const isMobileWeb = Platform.OS === "web" && windowWidth < 768;
+
+  // Ensure modal is at least 90% width on mobile web, 92% on mobile OS, max 600px on larger screens
+  const modalWidth = useMemo(() => {
+    if (isMobileWeb) {
+      // Mobile web - at least 90% of viewport
+      return windowWidth * 0.9;
+    } else if (windowWidth < 700) {
+      // Mobile OS or smaller screens - 92% of viewport
+      return windowWidth * 0.92;
+    } else {
+      // Larger screens - fixed width
+      return 600;
+    }
+  }, [windowWidth, isMobileWeb]);
 
   // Effect to fetch divisions
   useEffect(() => {
@@ -328,7 +342,10 @@ export function ContactAdminModal({ visible, onClose }: ContactAdminModalProps) 
     >
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={styles.centeredView}
+        style={[
+          styles.centeredView,
+          isMobileWeb && { paddingHorizontal: 0 }, // Remove any padding on mobile web
+        ]}
         keyboardVerticalOffset={Platform.OS === "ios" ? 40 : 0}
       >
         <ThemedView
@@ -341,6 +358,11 @@ export function ContactAdminModal({ visible, onClose }: ContactAdminModalProps) 
               marginTop: insets.top > 0 ? insets.top : 20,
               marginBottom: insets.bottom > 0 ? insets.bottom : 20,
               paddingHorizontal: isSmallScreen ? 15 : 25,
+            },
+            // Ensure the modal is never bigger than the screen on mobile web
+            isMobileWeb && {
+              maxWidth: "90%",
+              minWidth: Math.min(windowWidth * 0.9, 600),
             },
           ]}
         >
@@ -401,17 +423,21 @@ export function ContactAdminModal({ visible, onClose }: ContactAdminModalProps) 
             </ThemedView>
           </ScrollView>
 
-          <View style={styles.buttonContainer}>
+          <View
+            style={[styles.buttonContainer, isSmallScreen && Platform.OS === "web" && styles.buttonContainerColumn]}
+          >
             <Button
-              variant="secondary" // Assuming secondary variant exists
+              variant="secondary"
               onPress={onClose}
               disabled={isSending}
+              style={[styles.button, isSmallScreen && Platform.OS === "web" && styles.fullWidthButton]}
             >
               Cancel
             </Button>
             <Button
               onPress={handleSend}
               disabled={isSending || selectedRoles.length === 0 || !subject.trim() || !message.trim()}
+              style={[styles.button, isSmallScreen && Platform.OS === "web" && styles.fullWidthButton]}
             >
               Send Message
             </Button>
@@ -498,6 +524,19 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: Colors.light.border,
     gap: 10,
+  },
+  buttonContainerColumn: {
+    flexDirection: "column",
+    justifyContent: "center",
+    alignItems: "stretch",
+  },
+  button: {
+    flex: Platform.OS === "web" ? 0 : 1,
+    minWidth: Platform.OS === "web" ? 120 : "auto",
+  },
+  fullWidthButton: {
+    width: "100%",
+    marginBottom: 10,
   },
   errorText: {
     color: Colors.light.error,

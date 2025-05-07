@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
   Modal,
   StyleSheet,
@@ -7,12 +7,15 @@ import {
   Platform,
   KeyboardAvoidingView,
   ScrollView,
+  useWindowDimensions,
+  View,
 } from "react-native";
 import { ThemedView } from "./ThemedView";
 import { ThemedText } from "./ThemedText";
 import { Colors } from "@/constants/Colors";
 import Toast from "react-native-toast-message";
 import { supabase } from "@/utils/supabase";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 interface MemberMessageModalProps {
   visible: boolean;
@@ -26,6 +29,26 @@ export function MemberMessageModal({ visible, onClose, memberPin, memberEmail, d
   const [message, setMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+
+  // Calculate responsive dimensions
+  const isSmallScreen = windowWidth < 380;
+  const isMobileWeb = Platform.OS === "web" && windowWidth < 768;
+
+  // Ensure modal is at least 90% width on mobile web, 92% on mobile OS, max 500px on larger screens
+  const modalWidth = useMemo(() => {
+    if (isMobileWeb) {
+      // Mobile web - at least 90% of viewport
+      return windowWidth * 0.9;
+    } else if (windowWidth < 700) {
+      // Mobile OS or smaller screens - 92% of viewport
+      return windowWidth * 0.92;
+    } else {
+      // Larger screens - fixed width
+      return 500;
+    }
+  }, [windowWidth, isMobileWeb]);
 
   const handleSendMessage = async () => {
     if (!message.trim() || !division) {
@@ -102,10 +125,38 @@ export function MemberMessageModal({ visible, onClose, memberPin, memberEmail, d
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent={true} onRequestClose={handleClose}>
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.modalContainer}>
-        <ThemedView style={styles.modalContent}>
-          <ScrollView contentContainerStyle={styles.scrollContent}>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent={true}
+      onRequestClose={handleClose}
+      statusBarTranslucent={Platform.OS !== "web"}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={[styles.modalContainer, isMobileWeb && { paddingHorizontal: 0 }]}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 40 : 0}
+      >
+        <ThemedView
+          style={[
+            styles.modalContent,
+            {
+              width: modalWidth,
+              maxHeight: windowHeight * 0.9,
+              marginTop: insets.top > 0 ? insets.top : 20,
+              marginBottom: insets.bottom > 0 ? insets.bottom : 20,
+            },
+            isMobileWeb && {
+              maxWidth: "90%",
+              minWidth: Math.min(windowWidth * 0.9, 500),
+            },
+          ]}
+        >
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={true}
+            keyboardShouldPersistTaps="handled"
+          >
             {!isSuccess ? (
               <>
                 <ThemedText type="title" style={styles.modalTitle}>
@@ -125,28 +176,42 @@ export function MemberMessageModal({ visible, onClose, memberPin, memberEmail, d
                   value={message}
                   onChangeText={(text) => setMessage(text.slice(0, 500))}
                   multiline
-                  numberOfLines={6}
+                  numberOfLines={Platform.OS === "web" ? 6 : 8}
                   maxLength={500}
                   editable={!isLoading}
+                  textAlignVertical="top"
                 />
                 <ThemedText style={styles.charCount}>{message.length}/500 characters</ThemedText>
 
-                <ThemedView style={styles.modalButtons}>
+                <View
+                  style={[styles.modalButtons, isSmallScreen && Platform.OS === "web" && styles.modalButtonsColumn]}
+                >
                   <TouchableOpacity
-                    style={[styles.modalButton, styles.cancelButton]}
+                    style={[
+                      styles.modalButton,
+                      styles.cancelButton,
+                      isSmallScreen && Platform.OS === "web" && styles.fullWidthButton,
+                    ]}
                     onPress={handleClose}
                     disabled={isLoading}
+                    hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
                   >
                     <ThemedText style={styles.modalButtonText}>Cancel</ThemedText>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    style={[styles.modalButton, styles.sendButton, isLoading && styles.buttonDisabled]}
+                    style={[
+                      styles.modalButton,
+                      styles.sendButton,
+                      isLoading && styles.buttonDisabled,
+                      isSmallScreen && Platform.OS === "web" && styles.fullWidthButton,
+                    ]}
                     onPress={handleSendMessage}
                     disabled={isLoading}
+                    hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
                   >
                     <ThemedText style={styles.modalButtonText}>{isLoading ? "Sending..." : "Send Message"}</ThemedText>
                   </TouchableOpacity>
-                </ThemedView>
+                </View>
               </>
             ) : (
               <ThemedView style={styles.successContainer}>
@@ -157,7 +222,11 @@ export function MemberMessageModal({ visible, onClose, memberPin, memberEmail, d
                   Your message has been sent to the division administrators. They will review it and respond
                   accordingly.
                 </ThemedText>
-                <TouchableOpacity style={[styles.modalButton, styles.okButton]} onPress={handleClose}>
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.okButton]}
+                  onPress={handleClose}
+                  hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
+                >
                   <ThemedText style={styles.modalButtonText}>Close</ThemedText>
                 </TouchableOpacity>
               </ThemedView>
@@ -177,7 +246,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0, 0, 0, 0.5)",
   },
   modalContent: {
-    width: Platform.OS === "web" ? "50%" : "90%",
     maxWidth: 500,
     backgroundColor: Colors.dark.card,
     borderRadius: 12,
@@ -187,6 +255,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
+    paddingBottom: 10,
   },
   modalTitle: {
     fontSize: 20,
@@ -232,11 +301,18 @@ const styles = StyleSheet.create({
     marginTop: 10,
     backgroundColor: Colors.dark.card,
   },
+  modalButtonsColumn: {
+    flexDirection: "column",
+    justifyContent: "center",
+    alignItems: "stretch",
+    gap: 10,
+  },
   modalButton: {
-    paddingVertical: 10,
+    paddingVertical: 12,
     paddingHorizontal: 20,
     borderRadius: 8,
     minWidth: 120,
+    minHeight: 48,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -273,5 +349,10 @@ const styles = StyleSheet.create({
     fontSize: 16,
     textAlign: "center",
     marginBottom: 20,
+  },
+  fullWidthButton: {
+    width: "100%",
+    marginRight: 0,
+    marginBottom: 10,
   },
 });
