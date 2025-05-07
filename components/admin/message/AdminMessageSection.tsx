@@ -13,6 +13,27 @@ import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { Ionicons } from "@expo/vector-icons";
 
+/**
+ * AdminMessageSection Component
+ *
+ * Purpose:
+ * This component is specifically for company admins to view and manage admin-related messages.
+ * Unlike the regular AdminMessages component (used by division/union/app admins), this component
+ * implements special filtering to hide messages between members and division admins that don't
+ * involve company admins.
+ *
+ * Key Differences from AdminMessages.tsx:
+ * 1. Only for use by company_admin role users
+ * 2. Filters out member-to-division_admin messages that don't involve company_admin
+ * 3. Shows all admin-to-admin communications
+ * 4. Has specialized recipient role filtering to match company admin workflow
+ *
+ * Filtering Rules:
+ * - KEEP: Any thread where company_admin is the sender/recipient of any message
+ * - KEEP: Admin-to-admin communications (e.g., app_admin to union_admin)
+ * - EXCLUDE: Member-to-division_admin communications where company_admin is not involved
+ */
+
 // State Management & Data
 import { useAdminNotificationStore } from "@/store/adminNotificationStore";
 import { useUserStore } from "@/store/userStore";
@@ -97,37 +118,116 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
       thread.sort((a, b) => new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime())
     );
 
-    return Object.values(grouped)
-      .filter((thread) => {
-        if (!thread || thread.length === 0) return false;
+    // First apply standard filters (archived/status)
+    const statusFiltered = Object.values(grouped).filter((thread) => {
+      if (!thread || thread.length === 0) return false;
 
-        const rootMessage = thread[0];
-        const latestMessage = thread[thread.length - 1];
-        const isArchived = thread.some((msg) => msg.is_archived);
+      const rootMessage = thread[0];
+      const latestMessage = thread[thread.length - 1];
+      const isArchived = thread.some((msg) => msg.is_archived);
 
-        if (filterState.recipientRole && !rootMessage.recipient_roles?.includes(filterState.recipientRole)) {
-          return false;
-        }
+      if (filterState.recipientRole && !rootMessage.recipient_roles?.includes(filterState.recipientRole)) {
+        return false;
+      }
 
-        const needsAdminAck =
-          latestMessage.requires_acknowledgment &&
-          !(currentUser?.id && latestMessage.acknowledged_by?.includes(currentUser.id));
+      const needsAdminAck =
+        latestMessage.requires_acknowledgment &&
+        !(currentUser?.id && latestMessage.acknowledged_by?.includes(currentUser.id));
 
-        switch (filterState.status) {
-          case "archived":
-            return isArchived;
-          case "requires_ack":
-            return !isArchived && needsAdminAck;
-          case "all":
-          default:
-            return !isArchived;
-        }
-      })
-      .sort((threadA, threadB) => {
-        const lastMsgA = threadA[threadA.length - 1];
-        const lastMsgB = threadB[threadB.length - 1];
-        return new Date(lastMsgB.created_at ?? 0).getTime() - new Date(lastMsgA.created_at ?? 0).getTime();
+      switch (filterState.status) {
+        case "archived":
+          return isArchived;
+        case "requires_ack":
+          return !isArchived && needsAdminAck;
+        case "all":
+        default:
+          return !isArchived;
+      }
+    });
+
+    // Add special company_admin filter to exclude messages not involving company_admin
+    //
+    // FILTERING RULES FOR COMPANY ADMIN:
+    // 1. KEEP: Any thread where company_admin is the sender of any message
+    // 2. KEEP: Any thread where company_admin is in recipient_roles of any message
+    // 3. KEEP: Admin-to-admin communications (e.g., app_admin to union_admin)
+    // 4. EXCLUDE: Member-to-division_admin communications where company_admin is not involved
+    //
+    console.log(`[AdminMessageSection] Pre-filter: Found ${statusFiltered.length} threads after status filtering`);
+
+    const companyAdminFiltered = statusFiltered.filter((thread) => {
+      // Always show empty threads (shouldn't happen, but just in case)
+      if (!thread || thread.length === 0) return false;
+
+      // Get the root message for logging
+      const rootMsg = thread.find((msg) => !msg.parent_message_id) || thread[0];
+
+      // Check if any message in the thread involves company_admin directly
+      const hasCompanyAdminInvolved = thread.some(
+        (msg) =>
+          msg.sender_role === "company_admin" || (msg.recipient_roles && msg.recipient_roles.includes("company_admin"))
+      );
+
+      if (hasCompanyAdminInvolved) {
+        return true; // Keep threads where company_admin is directly involved
+      }
+
+      // Check for admin-to-admin communications (keep these)
+      const isAdminToAdminCommunication = thread.some((msg) => {
+        // Check if sender is an admin (not member)
+        const isSenderAdmin = msg.sender_role && msg.sender_role !== "member";
+
+        // Check if recipients are only admins (excluding member-to-division_admin only communications)
+        const hasAdminRecipients =
+          msg.recipient_roles &&
+          msg.recipient_roles.some((role) => role !== "division_admin" || msg.recipient_roles.length > 1);
+
+        return isSenderAdmin && hasAdminRecipients;
       });
+
+      if (isAdminToAdminCommunication) {
+        return true; // Keep admin-to-admin communications
+      }
+
+      // If we get here, check if this is just member-to-division_admin communication
+      const isMemberToDivisionOnly = thread.every((msg) => {
+        // Either a message from member to only division_admin
+        const isMemberToDivisionMsg =
+          msg.sender_role === "member" &&
+          msg.recipient_roles &&
+          msg.recipient_roles.length === 1 &&
+          msg.recipient_roles[0] === "division_admin";
+
+        // Or a reply from division_admin in a thread started by a member
+        const isDivisionReplyToMember =
+          msg.sender_role === "division_admin" && thread.some((origMsg) => origMsg.sender_role === "member");
+
+        return isMemberToDivisionMsg || isDivisionReplyToMember;
+      });
+
+      // Log filtering decisions for debugging
+      if (isMemberToDivisionOnly) {
+        console.log(
+          `[AdminMessageSection] Filtering out member-to-division thread: "${rootMsg.subject}" (id: ${rootMsg.id})`
+        );
+      } else {
+        console.log(
+          `[AdminMessageSection] Keeping thread: "${rootMsg.subject}" (id: ${rootMsg.id}) - has admin communication`
+        );
+      }
+
+      return !isMemberToDivisionOnly; // Filter out member-to-division_admin only threads
+    });
+
+    console.log(
+      `[AdminMessageSection] Post-filter: ${companyAdminFiltered.length} threads remain after company admin filtering`
+    );
+
+    return companyAdminFiltered.sort((threadA, threadB) => {
+      const lastMsgA = threadA[threadA.length - 1];
+      const lastMsgB = threadB[threadB.length - 1];
+      return new Date(lastMsgB.created_at ?? 0).getTime() - new Date(lastMsgA.created_at ?? 0).getTime();
+    });
   }, [messages, filterState, currentUser?.id]);
 
   // --- Handlers ---

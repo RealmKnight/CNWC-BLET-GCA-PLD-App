@@ -51,8 +51,6 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
 
   // Ref to track marked messages to prevent infinite loops
   const markedMessagesRef = useRef<Set<string>>(new Set());
-  // Ref to track refresh interval
-  const refreshIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Get screen dimensions
   const { width } = useWindowDimensions();
@@ -93,31 +91,12 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
     }
   }, [currentUser?.id, viewingDivisionId, _fetchAndSetMessages]);
 
-  // Setup polling as a fallback in case realtime isn't working
+  // Initial data fetch when component mounts
   useEffect(() => {
     if (!currentUser?.id) return;
 
-    // Clear any existing interval first
-    if (refreshIntervalRef.current) {
-      clearInterval(refreshIntervalRef.current);
-      refreshIntervalRef.current = null;
-    }
-
-    // Set up an interval to refresh data
-    refreshIntervalRef.current = setInterval(() => {
-      console.log("[AdminMessages] Running scheduled refresh");
-      refreshMessages();
-    }, 20000); // Check every 20 seconds (adjust as needed)
-
     // Initial refresh when component mounts
     refreshMessages();
-
-    return () => {
-      if (refreshIntervalRef.current) {
-        clearInterval(refreshIntervalRef.current);
-        refreshIntervalRef.current = null;
-      }
-    };
   }, [currentUser?.id, viewingDivisionId, refreshMessages]);
 
   // --- Thread Grouping and Filtering ---
