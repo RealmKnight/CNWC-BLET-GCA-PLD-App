@@ -702,8 +702,7 @@ function RequestDialog({
     if (displayAllotment.max <= 0) return "No days allocated for this date";
     if (hasSixMonthRequest && isSixMonthRequest && !userRequest)
       return "You already have a six-month request pending for this date";
-    if (isSixMonthRequest && !hasExistingRequest)
-      return "Six-month requests are processed by seniority and do not count against daily allotment";
+    if (isSixMonthRequest && !hasExistingRequest) return "Six-month requests are processed by seniority";
 
     // Added specific display for PIL requests - check isExistingRequestPaidInLieu FIRST
     if (isExistingRequestPaidInLieu) {
@@ -899,7 +898,7 @@ function RequestDialog({
             </View>
           )}
 
-          {!isPastView && !isExistingRequestPaidInLieu && !hasExistingRequest && !isSixMonthRequest && (
+          {!isPastView && !isExistingRequestPaidInLieu && !hasExistingRequest && !hasSixMonthRequest && (
             <>
               {/* Uses props availablePld/availableSdv */}
               <View style={dialogStyles.remainingDaysContainer}>

@@ -9,9 +9,13 @@ import {
   useWindowDimensions,
   Switch,
   ActivityIndicator,
+  Platform,
+  KeyboardAvoidingView,
+  TouchableOpacity,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import Toast from "react-native-toast-message"; // Import Toast
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -52,8 +56,8 @@ export function ContactAdminModal({ visible, onClose }: ContactAdminModalProps) 
   const colors = Colors[colorScheme as keyof typeof Colors];
   const currentUser = useUserStore((state) => state.member); // Get basic user info
   const effectiveRoles = useEffectiveRoles() ?? [];
-  const { height: windowHeight } = useWindowDimensions(); // Get window height
-  // const { addMessage } = useAdminNotificationStore(); // REMOVE: Rely on realtime refetch
+  const { height: windowHeight, width: windowWidth } = useWindowDimensions(); // Get window height and width
+  const insets = useSafeAreaInsets();
 
   // --- Determine Contactable Roles Dynamically ---
   const contactableRoles = useMemo(() => {
@@ -88,6 +92,10 @@ export function ContactAdminModal({ visible, onClose }: ContactAdminModalProps) 
   // Check if the current user is authorized to require acknowledgment
   const canRequireAcknowledgement = effectiveRoles.some((role) => ACK_REQUIRING_ROLES.includes(role));
   const showDivisionSelector = selectedRoles.includes("division_admin");
+
+  // Calculate responsive dimensions
+  const isSmallScreen = windowWidth < 380;
+  const modalWidth = windowWidth > 700 ? 600 : windowWidth * 0.92;
 
   // Effect to fetch divisions
   useEffect(() => {
@@ -233,7 +241,7 @@ export function ContactAdminModal({ visible, onClose }: ContactAdminModalProps) 
 
           return (
             <React.Fragment key={role.value}>
-              <Pressable
+              <TouchableOpacity
                 style={styles.checkboxContainer}
                 onPress={() => {
                   setSelectedRoles((prev) =>
@@ -246,7 +254,7 @@ export function ContactAdminModal({ visible, onClose }: ContactAdminModalProps) 
               >
                 <Ionicons name={isSelected ? "checkbox" : "square-outline"} size={24} color={colors.tint} />
                 <ThemedText style={styles.checkboxLabel}>{role.label}</ThemedText>
-              </Pressable>
+              </TouchableOpacity>
 
               {/* Render division selector immediately after Division Admin role if selected */}
               {isDivisionAdmin && isSelected && renderDivisionSelector()}
@@ -272,7 +280,7 @@ export function ContactAdminModal({ visible, onClose }: ContactAdminModalProps) 
           ) : (
             <>
               {/* "All Divisions" Checkbox */}
-              <Pressable
+              <TouchableOpacity
                 style={styles.checkboxContainer}
                 onPress={handleSelectAllToggle}
                 accessibilityRole="checkbox"
@@ -283,11 +291,11 @@ export function ContactAdminModal({ visible, onClose }: ContactAdminModalProps) 
                 <ThemedText style={[styles.checkboxLabel, selectAllDivisions && styles.boldLabel]}>
                   All Divisions
                 </ThemedText>
-              </Pressable>
+              </TouchableOpacity>
 
               {/* Individual Division Checkboxes */}
               {availableDivisions.map((division) => (
-                <Pressable
+                <TouchableOpacity
                   key={division.id}
                   style={styles.checkboxContainer}
                   onPress={() => handleDivisionToggle(division.id)}
@@ -301,7 +309,7 @@ export function ContactAdminModal({ visible, onClose }: ContactAdminModalProps) 
                     color={colors.tint}
                   />
                   <ThemedText style={styles.checkboxLabel}>{division.name}</ThemedText>
-                </Pressable>
+                </TouchableOpacity>
               ))}
             </>
           )}
@@ -311,20 +319,47 @@ export function ContactAdminModal({ visible, onClose }: ContactAdminModalProps) 
   };
 
   return (
-    <Modal animationType="slide" transparent={true} visible={visible} onRequestClose={onClose}>
-      <View style={styles.centeredView}>
-        <ThemedView style={[styles.modalView, { backgroundColor: colors.card, maxHeight: windowHeight * 0.85 }]}>
+    <Modal
+      animationType="slide"
+      transparent={true}
+      visible={visible}
+      onRequestClose={onClose}
+      statusBarTranslucent={Platform.OS !== "web"}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={styles.centeredView}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 40 : 0}
+      >
+        <ThemedView
+          style={[
+            styles.modalView,
+            {
+              backgroundColor: colors.card,
+              maxHeight: windowHeight * 0.9,
+              width: modalWidth,
+              marginTop: insets.top > 0 ? insets.top : 20,
+              marginBottom: insets.bottom > 0 ? insets.bottom : 20,
+              paddingHorizontal: isSmallScreen ? 15 : 25,
+            },
+          ]}
+        >
           <View style={styles.header}>
             <ThemedText style={styles.modalTitle}>Contact Admin</ThemedText>
-            <Pressable onPress={onClose} style={styles.closeButton}>
+            <TouchableOpacity
+              onPress={onClose}
+              style={styles.closeButton}
+              hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
+            >
               <Ionicons name="close-circle" size={28} color={colors.textDim} />
-            </Pressable>
+            </TouchableOpacity>
           </View>
 
           <ScrollView
             style={styles.scrollViewContent}
             contentContainerStyle={styles.scrollViewContainer}
             keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={true}
           >
             {renderRoleSelector()}
 
@@ -359,8 +394,9 @@ export function ContactAdminModal({ visible, onClose }: ContactAdminModalProps) 
                 value={message}
                 onChangeText={setMessage}
                 multiline
-                numberOfLines={4}
+                numberOfLines={Platform.OS === "web" ? 4 : 6}
                 style={{ ...styles.textInput, ...styles.textArea }}
+                textAlignVertical="top"
               />
             </ThemedView>
           </ScrollView>
@@ -381,7 +417,7 @@ export function ContactAdminModal({ visible, onClose }: ContactAdminModalProps) 
             </Button>
           </View>
         </ThemedView>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -395,11 +431,10 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0, 0, 0, 0.5)", // Dim background
   },
   modalView: {
-    margin: 20,
     borderRadius: 10,
-    paddingVertical: 20, // Adjusted padding
+    paddingVertical: 20,
     paddingHorizontal: 25,
-    alignItems: "stretch", // Stretch items horizontally
+    alignItems: "stretch",
     shadowColor: "#000",
     shadowOffset: {
       width: 0,
@@ -408,36 +443,35 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 4,
     elevation: 5,
-    width: "90%", // Adjust width as needed
-    maxWidth: 500,
-    overflow: "hidden", // Ensure content outside bounds (like shadows) isn't clipped unnecessarily, but internal content scrolls.
+    maxWidth: 600,
+    overflow: "hidden",
   },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 15, // Reduced margin
-    paddingBottom: 10, // Add padding below header before scroll starts
+    marginBottom: 15,
+    paddingBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.light.border, // Use theme color
+    borderBottomColor: Colors.light.border,
   },
   modalTitle: {
     fontSize: 20,
     fontWeight: "bold",
   },
   closeButton: {
-    padding: 5, // Add padding for easier pressing
+    padding: 8,
   },
   scrollViewContent: {
     flexShrink: 1,
-    padding: 8, // Allow scroll view to shrink if content is short
+    padding: 5,
   },
   scrollViewContainer: {
-    paddingBottom: 10, // Add padding at the bottom of scrollable content
+    paddingBottom: 10,
   },
   inputGroup: {
     marginBottom: 15,
-    backgroundColor: "transparent", // Ensure group background is transparent if modalView has color
+    backgroundColor: "transparent",
   },
   label: {
     fontSize: 16,
@@ -449,33 +483,34 @@ const styles = StyleSheet.create({
     padding: 10,
     borderRadius: 5,
     fontSize: 16,
-    borderColor: Colors.light.border, // Use theme color
-    // Text color/background likely handled by ThemedTextInput
+    borderColor: Colors.light.border,
   },
   textArea: {
-    minHeight: 80, // Use minHeight instead of fixed height
-    height: undefined, // Allow height to grow
+    minHeight: 100,
+    height: undefined,
     textAlignVertical: "top",
   },
   buttonContainer: {
     flexDirection: "row",
     justifyContent: "flex-end",
-    paddingTop: 15, // Add padding above buttons
-    marginTop: 10, // Add margin separation
+    paddingTop: 15,
+    marginTop: 10,
     borderTopWidth: 1,
-    borderTopColor: Colors.light.border, // Use theme color
+    borderTopColor: Colors.light.border,
     gap: 10,
   },
   errorText: {
-    color: Colors.light.error, // Use error color from theme
+    color: Colors.light.error,
     textAlign: "center",
-    paddingBottom: 10, // Add padding below error before buttons
+    paddingBottom: 10,
   },
   checkboxContainer: {
     flexDirection: "row",
     alignItems: "center",
     marginBottom: 10,
     backgroundColor: "transparent",
+    minHeight: 40,
+    paddingVertical: 5,
   },
   checkboxLabel: {
     marginLeft: 8,
@@ -484,35 +519,34 @@ const styles = StyleSheet.create({
   roleSelectorContainer: {
     marginBottom: 15,
     backgroundColor: "transparent",
-    paddingBottom: 10, // Add padding below roles before subject
+    paddingBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.light.border, // Use theme color
+    borderBottomColor: Colors.light.border,
   },
-  // Styles for the toggle
   toggleContainer: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginTop: 10,
-    marginBottom: 15, // Add margin below toggle
+    marginBottom: 15,
     paddingVertical: 10,
-    paddingHorizontal: 5, // Optional padding
+    paddingHorizontal: 5,
     backgroundColor: "transparent",
-    borderTopWidth: 1, // Separator line above
-    borderBottomWidth: 1, // Separator line below
-    borderColor: Colors.light.border, // Use theme border color
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: Colors.light.border,
   },
   toggleLabel: {
     fontSize: 16,
     fontWeight: "600",
-    marginRight: 10, // Space between label and switch
+    marginRight: 10,
   },
   nestedDivisionContainer: {
     marginTop: 15,
     paddingTop: 15,
-    paddingBottom: 5, // Reduce padding below last item
+    paddingBottom: 5,
     borderTopWidth: 1,
-    borderTopColor: Colors.light.border, // Use theme color
+    borderTopColor: Colors.light.border,
     backgroundColor: "transparent",
   },
   nestedLabel: {
