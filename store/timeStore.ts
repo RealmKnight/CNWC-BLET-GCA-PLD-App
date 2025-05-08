@@ -107,6 +107,7 @@ interface TimeActions {
     ) => Promise<boolean>; // No PIL for 6mo
     clearError: () => void;
     setIsInitialized: (isInitialized: boolean) => void;
+    triggerPldSdvRefresh: () => Promise<void>;
 }
 
 // ============================================================================
@@ -140,7 +141,9 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
     setIsInitialized: (isInitialized) => set({ isInitialized }),
 
     initialize: async (memberId) => {
-        console.log(`[TimeStore] Initializing for member: ${memberId}`);
+        console.log(
+            `[TimeStore] Initializing for member: ${memberId}. Subscribing to channel: mytime-updates-${memberId} and filter member_id=eq.${memberId}`,
+        );
         const existingChannel = get().channel;
         if (existingChannel) {
             console.log(
@@ -188,10 +191,57 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
                     event: "*",
                     schema: "public",
                     table: "pld_sdv_requests",
-                    filter: `member_id=eq.${memberId}`,
+                    // filter: `member_id=eq.${memberId}`, // <-- Temporarily commented out
                 },
-                (payload) =>
-                    get().handleRealtimeUpdate(payload, "pld_sdv_requests"),
+                (payload: RealtimePostgresChangesPayload<DbPldSdvRequests>) => {
+                    console.log(
+                        "[TimeStore] >>> pld_sdv_requests REALTIME (NO FILTER) CALLBACK FIRED <<< Payload:",
+                        payload,
+                    );
+
+                    const newRecord = payload.new as DbPldSdvRequests;
+                    const oldRecord = payload.old as Partial<DbPldSdvRequests>;
+
+                    if (payload.eventType === "UPDATE") {
+                        console.log(
+                            `[TimeStore DIAGNOSTIC] EventType is UPDATE. Store memberId: ${get().memberId}, Payload member_id: ${newRecord?.member_id}`,
+                        );
+                        // Unconditionally call handleRealtimeUpdate for UPDATE to see if it then works or logs [TimeStore RT]
+                        get().handleRealtimeUpdate(payload, "pld_sdv_requests");
+                    } else if (payload.eventType === "INSERT") {
+                        if (
+                            newRecord && newRecord.member_id === get().memberId
+                        ) {
+                            get().handleRealtimeUpdate(
+                                payload,
+                                "pld_sdv_requests",
+                            );
+                        } else {
+                            console.log(
+                                `[TimeStore] pld_sdv_requests (NO FILTER) INSERT for different/no member_id (${newRecord?.member_id}), ignoring.`,
+                            );
+                        }
+                    } else if (payload.eventType === "DELETE") {
+                        if (
+                            oldRecord && oldRecord.member_id === get().memberId
+                        ) {
+                            get().handleRealtimeUpdate(
+                                payload,
+                                "pld_sdv_requests",
+                            );
+                        } else {
+                            console.log(
+                                `[TimeStore] pld_sdv_requests (NO FILTER) DELETE for different/no member_id (${oldRecord?.member_id}), ignoring.`,
+                            );
+                        }
+                    } else {
+                        console.log(
+                            "[TimeStore] pld_sdv_requests (NO FILTER) other event type ('${payload.eventType}'), passing to handler:",
+                            payload,
+                        );
+                        get().handleRealtimeUpdate(payload, "pld_sdv_requests");
+                    }
+                },
             )
             // --- Six Month Requests --- Correctly filtered by member_id
             .on(
@@ -248,9 +298,10 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
             console.log(
                 `[TimeStore] Realtime subscription status for ${memberId}:`,
                 status,
+                err ? `Error: ${JSON.stringify(err)}` : "", // More detailed error logging
             );
             set({ isSubscribing: status === "SUBSCRIBED" });
-            if (status === "SUBSCRIPTION_ERROR" || err) {
+            if (err) {
                 console.error("[TimeStore] Realtime subscription error:", err);
                 set({
                     error: `Realtime connection failed: ${
@@ -1038,9 +1089,200 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
             clearTimeout(existingTimeout); // Clear previous timeout if exists
         }
 
+        // Immediate UI updates for critical changes
+        if (table === "pld_sdv_requests") {
+            if (payload.eventType === "DELETE") {
+                // Handle deletions by removing the request from state
+                const updatedRequests = get().timeOffRequests.filter(
+                    (request) => String(request.id) !== String(payload.old.id), // Robust comparison
+                );
+                console.log(
+                    `[TimeStore RT] Immediately removing deleted pld_sdv_request from UI. ID: ${payload.old.id}`,
+                );
+                set({ timeOffRequests: updatedRequests });
+            } else if (payload.eventType === "UPDATE") {
+                const { timeOffRequests } = get();
+                console.log(
+                    `[TimeStore RT] Processing UPDATE for pld_sdv_requests. Payload ID: ${payload.new.id} (type: ${typeof payload
+                        .new.id}). Current timeOffRequests count: ${timeOffRequests.length}`,
+                );
+
+                const updatedRequests = timeOffRequests.map((request) => {
+                    if (request.is_six_month_request) {
+                        // This payload is for pld_sdv_requests, so skip six_month_request placeholders
+                        return request;
+                    }
+                    // Log current request's ID and type for comparison
+                    // console.log(`[TimeStore RT Debug] Comparing with store request ID: ${request.id} (type: ${typeof request.id}), is_six_month: ${request.is_six_month_request}`);
+
+                    if (String(request.id) === String(payload.new.id)) {
+                        console.log(
+                            `[TimeStore RT Debug] Match found for ID ${request.id}! Updating status from "${request.status}" to "${payload.new.status}". Waitlist: ${payload.new.waitlist_position}`,
+                        );
+                        return {
+                            ...request,
+                            status: payload.new.status,
+                            waitlist_position: payload.new.waitlist_position,
+                            // Ensure other relevant fields from payload.new are also updated if necessary
+                            // For example, if paid_in_lieu can be changed by an admin:
+                            // paid_in_lieu: payload.new.paid_in_lieu,
+                        };
+                    }
+                    return request;
+                });
+
+                const originalRequest = timeOffRequests.find((req) =>
+                    String(req.id) === String(payload.new.id) &&
+                    !req.is_six_month_request
+                );
+                const newlyUpdatedRequest = updatedRequests.find((req) =>
+                    String(req.id) === String(payload.new.id) &&
+                    !req.is_six_month_request
+                );
+
+                if (
+                    originalRequest && newlyUpdatedRequest &&
+                    (originalRequest.status !== newlyUpdatedRequest.status ||
+                        originalRequest.waitlist_position !==
+                            newlyUpdatedRequest.waitlist_position)
+                ) {
+                    console.log(
+                        `[TimeStore RT] Request ID ${payload.new.id} was updated. Old status: ${originalRequest.status}, New status: ${newlyUpdatedRequest.status}. Old waitlist: ${originalRequest.waitlist_position}, New waitlist: ${newlyUpdatedRequest.waitlist_position}`,
+                    );
+                } else if (originalRequest) {
+                    console.log(
+                        `[TimeStore RT] Request ID ${payload.new.id} found but relevant fields (status, waitlist_position) did not change or payload values were same.`,
+                    );
+                } else {
+                    console.log(
+                        `[TimeStore RT] No matching non-six-month request found in store for ID ${payload.new.id}.`,
+                    );
+                }
+
+                // Remove cancelled/denied requests from the list
+                const filteredRequests = updatedRequests.filter((request) =>
+                    request.status !== "cancelled" &&
+                    request.status !== "denied"
+                );
+
+                console.log(
+                    `[TimeStore RT] Setting updated timeOffRequests for pld_sdv_request. Original count: ${timeOffRequests.length}, New count after map: ${updatedRequests.length}, New count after filter: ${filteredRequests.length}`,
+                );
+                set({ timeOffRequests: filteredRequests });
+            } else if (payload.eventType === "INSERT") {
+                // For new requests, add them to the UI immediately
+                // But only if they belong to the current user
+                if (payload.new.member_id === memberId) {
+                    const newRequest: TimeOffRequest = {
+                        id: String(payload.new.id), // Ensure ID is string
+                        member_id: payload.new.member_id,
+                        request_date: payload.new.request_date,
+                        leave_type: payload.new.leave_type as "PLD" | "SDV",
+                        status: payload.new.status as TimeOffRequest["status"],
+                        requested_at: payload.new.requested_at ||
+                            new Date().toISOString(),
+                        waitlist_position: payload.new.waitlist_position ||
+                            null,
+                        paid_in_lieu: payload.new.paid_in_lieu || false,
+                        is_six_month_request: false, // This is a pld_sdv_request
+                        calendar_id: payload.new.calendar_id || null,
+                    };
+
+                    // Add the new request to the state
+                    const currentRequests = get().timeOffRequests;
+                    const updatedRequests = [
+                        ...currentRequests,
+                        newRequest,
+                    ].sort((a, b) =>
+                        new Date(a.request_date).getTime() -
+                        new Date(b.request_date).getTime()
+                    ); // Keep sorted
+
+                    console.log(
+                        `[TimeStore RT] Immediately adding new pld_sdv_request to UI. ID: ${payload.new.id}`,
+                    );
+                    set({ timeOffRequests: updatedRequests });
+                }
+            }
+        } else if (table === "six_month_requests") {
+            if (payload.eventType === "DELETE") {
+                // Handle deletions by removing the request from state
+                const updatedRequests = get().timeOffRequests.filter(
+                    (request) =>
+                        !(request.is_six_month_request &&
+                            String(request.id) === String(payload.old.id)), // Robust comparison
+                );
+                console.log(
+                    `[TimeStore RT] Immediately removing deleted six-month request from UI. ID: ${payload.old.id}`,
+                );
+                set({ timeOffRequests: updatedRequests });
+            } else if (payload.eventType === "INSERT") {
+                if (payload.new.member_id === memberId) {
+                    const newSixMonthRequest: TimeOffRequest = {
+                        id: String(payload.new.id), // Ensure ID is string
+                        member_id: payload.new.member_id,
+                        request_date: payload.new.request_date,
+                        leave_type: payload.new.leave_type as "PLD" | "SDV",
+                        status: "pending", // Six month requests are initially pending in this combined list
+                        requested_at: payload.new.requested_at ||
+                            new Date().toISOString(),
+                        waitlist_position: null,
+                        paid_in_lieu: false,
+                        is_six_month_request: true,
+                        calendar_id: payload.new.calendar_id || null,
+                    };
+                    const currentRequests = get().timeOffRequests;
+                    const updatedRequests = [
+                        ...currentRequests,
+                        newSixMonthRequest,
+                    ].sort((a, b) =>
+                        new Date(a.request_date).getTime() -
+                        new Date(b.request_date).getTime()
+                    ); // Keep sorted
+
+                    console.log(
+                        `[TimeStore RT] Immediately adding new six-month request to UI. ID: ${payload.new.id}`,
+                    );
+                    set({ timeOffRequests: updatedRequests });
+                }
+            }
+            // Other six_month_requests changes (like UPDATE to 'processed')
+            // will be handled by the debounced refresh, which is generally fine
+            // as they would typically disappear from the active list once processed.
+        } else if (table === "vacation_requests") {
+            if (payload.eventType === "UPDATE") {
+                // Update vacation request status
+                const updatedRequests = get().vacationRequests.map(
+                    (request) => {
+                        if (request.id === payload.new.id) {
+                            return {
+                                ...request,
+                                status: payload.new.status,
+                            };
+                        }
+                        return request;
+                    },
+                );
+                console.log(
+                    `[TimeStore RT] Immediately updating vacation request status in UI`,
+                );
+                set({ vacationRequests: updatedRequests });
+            } else if (payload.eventType === "DELETE") {
+                // Remove deleted vacation requests
+                const updatedRequests = get().vacationRequests.filter(
+                    (request) => request.id !== payload.old.id,
+                );
+                console.log(
+                    `[TimeStore RT] Immediately removing deleted vacation request from UI`,
+                );
+                set({ vacationRequests: updatedRequests });
+            }
+        }
+
+        // Queue a full refresh to ensure all related data is synchronized
         const newTimeoutId = setTimeout(() => {
             console.log(
-                `[TimeStore] Debounced refresh triggered by ${table} update.`,
+                `[TimeStore RT] Debounced refresh triggered by ${table} update.`,
             );
             get().refreshAll(memberId);
             set({ refreshTimeoutId: null }); // Clear timeout ID after execution
@@ -1056,11 +1298,33 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
         // - pld_sdv_allocations change -> refreshTimeStats (? or specific recalculation)
         // - members change -> refreshTimeStats, refreshVacationStats
 
-        // For now, just trigger a full refresh, potentially debounced
-        // Consider adding debounce logic here
-        console.log(
-            `[TimeStore] Triggering refreshAll due to ${table} update.`,
-        );
-        get().refreshAll(memberId);
+        // NOTE: Full refresh is now handled by the debounce logic above
+        // No need to call refreshAll() again here
+    },
+
+    triggerPldSdvRefresh: async () => {
+        console.log("[TimeStore] External triggerPldSdvRefresh called");
+        const memberId = get().memberId;
+        if (memberId) {
+            set({ isLoading: true }); // Indicate loading
+            try {
+                // Focus on refreshing data most relevant to the requests list and stats
+                await get().fetchTimeOffRequests(memberId);
+                await get().fetchTimeStats(memberId);
+                set({ lastRefreshed: new Date(), error: null });
+            } catch (e: any) {
+                console.error("[TimeStore] Error in triggerPldSdvRefresh:", e);
+                set({
+                    error: e?.message ||
+                        "Error during triggered PLD/SDV refresh",
+                });
+            } finally {
+                set({ isLoading: false });
+            }
+        } else {
+            console.warn(
+                "[TimeStore] triggerPldSdvRefresh called but no memberId available.",
+            );
+        }
     },
 }));

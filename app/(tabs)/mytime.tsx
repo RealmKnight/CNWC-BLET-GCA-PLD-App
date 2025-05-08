@@ -28,6 +28,8 @@ import { useAuth } from "@/hooks/useAuth";
 import Toast from "react-native-toast-message";
 import { Database } from "@/types/supabase";
 import { PaidInLieuModal } from "@/components/modals/PaidInLieuModal";
+import { Select } from "@/components/ui/Select";
+import { supabase } from "@/utils/supabase";
 
 interface LeaveRowProps {
   label: string;
@@ -465,6 +467,12 @@ export default function MyTimeScreen() {
     cancelSixMonthRequest,
   } = useMyTime();
 
+  // <<< --- ADDED DEBUG LOGGING useEffect --- >>>
+  useEffect(() => {
+    console.log("[MyTimeScreen] timeOffRequests changed in useEffect:", timeOffRequests);
+  }, [timeOffRequests]);
+  // <<< --- END DEBUG LOGGING useEffect --- >>>
+
   // <<< --- ADD DEBUG LOGGING --- >>>
   console.log("[MyTimeScreen] Rendering with values:", {
     isLoading,
@@ -642,7 +650,93 @@ export default function MyTimeScreen() {
   // Handle pull-to-refresh - uses refreshData from hook
   const handleRefresh = () => {
     console.log("[MyTimeScreen] User-initiated pull-to-refresh");
-    refreshData(""); // Since we don't need to pass memberId from component
+    // Check if member exists and use its ID, otherwise use empty string
+    refreshData(member?.id || "");
+  };
+
+  // Added for SDV election
+  const [isSavingSplitWeeks, setIsSavingSplitWeeks] = useState(false);
+  const [nextYearSplitWeeks, setNextYearSplitWeeks] = useState<number | null>(null);
+  const now = new Date();
+  const currentYear = now.getFullYear();
+
+  // Only show section from Jan 1 to June 30
+  const isElectionPeriod = useMemo(() => {
+    const startDate = new Date(currentYear, 0, 1); // Jan 1
+    const endDate = new Date(currentYear, 5, 30); // June 30
+    return now >= startDate && now <= endDate;
+  }, [currentYear]);
+
+  // Fetch next_vacation_split when component loads
+  useEffect(() => {
+    const fetchNextVacationSplit = async () => {
+      if (!member) return;
+
+      try {
+        const { data, error } = await supabase
+          .from("members")
+          .select("next_vacation_split")
+          .eq("id", member.id)
+          .single();
+
+        if (error) throw error;
+
+        if (data && data.next_vacation_split !== null) {
+          setNextYearSplitWeeks(data.next_vacation_split);
+        }
+      } catch (error) {
+        console.error("[MyTimeScreen] Error fetching next_vacation_split:", error);
+      }
+    };
+
+    fetchNextVacationSplit();
+  }, [member]);
+
+  // Update next_vacation_split and sdv_election in database
+  const handleSplitWeeksChange = async (value: string | number | null) => {
+    if (!member || value === null || typeof value === "string") return;
+
+    setIsSavingSplitWeeks(true);
+
+    try {
+      // Calculate SDVs (6 per split week)
+      const sdvs = value * 6;
+
+      const { error } = await supabase
+        .from("members")
+        .update({
+          next_vacation_split: value,
+          sdv_election: sdvs,
+        })
+        .eq("id", member.id);
+
+      if (error) throw error;
+
+      setNextYearSplitWeeks(value);
+
+      Toast.show({
+        type: "success",
+        text1: "Split Weeks Updated",
+        text2: `Your split weeks election for next year has been updated to ${value}.`,
+        position: "bottom",
+        visibilityTime: 3000,
+      });
+
+      // Refresh data to update the UI with new values
+      // Pass the member.id instead of an empty string
+      refreshData(member.id || "");
+    } catch (error) {
+      console.error("[MyTimeScreen] Error updating split weeks:", error);
+      Toast.show({
+        type: "error",
+        text1: "Update Failed",
+        text2: error instanceof Error ? error.message : "An error occurred updating your split weeks.",
+        position: "bottom",
+        visibilityTime: 3000,
+      });
+    } finally {
+      setIsSavingSplitWeeks(false);
+    }
   };
 
   // Display loading indicator - uses isLoading from hook
@@ -686,6 +780,65 @@ export default function MyTimeScreen() {
         // syncStatus: timeStats.syncStatus, // Removed syncStatus
       }
     : null;
+
+  // Replace the renderSplitWeeksSection function to include a message when outside election period
+  const renderSplitWeeksSection = () => {
+    // Define the split weeks options
+    const splitWeeksOptions = [
+      { label: "0 Weeks", value: 0 },
+      { label: "1 Week (6 SDVs)", value: 1 },
+      { label: "2 Weeks (12 SDVs)", value: 2 },
+    ];
+
+    return (
+      <>
+        <ThemedView style={styles.sectionHeader}>
+          <ThemedText style={styles.sectionTitle}>Split Weeks Election for Next Year</ThemedText>
+        </ThemedView>
+        <ThemedView style={[styles.card, { width: cardWidth }]}>
+          <ThemedView style={styles.splitWeeksContainer}>
+            {isElectionPeriod ? (
+              <>
+                <ThemedText style={styles.splitWeeksDescription}>
+                  Choose how many vacation weeks you want to split into SDVs for next year. Each split week provides 6
+                  SDVs. You can split up to 2 weeks of your vacation time. This election must be made before June 30th.
+                </ThemedText>
+
+                <ThemedView style={styles.selectContainer}>
+                  <Select
+                    label="Split Weeks for NEXT year"
+                    value={nextYearSplitWeeks}
+                    onValueChange={handleSplitWeeksChange}
+                    options={splitWeeksOptions}
+                    disabled={isSavingSplitWeeks}
+                  />
+                  {isSavingSplitWeeks && (
+                    <ActivityIndicator
+                      size="small"
+                      color={Colors[colorScheme ?? "light"].primary}
+                      style={styles.saveIndicator}
+                    />
+                  )}
+                </ThemedView>
+              </>
+            ) : (
+              <ThemedView style={styles.notActiveContainer}>
+                <Feather name="calendar" size={24} color={Colors[colorScheme ?? "light"].textDim} />
+                <ThemedText style={styles.notActiveText}>
+                  Split weeks election is only available from January 1st through June 30th.
+                  {nextYearSplitWeeks !== null
+                    ? ` Your current election for next year is ${nextYearSplitWeeks} split weeks (${
+                        nextYearSplitWeeks * 6
+                      } SDVs).`
+                    : ""}
+                </ThemedText>
+              </ThemedView>
+            )}
+          </ThemedView>
+        </ThemedView>
+      </>
+    );
+  };
 
   return (
     <>
@@ -858,6 +1011,9 @@ export default function MyTimeScreen() {
             <VacationRequestRow key={`vac-past-${request.id}`} request={request} />
           ))}
         </ThemedView>
+
+        {/* Vacation Split weeks for next year member's own election */}
+        {renderSplitWeeksSection()}
       </ThemedScrollView>
 
       {/* Paid In Lieu Modal - No change needed in props passed */}
@@ -1305,5 +1461,32 @@ const styles = StyleSheet.create({
     color: Colors.dark.primary,
     padding: 8,
     textAlign: "center",
+  },
+  splitWeeksContainer: {
+    padding: 16,
+    alignItems: "center",
+  },
+  splitWeeksDescription: {
+    fontSize: 16,
+    marginBottom: 16,
+  },
+  selectContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  saveIndicator: {
+    marginLeft: 12,
+  },
+  notActiveContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 16,
+    borderRadius: 8,
+    backgroundColor: Colors.dark.background + "20",
+  },
+  notActiveText: {
+    marginLeft: 12,
+    fontSize: 16,
+    flex: 1,
   },
 });

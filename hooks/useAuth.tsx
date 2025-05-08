@@ -212,10 +212,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
         // 3. Initialize Time Store
         console.log("[Auth] Initializing time store...");
         try {
-          // No need to check isInitialized here, the store's initialize handles it
-          await useTimeStore.getState().initialize(userId);
-          console.log("[Auth] Time store initialized successfully");
-          // Note: timeStore manages its own cleanup internally via its cleanup action
+          const timeStore = useTimeStore.getState();
+          if (!timeStore.isInitialized) {
+            console.log("[Auth] TimeStore not initialized, proceeding with initialization.");
+            await timeStore.initialize(userId);
+            console.log("[Auth] Time store initialized successfully");
+          } else {
+            console.log("[Auth] TimeStore ALREADY INITIALIZED, skipping re-initialization.");
+          }
         } catch (error) {
           console.error("[Auth] Error initializing Time Store:", error);
           // Decide how to handle store init error (e.g., log, set global error state?)

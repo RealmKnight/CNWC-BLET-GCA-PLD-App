@@ -3,6 +3,7 @@ import { supabase } from "@/utils/supabase";
 import { addDays, isAfter, isBefore, parseISO, startOfDay } from "date-fns";
 import { format } from "date-fns-tz";
 import { useUserStore } from "@/store/userStore";
+import { useTimeStore } from "@/store/timeStore";
 import {
   PldSdvAllotment,
   useAdminCalendarManagementStore,
@@ -1047,6 +1048,7 @@ export function setupCalendarSubscriptions() {
         try {
           // Get the current state and refresh the requests for the affected date
           const state = useCalendarStore.getState();
+          const member = useUserStore.getState().member;
 
           let date: string;
           if (
@@ -1057,7 +1059,28 @@ export function setupCalendarSubscriptions() {
             date = payload.old.request_date;
           }
 
-          await state.refreshRequestsForDate(date, calendarId);
+          if (member?.calendar_id) {
+            await state.refreshRequestsForDate(date, member.calendar_id);
+          } else {
+            console.warn(
+              "[CalendarStore Realtime] Cannot refreshRequestsForDate, missing member.calendar_id",
+            );
+          }
+
+          // !!! DIAGNOSTIC HACK !!!
+          console.log(
+            "[CalendarStore Realtime] Attempting to trigger TimeStore refresh for PLD/SDV change.",
+          );
+          const { triggerPldSdvRefresh } = useTimeStore.getState();
+          if (triggerPldSdvRefresh) {
+            triggerPldSdvRefresh().catch((error) => {
+              console.error(
+                "[CalendarStore Realtime] Error calling triggerPldSdvRefresh from TimeStore:",
+                error,
+              );
+            });
+          }
+          // !!! END DIAGNOSTIC HACK !!!
         } catch (error) {
           console.error(
             "[CalendarStore Realtime] Error handling request change:",
