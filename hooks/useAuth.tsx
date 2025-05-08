@@ -436,20 +436,24 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
                 // Initialize all user-specific stores and hooks after confirming member data
                 // The initialize function within each store already prevents re-initialization
-                await initializeUserStores(fetchedMemberData.id, fetchedMemberData.calendar_id);
+                if (fetchedMemberData.id) {
+                  await initializeUserStores(fetchedMemberData.id, fetchedMemberData.calendar_id);
 
-                // Check if the member has an admin role (not "user") and initialize admin stores if needed
-                if (memberRole !== "user") {
-                  console.log("[Auth] Member has admin role:", memberRole, "initializing admin stores");
-                  // Ensure this only runs if needed (e.g., first time or after cleanup)
-                  if (needsCleanup || !adminNotificationCleanupRef.current) {
-                    // Example condition
-                    await initializeAdminStores(
-                      fetchedMemberData.id,
-                      memberRole,
-                      fetchedMemberData.division_id ? Number(fetchedMemberData.division_id) : null
-                    );
+                  // Check if the member has an admin role (not "user") and initialize admin stores if needed
+                  if (memberRole !== "user") {
+                    console.log("[Auth] Member has admin role:", memberRole, "initializing admin stores");
+                    // Ensure this only runs if needed (e.g., first time or after cleanup)
+                    if (needsCleanup || !adminNotificationCleanupRef.current) {
+                      // Example condition
+                      await initializeAdminStores(
+                        fetchedMemberData.id,
+                        memberRole,
+                        fetchedMemberData.division_id ? Number(fetchedMemberData.division_id) : null
+                      );
+                    }
                   }
+                } else {
+                  console.error("[Auth] Member data has null ID, cannot initialize stores");
                 }
               } else {
                 // No member data found - need association

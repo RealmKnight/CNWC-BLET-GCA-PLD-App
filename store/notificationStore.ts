@@ -4,6 +4,7 @@ import { StateCreator } from "zustand";
 import { Platform } from "react-native";
 import { useUserStore } from "@/store/userStore";
 import * as Notifications from "expo-notifications";
+import { RealtimeChannel } from "@supabase/supabase-js";
 
 interface Message {
   id: string;
@@ -408,7 +409,11 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
     };
 
     // Track active channels for cleanup
-    const activeChannels = {
+    const activeChannels: {
+      messagesChannel: RealtimeChannel | null;
+      userPinChannel: RealtimeChannel | null;
+      deliveriesChannel: RealtimeChannel | null;
+    } = {
       messagesChannel: null,
       userPinChannel: null,
       deliveriesChannel: null,
@@ -445,7 +450,7 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
             console.log(
               "[NotificationStore] Received realtime update for recipient_id:",
               payload.eventType,
-              payload.new?.id || payload.old?.id,
+              (payload.new as any)?.id || (payload.old as any)?.id,
             );
             // Get the user data to refresh messages
             const userData = await getUserData();
@@ -505,7 +510,7 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
                 console.log(
                   "[NotificationStore] Received realtime update for pin:",
                   payload.eventType,
-                  payload.new?.id || payload.old?.id,
+                  (payload.new as any)?.id || (payload.old as any)?.id,
                 );
                 await get().refreshMessages(pinNumber, userId, true);
               },
@@ -548,7 +553,7 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
                 console.log(
                   "[NotificationStore] Received delivery update:",
                   payload.eventType,
-                  payload.new?.id || payload.old?.id,
+                  (payload.new as any)?.id || (payload.old as any)?.id,
                 );
                 await get().refreshMessages(pinNumber, userId, true);
               },

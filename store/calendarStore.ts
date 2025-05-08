@@ -486,7 +486,9 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
         if (!requestsByDate[request.request_date]) {
           requestsByDate[request.request_date] = [];
         }
-        requestsByDate[request.request_date].push(request as DayRequest);
+        requestsByDate[request.request_date].push(
+          request as unknown as DayRequest,
+        );
       });
 
       return requestsByDate;
@@ -731,14 +733,16 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       if (error) throw error;
 
       // If immediate cancellation (data is true), update the UI again
-      if (data) {
+      if (data && member.calendar_id) {
         await state.refreshRequestsForDate(requestDate, member.calendar_id);
       }
       return true;
     } catch (error) {
       console.error("[CalendarStore] Error cancelling request:", error);
       // Revert optimistic update
-      await state.refreshRequestsForDate(requestDate, member.calendar_id);
+      if (member.calendar_id) {
+        await state.refreshRequestsForDate(requestDate, member.calendar_id);
+      }
       return false;
     }
   },
@@ -799,11 +803,12 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
   submitSixMonthRequest: async (
     date: string,
     type: "PLD" | "SDV",
-  ) => {
+  ): Promise<DayRequest | null> => {
     // Get the member ID from the user store
     const member = useUserStore.getState().member;
     if (!member) {
-      throw new Error("No member found");
+      console.error("[CalendarStore] submitSixMonthRequest: No member found");
+      return null;
     }
 
     console.log("[CalendarStore] Submitting six-month request", {
@@ -823,24 +828,26 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       const isEndOfMonth = isLastDayOfMonth(now);
       const isSixMonthDate = dateObj.getTime() === sixMonthsFromNow.getTime();
 
-      const isSixMonthRequest = isSixMonthDate || (
+      const isSixMonthRequestValid = isSixMonthDate || (
         isEndOfMonth &&
         dateObj.getMonth() === sixMonthsFromNow.getMonth() &&
         dateObj.getFullYear() === sixMonthsFromNow.getFullYear() &&
         dateObj.getDate() >= sixMonthsFromNow.getDate()
       );
 
-      if (!isSixMonthRequest) {
-        throw new Error(
-          "Selected date is not valid for a six-month request. Must be exactly six months from today.",
+      if (!isSixMonthRequestValid) {
+        console.error(
+          "[CalendarStore] submitSixMonthRequest: Selected date is not valid for a six-month request.",
         );
+        return null;
       }
 
       // Check if we already have a six-month request for this date
       if (state.sixMonthRequestDays[date] === true) {
-        throw new Error(
-          "You already have a six-month request for this date.",
+        console.error(
+          "[CalendarStore] submitSixMonthRequest: You already have a six-month request for this date.",
         );
+        return null;
       }
 
       // Submit six-month request
@@ -863,7 +870,7 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
 
       // Format the response to match DayRequest interface for compatibility
       // This is a temporary representation for the UI
-      const formattedRequest: DayRequest = {
+      const formattedRequest = {
         id: data.id,
         member_id: data.member_id,
         calendar_id: data.calendar_id,
@@ -872,20 +879,31 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
         status: "pending",
         requested_at: data.requested_at,
         member: {
-          id: member.id,
+          id: member.id ?? "",
           first_name: member.first_name,
           last_name: member.last_name,
           pin_number: member.pin_number,
         },
+        actioned_at: null,
+        actioned_by: null,
+        created_at: data.requested_at,
+        denial_comment: null,
+        paid_in_lieu: false,
+        updated_at: data.requested_at,
+        waitlist_position: null,
+        cancellation_reason: null,
+        is_absence: false,
+        absence_type: null,
+        notes: null,
       };
 
-      return formattedRequest;
+      return formattedRequest as unknown as DayRequest;
     } catch (error) {
       console.error(
         "[CalendarStore] Error submitting six-month request:",
         error,
       );
-      throw error;
+      return null;
     }
   },
 

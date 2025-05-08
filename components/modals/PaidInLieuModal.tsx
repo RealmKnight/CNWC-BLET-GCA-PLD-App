@@ -127,11 +127,11 @@ export function PaidInLieuModal({ isVisible, onConfirm, onCancel, stats, minDate
                 isSmallDevice && { minWidth: 80, paddingHorizontal: 16 },
               ]}
               onPress={() => setSelectedType("PLD")}
-              disabled={stats && stats.available.pld <= 0}
+              disabled={stats ? stats.available.pld <= 0 : false}
               accessibilityLabel={`PLD: ${stats?.available.pld || 0} available days`}
               accessibilityRole="button"
               accessibilityState={{
-                disabled: stats && stats.available.pld <= 0,
+                disabled: stats ? stats.available.pld <= 0 : false,
                 selected: selectedType === "PLD",
               }}
             >
@@ -156,11 +156,11 @@ export function PaidInLieuModal({ isVisible, onConfirm, onCancel, stats, minDate
                 isSmallDevice && { minWidth: 80, paddingHorizontal: 16 },
               ]}
               onPress={() => setSelectedType("SDV")}
-              disabled={stats && stats.available.sdv <= 0}
+              disabled={stats ? stats.available.sdv <= 0 : false}
               accessibilityLabel={`SDV: ${stats?.available.sdv || 0} available days`}
               accessibilityRole="button"
               accessibilityState={{
-                disabled: stats && stats.available.sdv <= 0,
+                disabled: stats ? stats.available.sdv <= 0 : false,
                 selected: selectedType === "SDV",
               }}
             >
@@ -184,8 +184,8 @@ export function PaidInLieuModal({ isVisible, onConfirm, onCancel, stats, minDate
               onDateChange={setSelectedDate}
               mode="date"
               placeholder="Select date for paid in lieu"
-              minDate={parsedMinDate}
-              maxDate={parsedMaxDate}
+              minDate={parsedMinDate || undefined}
+              maxDate={parsedMaxDate || undefined}
               accessibilityLabel="Select the date you want to request paid in lieu for"
               accessibilityHint="Opens a date picker to select a date within two weeks of today"
               disabled={!selectedType}
@@ -228,8 +228,13 @@ export function PaidInLieuModal({ isVisible, onConfirm, onCancel, stats, minDate
               disabled={
                 !selectedType ||
                 !selectedDate ||
-                (stats && selectedType === "PLD" && stats.available.pld <= 0) ||
-                (stats && selectedType === "SDV" && stats.available.sdv <= 0)
+                (stats
+                  ? selectedType === "PLD"
+                    ? stats.available.pld <= 0
+                    : selectedType === "SDV"
+                    ? stats.available.sdv <= 0
+                    : false
+                  : false)
               }
               accessibilityLabel="Request Payment"
               accessibilityRole="button"
@@ -237,8 +242,13 @@ export function PaidInLieuModal({ isVisible, onConfirm, onCancel, stats, minDate
                 disabled:
                   !selectedType ||
                   !selectedDate ||
-                  (stats && selectedType === "PLD" && stats.available.pld <= 0) ||
-                  (stats && selectedType === "SDV" && stats.available.sdv <= 0),
+                  (stats
+                    ? selectedType === "PLD"
+                      ? stats.available.pld <= 0
+                      : selectedType === "SDV"
+                      ? stats.available.sdv <= 0
+                      : false
+                    : false),
               }}
             >
               <ThemedText style={[styles.confirmButtonText, isSmallDevice && { fontSize: 14 }]}>
@@ -307,6 +317,7 @@ const styles = StyleSheet.create({
     marginBottom: 24,
     width: "100%",
     gap: 8,
+    backgroundColor: Colors.dark.card,
   },
   typeButton: {
     backgroundColor: Colors.dark.background,
@@ -316,6 +327,8 @@ const styles = StyleSheet.create({
     minWidth: 100,
     alignItems: "center",
     justifyContent: "center",
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
   },
   selectedTypeButton: {
     backgroundColor: Colors.dark.primary,
@@ -351,6 +364,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     width: "100%",
     gap: 12,
+    backgroundColor: Colors.dark.card,
   },
   cancelButton: {
     backgroundColor: Colors.dark.background,
@@ -360,6 +374,8 @@ const styles = StyleSheet.create({
     minWidth: 120,
     alignItems: "center",
     justifyContent: "center",
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
   },
   cancelButtonText: {
     fontSize: 16,
