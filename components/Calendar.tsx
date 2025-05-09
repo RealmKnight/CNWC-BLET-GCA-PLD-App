@@ -65,6 +65,9 @@ const AVAILABILITY_COLORS = {
   userRequested: { color: "#2196F3", text: "black" }, // Blue - User has already requested this day
 };
 
+// Define a type for the availability keys to ensure type safety
+type AvailabilityType = keyof typeof AVAILABILITY_COLORS;
+
 interface CalendarProps {
   current?: string;
   zoneId?: number;
@@ -101,7 +104,6 @@ export function Calendar({ current, zoneId, isZoneSpecific = false, onDayActuall
       // Debug log for each request's structure to verify field names
       if (request.member_id === member.id) {
         console.log(`[Calendar] Examining timeStore request:`, {
-          hasDate: !!request.date,
           hasRequestDate: !!request.request_date,
           isPIL: request.paid_in_lieu,
           status: request.status,
@@ -113,8 +115,8 @@ export function Calendar({ current, zoneId, isZoneSpecific = false, onDayActuall
         request.paid_in_lieu === true &&
         ["approved", "pending", "waitlisted", "cancellation_pending"].includes(request.status)
       ) {
-        // Use request_date as the primary field, fallback to date if needed
-        const dateField = request.request_date || request.date;
+        // Use request_date as the primary field
+        const dateField = request.request_date;
         if (dateField) {
           pilMap[dateField] = true;
           console.log(`[Calendar] Found PIL request in timeStore for ${dateField}:`, request);
@@ -325,7 +327,7 @@ export function Calendar({ current, zoneId, isZoneSpecific = false, onDayActuall
       }
 
       // Determine availability
-      let availability;
+      let availability: AvailabilityType;
 
       if (userHasAnyRequest) {
         // If user has ANY request (regular, PIL, or six-month), mark as userRequested
@@ -335,7 +337,9 @@ export function Calendar({ current, zoneId, isZoneSpecific = false, onDayActuall
         availability = "available";
       } else {
         // Otherwise use the standard getDateAvailability function
-        availability = getDateAvailability(dateStr);
+        // Type assertion to ensure it's a valid availability type
+        const dateAvailability = getDateAvailability(dateStr);
+        availability = (dateAvailability as AvailabilityType) || "unavailable";
       }
 
       const colors = AVAILABILITY_COLORS[availability];
