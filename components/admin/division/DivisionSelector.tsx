@@ -7,6 +7,9 @@ import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { supabase } from "@/utils/supabase";
 
+const ALL_DIVISIONS_VALUE = "";
+const ALL_DIVISIONS_LABEL = "All Divisions";
+
 interface DivisionSelectorProps {
   currentDivision: string;
   onDivisionChange: (division: string) => void;
@@ -94,6 +97,11 @@ export function DivisionSelector({
           opacity: disabled ? 0.5 : 1,
         }}
       >
+        {isAdmin && (
+          <option key="all-divisions-option" value={ALL_DIVISIONS_VALUE}>
+            {ALL_DIVISIONS_LABEL}
+          </option>
+        )}
         {divisions.map((division) => (
           <option key={division} value={division}>
             {division}
@@ -119,6 +127,7 @@ export function DivisionSelector({
       ]}
       itemStyle={styles.pickerItem}
     >
+      {isAdmin && <Picker.Item key="all-divisions-item" label={ALL_DIVISIONS_LABEL} value={ALL_DIVISIONS_VALUE} />}
       {divisions.map((division) => (
         <Picker.Item key={division} label={division} value={division} />
       ))}

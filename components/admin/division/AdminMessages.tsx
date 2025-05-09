@@ -213,23 +213,68 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
           const fetchedDivisions = data || [];
           setAvailableDivisions(fetchedDivisions);
 
-          // Set initial selectedDivisionName based on viewingDivisionId from store
+          let newSelectedDivisionName: string | null = null;
+          let determinedDivisionIdForStore: number | null = viewingDivisionId; // Start with current store value
+
           if (viewingDivisionId) {
-            const initialDivision = fetchedDivisions.find((d) => d.id === viewingDivisionId);
-            setSelectedDivisionName(initialDivision?.name ?? null);
-          } else if (fetchedDivisions.length > 0) {
-            setSelectedDivisionName(null);
+            // Priority 1: Store has a specific division selected
+            const divisionFromStore = fetchedDivisions.find((d) => d.id === viewingDivisionId);
+            if (divisionFromStore) {
+              newSelectedDivisionName = divisionFromStore.name;
+            } else {
+              newSelectedDivisionName = null;
+              determinedDivisionIdForStore = null;
+            }
+          } else if (currentUser?.division_id) {
+            // Priority 2: No specific division in store, try user's division
+            const usersDivision = fetchedDivisions.find((d) => d.id === currentUser.division_id);
+            if (usersDivision) {
+              newSelectedDivisionName = usersDivision.name;
+              determinedDivisionIdForStore = usersDivision.id;
+            } else {
+              newSelectedDivisionName = null;
+              determinedDivisionIdForStore = null;
+            }
+          } else {
+            newSelectedDivisionName = null;
+            determinedDivisionIdForStore = null;
+          }
+
+          if (selectedDivisionName !== newSelectedDivisionName) {
+            setSelectedDivisionName(newSelectedDivisionName);
+          }
+
+          if (viewingDivisionId !== determinedDivisionIdForStore) {
+            await setViewDivision(determinedDivisionIdForStore);
           }
         } catch (err: any) {
           console.error("Error fetching divisions:", err);
           setDivisionsError("Could not load divisions.");
+          setSelectedDivisionName(null); // Reset on error
+          if (viewingDivisionId !== null) {
+            // Clear store if it had a value and an error occurred
+            await setViewDivision(null);
+          }
         } finally {
           setDivisionsLoading(false);
         }
       }
       fetchDivisions();
+    } else {
+      // User cannot select division.
+      // Reset local selected name. The store's viewingDivisionId should be managed
+      // by other logic based on their roles if they cannot pick.
+      setSelectedDivisionName(null);
+      // If they can't select a division, but there was one in the store,
+      // we might want to clear it if this component exclusively drives that ID.
+      // However, it's safer to assume other parts of the app might set viewingDivisionId
+      // based on roles if canSelectDivision is false.
+      // For now, just ensure local state is clean.
+      // if (viewingDivisionId !== null) {
+      //   await setViewDivision(null); // Consider implications
+      // }
     }
-  }, [canSelectDivision, viewingDivisionId]);
+  }, [canSelectDivision, currentUser?.division_id, viewingDivisionId, setViewDivision, supabase]);
 
   // --- Handlers ---
   const handleSelectThread = (threadId: string) => {
@@ -244,15 +289,27 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
   };
 
   const handleDivisionChange = async (divisionName: string) => {
-    const nameToSet = divisionName === "" ? null : divisionName;
-    setSelectedDivisionName(nameToSet);
-    let divisionIdToSet: number | null = null;
-    if (nameToSet) {
-      const selectedDiv = availableDivisions.find((d) => d.name === nameToSet);
-      divisionIdToSet = selectedDiv?.id ?? null;
-      if (!selectedDiv && nameToSet !== null) console.error(`Could not find ID for division name: ${nameToSet}`);
+    // divisionName is the name selected from the Picker.
+    // It should always be a valid division name as there's no "All" or empty option.
+    setSelectedDivisionName(divisionName); // Update local state for the selector immediately
+
+    const selectedDiv = availableDivisions.find((d) => d.name === divisionName);
+    let divisionIdToSetInStore: number | null = null;
+
+    if (selectedDiv) {
+      divisionIdToSetInStore = selectedDiv.id;
+    } else {
+      // This case should ideally not happen if the picker only contains valid, non-empty division names.
+      // If divisionName could somehow be null or an empty string from the picker (e.g., if availableDivisions is empty)
+      // then divisionIdToSetInStore remains null.
+      console.warn(`Division name "${divisionName}" selected from picker but not found in availableDivisions.`);
     }
-    await setViewDivision(divisionIdToSet);
+
+    // Update the store only if the new ID is different from the current one.
+    if (viewingDivisionId !== divisionIdToSetInStore) {
+      await setViewDivision(divisionIdToSetInStore);
+    }
+    // _fetchAndSetMessages will be triggered by the useEffect watching viewingDivisionId
   };
 
   const handleSendReply = async () => {
