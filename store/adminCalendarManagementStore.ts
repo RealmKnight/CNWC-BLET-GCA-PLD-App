@@ -1142,29 +1142,34 @@ export const useAdminCalendarManagementStore = create<
                 override_by: userId,
                 override_at: new Date().toISOString(),
                 override_reason: reason || null,
-                // Let DB handle created_at/updated_at/updated_by potentially
             }));
 
             if (records.length === 0) {
                 console.warn(
-                    "[AdminStore] No week start dates generated for updateVacationAllotment, skipping upsert.",
+                    "[AdminStore] No week start dates generated for updateVacationAllotment, skipping operation.",
                     { year },
                 );
                 return;
             }
 
+            // Comment out or remove the temporary simple insert logic
+            // console.log(
+            //     `[AdminStore] TEMPORARY DEBUG: Attempting simple INSERT for one record for year ${year}`, records[0]
+            // );
+
+            // Restore original upsert logic:
             console.log(
                 `[AdminStore] Upserting ${records.length} vacation allotment records for year ${year}`,
             );
-
-            // Perform the bulk upsert
             const { data, error } = await supabase
                 .from("vacation_allotments")
                 .upsert(records, {
-                    onConflict: "calendar_id,week_start_date", // Conflict based on calendar and week start
-                    ignoreDuplicates: false, // Update existing records
+                    onConflict: "calendar_id,week_start_date",
+                    ignoreDuplicates: false,
                 })
-                .select(); // Select the results
+                .select(
+                    "id, calendar_id, week_start_date, max_allotment, current_requests, vac_year, is_override, override_by, override_at, override_reason",
+                ); // Restore full select or simplify as preferred
 
             if (error) throw error;
 
@@ -1175,7 +1180,31 @@ export const useAdminCalendarManagementStore = create<
                 "[AdminStore] Successfully updated vacation allotments",
             );
         } catch (error) {
-            console.error("[updateVacationAllotment] Error:", error);
+            console.error(
+                "[updateVacationAllotment] Full error object:",
+                JSON.stringify(error, null, 2),
+            );
+            // Attempt to log specific properties if they exist on the error object
+            if (error && typeof error === "object") {
+                const supabaseError = error as any; // Type assertion to access potential Supabase error properties
+                console.error(
+                    "[updateVacationAllotment] Error message:",
+                    supabaseError.message,
+                );
+                console.error(
+                    "[updateVacationAllotment] Error details:",
+                    supabaseError.details,
+                );
+                console.error(
+                    "[updateVacationAllotment] Error hint:",
+                    supabaseError.hint,
+                );
+                console.error(
+                    "[updateVacationAllotment] Error code:",
+                    supabaseError.code,
+                );
+            }
+
             const message = error instanceof Error
                 ? error.message
                 : "Failed to update vacation allotment";

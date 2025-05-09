@@ -20,6 +20,7 @@ import Animated, {
   useAnimatedStyle,
   withTiming,
 } from "react-native-reanimated";
+import { AdminMessageBadge } from "@/components/ui/AdminMessageBadge";
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 const AnimatedTouchableOpacity = Animated.createAnimatedComponent(TouchableOpacity);
@@ -89,6 +90,7 @@ export const DivisionAdminPanel = forwardRef<View, DivisionAdminPanelProps>(({ d
           size={shouldUseMobileLayout ? 28 : 24}
           color={isActive ? (shouldUseMobileLayout ? tintColor : "#000000") : Colors[colorScheme].text}
         />
+        {section.key === "adminMessages" && <AdminMessageBadge />}
         {!shouldUseMobileLayout && (
           <ThemedText style={[styles.sectionButtonText, isActive && styles.activeSectionButtonText]}>
             {section.title}

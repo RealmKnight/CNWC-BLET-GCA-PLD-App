@@ -234,7 +234,8 @@ export function CalendarAllotments({ calendarId, selectedDivision }: CalendarAll
     }
 
     try {
-      const currentType = selectedType;
+      // Use activeTab instead of selectedType to determine the correct type
+      const currentType = activeTab;
       // Get the calendar name from the store
       const calendarName =
         Object.values(adminCalendarStore.calendars)

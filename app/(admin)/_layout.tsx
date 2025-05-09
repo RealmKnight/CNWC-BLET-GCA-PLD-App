@@ -5,11 +5,12 @@ import { useAuth } from "@/hooks/useAuth";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { HapticTab } from "@/components/HapticTab";
-import { Platform, ViewStyle } from "react-native";
+import { Platform, ViewStyle, View } from "react-native";
 import TabBarBackground from "@/components/ui/TabBarBackground";
 import { Ionicons } from "@expo/vector-icons";
 import { BottomTabNavigationOptions } from "@react-navigation/bottom-tabs";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
+import { AdminMessageBadge } from "@/components/ui/AdminMessageBadge";
 
 export default function AdminLayout() {
   const { userRole } = useAuth();
@@ -40,7 +41,10 @@ export default function AdminLayout() {
             options={{
               title: "Division Admin",
               tabBarIcon: ({ color, focused }) => (
-                <Ionicons name={focused ? "people" : "people-outline"} size={28} color={color} />
+                <View>
+                  <Ionicons name={focused ? "people" : "people-outline"} size={28} color={color} />
+                  <AdminMessageBadge />
+                </View>
               ),
             }}
           />
@@ -92,7 +96,10 @@ export default function AdminLayout() {
           options={{
             title: "Division Admin",
             tabBarIcon: ({ color, focused }) => (
-              <Ionicons name={focused ? "people" : "people-outline"} size={28} color={color} />
+              <View>
+                <Ionicons name={focused ? "people" : "people-outline"} size={28} color={color} />
+                <AdminMessageBadge />
+              </View>
             ),
             href: userRole === "application_admin" || userRole === "union_admin" ? undefined : null,
           }}
