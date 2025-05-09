@@ -1243,6 +1243,7 @@ const styles = StyleSheet.create({
   },
   pushNotificationContainer: {
     width: "100%",
+    backgroundColor: Colors.dark.card,
   },
   pushNotificationButton: {
     width: "100%",
