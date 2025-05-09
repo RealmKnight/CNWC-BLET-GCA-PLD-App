@@ -427,14 +427,14 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   updateDateButton: {
-    backgroundColor: Colors.light.tint + "CC", // Slightly more transparent
+    backgroundColor: Colors.dark.buttonBackground,
   },
   changeButton: {
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.dark.buttonBackground,
     color: Colors.dark.buttonText,
   },
   assignButton: {
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.dark.buttonBackground,
     paddingHorizontal: 24,
     paddingVertical: 8,
     borderRadius: 8,
@@ -447,6 +447,8 @@ const styles = StyleSheet.create({
   webDatePickerContainer: {
     padding: 20,
     alignItems: "center",
+    backgroundColor: Colors.dark.card,
+    borderRadius: 8,
   },
   webDatePicker: {
     marginBottom: 20,
@@ -456,11 +458,11 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   cancelButton: {
-    backgroundColor: Colors.dark.buttonText,
-    color: Colors.dark.buttonBackground,
+    backgroundColor: Colors.dark.buttonBackground,
+    color: Colors.dark.buttonText,
   },
   updateButton: {
-    backgroundColor: Colors.dark.buttonText,
-    color: Colors.dark.buttonBackground,
+    backgroundColor: Colors.dark.buttonBackground,
+    color: Colors.dark.buttonText,
   },
 });

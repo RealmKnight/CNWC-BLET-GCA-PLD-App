@@ -291,7 +291,7 @@ const styles = StyleSheet.create({
   },
   messageComposer: {
     flex: 1,
-    backgroundColor: Colors.light.background,
+    backgroundColor: Colors.dark.card,
     borderRadius: 8,
     padding: 20,
   },
@@ -299,6 +299,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 12,
     marginBottom: 16,
+    backgroundColor: Colors.dark.card,
   },
   subjectInput: {
     flex: 1,

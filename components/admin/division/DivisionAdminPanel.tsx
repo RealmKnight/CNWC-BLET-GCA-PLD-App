@@ -7,7 +7,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { MemberManagement } from "./MemberManagement";
-import { DivisionOfficers } from "./DivisionOfficers";
+import { DivisionManagement } from "./DivisionManagement";
 import { MessageCenter } from "./MessageCenter";
 import { AdminMessages } from "./AdminMessages";
 import { CalendarManager } from "./CalendarManager";
@@ -26,7 +26,7 @@ const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 const AnimatedTouchableOpacity = Animated.createAnimatedComponent(TouchableOpacity);
 const AnimatedThemedView = Animated.createAnimatedComponent(ThemedView);
 
-type Section = "members" | "officers" | "messages" | "adminMessages" | "calendar";
+type Section = "members" | "division" | "messages" | "adminMessages" | "calendar";
 
 type IconName = keyof typeof Ionicons.glyphMap;
 
@@ -39,7 +39,7 @@ interface SectionButton {
 
 const sections: SectionButton[] = [
   { key: "members", title: "Member Management", icon: "people", outlineIcon: "people-outline" },
-  { key: "officers", title: "Division Officers", icon: "ribbon", outlineIcon: "ribbon-outline" },
+  { key: "division", title: "Division Management", icon: "business", outlineIcon: "business-outline" },
   { key: "messages", title: "Member Messages/News", icon: "mail", outlineIcon: "mail-outline" },
   { key: "adminMessages", title: "Admin Messages", icon: "chatbox", outlineIcon: "chatbox-outline" },
   { key: "calendar", title: "Calendar(s)", icon: "calendar", outlineIcon: "calendar-outline" },
@@ -105,8 +105,8 @@ export const DivisionAdminPanel = forwardRef<View, DivisionAdminPanelProps>(({ d
       switch (activeSection) {
         case "members":
           return MemberManagement;
-        case "officers":
-          return () => <DivisionOfficers division={division} />;
+        case "division":
+          return () => <DivisionManagement division={division} />;
         case "messages":
           return MessageCenter;
         case "adminMessages":

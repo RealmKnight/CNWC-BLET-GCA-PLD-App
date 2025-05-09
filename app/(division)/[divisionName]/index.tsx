@@ -165,36 +165,35 @@ export default function DivisionDetailsScreen() {
           {division.location && <ThemedText style={styles.subtitle}>{division.location}</ThemedText>}
           {division.description && <ThemedText style={styles.description}>{division.description}</ThemedText>}
         </ThemedView>
-
         <NavigationCard
-          title="Members"
-          description={`View all ${division.member_count || 0} division members`}
-          icon="people"
-          href={`/division/${division.name}/members`}
-        />
-        <NavigationCard
-          title="Officers"
-          description="View division officers and leadership"
-          icon="person-circle"
-          href={`/division/${division.name}/officers`}
+          title="Announcements"
+          description="View division announcements and updates"
+          icon="megaphone"
+          href={`/${encodeURIComponent(division.name)}/announcements`}
         />
         <NavigationCard
           title="Meetings"
           description="Access meeting schedules and minutes"
           icon="calendar"
-          href={`/division/${division.name}/meetings`}
+          href={`/${encodeURIComponent(division.name)}/meetings`}
+        />
+        <NavigationCard
+          title="Members"
+          description={`View all ${division.member_count || 0} division members`}
+          icon="people"
+          href={`/${encodeURIComponent(division.name)}/members`}
+        />
+        <NavigationCard
+          title="Officers"
+          description="View division officers and leadership"
+          icon="person-circle"
+          href={`/${encodeURIComponent(division.name)}/officers`}
         />
         <NavigationCard
           title="Documents"
           description="View division documents and bylaws"
           icon="document-text"
-          href={`/division/${division.name}/documents`}
-        />
-        <NavigationCard
-          title="Announcements"
-          description="View division announcements and updates"
-          icon="megaphone"
-          href={`/division/${division.name}/announcements`}
+          href={`/${encodeURIComponent(division.name)}/documents`}
         />
       </ThemedView>
     </ThemedScrollView>

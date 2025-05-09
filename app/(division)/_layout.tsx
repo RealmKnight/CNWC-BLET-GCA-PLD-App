@@ -30,13 +30,32 @@ export default function DivisionLayout() {
           }}
         />
         <Stack.Screen
-          name="[divisionName]"
+          name="[divisionName]/index"
           options={{
             title: "Division Details",
             headerTitle: ({ children }) => {
               // Remove "Division" prefix if it exists
               const title = String(children).replace("Division ", "");
               return <ThemedText style={{ fontSize: 17, fontWeight: "600" }}>Division {title}</ThemedText>;
+            },
+          }}
+        />
+        <Stack.Screen
+          name="[divisionName]/members"
+          options={{
+            title: "Division Members",
+            headerTitle: ({ children }) => {
+              // Display only the relevant part (usually just "Members")
+              return <ThemedText style={{ fontSize: 17, fontWeight: "600" }}>Members</ThemedText>;
+            },
+          }}
+        />
+        <Stack.Screen
+          name="[divisionName]/officers"
+          options={{
+            title: "Division Officers",
+            headerTitle: ({ children }) => {
+              return <ThemedText style={{ fontSize: 17, fontWeight: "600" }}>Officers</ThemedText>;
             },
           }}
         />

@@ -1044,6 +1044,7 @@ const styles = StyleSheet.create({
     gap: 16,
     borderBottomWidth: 1,
     borderBottomColor: Colors.light.border,
+    backgroundColor: Colors.dark.card,
   },
   errorContainer: {
     padding: 16,
@@ -1065,6 +1066,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     marginLeft: 12,
+    backgroundColor: Colors.dark.card,
   },
   memberText: {
     flex: 1,
