@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useEffect } from "react";
 import { StyleSheet, View } from "react-native";
 import { ThemedText } from "@/components/ThemedText";
 import { useAdminNotificationStore } from "@/store/adminNotificationStore";
@@ -19,6 +19,11 @@ export function AdminMessageBadge({ style }: AdminMessageBadgeProps) {
   const currentUser = useUserStore((state) => state.member);
   const effectiveRoles = useEffectiveRoles() ?? [];
   const isCompanyAdmin = effectiveRoles.includes("company_admin");
+
+  // Debug log when unread count changes
+  useEffect(() => {
+    console.log(`[AdminMessageBadge] Unread count updated: ${unreadCount}`);
+  }, [unreadCount]);
 
   const colorScheme = useColorScheme() ?? "light";
   // Use error or primary color for the badge background for attention

@@ -1473,6 +1473,17 @@ const styles = StyleSheet.create({
   selectContainer: {
     flexDirection: "row",
     alignItems: "center",
+    ...Platform.select({
+      ios: {
+        minHeight: 50, // Increased height for iOS
+      },
+      android: {
+        minHeight: 55, // Slightly more height for Android
+      },
+      web: {
+        // Keep original height for web
+      },
+    }),
   },
   saveIndicator: {
     marginLeft: 12,

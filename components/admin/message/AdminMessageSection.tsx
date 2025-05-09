@@ -24,7 +24,7 @@ import { Ionicons } from "@expo/vector-icons";
  *
  * Key Differences from AdminMessages.tsx:
  * 1. Only for use by company_admin role users
- * 2. Filters out member-to-division_admin messages that don't involve company_admin
+ * 2. Filters out member-to-division_admin communications where company_admin is not involved
  * 3. Shows all admin-to-admin communications
  * 4. Has specialized recipient role filtering to match company admin workflow
  *
@@ -88,12 +88,18 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
     isLoading,
     error,
     unarchiveThread,
+    unreadCount,
   } = useAdminNotificationStore();
 
   // User & Roles
   const currentUser = useUserStore((state) => state.member);
   const effectiveRoles = useEffectiveRoles() ?? [];
   const isCompanyAdmin = effectiveRoles.includes("company_admin");
+
+  // Debug: Monitor readStatusMap changes
+  useEffect(() => {
+    console.log(`[AdminMessageSection] ReadStatusMap or unreadCount updated. Unread count: ${unreadCount}`);
+  }, [readStatusMap, unreadCount]);
 
   // Theme & Colors
   const colorScheme = useColorScheme() ?? "light";
@@ -150,8 +156,8 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
     // FILTERING RULES FOR COMPANY ADMIN:
     // 1. KEEP: Any thread where company_admin is the sender of any message
     // 2. KEEP: Any thread where company_admin is in recipient_roles of any message
-    // 3. KEEP: Admin-to-admin communications (e.g., app_admin to union_admin)
-    // 4. EXCLUDE: Member-to-division_admin communications where company_admin is not involved
+    // 3. KEEP: Any thread started by a company_admin
+    // 4. EXCLUDE: All other communications where company_admin is not directly involved
     //
     console.log(`[AdminMessageSection] Pre-filter: Found ${statusFiltered.length} threads after status filtering`);
 
@@ -169,54 +175,27 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
       );
 
       if (hasCompanyAdminInvolved) {
+        console.log(
+          `[AdminMessageSection] Keeping thread: "${rootMsg.subject}" (id: ${rootMsg.id}) - company_admin directly involved`
+        );
         return true; // Keep threads where company_admin is directly involved
       }
 
-      // Check for admin-to-admin communications (keep these)
-      const isAdminToAdminCommunication = thread.some((msg) => {
-        // Check if sender is an admin (not member)
-        const isSenderAdmin = msg.sender_role && msg.sender_role !== "member";
+      // Check if this thread was started by a company_admin
+      const isThreadStartedByCompanyAdmin = rootMsg.sender_role === "company_admin";
 
-        // Check if recipients are only admins (excluding member-to-division_admin only communications)
-        const hasAdminRecipients =
-          msg.recipient_roles &&
-          msg.recipient_roles.some((role) => role !== "division_admin" || msg.recipient_roles.length > 1);
-
-        return isSenderAdmin && hasAdminRecipients;
-      });
-
-      if (isAdminToAdminCommunication) {
-        return true; // Keep admin-to-admin communications
+      if (isThreadStartedByCompanyAdmin) {
+        console.log(
+          `[AdminMessageSection] Keeping thread: "${rootMsg.subject}" (id: ${rootMsg.id}) - thread started by company_admin`
+        );
+        return true; // Keep threads started by company_admin
       }
 
-      // If we get here, check if this is just member-to-division_admin communication
-      const isMemberToDivisionOnly = thread.every((msg) => {
-        // Either a message from member to only division_admin
-        const isMemberToDivisionMsg =
-          msg.sender_role === "member" &&
-          msg.recipient_roles &&
-          msg.recipient_roles.length === 1 &&
-          msg.recipient_roles[0] === "division_admin";
-
-        // Or a reply from division_admin in a thread started by a member
-        const isDivisionReplyToMember =
-          msg.sender_role === "division_admin" && thread.some((origMsg) => origMsg.sender_role === "member");
-
-        return isMemberToDivisionMsg || isDivisionReplyToMember;
-      });
-
-      // Log filtering decisions for debugging
-      if (isMemberToDivisionOnly) {
-        console.log(
-          `[AdminMessageSection] Filtering out member-to-division thread: "${rootMsg.subject}" (id: ${rootMsg.id})`
-        );
-      } else {
-        console.log(
-          `[AdminMessageSection] Keeping thread: "${rootMsg.subject}" (id: ${rootMsg.id}) - has admin communication`
-        );
-      }
-
-      return !isMemberToDivisionOnly; // Filter out member-to-division_admin only threads
+      // If company_admin is not directly involved and didn't start the thread, exclude it
+      console.log(
+        `[AdminMessageSection] Filtering out thread: "${rootMsg.subject}" (id: ${rootMsg.id}) - company_admin not involved`
+      );
+      return false;
     });
 
     console.log(
@@ -232,6 +211,7 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
 
   // --- Handlers ---
   const handleSelectThread = (threadId: string) => {
+    console.log(`[AdminMessageSection] Selecting thread ${threadId}`);
     let foundThread: AdminMessage[] | undefined;
     try {
       foundThread = filteredThreads.find((t: AdminMessage[], index: number) => {
@@ -248,18 +228,31 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
 
     if (thread && thread.length > 0) {
       try {
+        // Sort messages in descending order by creation date to get the latest first
         thread.sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime());
-      } catch (e: any) {}
 
-      const latestMessage = thread[0];
-      if (latestMessage?.id) {
-        markMessageAsRead(latestMessage.id).catch((err: Error) => {
-          console.error("Failed to mark thread as read:", err);
-        });
-      } else {
-        console.warn("[AdminMessageSection] Could not find latest message ID to mark as read.");
+        const latestMessage = thread[0];
+        if (latestMessage?.id) {
+          console.log(`[AdminMessageSection] Marking latest message ${latestMessage.id} as read`);
+
+          // Check if message is already read to avoid unnecessary updates
+          if (!readStatusMap[latestMessage.id]) {
+            markMessageAsRead(latestMessage.id)
+              .then(() => {
+                console.log(`[AdminMessageSection] Successfully marked message ${latestMessage.id} as read`);
+              })
+              .catch((err: Error) => {
+                console.error(`[AdminMessageSection] Failed to mark message ${latestMessage.id} as read:`, err);
+              });
+          } else {
+            console.log(`[AdminMessageSection] Message ${latestMessage.id} already marked as read`);
+          }
+        } else {
+          console.warn("[AdminMessageSection] Could not find latest message ID to mark as read.");
+        }
+      } catch (e: any) {
+        console.error("[AdminMessageSection] Error processing thread:", e);
       }
-    } else {
     }
 
     setSelectedThreadId(threadId);
@@ -482,6 +475,11 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
     // Check read status using the map from the store
     const isUnread = !readStatusMap[latestMessage.id];
 
+    // Log read status for debugging
+    if (process.env.NODE_ENV === "development") {
+      console.log(`[renderThreadItem] Thread ${rootId}, message ${latestMessage.id}, unread: ${isUnread}`);
+    }
+
     return (
       <TouchableOpacity
         onPress={() => handleSelectThread(rootId)}
@@ -498,7 +496,7 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
           <View style={{ flexDirection: "row", alignItems: "center", flexShrink: 1 }}>
             {/* Add unread dot indicator */}
-            {isUnread && <View style={[styles.unreadDot, { backgroundColor: colors.primary }]} />}
+            {isUnread && <View style={[styles.unreadDot, { backgroundColor: colors.error }]} />}
             <ThemedText
               type={isUnread ? "defaultSemiBold" : "default"}
               style={isUnread ? styles.unreadText : {}}
@@ -566,7 +564,7 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
             <ThemedText style={[styles.emptyListText, { color: colors.textDim }]}>No messages found.</ThemedText>
           </View>
         }
-        extraData={selectedThreadId}
+        extraData={[selectedThreadId, readStatusMap, unreadCount]}
       />
     );
   };

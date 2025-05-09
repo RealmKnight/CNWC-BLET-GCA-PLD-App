@@ -302,6 +302,7 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
             const record = (payload.new || payload.old) as {
                 id?: string;
                 message_id?: string;
+                user_id?: string;
                 [key: string]: any;
             };
             // Log the specific table that triggered the update
@@ -309,6 +310,62 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
                 `[handleRealtimeUpdate] Received ${payload.eventType} on table '${payload.table}' for record:`,
                 record?.id ?? record?.message_id ?? "(no ID)",
             );
+
+            // For read status changes, we need to update immediately
+            if (payload.table === "admin_message_read_status") {
+                // If a new read status was created, update our readStatusMap optimistically
+                if (
+                    payload.eventType === "INSERT" && record.user_id === userId
+                ) {
+                    const message_id = record.message_id;
+                    const currentReadStatusMap = { ...get().readStatusMap };
+                    const messages = get().messages;
+                    const currentUnreadCount = get().unreadCount;
+
+                    // Only update if we don't already have this marked as read
+                    if (message_id && !currentReadStatusMap[message_id]) {
+                        currentReadStatusMap[message_id] = true;
+
+                        // Check if this was the latest message in a thread
+                        const isLatestInThread = messages.some((msg) => {
+                            const rootId = msg.parent_message_id || msg.id;
+                            const threadMessages = messages
+                                .filter((m) =>
+                                    (m.parent_message_id || m.id) === rootId
+                                )
+                                .sort((a, b) =>
+                                    new Date(b.created_at ?? 0).getTime() -
+                                    new Date(a.created_at ?? 0).getTime()
+                                );
+
+                            return threadMessages.length > 0 &&
+                                threadMessages[0].id === message_id &&
+                                !threadMessages[0].is_archived;
+                        });
+
+                        // Update the count if needed
+                        if (isLatestInThread) {
+                            set({
+                                readStatusMap: currentReadStatusMap,
+                                unreadCount: Math.max(
+                                    0,
+                                    currentUnreadCount - 1,
+                                ),
+                            });
+
+                            console.log(
+                                `[handleRealtimeUpdate] Updated read status for message ${message_id}, decremented unread count to ${
+                                    Math.max(0, currentUnreadCount - 1)
+                                }`,
+                            );
+                            return; // Skip the standard refresh
+                        } else {
+                            set({ readStatusMap: currentReadStatusMap });
+                            return; // Skip the standard refresh
+                        }
+                    }
+                }
+            }
 
             // Limit duplicate refreshes by setting a minimum time between refreshes
             const currentTime = Date.now();
@@ -570,43 +627,62 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
 
     // Action to mark a message as read by calling the RPC
     markMessageAsRead: async (messageId) => {
-        // Get current readStatusMap
+        // Get current readStatusMap and messages
         const readStatusMap = { ...get().readStatusMap };
         const originalReadStatusMap = { ...readStatusMap };
+        const messages = get().messages;
+
+        // Calculate current unread count before the update
+        const currentUnreadCount = get().unreadCount;
 
         // Optimistically update UI
         readStatusMap[messageId] = true;
-        set({ readStatusMap });
 
-        // console.log(
-        //     `[markMessageAsRead] Attempting RPC call for message ${messageId}.`,
-        // ); // REMOVE/COMMENT OUT
-        let rpcError = null;
+        // Optimistically update unread count
+        // Find if this message is the latest in its thread
+        const isLatestInThread = messages.some((msg) => {
+            // Get root message ID (either the parent_message_id or the message's own id if it's a root)
+            const rootId = msg.parent_message_id || msg.id;
+            // Sort messages in this thread by creation date, descending
+            const threadMessages = messages
+                .filter((m) => (m.parent_message_id || m.id) === rootId)
+                .sort((a, b) =>
+                    new Date(b.created_at ?? 0).getTime() -
+                    new Date(a.created_at ?? 0).getTime()
+                );
+
+            // If this message is the latest in its thread and it's being marked as read,
+            // then we should decrement the unread count
+            return threadMessages.length > 0 &&
+                threadMessages[0].id === messageId &&
+                !originalReadStatusMap[messageId] &&
+                !threadMessages[0].is_archived;
+        });
+
+        // Only decrement unread count if this was the latest message in a thread and it wasn't already read
+        const newUnreadCount = isLatestInThread
+            ? Math.max(0, currentUnreadCount - 1)
+            : currentUnreadCount;
+
+        // Update both the read status map and unread count
+        set({
+            readStatusMap,
+            unreadCount: newUnreadCount,
+        });
+
         try {
             const { error } = await supabase.rpc("mark_admin_message_read", {
                 message_id_to_mark: messageId,
             });
-            rpcError = error;
             if (error) throw error;
-            // console.log(
-            //     `[markMessageAsRead] RPC called successfully for ${messageId}.`,
-            // ); // REMOVE/COMMENT OUT
         } catch (error: any) {
             console.error("[markMessageAsRead] Error during RPC call:", error);
             // Revert optimistic update on error
             set({
                 readStatusMap: originalReadStatusMap,
+                unreadCount: currentUnreadCount,
                 error: `Mark read failed: ${error?.message ?? "Unknown error"}`,
             });
-        } finally {
-            if (rpcError) {
-                console.error(
-                    "[markMessageAsRead] RPC returned error:",
-                    rpcError.message,
-                );
-                // Revert optimistic update on RPC error
-                set({ readStatusMap: originalReadStatusMap });
-            }
         }
     },
 

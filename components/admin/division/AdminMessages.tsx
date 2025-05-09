@@ -510,7 +510,7 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
         }`}
       >
         <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
-          {isUnread && <View style={[styles.unreadDot, { backgroundColor: colors.primary }]} />}
+          {isUnread && <View style={[styles.unreadDot, { backgroundColor: colors.error }]} />}
           <ThemedText type={isUnread ? "defaultSemiBold" : "default"} style={isUnread ? styles.unreadText : {}}>
             {rootMessage.subject || "(No Subject)"}
           </ThemedText>
