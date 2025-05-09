@@ -575,8 +575,8 @@ const styles = StyleSheet.create({
   },
   memberListContainer: {
     flex: 1,
-    minHeight: IS_MOBILE ? SCREEN_HEIGHT * 0.45 : 250, // Larger on mobile
-    maxHeight: IS_MOBILE ? SCREEN_HEIGHT * 0.75 : SCREEN_HEIGHT * 0.45, // Responsive height based on device
+    minHeight: IS_MOBILE ? SCREEN_HEIGHT * 0.65 : 250, // Larger on mobile
+    maxHeight: IS_MOBILE ? SCREEN_HEIGHT * 0.85 : SCREEN_HEIGHT * 0.45, // Responsive height based on device
   },
   memberList: {
     flex: 1,
