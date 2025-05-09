@@ -519,6 +519,8 @@ const styles = StyleSheet.create({
     width: "100%",
     display: "flex",
     flexDirection: "column",
+    minHeight: IS_MOBILE ? SCREEN_HEIGHT * 0.6 : 300, // Taller on mobile
+    maxHeight: IS_MOBILE ? SCREEN_HEIGHT * 0.9 : 480,
   },
   filterButtons: {
     flexDirection: "row",
