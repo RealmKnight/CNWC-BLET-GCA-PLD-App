@@ -7,18 +7,20 @@ import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { DivisionOfficers } from "./DivisionOfficers";
 import Animated, { FadeIn, FadeOut, SlideInRight, SlideOutLeft } from "react-native-reanimated";
+import { DivisionMeetings } from "./DivisionMeetings";
+import { useDivisionManagementStore, DivisionView } from "@/store/divisionManagementStore";
 
 const AnimatedThemedView = Animated.createAnimatedComponent(ThemedView);
-
-// Define view types for division management
-type DivisionView = "meetings" | "announcements" | "documents" | "officers";
 
 interface DivisionManagementProps {
   division: string;
 }
 
 export function DivisionManagement({ division }: DivisionManagementProps) {
-  const [currentView, setCurrentView] = useState<DivisionView>("announcements");
+  // Use specific selectors instead of returning an object
+  const currentView = useDivisionManagementStore((state) => state.currentView[division] || "announcements");
+  const setCurrentView = useDivisionManagementStore((state) => state.setCurrentView);
+
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const tintColor = Colors[colorScheme].tint;
   const { width } = useWindowDimensions();
@@ -42,14 +44,14 @@ export function DivisionManagement({ division }: DivisionManagementProps) {
             isMobile && styles.mobileActionButton,
             { minWidth: buttonSize, height: buttonSize },
           ]}
-          onPress={() => setCurrentView(view)}
+          onPress={() => setCurrentView(division, view)}
         >
           <Ionicons name={icon as any} size={iconSize} color={iconColor} />
           {!isMobile && <ThemedText style={[styles.buttonText, isActive && styles.activeText]}>{label}</ThemedText>}
         </ButtonComponent>
       );
     },
-    [currentView, isMobile, tintColor, colorScheme]
+    [currentView, isMobile, tintColor, colorScheme, division, setCurrentView]
   );
 
   // Content Rendering based on selected view
@@ -96,9 +98,7 @@ export function DivisionManagement({ division }: DivisionManagementProps) {
             contentContainerStyle={styles.contentContainer}
             nestedScrollEnabled={true}
           >
-            <ThemedView style={styles.placeholderContainer}>
-              <ThemedText style={styles.placeholderText}>Meetings Management Coming Soon</ThemedText>
-            </ThemedView>
+            <DivisionMeetings division={division} isAdmin={true} />
           </ScrollView>
         );
       default:

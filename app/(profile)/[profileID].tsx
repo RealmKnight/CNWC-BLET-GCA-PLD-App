@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { StyleSheet, ScrollView, Alert, Modal, Platform, TextInput } from "react-native";
+import { StyleSheet, ScrollView, Alert, Modal, Platform, TextInput, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -19,6 +19,7 @@ import { parseISO, format, differenceInYears, isAfter } from "date-fns";
 import Toast from "react-native-toast-message";
 import { ChangePasswordModal } from "@/components/ui/ChangePasswordModal";
 import { MemberMessageModal } from "@/components/MemberMessageModal";
+import { MeetingNotificationPreferences } from "@/components/ui/MeetingNotificationPreferences";
 
 type Member = Database["public"]["Tables"]["members"]["Row"];
 type ContactPreference = "in_app" | "phone" | "text" | "email" | "push";
@@ -1129,6 +1130,12 @@ export default function ProfileScreen() {
                 </TouchableOpacity>
               </ThemedView>
             )}
+
+            {/* Notification Settings Section */}
+            <ThemedText style={styles.sectionTitle}>Notification Settings</ThemedText>
+            <View style={styles.notificationPreferences}>
+              <MeetingNotificationPreferences />
+            </View>
           </ThemedView>
         </ThemedView>
       )}
@@ -1234,6 +1241,7 @@ const styles = StyleSheet.create({
   },
   preferenceContainer: {
     gap: 12,
+    backgroundColor: Colors.dark.card,
   },
   preferenceButtons: {
     flexDirection: "row",
@@ -1417,5 +1425,16 @@ const styles = StyleSheet.create({
     color: Colors.dark.buttonText,
     fontWeight: "600",
     fontSize: 12,
+  },
+  sectionTitle: {
+    paddingTop: 16,
+    fontSize: 18,
+    fontWeight: "600",
+    marginBottom: 4,
+    backgroundColor: Colors.dark.card,
+  },
+  notificationPreferences: {
+    gap: 6,
+    backgroundColor: Colors.dark.card,
   },
 });

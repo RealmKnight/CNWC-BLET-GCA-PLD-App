@@ -31,6 +31,13 @@ export interface Officer {
     phone_number?: string;
 }
 
+// Types
+export type DivisionView =
+    | "meetings"
+    | "announcements"
+    | "documents"
+    | "officers";
+
 interface DivisionManagementState {
     // Data
     divisions: Division[];
@@ -83,6 +90,12 @@ interface DivisionManagementState {
     // State management
     setSelectedDivisionId: (id: number | null) => void;
     clearError: () => void;
+
+    // New state
+    currentView: Record<string, DivisionView>; // Maps division name to selected view
+
+    // New actions
+    setCurrentView: (division: string, view: DivisionView) => void;
 }
 
 export const useDivisionManagementStore = create<DivisionManagementState>((
@@ -98,6 +111,7 @@ export const useDivisionManagementStore = create<DivisionManagementState>((
     isLoadingOfficers: false,
     selectedDivisionId: null,
     error: null,
+    currentView: {},
 
     // Fetch operations
     fetchDivisions: async () => {
@@ -543,4 +557,14 @@ export const useDivisionManagementStore = create<DivisionManagementState>((
     },
 
     clearError: () => set({ error: null }),
+
+    // New actions
+    setCurrentView: (division: string, view: DivisionView) => {
+        set((state) => ({
+            currentView: {
+                ...state.currentView,
+                [division]: view,
+            },
+        }));
+    },
 }));

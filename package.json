@@ -98,7 +98,9 @@
     "typescript": "^5.3.3",
     "vite-tsconfig-paths": "^5.1.4",
     "vitest": "^3.1.1",
-    "zustand": "^5.0.3"
+    "zustand": "^5.0.3",
+    "eslint": "^8.57.0",
+    "eslint-config-expo": "~8.0.1"
   },
   "private": true
 }

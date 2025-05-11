@@ -41,6 +41,15 @@ export default function DivisionLayout() {
           }}
         />
         <Stack.Screen
+          name="[divisionName]/meetings"
+          options={{
+            title: "Division Meetings",
+            headerTitle: ({ children }) => {
+              return <ThemedText style={{ fontSize: 17, fontWeight: "600" }}>Meetings</ThemedText>;
+            },
+          }}
+        />
+        <Stack.Screen
           name="[divisionName]/members"
           options={{
             title: "Division Members",

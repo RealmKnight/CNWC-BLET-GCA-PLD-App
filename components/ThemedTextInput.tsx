@@ -35,7 +35,14 @@ export function ThemedTextInput({ containerStyle, style, type = "text", ...props
     };
 
     // Extract onChangeText and other RN-specific props from props for web
-    const { onChangeText, multiline, numberOfLines, placeholderTextColor, ...restProps } = props;
+    const {
+      onChangeText,
+      multiline,
+      numberOfLines,
+      placeholderTextColor,
+      textAlignVertical, // Extract textAlignVertical to prevent it from being passed to the DOM
+      ...restProps
+    } = props;
 
     // Define the web onChange handler
     const handleWebChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -96,6 +103,8 @@ function flattenStyle(style: any): any {
     } else if (key === "marginVertical") {
       result.marginTop = value;
       result.marginBottom = value;
+    } else if (key === "textAlignVertical") {
+      // Skip this prop for web as it's not supported in CSS
     } else {
       // Direct property mapping
       result[key] = value;
