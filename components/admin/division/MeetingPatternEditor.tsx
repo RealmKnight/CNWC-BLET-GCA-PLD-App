@@ -1035,12 +1035,39 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     overflow: "hidden",
     backgroundColor: Colors.dark.background,
+    ...Platform.select({
+      ios: {
+        height: 50,
+      },
+      android: {
+        height: 50,
+        paddingHorizontal: 0,
+      },
+      web: {
+        height: 40,
+        minHeight: 40,
+      },
+    }),
   },
   picker: {
-    height: 40,
+    height: Platform.select({
+      ios: 50,
+      android: 50,
+      web: 40,
+    }),
     width: "100%",
     color: Colors.dark.text,
     backgroundColor: Colors.dark.background,
+    borderColor: Colors.dark.border,
+    ...Platform.select({
+      android: {
+        paddingHorizontal: 0,
+      },
+      web: {
+        paddingRight: 24, // Space for dropdown arrow
+        cursor: "pointer",
+      },
+    }),
   },
   textArea: {
     height: 100,

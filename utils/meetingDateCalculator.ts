@@ -77,6 +77,119 @@ export function calculateMeetingOccurrences(
 }
 
 /**
+ * Convert local time to UTC, respecting the adjust_for_dst flag
+ * If adjust_for_dst is true, use normal time zone conversion with DST
+ * If adjust_for_dst is false, adjust to maintain the same UTC time regardless of DST
+ */
+function convertToUtc(
+    localDateTime: Date,
+    timeZone: string,
+    adjustForDst: boolean,
+): Date {
+    if (adjustForDst) {
+        // Use regular time zone conversion with automatic DST handling
+        console.log(
+            "convertToUtc - adjustForDst=true: Input localDateTime (toString):",
+            localDateTime.toString(),
+        );
+        console.log(
+            "convertToUtc - adjustForDst=true: Input localDateTime (toISOString):",
+            localDateTime.toISOString(),
+        );
+        console.log(
+            "convertToUtc - adjustForDst=true: Input timeZone:",
+            timeZone,
+        );
+        console.log(
+            "convertToUtc - adjustForDst=true: Input adjustForDst:",
+            adjustForDst,
+        );
+        const result = fromZonedTime(localDateTime, timeZone);
+        console.log(
+            "convertToUtc - adjustForDst=true: Output fromZonedTime (toISOString):",
+            result.toISOString(),
+        );
+        return result;
+    } else {
+        // Calculate the standard time (non-DST) offset for this time zone
+        console.log(
+            "convertToUtc - adjustForDst=false: Input localDateTime (toString):",
+            localDateTime.toString(),
+        );
+        console.log(
+            "convertToUtc - adjustForDst=false: Input localDateTime (toISOString):",
+            localDateTime.toISOString(),
+        );
+        console.log(
+            "convertToUtc - adjustForDst=false: Input timeZone:",
+            timeZone,
+        );
+        console.log(
+            "convertToUtc - adjustForDst=false: Input adjustForDst:",
+            adjustForDst,
+        );
+
+        const january = new Date(localDateTime.getFullYear(), 0, 1);
+        const july = new Date(localDateTime.getFullYear(), 6, 1);
+
+        // Get both offsets and use the larger one (usually non-DST)
+        const januaryOffset = new Date(toZonedTime(january, timeZone))
+            .getTimezoneOffset();
+        const julyOffset = new Date(toZonedTime(july, timeZone))
+            .getTimezoneOffset();
+
+        // Standard time has the larger offset value (more negative)
+        const standardTimeOffset = Math.max(januaryOffset, julyOffset);
+        const currentOffset = new Date(toZonedTime(localDateTime, timeZone))
+            .getTimezoneOffset();
+
+        console.log(
+            "convertToUtc - adjustForDst=false: standardTimeOffset:",
+            standardTimeOffset,
+        );
+        console.log(
+            "convertToUtc - adjustForDst=false: currentOffset:",
+            currentOffset,
+        );
+
+        // If currently in DST but we want to ignore it, adjust the time
+        if (currentOffset !== standardTimeOffset) {
+            const adjustmentMs = (standardTimeOffset - currentOffset) * 60 *
+                1000;
+            const adjustedDate = new Date(
+                localDateTime.getTime() + adjustmentMs,
+            );
+            console.log(
+                "convertToUtc - adjustForDst=false (in DST branch): adjustedDate (toString):",
+                adjustedDate.toString(),
+            );
+            console.log(
+                "convertToUtc - adjustForDst=false (in DST branch): adjustedDate (toISOString):",
+                adjustedDate.toISOString(),
+            );
+            const result = fromZonedTime(adjustedDate, timeZone);
+            console.log(
+                "convertToUtc - adjustForDst=false (in DST branch): Output fromZonedTime (toISOString):",
+                result.toISOString(),
+            );
+            return result;
+        }
+
+        // Already in standard time
+        console.log(
+            "convertToUtc - adjustForDst=false (in standard time branch): localDateTime (toString):",
+            localDateTime.toString(),
+        );
+        const result = fromZonedTime(localDateTime, timeZone);
+        console.log(
+            "convertToUtc - adjustForDst=false (in standard time branch): Output fromZonedTime (toISOString):",
+            result.toISOString(),
+        );
+        return result;
+    }
+}
+
+/**
  * Calculate occurrences for a day of month pattern (e.g., 15th of every month)
  */
 function calculateDayOfMonthOccurrences(
@@ -117,16 +230,17 @@ function calculateDayOfMonthOccurrences(
                     seconds,
                 });
 
-                // Convert to UTC for storage
-                const utcDateTime = fromZonedTime(
+                // Convert to UTC for storage, respecting adjust_for_dst flag
+                const utcDateTime = convertToUtc(
                     localDateTime,
                     pattern.time_zone,
+                    pattern.adjust_for_dst,
                 );
 
                 occurrences.push(createOccurrenceFromPattern(
                     pattern,
-                    format(utcDateTime, "yyyy-MM-dd'T'HH:mm:ss'Z'"),
-                    format(utcDateTime, "yyyy-MM-dd'T'HH:mm:ss'Z'"),
+                    utcDateTime.toISOString(),
+                    utcDateTime.toISOString(),
                 ));
             }
         }
@@ -180,16 +294,17 @@ function calculateNthDayOfMonthOccurrences(
                     seconds,
                 });
 
-                // Convert to UTC for storage
-                const utcDateTime = fromZonedTime(
+                // Convert to UTC for storage, respecting adjust_for_dst flag
+                const utcDateTime = convertToUtc(
                     localDateTime,
                     pattern.time_zone,
+                    pattern.adjust_for_dst,
                 );
 
                 occurrences.push(createOccurrenceFromPattern(
                     pattern,
-                    format(utcDateTime, "yyyy-MM-dd'T'HH:mm:ss'Z'"),
-                    format(utcDateTime, "yyyy-MM-dd'T'HH:mm:ss'Z'"),
+                    utcDateTime.toISOString(),
+                    utcDateTime.toISOString(),
                 ));
             }
         }
@@ -225,16 +340,17 @@ function calculateSpecificDateOccurrences(
             const [hours, minutes, seconds] = time.split(":").map(Number);
             const localDateTime = set(dateObj, { hours, minutes, seconds });
 
-            // Convert to UTC for storage
-            const utcDateTime = fromZonedTime(
+            // Convert to UTC for storage, respecting adjust_for_dst flag
+            const utcDateTime = convertToUtc(
                 localDateTime,
                 pattern.time_zone,
+                pattern.adjust_for_dst,
             );
 
             occurrences.push(createOccurrenceFromPattern(
                 pattern,
-                format(utcDateTime, "yyyy-MM-dd'T'HH:mm:ss'Z'"),
-                format(utcDateTime, "yyyy-MM-dd'T'HH:mm:ss'Z'"),
+                utcDateTime.toISOString(),
+                utcDateTime.toISOString(),
             ));
         }
     });
@@ -305,16 +421,17 @@ function calculateRotatingOccurrences(
                     seconds,
                 });
 
-                // Convert to UTC for storage
-                const utcDateTime = fromZonedTime(
+                // Convert to UTC for storage, respecting adjust_for_dst flag
+                const utcDateTime = convertToUtc(
                     localDateTime,
                     pattern.time_zone,
+                    pattern.adjust_for_dst,
                 );
 
                 occurrences.push(createOccurrenceFromPattern(
                     pattern,
-                    format(utcDateTime, "yyyy-MM-dd'T'HH:mm:ss'Z'"),
-                    format(utcDateTime, "yyyy-MM-dd'T'HH:mm:ss'Z'"),
+                    utcDateTime.toISOString(),
+                    utcDateTime.toISOString(),
                 ));
             }
         }

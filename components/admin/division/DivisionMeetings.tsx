@@ -1625,17 +1625,46 @@ const styles = StyleSheet.create({
     color: Colors.dark.text,
   },
   pickerContainer: {
+    flex: 1,
+    minWidth: 150,
     borderWidth: 1,
     borderColor: Colors.dark.border,
     borderRadius: 8,
     overflow: "hidden",
+    backgroundColor: Colors.dark.background,
+    ...Platform.select({
+      ios: {
+        height: 50,
+      },
+      android: {
+        height: 50,
+        paddingHorizontal: 0,
+      },
+      web: {
+        height: 40,
+        minHeight: 40,
+      },
+    }),
   },
   picker: {
-    height: 50,
+    height: Platform.select({
+      ios: 50,
+      android: 50,
+      web: 40,
+    }),
     width: "100%",
-    backgroundColor: Colors.dark.background,
     color: Colors.dark.text,
+    backgroundColor: Colors.dark.background,
     borderColor: Colors.dark.border,
+    ...Platform.select({
+      android: {
+        paddingHorizontal: 0,
+      },
+      web: {
+        paddingRight: 24, // Space for dropdown arrow
+        cursor: "pointer",
+      },
+    }),
   },
   occurrenceSelector: {
     marginBottom: 16,

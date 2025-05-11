@@ -549,6 +549,11 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
                     return newOcc;
                 });
 
+                console.log(
+                    "divisionMeetingStore: Occurrences to be inserted:",
+                    JSON.stringify(occurrences.slice(0, 3), null, 2),
+                ); // Log first 3 occurrences
+
                 const { error: occurrencesError } = await supabase
                     .from("meeting_occurrences")
                     .insert(occurrences);
@@ -621,7 +626,7 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
                 patternWithUser.created_by = user.id;
             }
 
-            // Update the pattern
+            // First update the pattern
             const { data, error } = await supabase
                 .from("division_meetings")
                 .update(patternWithUser)
@@ -632,68 +637,115 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
             if (error) throw error;
             if (!data) throw new Error("Failed to update meeting pattern");
 
-            // Handle regeneration of future occurrences
-            // This is a more complex operation that will delete and replace future occurrences
+            // Calculate next 12 months of occurrences based on updated pattern
             const now = new Date();
-
-            // First, delete future occurrences that haven't been overridden
-            const { error: deleteError } = await supabase.rpc(
-                "delete_future_non_overridden_occurrences",
-                {
-                    pattern_id: id,
-                    from_date: format(now, "yyyy-MM-dd"),
-                },
+            const occurrencesFromPattern = calculateMeetingOccurrences(
+                data as DivisionMeeting,
+                now,
+                addMonths(now, 12),
             );
 
-            if (deleteError) {
-                // If RPC function doesn't exist yet, try direct approach
-                console.warn(
-                    "RPC function failed, trying direct delete:",
-                    deleteError,
-                );
-
-                // Try simpler approach - delete all future occurrences
-                const { error: fallbackError } = await supabase
+            // Fetch existing occurrences for this pattern
+            const { data: existingOccurrences, error: fetchError } =
+                await supabase
                     .from("meeting_occurrences")
-                    .delete()
+                    .select("*")
                     .eq("meeting_pattern_id", id)
                     .gte(
                         "actual_scheduled_datetime_utc",
                         format(now, "yyyy-MM-dd"),
                     );
 
-                if (fallbackError) throw fallbackError;
+            if (fetchError) throw fetchError;
+
+            // Map existing occurrences by their scheduled date for easy lookup
+            const existingOccurrenceMap = new Map<string, any>();
+            (existingOccurrences || []).forEach((occurrence) => {
+                // Create a date-only key for comparison
+                const dateKey =
+                    occurrence.actual_scheduled_datetime_utc.split("T")[0];
+                existingOccurrenceMap.set(dateKey, occurrence);
+            });
+
+            // Separate occurrences to update and insert
+            const occurrencesToUpdate: any[] = [];
+            const occurrencesToInsert: any[] = [];
+
+            occurrencesFromPattern.forEach((newOccurrence) => {
+                // Create a date-only key to match with existing occurrences
+                const dateKey =
+                    newOccurrence.actual_scheduled_datetime_utc.split("T")[0];
+                const existingOccurrence = existingOccurrenceMap.get(dateKey);
+
+                if (existingOccurrence) {
+                    // Only update if the existing occurrence hasn't been modified
+                    if (
+                        existingOccurrence.original_scheduled_datetime_utc ===
+                            existingOccurrence.actual_scheduled_datetime_utc
+                    ) {
+                        // Update with new values but keep the existing ID
+                        occurrencesToUpdate.push({
+                            id: existingOccurrence.id,
+                            meeting_pattern_id: id,
+                            original_scheduled_datetime_utc:
+                                newOccurrence.original_scheduled_datetime_utc,
+                            actual_scheduled_datetime_utc:
+                                newOccurrence.actual_scheduled_datetime_utc,
+                            time_zone: newOccurrence.time_zone,
+                            location_name: newOccurrence.location_name,
+                            location_address: newOccurrence.location_address,
+                            agenda: newOccurrence.agenda,
+                            notes: existingOccurrence.notes, // Keep existing notes
+                            is_cancelled: existingOccurrence.is_cancelled, // Keep cancelled status
+                            override_reason: existingOccurrence.override_reason, // Keep override reason
+                            updated_by: user.id,
+                            updated_at: new Date().toISOString(),
+                        });
+                    }
+                    // Remove this date from the map to track occurrences that need to be processed
+                    existingOccurrenceMap.delete(dateKey);
+                } else {
+                    // This is a new occurrence, prepare for insertion
+                    occurrencesToInsert.push({
+                        ...newOccurrence,
+                        created_by: user.id,
+                        updated_by: user.id,
+                    });
+                }
+            });
+
+            // Process updates in batches if needed
+            if (occurrencesToUpdate.length > 0) {
+                console.log(
+                    `Updating ${occurrencesToUpdate.length} existing occurrences`,
+                );
+
+                // Update in batches of 50 to avoid potential issues with large updates
+                for (let i = 0; i < occurrencesToUpdate.length; i += 50) {
+                    const batch = occurrencesToUpdate.slice(i, i + 50);
+                    const { error: updateError } = await supabase
+                        .from("meeting_occurrences")
+                        .upsert(batch, { onConflict: "id" });
+
+                    if (updateError) throw updateError;
+                }
             }
 
-            // Generate new occurrences for the next 12 months
-            const occurrencesPartial = calculateMeetingOccurrences(
-                data as DivisionMeeting,
-                now,
-                addMonths(now, 12),
-            );
+            // Process inserts
+            if (occurrencesToInsert.length > 0) {
+                console.log(
+                    `Inserting ${occurrencesToInsert.length} new occurrences`,
+                );
 
-            // Insert the new occurrences
-            if (occurrencesPartial.length > 0) {
-                // Complete the occurrences with proper user IDs and without database-generated fields
-                const occurrences = occurrencesPartial.map((occ) => {
-                    // Create a new object without the id field
-                    const { id: occId, ...newOcc } = occ;
+                // Insert in batches of 50
+                for (let i = 0; i < occurrencesToInsert.length; i += 50) {
+                    const batch = occurrencesToInsert.slice(i, i + 50);
+                    const { error: insertError } = await supabase
+                        .from("meeting_occurrences")
+                        .insert(batch);
 
-                    // Override meeting_pattern_id with the pattern ID parameter
-                    newOcc.meeting_pattern_id = id; // This is the pattern ID passed to the function
-
-                    // Set user IDs for created_by and updated_by
-                    newOcc.created_by = user.id;
-                    newOcc.updated_by = user.id;
-
-                    return newOcc;
-                });
-
-                const { error: occurrencesError } = await supabase
-                    .from("meeting_occurrences")
-                    .insert(occurrences);
-
-                if (occurrencesError) throw occurrencesError;
+                    if (insertError) throw insertError;
+                }
             }
 
             // Update the state
