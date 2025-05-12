@@ -25,7 +25,7 @@ export default function RostersLayout() {
         <Stack.Screen
           name="index"
           options={{
-            title: "Rosters",
+            title: "Seniority Rosters",
           }}
         />
       </Stack>

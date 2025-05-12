@@ -47,6 +47,12 @@ export default function HomeScreen() {
             href="/(rosters)"
           />
           <NavigationCard
+            title="GCA"
+            description="Access GCA resources and information"
+            icon="business"
+            href="/(gca)"
+          />
+          <NavigationCard
             title="Agreements"
             description="View and search through union agreements and contracts"
             icon="document-text"
@@ -57,12 +63,6 @@ export default function HomeScreen() {
             description="File and track claims and grievances"
             icon="file-tray-full"
             href="/(claims)"
-          />
-          <NavigationCard
-            title="GCA"
-            description="Access GCA resources and information"
-            icon="business"
-            href="/(gca)"
           />
           <NavigationCard
             title="Tools & Links"

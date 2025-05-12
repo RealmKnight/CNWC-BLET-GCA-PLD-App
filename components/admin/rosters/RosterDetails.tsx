@@ -1,41 +1,29 @@
 import React, { useState, useEffect } from "react";
-import { StyleSheet, View, ActivityIndicator, FlatList, useWindowDimensions, TextInput, Platform } from "react-native";
+import { StyleSheet, View, VirtualizedList, TextInput, Platform, useWindowDimensions } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
-import { ThemedScrollView } from "@/components/ThemedScrollView";
 import { TouchableOpacityComponent } from "@/components/TouchableOpacityComponent";
+import { Ionicons } from "@expo/vector-icons";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
-import { Ionicons } from "@expo/vector-icons";
 import { supabase } from "@/utils/supabase";
 import { Roster, RosterMember, RosterDisplayField } from "@/types/rosters";
-import { getRosterMembers } from "@/utils/roster-utils";
-import { generateRosterPdf } from "@/utils/roster-pdf-generator";
 
-type ColorSchemeName = keyof typeof Colors;
+interface RosterDetailsProps {
+  roster: Roster;
+  onBack: () => void;
+  onExportPdf: (members: RosterMember[], rosterType: string, selectedFields: RosterDisplayField[]) => void;
+}
 
-// Roster types enum
-const ROSTER_TYPES = ["WC", "DMIR", "DWP", "EJE"];
-
-export default function RostersScreen() {
-  const colorScheme = (useColorScheme() ?? "light") as ColorSchemeName;
+export function RosterDetails({ roster, onBack, onExportPdf }: RosterDetailsProps) {
   const { width } = useWindowDimensions();
   const isMobileView = width < 768;
+  const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
 
-  const [selectedRosterType, setSelectedRosterType] = useState("WC");
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-  const [rosters, setRosters] = useState<Roster[]>([]);
-  const [selectedRoster, setSelectedRoster] = useState<Roster | null>(null);
   const [members, setMembers] = useState<RosterMember[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-
-  // Available years for the dropdown (current year and 7 previous years)
-  const currentYear = new Date().getFullYear();
-  const availableYears = Array.from({ length: 8 }, (_, i) => currentYear - i);
-
-  // Fields to display in the roster view
   const [selectedFields, setSelectedFields] = useState<RosterDisplayField[]>([
     "rank",
     "name",
@@ -43,63 +31,43 @@ export default function RostersScreen() {
     "system_sen_type",
     "engineer_date",
     "zone_name",
-    "home_zone_name",
     "division_name",
   ]);
+  const [rosterType, setRosterType] = useState("");
 
-  // Fetch roster types and saved rosters on component mount
+  // Fields that can be selected for display
+  const displayFields: { key: RosterDisplayField; label: string }[] = [
+    { key: "rank", label: "Rank" },
+    { key: "name", label: "Name" },
+    { key: "pin_number", label: "PIN" },
+    { key: "system_sen_type", label: "Prior Rights" },
+    { key: "engineer_date", label: "Engineer Date" },
+    { key: "date_of_birth", label: "Date of Birth" },
+    { key: "zone_name", label: "Zone" },
+    { key: "home_zone_name", label: "Home Zone" },
+    { key: "division_name", label: "Division" },
+    { key: "prior_vac_sys", label: "Prior Rights Rank" },
+  ];
+
   useEffect(() => {
-    fetchRosters();
-  }, [selectedYear, selectedRosterType]);
+    fetchRosterData();
+  }, [roster]);
 
-  // Fetch rosters for the selected year and type
-  const fetchRosters = async () => {
+  const fetchRosterData = async () => {
     setIsLoading(true);
-    setError(null);
-
     try {
-      // Get roster type ID
-      const { data: typeData, error: typeError } = await supabase
+      // First, get the roster type name
+      const { data: rosterTypeData, error: typeError } = await supabase
         .from("roster_types")
-        .select("id")
-        .eq("name", selectedRosterType)
+        .select("name")
+        .eq("id", roster.roster_type_id)
         .single();
 
       if (typeError) throw typeError;
 
-      // Fetch rosters for selected year and type
-      const { data: rostersData, error: rostersError } = await supabase
-        .from("rosters")
-        .select("*")
-        .eq("year", selectedYear)
-        .eq("roster_type_id", typeData.id)
-        .order("effective_date", { ascending: false });
+      setRosterType(rosterTypeData?.name || "");
 
-      if (rostersError) throw rostersError;
-
-      setRosters(rostersData || []);
-
-      // If rosters exist, select the most recent one
-      if (rostersData && rostersData.length > 0) {
-        setSelectedRoster(rostersData[0]);
-        fetchRosterMembers(rostersData[0].id);
-      } else {
-        setSelectedRoster(null);
-        setMembers([]);
-        setIsLoading(false);
-      }
-    } catch (error) {
-      console.error("Error fetching rosters:", error);
-      setError(error instanceof Error ? error.message : "Failed to fetch rosters");
-      setIsLoading(false);
-    }
-  };
-
-  // Fetch members for the selected roster
-  const fetchRosterMembers = async (rosterId: string) => {
-    setIsLoading(true);
-    try {
-      // Fetch roster entries with member details
+      // Then get roster entries with member details
       const { data: entriesData, error: entriesError } = await supabase
         .from("roster_entries")
         .select(
@@ -125,16 +93,18 @@ export default function RostersScreen() {
           )
         `
         )
-        .eq("roster_id", rosterId)
+        .eq("roster_id", roster.id)
         .order("order_in_roster", { ascending: true });
 
       if (entriesError) throw entriesError;
 
       // Fetch zones and divisions for names
       const { data: zones, error: zonesError } = await supabase.from("zones").select("id, name");
+
       if (zonesError) throw zonesError;
 
       const { data: divisions, error: divisionsError } = await supabase.from("divisions").select("id, name");
+
       if (divisionsError) throw divisionsError;
 
       // Create lookup maps
@@ -163,30 +133,17 @@ export default function RostersScreen() {
           division_name: member.division_id ? divisionMap.get(member.division_id) : undefined,
           // Add rank
           rank: entry.order_in_roster || index + 1,
+          // Add any details from the roster_entries.details field
+          ...entry.details,
         };
       });
 
       setMembers(membersList);
     } catch (error) {
-      console.error("Error fetching roster members:", error);
-      setError(error instanceof Error ? error.message : "Failed to fetch roster members");
+      console.error("Error fetching roster details:", error);
+      setError(error instanceof Error ? error.message : "Failed to fetch roster details");
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  // Handle PDF export
-  const handleExportPdf = async () => {
-    try {
-      await generateRosterPdf({
-        members: filteredMembers,
-        selectedFields,
-        rosterType: selectedRosterType,
-        title: `${selectedRosterType} Seniority Roster - ${selectedYear}`,
-      });
-    } catch (error) {
-      console.error("Error generating PDF:", error);
-      setError(error instanceof Error ? error.message : "Failed to generate PDF");
     }
   };
 
@@ -203,7 +160,43 @@ export default function RostersScreen() {
     );
   });
 
-  // Render a member in the roster list
+  const toggleField = (field: RosterDisplayField) => {
+    setSelectedFields((prev) => {
+      // Always keep rank, name, and pin_number selected
+      if (["rank", "name", "pin_number"].includes(field)) return prev;
+
+      return prev.includes(field) ? prev.filter((f) => f !== field) : [...prev, field];
+    });
+  };
+
+  const renderFieldSelector = () => (
+    <View style={styles.fieldSelectorContainer}>
+      <ThemedText style={styles.fieldSelectorTitle}>Display Fields:</ThemedText>
+      <View style={styles.fieldChips}>
+        {displayFields.map((field) => {
+          const isSelected = selectedFields.includes(field.key);
+          // Don't allow deselecting rank, name, and pin_number
+          const isLocked = ["rank", "name", "pin_number"].includes(field.key);
+
+          return (
+            <TouchableOpacityComponent
+              key={field.key}
+              style={[styles.fieldChip, isSelected && styles.selectedFieldChip, isLocked && styles.lockedFieldChip]}
+              onPress={() => !isLocked && toggleField(field.key)}
+              activeOpacity={isLocked ? 1 : 0.7}
+            >
+              <ThemedText style={[styles.fieldChipText, isSelected && styles.selectedFieldChipText]}>
+                {field.label}
+                {isLocked && " *"}
+              </ThemedText>
+            </TouchableOpacityComponent>
+          );
+        })}
+      </View>
+      <ThemedText style={styles.fieldSelectorNote}>* Required fields</ThemedText>
+    </View>
+  );
+
   const renderMemberItem = ({ item }: { item: RosterMember }) => {
     const formatDate = (dateString?: string) => {
       if (!dateString) return "N/A";
@@ -255,131 +248,75 @@ export default function RostersScreen() {
     );
   };
 
-  // Render the year picker based on platform
-  const renderYearPicker = () => {
-    if (Platform.OS === "web") {
-      return (
-        <select
-          value={selectedYear}
-          onChange={(e) => setSelectedYear(parseInt(e.target.value))}
-          style={{
-            height: 40,
-            padding: 8,
-            backgroundColor: Colors[colorScheme].background,
-            color: Colors[colorScheme].text,
-            borderColor: Colors[colorScheme].border,
-            borderWidth: 1,
-            borderRadius: 8,
-            minWidth: 120,
-          }}
-        >
-          {availableYears.map((year) => (
-            <option key={year} value={year}>
-              {year}
-            </option>
-          ))}
-        </select>
-      );
-    } else {
-      // For native platforms
-      return (
-        <View style={styles.pickerContainer}>
-          {availableYears.map((year) => (
-            <TouchableOpacityComponent
-              key={year}
-              style={[styles.yearButton, selectedYear === year && { backgroundColor: Colors[colorScheme].tint }]}
-              onPress={() => setSelectedYear(year)}
-            >
-              <ThemedText style={[styles.yearText, selectedYear === year && { color: Colors[colorScheme].background }]}>
-                {year}
-              </ThemedText>
-            </TouchableOpacityComponent>
-          ))}
-        </View>
-      );
-    }
-  };
+  const getItem = (data: RosterMember[], index: number) => data[index];
+  const getItemCount = (data: RosterMember[]) => data.length;
+  const keyExtractor = (item: RosterMember) => item.id || item.pin_number.toString();
 
   return (
     <ThemedView style={styles.container}>
       <View style={styles.header}>
-        <View style={styles.typeSelector}>
-          {ROSTER_TYPES.map((type) => (
-            <TouchableOpacityComponent
-              key={type}
-              style={[styles.typeButton, selectedRosterType === type && { backgroundColor: "#B4975A" }]}
-              onPress={() => setSelectedRosterType(type)}
-            >
-              <ThemedText
-                style={[
-                  styles.typeButtonText,
-                  selectedRosterType === type && { color: Colors[colorScheme].background },
-                ]}
-              >
-                {type}
-              </ThemedText>
-            </TouchableOpacityComponent>
-          ))}
-        </View>
+        <View style={styles.headerTop}>
+          <TouchableOpacityComponent style={styles.backButton} onPress={onBack} activeOpacity={0.7}>
+            <Ionicons name="arrow-back" size={24} color={Colors[colorScheme].text} />
+          </TouchableOpacityComponent>
 
-        <View style={styles.yearSelectorContainer}>
-          <View style={styles.yearSelector}>
-            <ThemedText style={styles.selectorLabel}>Year:</ThemedText>
-            {renderYearPicker()}
-          </View>
-        </View>
-
-        <View style={styles.utilityRow}>
-          <View style={styles.searchContainer}>
-            <Ionicons name="search" size={20} color={Colors[colorScheme].text} />
-            <TextInput
-              style={[styles.searchInput, { color: Colors[colorScheme].text }]}
-              placeholder="Search roster..."
-              placeholderTextColor={Colors[colorScheme].text + "80"}
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-            />
-            {searchQuery ? (
-              <TouchableOpacityComponent onPress={() => setSearchQuery("")}>
-                <Ionicons name="close-circle" size={20} color={Colors[colorScheme].text} />
-              </TouchableOpacityComponent>
-            ) : null}
-          </View>
+          <ThemedText style={styles.rosterTitle}>{roster.name}</ThemedText>
 
           <TouchableOpacityComponent
             style={styles.exportButton}
-            onPress={handleExportPdf}
-            disabled={members.length === 0}
+            onPress={() => onExportPdf(filteredMembers, rosterType, selectedFields)}
+            activeOpacity={0.7}
           >
-            <Ionicons name="download-outline" size={16} color={Colors.dark.buttonText} />
-            <ThemedText style={styles.exportButtonText}>Export PDF</ThemedText>
+            <Ionicons name="document-text-outline" size={20} color={Colors[colorScheme].text} />
+            <ThemedText style={styles.exportText}>Export PDF</ThemedText>
           </TouchableOpacityComponent>
         </View>
+
+        <View style={styles.searchContainer}>
+          <View style={styles.searchInputWrapper}>
+            <Ionicons name="search" size={20} color={Colors[colorScheme].text} style={styles.searchIcon} />
+            <TextInput
+              style={[styles.searchInput, { color: Colors[colorScheme].text }]}
+              placeholder="Search members..."
+              placeholderTextColor={Colors[colorScheme].text}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+            />
+            {searchQuery !== "" && (
+              <TouchableOpacityComponent
+                style={styles.clearButton}
+                onPress={() => setSearchQuery("")}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="close-circle" size={20} color={Colors[colorScheme].text} />
+              </TouchableOpacityComponent>
+            )}
+          </View>
+        </View>
+
+        {renderFieldSelector()}
       </View>
 
       {isLoading ? (
         <View style={styles.centerContent}>
-          <ActivityIndicator size="large" color={Colors[colorScheme].tint} />
+          <ThemedText>Loading roster details...</ThemedText>
         </View>
       ) : error ? (
         <View style={styles.centerContent}>
           <ThemedText>Error: {error}</ThemedText>
         </View>
-      ) : members.length === 0 ? (
+      ) : filteredMembers.length === 0 ? (
         <View style={styles.centerContent}>
-          <ThemedText>
-            No roster data available for {selectedRosterType} - {selectedYear}
-          </ThemedText>
+          <ThemedText>No members found</ThemedText>
         </View>
       ) : (
-        <FlatList
+        <VirtualizedList
           data={filteredMembers}
           renderItem={renderMemberItem}
-          keyExtractor={(item) => item.id || item.pin_number.toString()}
+          keyExtractor={keyExtractor}
+          getItemCount={getItemCount}
+          getItem={getItem}
           contentContainerStyle={styles.listContent}
-          initialNumToRender={20}
-          maxToRenderPerBatch={20}
-          windowSize={5}
         />
       )}
     </ThemedView>
@@ -395,90 +332,102 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.dark.border,
   },
-  headerTitle: {
+  headerTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  backButton: {
+    padding: 8,
+    marginRight: 8,
+  },
+  rosterTitle: {
+    flex: 1,
     fontSize: 18,
     fontWeight: "bold",
-    marginBottom: 16,
   },
-  typeSelector: {
-    flexDirection: "row",
-    marginBottom: 16,
-    justifyContent: "space-between",
-  },
-  typeButton: {
-    flex: 1,
-    paddingVertical: 8,
-    borderTopLeftRadius: 8,
-    borderTopRightRadius: 8,
-    borderWidth: 1,
-    borderColor: Colors.dark.border,
-    alignItems: "center",
-  },
-  typeButtonText: {
-    fontSize: 14,
-    fontWeight: "500",
-  },
-  yearSelectorContainer: {
-    marginBottom: 16,
-  },
-  yearSelector: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  selectorLabel: {
-    marginRight: 8,
-  },
-  pickerContainer: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-  },
-  yearButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    marginRight: 8,
-    marginBottom: 8,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: Colors.dark.border,
-  },
-  yearText: {
-    fontSize: 14,
-  },
-  utilityRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  searchContainer: {
-    flex: 1,
+  exportButton: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: Colors.dark.card,
     paddingHorizontal: 12,
     paddingVertical: 8,
+    borderRadius: 4,
+  },
+  exportText: {
+    marginLeft: 4,
+    fontSize: 14,
+  },
+  searchContainer: {
+    marginBottom: 16,
+  },
+  searchInputWrapper: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: Colors.dark.card,
     borderRadius: 8,
-    borderWidth: 1,
-    borderColor: Colors.dark.border,
+    paddingHorizontal: 12,
+  },
+  searchIcon: {
     marginRight: 8,
   },
   searchInput: {
     flex: 1,
-    marginLeft: 8,
+    height: 40,
+    paddingRight: 40,
+    ...(Platform.OS === "web" && {
+      outlineColor: Colors.dark.border,
+      outlineWidth: 0,
+    }),
+  },
+  clearButton: {
+    padding: 4,
+    ...(Platform.OS === "web" && {
+      cursor: "pointer",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+    }),
+  },
+  fieldSelectorContainer: {
+    marginTop: 8,
+  },
+  fieldSelectorTitle: {
     fontSize: 14,
-    paddingVertical: 0,
-  },
-  exportButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#B4975A", // BLET gold
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
-  },
-  exportButtonText: {
-    color: Colors.dark.buttonText,
     fontWeight: "500",
-    marginLeft: 6,
+    marginBottom: 8,
+  },
+  fieldChips: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    marginBottom: 8,
+  },
+  fieldChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginRight: 8,
+    marginBottom: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    backgroundColor: Colors.dark.background,
+  },
+  selectedFieldChip: {
+    backgroundColor: Colors.dark.tint,
+    borderColor: Colors.dark.tint,
+  },
+  lockedFieldChip: {
+    opacity: 0.6,
+  },
+  fieldChipText: {
+    fontSize: 12,
+  },
+  selectedFieldChipText: {
+    color: Colors.dark.buttonText,
+  },
+  fieldSelectorNote: {
+    fontSize: 12,
+    opacity: 0.6,
   },
   centerContent: {
     flex: 1,
@@ -491,27 +440,26 @@ const styles = StyleSheet.create({
   memberItem: {
     flexDirection: "row",
     marginBottom: 12,
-    borderRadius: 8,
     borderWidth: 1,
     borderColor: Colors.dark.border,
+    borderRadius: 8,
+    backgroundColor: Colors.dark.card,
     overflow: "hidden",
   },
   memberRank: {
-    backgroundColor: "#B4975A", // BLET gold
     width: 40,
-    justifyContent: "center",
     alignItems: "center",
-    padding: 8,
+    justifyContent: "center",
+    backgroundColor: Colors.dark.tint,
+    paddingVertical: 12,
   },
   rankText: {
     color: Colors.dark.buttonText,
     fontWeight: "bold",
-    fontSize: 16,
   },
   memberDetails: {
     flex: 1,
     padding: 12,
-    backgroundColor: Colors.dark.card,
   },
   memberName: {
     fontSize: 16,
@@ -526,6 +474,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     opacity: 0.8,
     marginRight: 12,
-    marginBottom: 3,
+    marginBottom: 4,
   },
 });
