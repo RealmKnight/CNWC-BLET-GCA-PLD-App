@@ -103,18 +103,8 @@ export function categorizeMembers(members: RosterMember[]): CategorizedMembers {
  * @returns Promise with RosterMember array
  */
 export async function fetchRosterMembers(): Promise<RosterMember[]> {
-    const { createClient } = await import("@supabase/supabase-js");
-    const { EXPO_PUBLIC_SUPABASE_URL, EXPO_PUBLIC_SUPABASE_ANON_KEY } =
-        process.env;
-
-    if (!EXPO_PUBLIC_SUPABASE_URL || !EXPO_PUBLIC_SUPABASE_ANON_KEY) {
-        throw new Error("Missing Supabase environment variables");
-    }
-
-    const supabase = createClient(
-        EXPO_PUBLIC_SUPABASE_URL,
-        EXPO_PUBLIC_SUPABASE_ANON_KEY,
-    );
+    // Import the existing Supabase client
+    const { supabase } = await import("@/utils/supabase");
 
     // First fetch all active members
     const { data: members, error: membersError } = await supabase
