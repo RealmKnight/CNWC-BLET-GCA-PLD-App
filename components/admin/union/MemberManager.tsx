@@ -11,15 +11,46 @@ import { DynamicRosterView } from "@/components/admin/rosters/DynamicRosterView"
 import { RosterPDFExporter } from "@/components/admin/rosters/RosterPDFExporter";
 import { Roster } from "@/types/rosters";
 import { PlatformScrollView } from "@/components/PlatformScrollView";
+import { UnionMemberList } from "@/components/admin/union/UnionMemberList";
+import { MemberEditForm } from "@/components/admin/division/MemberEditForm";
+import { AddMemberForm } from "@/components/admin/union/AddMemberForm";
+import { MemberData } from "@/store/adminMemberManagementStore";
 
-// Placeholder components for member management tabs
-const MembersTab = () => (
-  <PlatformScrollView contentContainerStyle={styles.tabContentContainer}>
-    <ThemedView style={styles.tabContent}>
-      <ThemedText>Members Management Coming Soon</ThemedText>
+// Updated Members tab with real implementation
+const MembersTab = () => {
+  const [selectedMember, setSelectedMember] = useState<MemberData | null>(null);
+  const [isAddingMember, setIsAddingMember] = useState(false);
+
+  // Handler to view member details for editing
+  const handleSelectMember = (member: MemberData) => {
+    setSelectedMember(member);
+    setIsAddingMember(false);
+  };
+
+  // Handler to add a new member
+  const handleAddMember = () => {
+    setIsAddingMember(true);
+    setSelectedMember(null);
+  };
+
+  // Handler to go back to member list
+  const handleCloseForm = (updatedMember?: MemberData | null) => {
+    setSelectedMember(null);
+    setIsAddingMember(false);
+  };
+
+  return (
+    <ThemedView style={styles.memberContainer}>
+      {!selectedMember && !isAddingMember && (
+        <UnionMemberList onEditMember={handleSelectMember} onAddMember={handleAddMember} />
+      )}
+
+      {selectedMember && !isAddingMember && <MemberEditForm member={selectedMember} onClose={handleCloseForm} />}
+
+      {isAddingMember && !selectedMember && <AddMemberForm onClose={handleCloseForm} />}
     </ThemedView>
-  </PlatformScrollView>
-);
+  );
+};
 
 const MemberTransfersTab = () => (
   <PlatformScrollView contentContainerStyle={styles.tabContentContainer}>
@@ -262,5 +293,10 @@ const styles = StyleSheet.create({
   backText: {
     fontSize: 16,
     color: Colors.light.tint,
+  },
+  memberContainer: {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
   },
 });
