@@ -1789,7 +1789,128 @@ export default function CalendarScreen() {
     fetchCalendarName();
   }, [member?.calendar_id]);
 
-  // Refresh timeStore when screen gains focus only if it's been more than a minute
+  // Ref to track whether we've logged diagnostic info for this session
+  const hasLoggedDiagnosticsRef = useRef(false);
+
+  // Add diagnostics to track subscription status and six-month state on screen focus
+  useFocusEffect(
+    useCallback(() => {
+      const runDiagnostics = async () => {
+        if (!member?.id) return;
+
+        // Log current state of sixMonthRequestDays
+        const sixMonthDays = useCalendarStore.getState().sixMonthRequestDays;
+        const dayCount = Object.keys(sixMonthDays).length;
+
+        console.log(
+          `[CalendarScreen] Screen focused, sixMonthRequestDays: ${dayCount} days:`,
+          Object.keys(sixMonthDays)
+        );
+
+        // Check if we have a selected date that should be a six-month request
+        if (selectedDate && sixMonthDays[selectedDate]) {
+          console.log(`[CalendarScreen] Current selected date ${selectedDate} IS in sixMonthRequestDays`);
+        } else if (selectedDate) {
+          console.log(`[CalendarScreen] Current selected date ${selectedDate} is NOT in sixMonthRequestDays`);
+        }
+
+        // If member has calendar_id, check for existing requests directly
+        if (member.calendar_id && selectedDate) {
+          try {
+            // Query the database directly as a diagnostic check
+            console.log(`[CalendarScreen] Checking for six-month requests for ${selectedDate} directly from database`);
+            const { data, error } = await supabase
+              .from("six_month_requests")
+              .select("id, request_date")
+              .eq("member_id", member.id)
+              .eq("request_date", selectedDate)
+              .eq("processed", false);
+
+            if (error) {
+              console.error("[CalendarScreen] Error checking six-month requests:", error);
+            } else if (data && data.length > 0) {
+              console.log(
+                `[CalendarScreen] Found ${data.length} six-month request(s) in database for date ${selectedDate}:`,
+                data
+              );
+
+              // Check if this data is reflected in our local state
+              if (!sixMonthDays[selectedDate]) {
+                console.warn(
+                  `[CalendarScreen] DISCREPANCY DETECTED: The six-month request exists in database but is NOT in the store state.`
+                );
+              }
+            } else {
+              console.log(`[CalendarScreen] No six-month requests found in database for date ${selectedDate}`);
+
+              // Check if our local state incorrectly thinks we have this request
+              if (sixMonthDays[selectedDate]) {
+                console.warn(
+                  `[CalendarScreen] DISCREPANCY DETECTED: The store state has a six-month request that doesn't exist in the database.`
+                );
+              }
+            }
+          } catch (err) {
+            console.error("[CalendarScreen] Error during diagnostic check:", err);
+          }
+        }
+
+        // Only run the more comprehensive diagnostics once per component mount
+        if (!hasLoggedDiagnosticsRef.current) {
+          console.log("[CalendarScreen] Running initial comprehensive diagnostics");
+
+          // Check ALL six-month requests for the user
+          try {
+            const { data: allRequests, error: allError } = await supabase
+              .from("six_month_requests")
+              .select("id, request_date")
+              .eq("member_id", member.id)
+              .eq("processed", false);
+
+            if (allError) {
+              console.error("[CalendarScreen] Error checking all six-month requests:", allError);
+            } else {
+              const dbDates = allRequests.map((req) => req.request_date);
+              const storeDates = Object.keys(sixMonthDays);
+
+              console.log(`[CalendarScreen] Database has ${dbDates.length} six-month requests:`, dbDates);
+              console.log(`[CalendarScreen] Store has ${storeDates.length} six-month requests:`, storeDates);
+
+              // Check for dates in DB but not in store
+              const missingInStore = dbDates.filter((date) => !sixMonthDays[date]);
+              if (missingInStore.length > 0) {
+                console.warn(
+                  `[CalendarScreen] Found ${missingInStore.length} dates in DB but missing in store:`,
+                  missingInStore
+                );
+              }
+
+              // Check for dates in store but not in DB
+              const missingInDb = storeDates.filter((date) => !dbDates.includes(date));
+              if (missingInDb.length > 0) {
+                console.warn(
+                  `[CalendarScreen] Found ${missingInDb.length} dates in store but missing in DB:`,
+                  missingInDb
+                );
+              }
+            }
+          } catch (err) {
+            console.error("[CalendarScreen] Error during comprehensive diagnostic check:", err);
+          }
+
+          hasLoggedDiagnosticsRef.current = true;
+        }
+      };
+
+      runDiagnostics();
+
+      return () => {
+        // No cleanup needed for diagnostics
+      };
+    }, [member?.id, member?.calendar_id, selectedDate])
+  );
+
+  // Existing useEffect for refreshing timeStore
   useFocusEffect(
     useCallback(() => {
       if (member?.id && useTimeStore.getState().isInitialized) {

@@ -988,6 +988,13 @@ export function setupCalendarSubscriptions() {
   const calendarId = member.calendar_id;
   const memberId = member.id;
 
+  console.log(
+    "[CalendarStore] Setting up subscriptions for memberId:",
+    memberId,
+    "calendarId:",
+    calendarId,
+  );
+
   // Create channels for different tables
   const pldSdvAllotmentsChannel = supabase.channel(
     "pld-sdv-allotments-changes",
@@ -1048,7 +1055,12 @@ export function setupCalendarSubscriptions() {
         }
       },
     )
-    .subscribe();
+    .subscribe((status) => {
+      console.log(
+        "[CalendarStore Realtime] PLD/SDV allotments subscription status:",
+        status,
+      );
+    });
 
   // Subscribe to requests changes
   requestsChannel
@@ -1107,7 +1119,12 @@ export function setupCalendarSubscriptions() {
         }
       },
     )
-    .subscribe();
+    .subscribe((status) => {
+      console.log(
+        "[CalendarStore Realtime] Requests subscription status:",
+        status,
+      );
+    });
 
   // Subscribe to six-month requests changes for the current member
   sixMonthRequestsChannel
@@ -1121,8 +1138,16 @@ export function setupCalendarSubscriptions() {
       },
       async (payload: RealtimePostgresChangesPayload<any>) => {
         console.log(
-          "[CalendarStore Realtime] Six-month request change:",
-          payload,
+          "[CalendarStore Realtime] Six-month request change detected:",
+          {
+            eventType: payload.eventType,
+            table: payload.table,
+            schema: payload.schema,
+            memberId: memberId,
+            requestDate: payload.eventType === "INSERT"
+              ? payload.new.request_date
+              : payload.old?.request_date,
+          },
         );
 
         try {
@@ -1132,16 +1157,49 @@ export function setupCalendarSubscriptions() {
           // Handle different event types
           if (payload.eventType === "INSERT") {
             // Add the date to sixMonthRequestDays
-            state.setSixMonthRequestDays({
+            const updatedDays = {
               ...state.sixMonthRequestDays,
               [payload.new.request_date]: true,
-            });
+            };
+            console.log(
+              "[CalendarStore Realtime] Adding six-month request date to state:",
+              payload.new.request_date,
+              "Updated days:",
+              Object.keys(updatedDays),
+            );
+            state.setSixMonthRequestDays(updatedDays);
           } else if (payload.eventType === "DELETE") {
             // Remove the date from sixMonthRequestDays
             const newSixMonthRequestDays = { ...state.sixMonthRequestDays };
             delete newSixMonthRequestDays[payload.old.request_date];
+            console.log(
+              "[CalendarStore Realtime] Removing six-month request date from state:",
+              payload.old.request_date,
+              "Updated days:",
+              Object.keys(newSixMonthRequestDays),
+            );
             state.setSixMonthRequestDays(newSixMonthRequestDays);
+          } else if (payload.eventType === "UPDATE") {
+            console.log(
+              "[CalendarStore Realtime] Detected UPDATE for six-month request:",
+              payload.old.request_date,
+              "->",
+              payload.new.request_date,
+            );
+            // Handle updates if needed
+            if (payload.old.request_date !== payload.new.request_date) {
+              const updatedDays = { ...state.sixMonthRequestDays };
+              delete updatedDays[payload.old.request_date];
+              updatedDays[payload.new.request_date] = true;
+              state.setSixMonthRequestDays(updatedDays);
+            }
           }
+
+          // Verify state update was successful
+          console.log(
+            "[CalendarStore Realtime] Six-month days after update:",
+            Object.keys(useCalendarStore.getState().sixMonthRequestDays),
+          );
         } catch (error) {
           console.error(
             "[CalendarStore Realtime] Error handling six-month request change:",
@@ -1150,7 +1208,35 @@ export function setupCalendarSubscriptions() {
         }
       },
     )
-    .subscribe();
+    .subscribe((status) => {
+      console.log(
+        "[CalendarStore Realtime] Six-month subscription status:",
+        status,
+      );
+
+      // Log detailed subscription info
+      if (status === "SUBSCRIBED") {
+        console.log(
+          "[CalendarStore Realtime] Six-month subscription active. Channel details:",
+          {
+            channelName: "six-month-requests-changes",
+            topic: "six-month-requests",
+            isJoined: true,
+          },
+        );
+      } else if (
+        status === "CHANNEL_ERROR" || status === "CLOSED" ||
+        status === "TIMED_OUT"
+      ) {
+        console.warn(
+          "[CalendarStore Realtime] Six-month subscription issue detected:",
+          status,
+          "This may prevent six-month request updates from being received.",
+        );
+      }
+    });
+
+  console.log("[CalendarStore] All subscriptions setup complete");
 
   // Return a cleanup function directly
   return () => {
@@ -1158,5 +1244,6 @@ export function setupCalendarSubscriptions() {
     pldSdvAllotmentsChannel.unsubscribe();
     requestsChannel.unsubscribe();
     sixMonthRequestsChannel.unsubscribe();
+    console.log("[CalendarStore] All subscriptions unsubscribed");
   };
 }

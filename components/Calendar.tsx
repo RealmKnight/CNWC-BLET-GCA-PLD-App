@@ -515,6 +515,87 @@ export function Calendar({ current, zoneId, isZoneSpecific = false, onDayActuall
     }
   };
 
+  // Add diagnostic logging for sixMonthRequestDays
+  useEffect(() => {
+    console.log("[Calendar Component] sixMonthRequestDays changed:", {
+      count: Object.keys(sixMonthRequestDays).length,
+      dates: Object.keys(sixMonthRequestDays),
+    });
+
+    // If user has six-month requests, check if they're actually displayed correctly
+    if (member?.id && Object.keys(sixMonthRequestDays).length > 0) {
+      // Get the first six-month date to check
+      const firstSixMonthDate = Object.keys(sixMonthRequestDays)[0];
+
+      // Wait a bit to ensure markedDates has updated
+      setTimeout(() => {
+        // Safely access markedDates without modifying it
+        const currentMarkedDates = lastGeneratedMarksRef.current || {};
+        const markedDate = currentMarkedDates[firstSixMonthDate];
+
+        if (markedDate) {
+          // Check if the date is correctly marked as userRequested
+          const userRequestedStyle =
+            markedDate.customStyles?.container?.backgroundColor === AVAILABILITY_COLORS.userRequested.color;
+
+          console.log(`[Calendar Component] Six-month date ${firstSixMonthDate} rendering diagnostic:`, {
+            isMarked: !!markedDate,
+            isDisabledTouch: markedDate.disableTouchEvent,
+            isUserRequestedStyle: userRequestedStyle,
+            backgroundColor: markedDate.customStyles?.container?.backgroundColor,
+            expectedColor: AVAILABILITY_COLORS.userRequested.color,
+          });
+
+          if (!userRequestedStyle) {
+            console.warn(
+              `[Calendar Component] RENDERING ISSUE: Six-month date ${firstSixMonthDate} is not displaying with userRequested style`
+            );
+          }
+        } else {
+          console.warn(
+            `[Calendar Component] RENDERING ISSUE: Six-month date ${firstSixMonthDate} is not present in markedDates`
+          );
+        }
+      }, 100);
+    }
+  }, [sixMonthRequestDays, member?.id]);
+
+  // Add diagnostic logging when the calendar renders with new markedDates
+  useEffect(() => {
+    const sixMonthDatesCount = Object.keys(sixMonthRequestDays).length;
+    const markedDatesCount = Object.keys(markedDates).length;
+
+    console.log("[Calendar Component] Calendar rendering with:", {
+      currentDate: calendarDate,
+      selectedDate,
+      sixMonthRequestDaysCount: sixMonthDatesCount,
+      markedDatesCount,
+      isInitialized,
+    });
+
+    if (sixMonthDatesCount > 0) {
+      // Check if all six-month requests are properly marked
+      const sixMonthDates = Object.keys(sixMonthRequestDays);
+      let missingMarks = 0;
+      let incorrectlyMarked = 0;
+
+      sixMonthDates.forEach((date) => {
+        const mark = markedDates[date];
+        if (!mark) {
+          missingMarks++;
+        } else if (mark.customStyles?.container?.backgroundColor !== AVAILABILITY_COLORS.userRequested.color) {
+          incorrectlyMarked++;
+        }
+      });
+
+      if (missingMarks > 0 || incorrectlyMarked > 0) {
+        console.warn(
+          `[Calendar Component] Marking issues detected: ${missingMarks} six-month dates missing marks, ${incorrectlyMarked} incorrectly marked`
+        );
+      }
+    }
+  }, [markedDates, sixMonthRequestDays, calendarDate, selectedDate, isInitialized]);
+
   // Only show loading state if we're not initialized
   if (!isInitialized) {
     return (
