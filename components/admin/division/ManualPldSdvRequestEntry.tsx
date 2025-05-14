@@ -841,6 +841,7 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
             </View>
 
             <View style={styles.modalBody}>
+              <ThemedText style={styles.modalWarning}>**Edit with caution**</ThemedText>
               <ThemedText style={styles.modalInfoText}>
                 Member: {selectedMember?.first_name} {selectedMember?.last_name}
               </ThemedText>
@@ -1176,7 +1177,6 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       paddingBottom: 8,
       marginBottom: 16,
       backgroundColor: Colors.dark.card,
-      borderRadius: 8,
       padding: 4,
     },
     modalTitle: {
@@ -1188,6 +1188,11 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     },
     modalBody: {
       padding: 8,
+    },
+    modalWarning: {
+      fontSize: 16,
+      color: Colors.dark.error,
+      textAlign: "center",
     },
     modalInfoText: {
       fontSize: 16,
