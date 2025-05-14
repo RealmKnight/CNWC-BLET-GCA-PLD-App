@@ -16,7 +16,7 @@ type Request = Database["public"]["Tables"]["pld_sdv_requests"]["Row"];
 
 export interface DayRequest extends Request {
   member: {
-    id: string;
+    id: string | null;
     first_name: string | null;
     last_name: string | null;
     pin_number: number;
@@ -34,7 +34,7 @@ export interface DayAllotment {
 
 // Add type for member data
 interface RequestMember {
-  id: string;
+  id: string | null;
   first_name: string | null;
   last_name: string | null;
   pin_number: number;
@@ -42,7 +42,8 @@ interface RequestMember {
 
 interface FullRequestData {
   id: string;
-  member_id: string;
+  member_id: string | null;
+  pin_number: number | null;
   calendar_id: string;
   request_date: string;
   leave_type: "PLD" | "SDV";
@@ -55,6 +56,8 @@ interface FullRequestData {
     | "cancelled";
   requested_at: string;
   waitlist_position?: number;
+  import_source?: string | null;
+  imported_at?: string | null;
   member: RequestMember;
 }
 
@@ -448,11 +451,11 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       calendarId,
     });
     try {
-      // Query with join to members table using the member_id foreign key
+      // Query with join to members table using the member_id foreign key OR pin_number
       const { data, error } = await supabase
         .from("pld_sdv_requests")
         .select(`
-          id, member_id, calendar_id, request_date, leave_type, status, requested_at, waitlist_position, paid_in_lieu,
+          id, member_id, pin_number, calendar_id, request_date, leave_type, status, requested_at, waitlist_position, paid_in_lieu, import_source, imported_at,
           member:members(id, first_name, last_name, pin_number)
         `)
         .eq("calendar_id", calendarId)
@@ -476,19 +479,30 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
             date: r.request_date,
             status: r.status,
             member_id: r.member_id,
+            pin_number: r.pin_number,
           })),
         );
       }
 
       // Group requests by date
       const requestsByDate: Record<string, DayRequest[]> = {};
-      data?.forEach((request) => {
+      data?.forEach((request: any) => {
         if (!requestsByDate[request.request_date]) {
           requestsByDate[request.request_date] = [];
         }
-        requestsByDate[request.request_date].push(
-          request as unknown as DayRequest,
-        );
+
+        // Special handling for null member data (pin_number only cases)
+        if (request.pin_number && (!request.member || !request.member.id)) {
+          // Create a default member object using the pin_number for display
+          request.member = {
+            id: null,
+            pin_number: request.pin_number,
+            first_name: `PIN: ${request.pin_number}`,
+            last_name: "",
+          };
+        }
+
+        requestsByDate[request.request_date].push(request as DayRequest);
       });
 
       return requestsByDate;
@@ -657,7 +671,7 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       const { data, error } = await supabase
         .from("pld_sdv_requests")
         .select(`
-          *,
+          id, member_id, pin_number, calendar_id, request_date, leave_type, status, requested_at, waitlist_position, paid_in_lieu, import_source, imported_at,
           member:members(id, first_name, last_name, pin_number)
         `)
         .eq("calendar_id", calendarId)
@@ -674,8 +688,23 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
         return;
       }
 
+      // Process the data and create a new requests object
+      const processedData = data?.map((request: any) => {
+        // Handle PIN-only entries
+        if (request.pin_number && (!request.member || !request.member.id)) {
+          // Create a default member object using the pin_number for display
+          request.member = {
+            id: null,
+            pin_number: request.pin_number,
+            first_name: `PIN: ${request.pin_number}`,
+            last_name: "",
+          };
+        }
+        return request as DayRequest;
+      }) || [];
+
       const newRequests = { ...state.requests };
-      newRequests[date] = data as DayRequest[];
+      newRequests[date] = processedData;
       state.setRequests(newRequests);
     } catch (error) {
       console.error(

@@ -40,7 +40,8 @@ export interface VacationStats {
 // Combined type for PLD/SDV and Six Month Requests for easier state management
 export interface TimeOffRequest {
     id: string;
-    member_id: string;
+    member_id: string | null;
+    pin_number?: number | null;
     request_date: string;
     leave_type: "PLD" | "SDV";
     status:
@@ -55,6 +56,8 @@ export interface TimeOffRequest {
     paid_in_lieu?: boolean | null;
     is_six_month_request: boolean; // Flag to distinguish origin
     calendar_id?: string | null;
+    import_source?: string | null;
+    imported_at?: string | null;
 }
 
 export interface UserVacationRequest {
@@ -636,16 +639,49 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
             const startDate = `${currentYear}-01-01`;
             const endDate = `${currentYear}-12-31`;
 
-            // --- Step 1: Fetch Regular & Six Month Requests Concurrently ---
+            // Get member PIN for additional queries
+            const { data: memberData, error: memberError } = await supabase
+                .from("members")
+                .select("pin_number")
+                .eq("id", memberId)
+                .single();
+
+            if (memberError && memberError.code !== "PGRST116") {
+                console.error(
+                    "[TimeStore] Error fetching member PIN:",
+                    memberError,
+                );
+            }
+
+            const memberPin = memberData?.pin_number;
+            console.log(
+                `[TimeStore] Using member PIN ${memberPin} for additional queries`,
+            );
+
+            // --- Step 1: Fetch Regular, PIN-based, & Six Month Requests Concurrently ---
             const regularRequestsPromise = supabase
                 .from("pld_sdv_requests")
                 .select(
-                    "id, member_id, request_date, leave_type, status, requested_at, waitlist_position, paid_in_lieu, calendar_id",
+                    "id, member_id, pin_number, request_date, leave_type, status, requested_at, waitlist_position, paid_in_lieu, calendar_id, import_source, imported_at",
                 )
                 .eq("member_id", memberId)
                 .gte("request_date", startDate)
                 .lte("request_date", endDate)
                 .not("status", "in", '("cancelled","denied")'); // Exclude cancelled/denied
+
+            // Only fetch by PIN if we have a valid PIN
+            const pinRequestsPromise = memberPin
+                ? supabase
+                    .from("pld_sdv_requests")
+                    .select(
+                        "id, member_id, pin_number, request_date, leave_type, status, requested_at, waitlist_position, paid_in_lieu, calendar_id, import_source, imported_at",
+                    )
+                    .eq("pin_number", memberPin)
+                    .is("member_id", null) // Only get requests without member_id
+                    .gte("request_date", startDate)
+                    .lte("request_date", endDate)
+                    .not("status", "in", '("cancelled","denied")')
+                : Promise.resolve({ data: [], error: null });
 
             const sixMonthRequestsPromise = supabase
                 .from("six_month_requests")
@@ -657,14 +693,21 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
                 .lte("request_date", endDate);
             // No status filter needed here, unprocessed are considered pending
 
-            const [regularResult, sixMonthResult] = await Promise.all([
-                regularRequestsPromise,
-                sixMonthRequestsPromise,
-            ]);
+            const [regularResult, pinResult, sixMonthResult] = await Promise
+                .all([
+                    regularRequestsPromise,
+                    pinRequestsPromise,
+                    sixMonthRequestsPromise,
+                ]);
 
             if (regularResult.error) {
                 throw new Error(
                     `Error fetching regular requests: ${regularResult.error.message}`,
+                );
+            }
+            if (pinResult.error) {
+                throw new Error(
+                    `Error fetching PIN-based requests: ${pinResult.error.message}`,
                 );
             }
             if (sixMonthResult.error) {
@@ -674,10 +717,11 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
             }
 
             const regularRequests = regularResult.data || [];
+            const pinRequests = pinResult.data || [];
             const sixMonthRequests = sixMonthResult.data || [];
 
             console.log(
-                `[TimeStore] Fetched raw requests: Regular=${regularRequests.length}, SixMonth=${sixMonthRequests.length}`,
+                `[TimeStore] Fetched raw requests: Regular=${regularRequests.length}, PIN-based=${pinRequests.length}, SixMonth=${sixMonthRequests.length}`,
             );
 
             // --- Step 2: Combine and Transform Requests ---
@@ -688,6 +732,7 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
                 combinedRequests.push({
                     id: req.id,
                     member_id: req.member_id,
+                    pin_number: req.pin_number || null,
                     request_date: req.request_date,
                     leave_type: req.leave_type as "PLD" | "SDV",
                     status: req.status as TimeOffRequest["status"], // Cast to the store's status type
@@ -696,6 +741,27 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
                     paid_in_lieu: req.paid_in_lieu,
                     is_six_month_request: false, // Mark as not a six-month origin
                     calendar_id: req.calendar_id,
+                    import_source: req.import_source || null,
+                    imported_at: req.imported_at || null,
+                });
+            });
+
+            // Process PIN-based requests (requests with pin_number but no member_id)
+            pinRequests.forEach((req) => {
+                combinedRequests.push({
+                    id: req.id,
+                    member_id: null,
+                    pin_number: req.pin_number,
+                    request_date: req.request_date,
+                    leave_type: req.leave_type as "PLD" | "SDV",
+                    status: req.status as TimeOffRequest["status"],
+                    requested_at: req.requested_at,
+                    waitlist_position: req.waitlist_position,
+                    paid_in_lieu: req.paid_in_lieu,
+                    is_six_month_request: false,
+                    calendar_id: req.calendar_id,
+                    import_source: req.import_source || null,
+                    imported_at: req.imported_at || null,
                 });
             });
 
@@ -1186,6 +1252,8 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
                         paid_in_lieu: payload.new.paid_in_lieu || false,
                         is_six_month_request: false, // This is a pld_sdv_request
                         calendar_id: payload.new.calendar_id || null,
+                        import_source: payload.new.import_source || null,
+                        imported_at: payload.new.imported_at || null,
                     };
 
                     // Add the new request to the state
@@ -1230,6 +1298,8 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
                         paid_in_lieu: false,
                         is_six_month_request: true,
                         calendar_id: payload.new.calendar_id || null,
+                        import_source: payload.new.import_source || null,
+                        imported_at: payload.new.imported_at || null,
                     };
                     const currentRequests = get().timeOffRequests;
                     const updatedRequests = [

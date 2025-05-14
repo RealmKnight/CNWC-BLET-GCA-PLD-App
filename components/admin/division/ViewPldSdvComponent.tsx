@@ -12,14 +12,11 @@ import {
   ImageStyle,
   StyleProp,
   TextInputProps,
-  TouchableOpacity,
-  useWindowDimensions,
 } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { Picker } from "@react-native-picker/picker";
 import { Button } from "@/components/ui/Button";
-import Toast from "react-native-toast-message";
 import { useAdminMemberManagementStore } from "@/store/adminMemberManagementStore";
 import { useAdminCalendarManagementStore } from "@/store/adminCalendarManagementStore";
 import { useUserStore } from "@/store/userStore";
@@ -38,11 +35,6 @@ import {
   AuditEventType,
 } from "./constants";
 import { CalendarSelector } from "./CalendarSelector";
-import { ThemedTouchableOpacity } from "@/components/ThemedTouchableOpacity";
-import { Ionicons } from "@expo/vector-icons";
-import { ViewPldSdvComponent } from "./ViewPldSdvComponent";
-import { ImportPldSdvComponent } from "./ImportPldSdvComponent";
-import { ManualPldSdvRequestEntry } from "./ManualPldSdvRequestEntry";
 
 // Types for our component
 type DatePreset = "3days" | "7days" | "30days" | "6months" | "alltime" | "custom";
@@ -56,14 +48,6 @@ interface PldSdvRequest extends Tables<"pld_sdv_requests"> {
   };
 }
 
-interface AuditEvent {
-  id: string;
-  type: AuditEventType;
-  timestamp: string;
-  user_id: string;
-  details: Record<string, unknown>;
-}
-
 interface MemberSearchResult {
   id: string;
   pin_number: number;
@@ -72,82 +56,113 @@ interface MemberSearchResult {
   display: string;
 }
 
-interface PldSdvManagerProps {
+interface ViewPldSdvComponentProps {
   selectedDivision: string;
   selectedCalendarId: string | null | undefined;
+  onCalendarChange?: (calendarId: string | null) => void;
 }
 
-interface DynamicStyles extends Record<string, StyleProp<ViewStyle | TextStyle | ImageStyle>> {
-  container: StyleProp<ViewStyle>;
-  header: StyleProp<ViewStyle>;
-  title: StyleProp<TextStyle>;
-  searchContainer: StyleProp<ViewStyle>;
-  input: StyleProp<TextStyle>;
-  resultsList: StyleProp<ViewStyle>;
-  resultItem: StyleProp<ViewStyle>;
-  resultText: StyleProp<TextStyle>;
-  tableContainer: StyleProp<ViewStyle>;
-  table: StyleProp<ViewStyle>;
-  tableRow: StyleProp<ViewStyle>;
-  tableCell: StyleProp<ViewStyle | TextStyle>;
-  sortableHeader: StyleProp<ViewStyle | TextStyle>;
-  iosPickerSpecificStyle: StyleProp<ViewStyle>;
-  androidPickerSpecificStyle: StyleProp<ViewStyle>;
-  picker: StyleProp<ViewStyle>;
-  webSelect?: StyleProp<TextStyle>;
-  webInput?: StyleProp<TextStyle>;
-  webDateInput?: StyleProp<TextStyle>;
-  searchResults?: StyleProp<ViewStyle>;
-  searchResultItem?: StyleProp<ViewStyle>;
-}
-
-// Define the tab types
-type PldSdvTab = "view" | "import" | "enter";
-
-export function PldSdvManager({ selectedDivision, selectedCalendarId }: PldSdvManagerProps) {
+export function ViewPldSdvComponent({
+  selectedDivision,
+  selectedCalendarId: propSelectedCalendarId,
+  onCalendarChange,
+}: ViewPldSdvComponentProps) {
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
-  const tintColor = Colors[colorScheme].tint;
-  const { width } = useWindowDimensions();
-  const isMobile = Platform.OS !== "web" || width < 768;
 
-  // Use dynamic styles based on the current colorScheme
-  const currentStyles = {
-    container: {
-      flex: 1,
+  // Dynamic styles that depend on colorScheme
+  const dynamicStyles = {
+    webSelect: Platform.select({
+      web: {
+        width: "100%",
+        padding: 8,
+        borderRadius: 4,
+        fontSize: 16,
+        backgroundColor: Colors[colorScheme].background,
+        color: Colors[colorScheme].tint,
+        borderColor: Colors[colorScheme].border,
+        borderWidth: 1,
+      } as TextStyle,
+      default: {} as TextStyle,
+    }),
+    webInput: Platform.select({
+      web: {
+        width: "100%",
+        padding: 8,
+        borderRadius: 4,
+        fontSize: 16,
+        backgroundColor: Colors[colorScheme].background,
+        color: Colors[colorScheme].tint,
+        borderColor: Colors[colorScheme].border,
+        borderWidth: 1,
+      } as TextStyle,
+      default: {} as TextStyle,
+    }),
+    webDateInput: Platform.select({
+      web: {
+        width: "100%",
+        padding: 8,
+        borderRadius: 4,
+        fontSize: 16,
+        backgroundColor: Colors[colorScheme].background,
+        color: Colors[colorScheme].tint,
+        borderColor: Colors[colorScheme].border,
+        borderWidth: 1,
+      } as TextStyle,
+      default: {} as TextStyle,
+    }),
+    iosPickerSpecificStyle: {
+      height: undefined,
+    },
+    androidPickerSpecificStyle: {
+      paddingHorizontal: 8,
+      height: undefined,
+    },
+    picker: {
+      width: "100%",
+      backgroundColor: Colors[colorScheme].background,
+      color: Colors[colorScheme].tint,
+      ...(Platform.OS === "ios"
+        ? {
+            height: undefined,
+          }
+        : {}),
+      ...(Platform.OS === "android"
+        ? {
+            paddingHorizontal: 8,
+          }
+        : {}),
     } as ViewStyle,
-    tabsContainer: {
-      flexDirection: "row" as "row",
-      gap: 8,
-      padding: 16,
+    input: {
+      width: "100%",
+      height: 40,
+      paddingHorizontal: 8,
+      borderRadius: 4,
+      backgroundColor: Colors[colorScheme].background,
+      color: Colors[colorScheme].tint,
+      borderColor: Colors[colorScheme].border,
+      borderWidth: 1,
+    } as TextStyle,
+    searchResults: {
+      position: "absolute",
+      top: "100%",
+      left: 0,
+      right: 0,
+      backgroundColor: Colors[colorScheme].background,
+      borderRadius: 4,
+      borderColor: Colors[colorScheme].border,
+      borderWidth: 1,
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.25,
+      shadowRadius: 3.84,
+      elevation: 5,
+      zIndex: 1000,
+    } as ViewStyle,
+    searchResultItem: {
+      padding: 12,
       borderBottomWidth: 1,
       borderBottomColor: Colors[colorScheme].border,
-    } as ViewStyle,
-    tabButton: {
-      flexDirection: "row" as "row",
-      alignItems: "center" as "center",
-      padding: 8,
-      borderRadius: 8,
-      borderWidth: 1,
-      borderColor: Colors[colorScheme].border,
-      marginRight: 4,
-    } as ViewStyle,
-    activeTabButton: {
-      backgroundColor: Colors[colorScheme].tint,
-      borderColor: Colors[colorScheme].tint,
-    } as ViewStyle,
-    mobileTabButton: {
-      padding: 8,
-    } as ViewStyle,
-    buttonText: {
-      fontSize: 14,
-      fontWeight: "500" as "500",
-      marginLeft: 4,
-    } as TextStyle,
-    activeText: {
-      color: Colors[colorScheme].background,
-    } as TextStyle,
-    contentContainer: {
-      flex: 1,
+      backgroundColor: Colors[colorScheme].background,
     } as ViewStyle,
   };
 
@@ -184,11 +199,14 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId }: PldSdvMa
   const [isDivisionReady, setIsDivisionReady] = useState(false);
 
   // Refs to hold the latest state for fetchRequests to avoid closure issues
-  const currentCalendarIdRef = useRef<string | null | undefined>(selectedCalendarId);
+  const currentCalendarIdRef = useRef<string | null | undefined>(propSelectedCalendarId);
   const currentStartDateRef = useRef<string>(startDate);
   const currentEndDateRef = useRef<string>(endDate);
   const currentSelectedMemberRef = useRef<MemberSearchResult | null>(selectedMember);
   const currentSearchQueryRef = useRef<string>(searchQuery);
+
+  // Add state to track selected calendar internally (initialized from prop)
+  const [selectedCalendarId, setSelectedCalendarId] = useState<string | null>(propSelectedCalendarId || null);
 
   // Get current division's calendars
   const currentDivisionCalendars = calendars[selectedDivision] || [];
@@ -217,7 +235,7 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId }: PldSdvMa
 
   // Sort and filter requests
   const filteredAndSortedRequests = useMemo(() => {
-    console.log("[PldSdvManager] Filtering and sorting requests:", {
+    console.log("[ViewPldSdvComponent] Filtering and sorting requests:", {
       totalRequests: requests.length,
       statusFilter,
       typeFilter,
@@ -257,7 +275,7 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId }: PldSdvMa
       return sortDirection === "asc" ? comparison : -comparison;
     });
 
-    console.log("[PldSdvManager] Filtered and sorted results:", {
+    console.log("[ViewPldSdvComponent] Filtered and sorted results:", {
       filteredCount: filtered.length,
       firstItem: filtered[0] || null,
     });
@@ -283,12 +301,12 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId }: PldSdvMa
     const search = currentSearchQueryRef.current;
 
     if (!calendarId) {
-      console.log("[PldSdvManager] fetchRequests: Skip - no calendarId in ref");
+      console.log("[ViewPldSdvComponent] fetchRequests: Skip - no calendarId in ref");
       setRequests([]);
       return;
     }
 
-    console.log("[PldSdvManager] fetchRequests: Preparing with ref values:", {
+    console.log("[ViewPldSdvComponent] fetchRequests: Preparing with ref values:", {
       calendarId,
       startDate: start,
       endDate: end,
@@ -310,7 +328,7 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId }: PldSdvMa
         lastFetchRef.current.timestamp > 0 &&
         now - lastFetchRef.current.timestamp < 500
       ) {
-        console.log("[PldSdvManager] Skipping duplicate fetch request (refs)");
+        console.log("[ViewPldSdvComponent] Skipping duplicate fetch request (refs)");
         setIsLoading(false);
         return;
       }
@@ -339,7 +357,7 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId }: PldSdvMa
         query = query.eq("member_id", member.id);
       }
 
-      console.log("[PldSdvManager] Executing main query with ref params:", {
+      console.log("[ViewPldSdvComponent] Executing main query with ref params:", {
         calendarId,
         startDate: start,
         endDate: end,
@@ -349,10 +367,10 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId }: PldSdvMa
 
       if (error) throw error;
 
-      console.log(`[PldSdvManager] Fetched ${data?.length || 0} requests successfully (refs).`);
+      console.log(`[ViewPldSdvComponent] Fetched ${data?.length || 0} requests successfully (refs).`);
       setRequests(data || []);
     } catch (error) {
-      console.error("[PldSdvManager] Error in fetchRequests (refs):", error);
+      console.error("[ViewPldSdvComponent] Error in fetchRequests (refs):", error);
       setError(error instanceof Error ? error.message : "Failed to fetch requests");
       setRequests([]);
     } finally {
@@ -393,7 +411,7 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId }: PldSdvMa
 
         setSearchResults(results);
       } catch (error) {
-        console.error("[PldSdvManager] Error searching members:", error);
+        console.error("[ViewPldSdvComponent] Error searching members:", error);
         setError(error instanceof Error ? error.message : "Failed to search members");
       } finally {
         setIsLoading(false);
@@ -434,15 +452,6 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId }: PldSdvMa
     setIsDetailsModalVisible(true);
   }, []);
 
-  // Handle calendar change - Now properly implemented
-  const handleCalendarChange = useCallback((calendarId: string | null) => {
-    console.log("[PldSdvManager] Calendar changed to:", calendarId);
-    // Reset member selection when calendar changes
-    setSelectedMember(null);
-    setSearchQuery("");
-    setSearchResults([]);
-  }, []);
-
   // Handle sort change
   const handleSortChange = (field: keyof PldSdvRequest) => {
     if (field === sortField) {
@@ -453,6 +462,23 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId }: PldSdvMa
     }
   };
 
+  // Add calendar selection handler
+  const handleCalendarChange = useCallback(
+    (calendarId: string | null) => {
+      console.log("[ViewPldSdvComponent] Calendar changed to:", calendarId);
+      setSelectedCalendarId(calendarId);
+      // Notify parent component if callback provided
+      if (onCalendarChange) {
+        onCalendarChange(calendarId);
+      }
+      // Reset member selection when calendar changes
+      setSelectedMember(null);
+      setSearchQuery("");
+      setSearchResults([]);
+    },
+    [onCalendarChange]
+  );
+
   // --- EFFECTS ---
 
   // Effect for Division Change
@@ -460,7 +486,7 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId }: PldSdvMa
     if (selectedDivision === processedDivisionRef.current) {
       return;
     }
-    console.log(`[PldSdvManager] Division changed effect running for: ${selectedDivision}`);
+    console.log(`[ViewPldSdvComponent] Division changed effect running for: ${selectedDivision}`);
     setIsDivisionReady(false); // Mark as not ready immediately
     processedDivisionRef.current = selectedDivision;
 
@@ -473,21 +499,21 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId }: PldSdvMa
     setStatusFilter("all");
     setTypeFilter("all");
     lastFetchRef.current = { calendarId: null, startDate: "", endDate: "", timestamp: 0 };
-    console.log("[PldSdvManager] State reset complete for division change.");
+    console.log("[ViewPldSdvComponent] State reset complete for division change.");
 
     // --- Fetch Settings ---
     const loadDivisionSettings = async () => {
       try {
         setIsLoading(true);
         setError(null);
-        console.log(`[PldSdvManager] Fetching division settings for ${selectedDivision}...`);
+        console.log(`[ViewPldSdvComponent] Fetching division settings for ${selectedDivision}...`);
         await fetchDivisionSettings(selectedDivision);
-        console.log(`[PldSdvManager] Division settings fetch complete for: ${selectedDivision}.`);
+        console.log(`[ViewPldSdvComponent] Division settings fetch complete for: ${selectedDivision}.`);
         // NOW mark as ready after settings are fetched (and store should have updated props)
         setIsDivisionReady(true);
-        console.log(`[PldSdvManager] Division ${selectedDivision} marked as READY.`);
+        console.log(`[ViewPldSdvComponent] Division ${selectedDivision} marked as READY.`);
       } catch (err) {
-        console.error("[PldSdvManager] Error loading division settings:", err);
+        console.error("[ViewPldSdvComponent] Error loading division settings:", err);
         setError(err instanceof Error ? err.message : "Failed to load division settings");
         setIsLoading(false); // Allow UI to show error
         setIsDivisionReady(true); // Mark as ready even on error to unblock potential UI messages
@@ -505,7 +531,7 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId }: PldSdvMa
     // will trigger the main fetch effect.
     if (datePreset === "custom") return;
 
-    console.log("[PldSdvManager] Date Preset changed effect running for:", datePreset);
+    console.log("[ViewPldSdvComponent] Date Preset changed effect running for:", datePreset);
 
     const now = new Date();
     let start: Date;
@@ -534,7 +560,7 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId }: PldSdvMa
         break;
       default:
         // Should not happen if datePreset is not 'custom'
-        console.warn("[PldSdvManager] Unexpected datePreset in effect:", datePreset);
+        console.warn("[ViewPldSdvComponent] Unexpected datePreset in effect:", datePreset);
         return;
     }
 
@@ -543,7 +569,10 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId }: PldSdvMa
 
     // Update state only if dates actually changed to prevent infinite loops
     if (formattedStart !== startDate || formattedEnd !== endDate) {
-      console.log("[PldSdvManager] Setting date range from preset:", { start: formattedStart, end: formattedEnd });
+      console.log("[ViewPldSdvComponent] Setting date range from preset:", {
+        start: formattedStart,
+        end: formattedEnd,
+      });
       setStartDate(formattedStart);
       setEndDate(formattedEnd);
       // The main fetch effect will catch this state change.
@@ -553,14 +582,14 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId }: PldSdvMa
   // Effect to fetch members when calendar changes
   useEffect(() => {
     if (selectedCalendarId) {
-      console.log("[PldSdvManager] Fetching members for calendar:", selectedCalendarId);
+      console.log("[ViewPldSdvComponent] Fetching members for calendar:", selectedCalendarId);
       fetchMembersByCalendarId(selectedCalendarId);
     }
   }, [selectedCalendarId, fetchMembersByCalendarId]);
 
   // Main Effect to Trigger Fetch Requests
   useEffect(() => {
-    console.log("[PldSdvManager] Main Fetch trigger effect checking...", {
+    console.log("[ViewPldSdvComponent] Main Fetch trigger effect checking...", {
       isDivisionReady,
       calendar: selectedCalendarId,
       start: startDate,
@@ -573,14 +602,14 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId }: PldSdvMa
     if (isDivisionReady && selectedCalendarId && startDate && endDate) {
       // Use a small delay to allow state propagation and debounce rapid changes
       const timerId = setTimeout(() => {
-        console.log("[PldSdvManager] Triggering fetch from main effect timeout (Division Ready)");
+        console.log("[ViewPldSdvComponent] Triggering fetch from main effect timeout (Division Ready)");
         fetchRequests(); // This now reads from refs
       }, 300); // Adjusted delay
 
       return () => clearTimeout(timerId);
     } else {
       // Log why fetch is being skipped
-      console.log("[PldSdvManager] Skipping fetch:", {
+      console.log("[ViewPldSdvComponent] Skipping fetch:", {
         isDivisionReady,
         hasCalendar: !!selectedCalendarId,
         hasStartDate: !!startDate,
@@ -589,14 +618,14 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId }: PldSdvMa
       // No calendar or dates selected, or division not ready, ensure requests are cleared
       // Check specific conditions for clarity
       if (!isDivisionReady) {
-        console.log("[PldSdvManager] ... division not ready yet.");
+        console.log("[ViewPldSdvComponent] ... division not ready yet.");
         // Keep loading true if division change is in progress
       } else if (!selectedCalendarId) {
-        console.log("[PldSdvManager] ... no calendar selected.");
+        console.log("[ViewPldSdvComponent] ... no calendar selected.");
         setRequests([]);
         setIsLoading(false); // Division is ready, but no calendar
       } else if (!startDate || !endDate) {
-        console.log("[PldSdvManager] ... dates not set yet.");
+        console.log("[ViewPldSdvComponent] ... dates not set yet.");
         setRequests([]);
         setIsLoading(false); // Division/calendar ready, but dates missing
       }
@@ -604,25 +633,6 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId }: PldSdvMa
     // Watch the original state props/variables that indicate a fetch might be needed.
     // Add isDivisionReady to dependencies.
   }, [isDivisionReady, selectedCalendarId, startDate, endDate, selectedMember, searchQuery, fetchRequests]); // Keep original deps + isDivisionReady
-
-  // Effect for Real-time Updates (Commented out for debugging)
-  // useEffect(() => {
-  //   if (!selectedCalendarId) return;
-  //   console.log("[PldSdvManager] Setting up realtime subscription for calendar:", selectedCalendarId);
-  //   const channel = supabase
-  //     .channel(`pld-sdv-requests-${selectedCalendarId}`)
-  //     .on(...)
-  //     .subscribe();
-  //   return () => { /* unsubscribe */ };
-  // }, [selectedCalendarId, fetchRequests]);
-
-  // Effect for Component Unmount Cleanup
-  useEffect(() => {
-    return () => {
-      console.log("[PldSdvManager] Component unmounting, cleaning up all subscriptions");
-      supabase.removeAllChannels();
-    };
-  }, []);
 
   // Update refs whenever the corresponding state/prop changes
   useEffect(() => {
@@ -641,87 +651,336 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId }: PldSdvMa
     currentSearchQueryRef.current = searchQuery;
   }, [searchQuery]);
 
-  // State for the currently active tab
-  const [activeTab, setActiveTab] = useState<PldSdvTab>("view");
+  // Add an effect to update internal state when prop changes
+  useEffect(() => {
+    if (propSelectedCalendarId !== selectedCalendarId) {
+      setSelectedCalendarId(propSelectedCalendarId || null);
+    }
+  }, [propSelectedCalendarId]);
 
-  // Function to render each tab button
-  const renderTabButton = useCallback(
-    (tab: PldSdvTab, icon: string, label: string) => {
-      const isActive = activeTab === tab;
-      const iconColor = isActive ? Colors[colorScheme].background : tintColor;
-      const buttonSize = isMobile ? 40 : "auto";
-      const iconSize = isMobile ? 20 : 24;
-      const ButtonComponent = ThemedTouchableOpacity;
-
-      return (
-        <ButtonComponent
-          key={tab}
-          style={[
-            currentStyles.tabButton,
-            isActive && currentStyles.activeTabButton,
-            isMobile && currentStyles.mobileTabButton,
-            { minWidth: buttonSize, height: buttonSize },
-          ]}
-          onPress={() => setActiveTab(tab)}
+  // Render date preset selector
+  const renderDatePresetSelector = () => (
+    <View style={styles.selectorContainer}>
+      <ThemedText style={styles.label}>Date Range:</ThemedText>
+      {Platform.OS === "web" ? (
+        <select
+          value={datePreset}
+          onChange={(e) => setDatePreset(e.target.value as DatePreset)}
+          style={dynamicStyles.webSelect as React.CSSProperties}
         >
-          <Ionicons name={icon as any} size={iconSize} color={iconColor} />
-          {!isMobile && (
-            <ThemedText style={[currentStyles.buttonText, isActive && currentStyles.activeText]}>{label}</ThemedText>
-          )}
-        </ButtonComponent>
-      );
-    },
-    [activeTab, isMobile, tintColor, colorScheme]
+          <option value="3days">Past & Next 30 Days</option>
+          <option value="7days">Past & Next 60 Days</option>
+          <option value="30days">Past & Next 180 Days</option>
+          <option value="6months">Past & Next Year</option>
+          <option value="alltime">All Time (Maximum Range)</option>
+          <option value="custom">Custom Range</option>
+        </select>
+      ) : (
+        <Picker
+          selectedValue={datePreset}
+          onValueChange={(value) => setDatePreset(value as DatePreset)}
+          style={dynamicStyles.picker as unknown as StyleProp<TextStyle>}
+          dropdownIconColor={Colors[colorScheme].tint}
+        >
+          <Picker.Item label="Past & Next 30 Days" value="3days" />
+          <Picker.Item label="Past & Next 60 Days" value="7days" />
+          <Picker.Item label="Past & Next 180 Days" value="30days" />
+          <Picker.Item label="Past & Next Year" value="6months" />
+          <Picker.Item label="All Time (Maximum Range)" value="alltime" />
+          <Picker.Item label="Custom Range" value="custom" />
+        </Picker>
+      )}
+    </View>
   );
 
-  // Function to render the active content based on the tab
-  const renderTabContent = useCallback(() => {
-    switch (activeTab) {
-      case "view":
-        return (
-          <ViewPldSdvComponent
-            selectedDivision={selectedDivision}
-            selectedCalendarId={selectedCalendarId}
-            onCalendarChange={(calendarId) => {
-              // No need to update selectedCalendarId since it comes from props
-              console.log("[PldSdvManager] Calendar changed from ViewPldSdvComponent:", calendarId);
-            }}
+  // Render custom date range inputs
+  const renderCustomDateRange = () =>
+    datePreset === "custom" && (
+      <View style={styles.dateRangeContainer}>
+        <View style={styles.dateInputContainer}>
+          <ThemedText style={styles.label}>Start Date:</ThemedText>
+          <input
+            type="date"
+            value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
+            style={dynamicStyles.webDateInput as React.CSSProperties}
           />
-        );
-      case "import":
-        return (
-          <ImportPldSdvComponent
-            selectedDivision={selectedDivision}
-            selectedCalendarId={selectedCalendarId}
-            onCalendarChange={(calendarId) => {
-              console.log("[PldSdvManager] Calendar changed from ImportPldSdvComponent:", calendarId);
-            }}
+        </View>
+        <View style={styles.dateInputContainer}>
+          <ThemedText style={styles.label}>End Date:</ThemedText>
+          <input
+            type="date"
+            value={endDate}
+            onChange={(e) => setEndDate(e.target.value)}
+            style={dynamicStyles.webDateInput as React.CSSProperties}
           />
-        );
-      case "enter":
-        return (
-          <ManualPldSdvRequestEntry
-            selectedDivision={selectedDivision}
-            selectedCalendarId={selectedCalendarId}
-            onCalendarChange={(calendarId) => {
-              console.log("[PldSdvManager] Calendar changed from ManualPldSdvRequestEntry:", calendarId);
-            }}
-          />
-        );
-      default:
-        return <ViewPldSdvComponent selectedDivision={selectedDivision} selectedCalendarId={selectedCalendarId} />;
-    }
-  }, [activeTab, selectedDivision, selectedCalendarId]);
+        </View>
+      </View>
+    );
 
-  return (
-    <ThemedView style={currentStyles.container}>
-      <View style={currentStyles.tabsContainer}>
-        {renderTabButton("view", "list-outline", "View PLD/SDV")}
-        {renderTabButton("import", "cloud-upload-outline", "Import PLD/SDV")}
-        {renderTabButton("enter", "create-outline", "Enter PLD/SDV")}
+  // Render filter controls
+  const renderFilterControls = () => (
+    <View style={styles.filterContainer}>
+      <View style={styles.selectorContainer}>
+        <ThemedText style={styles.label}>Status:</ThemedText>
+        {Platform.OS === "web" ? (
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as RequestStatus | "all")}
+            style={dynamicStyles.webSelect as React.CSSProperties}
+          >
+            <option value="all">All Statuses</option>
+            {REQUEST_STATUSES.map((status) => (
+              <option key={status} value={status}>
+                {status.charAt(0).toUpperCase() + status.slice(1).replace(/_/g, " ")}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <Picker
+            selectedValue={statusFilter}
+            onValueChange={(value) => setStatusFilter(value as RequestStatus | "all")}
+            style={dynamicStyles.picker as unknown as StyleProp<TextStyle>}
+            dropdownIconColor={Colors[colorScheme].tint}
+          >
+            <Picker.Item label="All Statuses" value="all" />
+            {REQUEST_STATUSES.map((status) => (
+              <Picker.Item
+                key={status}
+                label={status.charAt(0).toUpperCase() + status.slice(1).replace(/_/g, " ")}
+                value={status}
+              />
+            ))}
+          </Picker>
+        )}
       </View>
 
-      <View style={currentStyles.contentContainer}>{renderTabContent()}</View>
+      <View style={styles.selectorContainer}>
+        <ThemedText style={styles.label}>Type:</ThemedText>
+        {Platform.OS === "web" ? (
+          <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value as RequestType | "all")}
+            style={dynamicStyles.webSelect as React.CSSProperties}
+          >
+            <option value="all">All Types</option>
+            {REQUEST_TYPES.map((type) => (
+              <option key={type} value={type}>
+                {type}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <Picker
+            selectedValue={typeFilter}
+            onValueChange={(value) => setTypeFilter(value as RequestType | "all")}
+            style={dynamicStyles.picker as unknown as StyleProp<TextStyle>}
+            dropdownIconColor={Colors[colorScheme].tint}
+          >
+            <Picker.Item label="All Types" value="all" />
+            {REQUEST_TYPES.map((type) => (
+              <Picker.Item key={type} label={type} value={type} />
+            ))}
+          </Picker>
+        )}
+      </View>
+    </View>
+  );
+
+  // Render member search
+  const renderMemberSearch = () => (
+    <View style={styles.searchContainer}>
+      <ThemedText style={styles.label}>Search Member:</ThemedText>
+      <View style={styles.searchInputWrapper}>
+        {Platform.OS === "web" ? (
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => handleSearchChange(e.target.value)}
+            placeholder="Enter PIN or name (min. 3 characters)"
+            style={dynamicStyles.webInput as React.CSSProperties}
+          />
+        ) : (
+          <TextInput
+            value={searchQuery}
+            onChangeText={handleSearchChange}
+            placeholder="Enter PIN or name (min. 3 characters)"
+            style={dynamicStyles.input}
+            placeholderTextColor={Colors[colorScheme].textDim}
+          />
+        )}
+        {(searchQuery.length > 0 || selectedMember) && (
+          <Pressable
+            style={styles.clearIconButton}
+            onPress={() => {
+              setSearchQuery("");
+              setSelectedMember(null);
+              setSearchResults([]);
+            }}
+          >
+            <ThemedText style={styles.clearIconText}>×</ThemedText>
+          </Pressable>
+        )}
+      </View>
+      {searchResults.length > 0 && (
+        <View style={dynamicStyles.searchResults}>
+          {searchResults.map((result) => (
+            <Pressable
+              key={result.id}
+              style={dynamicStyles.searchResultItem}
+              onPress={() => handleMemberSelect(result)}
+            >
+              <ThemedText>{result.display}</ThemedText>
+            </Pressable>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+
+  // Render requests table/list
+  const renderRequests = () => {
+    // Show a message when no results are found
+    if (filteredAndSortedRequests.length === 0) {
+      return (
+        <View style={styles.noResultsContainer}>
+          <ThemedText style={styles.noResultsText}>No requests found for the selected date range.</ThemedText>
+          <ThemedText style={styles.noResultsSubText}>
+            Try extending the date range or switching to a different filter.
+          </ThemedText>
+          <Button
+            onPress={() => {
+              setDatePreset("6months");
+            }}
+            style={{ marginTop: 16 }}
+          >
+            View Last 6 Months
+          </Button>
+        </View>
+      );
+    }
+
+    if (Platform.OS === "web") {
+      return (
+        <div style={styles.tableContainer as React.CSSProperties}>
+          <table style={styles.table as React.CSSProperties}>
+            <thead>
+              <tr>
+                <th style={styles.sortableHeader as React.CSSProperties}>
+                  Date {sortField === "request_date" && (sortDirection === "asc" ? "↑" : "↓")}
+                </th>
+                <th style={styles.sortableHeader as React.CSSProperties}>
+                  Member {sortField === "member" && (sortDirection === "asc" ? "↑" : "↓")}
+                </th>
+                <th style={styles.sortableHeader as React.CSSProperties}>
+                  Type {sortField === "leave_type" && (sortDirection === "asc" ? "↑" : "↓")}
+                </th>
+                <th style={styles.sortableHeader as React.CSSProperties}>
+                  Status {sortField === "status" && (sortDirection === "asc" ? "↑" : "↓")}
+                </th>
+                <th style={styles.sortableHeader as React.CSSProperties}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredAndSortedRequests.map((request) => (
+                <tr
+                  key={request.id}
+                  style={
+                    {
+                      ...styles.tableRow,
+                      backgroundColor:
+                        highlightedRequestId === request.id ? Colors[colorScheme].secondary : "transparent",
+                    } as React.CSSProperties
+                  }
+                  onClick={() => handleRequestSelect(request)}
+                >
+                  <td style={styles.tableCell as React.CSSProperties}>
+                    {format(parseISO(request.request_date), "MMM d, yyyy")}
+                  </td>
+                  <td style={styles.tableCell as React.CSSProperties}>
+                    {request.member ? `${request.member.last_name}, ${request.member.first_name}` : "Unknown"}
+                  </td>
+                  <td style={styles.tableCell as React.CSSProperties}>{request.leave_type}</td>
+                  <td style={styles.tableCell as React.CSSProperties}>{request.status}</td>
+                  <td style={styles.tableCell as React.CSSProperties}>
+                    <Button onPress={() => handleRequestSelect(request)}>View Details</Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+
+    return (
+      <View style={{ flex: 1 }}>
+        <FlatList
+          data={filteredAndSortedRequests}
+          keyExtractor={(item) => item.id}
+          ListHeaderComponent={
+            <View style={styles.listHeader}>
+              <Pressable style={styles.listHeaderItem} onPress={() => handleSortChange("request_date")}>
+                <ThemedText>Date {sortField === "request_date" && (sortDirection === "asc" ? "↑" : "↓")}</ThemedText>
+              </Pressable>
+              <Pressable style={styles.listHeaderItem} onPress={() => handleSortChange("member")}>
+                <ThemedText>Member {sortField === "member" && (sortDirection === "asc" ? "↑" : "↓")}</ThemedText>
+              </Pressable>
+              <Pressable style={styles.listHeaderItem} onPress={() => handleSortChange("leave_type")}>
+                <ThemedText>Type {sortField === "leave_type" && (sortDirection === "asc" ? "↑" : "↓")}</ThemedText>
+              </Pressable>
+              <Pressable style={styles.listHeaderItem} onPress={() => handleSortChange("status")}>
+                <ThemedText>Status {sortField === "status" && (sortDirection === "asc" ? "↑" : "↓")}</ThemedText>
+              </Pressable>
+            </View>
+          }
+          renderItem={({ item: request }) => (
+            <Pressable
+              style={[styles.listItem, highlightedRequestId === request.id && styles.highlightedListItem]}
+              onPress={() => handleRequestSelect(request)}
+            >
+              <View style={styles.listItemContent}>
+                <ThemedText style={styles.listItemDate as StyleProp<TextStyle>}>
+                  {format(parseISO(request.request_date), "MMM d, yyyy")}
+                </ThemedText>
+                <ThemedText style={styles.listItemMember as StyleProp<TextStyle>}>
+                  {request.member ? `${request.member.last_name}, ${request.member.first_name}` : "Unknown"}
+                </ThemedText>
+                <ThemedText style={styles.listItemType as StyleProp<TextStyle>}>{request.leave_type}</ThemedText>
+                <ThemedText style={styles.listItemStatus as StyleProp<TextStyle>}>{request.status}</ThemedText>
+              </View>
+            </Pressable>
+          )}
+        />
+      </View>
+    );
+  };
+
+  return (
+    <ThemedView style={styles.container}>
+      {/* Add CalendarSelector */}
+      <CalendarSelector
+        calendars={currentDivisionCalendars}
+        selectedCalendarId={selectedCalendarId}
+        onSelectCalendar={handleCalendarChange}
+        disabled={isLoading}
+        style={{ marginBottom: 16 }}
+      />
+
+      <View style={styles.content}>
+        {renderDatePresetSelector()}
+        {renderCustomDateRange()}
+        {renderFilterControls()}
+        {renderMemberSearch()}
+      </View>
+
+      {isLoading ? (
+        <ActivityIndicator size="large" color={Colors[colorScheme].tint} style={styles.loading} />
+      ) : error ? (
+        <ThemedText style={styles.error}>{error}</ThemedText>
+      ) : (
+        renderRequests()
+      )}
 
       <PldSdvRequestDetails
         request={selectedRequest}
@@ -738,43 +997,9 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId }: PldSdvMa
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.dark.card,
-  },
-  tabsContainer: {
-    flexDirection: "row",
-    gap: 8,
     padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.dark.border,
   },
-  tabButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: Colors.dark.border,
-    marginRight: 4,
-  },
-  activeTabButton: {
-    backgroundColor: Colors.dark.tint,
-    borderColor: Colors.dark.tint,
-  },
-  mobileTabButton: {
-    padding: 8,
-  },
-  buttonText: {
-    fontSize: 14,
-    fontWeight: "500",
-    marginLeft: 4,
-  },
-  activeText: {
-    color: Colors.dark.background,
-  },
-  contentContainer: {
-    flex: 1,
-  },
-  header: {
+  content: {
     marginBottom: 20,
   },
   selectorContainer: {
@@ -809,16 +1034,16 @@ const styles = StyleSheet.create({
       borderColor: Colors.dark.border,
       borderRadius: 8,
       marginTop: 16,
-    },
-    default: {},
+    } as ViewStyle,
+    default: {} as ViewStyle,
   }),
   table: Platform.select({
     web: {
       width: "100%",
       borderCollapse: "collapse",
       backgroundColor: Colors.dark.background,
-    },
-    default: {},
+    } as ViewStyle,
+    default: {} as ViewStyle,
   }),
   tableRow: Platform.select({
     web: {
@@ -829,46 +1054,46 @@ const styles = StyleSheet.create({
       "&:hover": {
         backgroundColor: Colors.dark.secondary,
       },
-    },
-    default: {},
+    } as ViewStyle,
+    default: {} as ViewStyle,
   }),
   listItem: {
     padding: 16,
     borderBottomWidth: 1,
     borderBottomColor: Colors.dark.border,
     cursor: "pointer",
-  },
+  } as ViewStyle,
   highlightedListItem: {
     backgroundColor: Colors.dark.secondary,
-  },
+  } as ViewStyle,
   listItemContent: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-  },
+  } as ViewStyle,
   listItemDate: {
     flex: 1,
-  },
+  } as ViewStyle,
   listItemMember: {
     flex: 2,
-  },
+  } as ViewStyle,
   listItemType: {
     flex: 1,
-  },
+  } as ViewStyle,
   listItemStatus: {
     flex: 1,
-  },
+  } as ViewStyle,
   loading: {
     marginTop: 20,
-  },
+  } as ViewStyle,
   error: {
     color: Colors.dark.error,
     textAlign: "center",
     marginTop: 20,
-  },
+  } as TextStyle,
   filterContainer: {
     marginBottom: 16,
-  },
+  } as ViewStyle,
   sortableHeader: {
     cursor: "pointer",
     userSelect: "none",
@@ -879,25 +1104,25 @@ const styles = StyleSheet.create({
     color: Colors.dark.text,
     fontWeight: "bold",
     textAlign: "left",
-  },
+  } as ViewStyle,
   listHeader: {
     flexDirection: "row",
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: Colors.dark.border,
-  },
+  } as ViewStyle,
   listHeaderItem: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
-  },
+  } as ViewStyle,
   tableCell: Platform.select({
     web: {
       padding: 12,
       color: Colors.dark.text,
-    },
-    default: {},
+    } as ViewStyle,
+    default: {} as ViewStyle,
   }),
   clearIconButton: {
     position: "absolute",
@@ -915,192 +1140,24 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "transparent",
-  },
+  } as ViewStyle,
   clearIconText: {
     fontSize: 14,
     color: Colors.dark.textDim,
     fontWeight: "bold",
-  },
+  } as TextStyle,
   noResultsContainer: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-  },
+  } as ViewStyle,
   noResultsText: {
     fontSize: 18,
     fontWeight: "bold",
     marginBottom: 16,
-  },
+  } as TextStyle,
   noResultsSubText: {
     fontSize: 16,
     color: Colors.dark.textDim,
-  },
+  } as TextStyle,
 });
-
-const getStyles = (colorScheme: "light" | "dark"): DynamicStyles => {
-  const baseColors = Colors[colorScheme];
-  const iosPickerStyle = {
-    height: undefined, // Let iOS determine height
-  };
-  const androidPickerStyle = {
-    paddingHorizontal: 8,
-    height: 50, // Example fixed height for Android, adjust as needed
-  };
-
-  return {
-    container: {
-      flex: 1,
-      backgroundColor: baseColors.background,
-    },
-    header: {
-      padding: 16,
-      borderBottomWidth: 1,
-      borderBottomColor: baseColors.border,
-    },
-    title: {
-      fontSize: 24,
-      fontWeight: "bold",
-      color: baseColors.text,
-    },
-    searchContainer: {
-      padding: 16,
-    },
-    input: {
-      height: 40,
-      borderWidth: 1,
-      borderColor: baseColors.border,
-      borderRadius: 8,
-      padding: 8,
-      color: baseColors.text,
-    },
-    resultsList: {
-      padding: 16,
-    },
-    resultItem: {
-      padding: 12,
-      borderBottomWidth: 1,
-      borderBottomColor: baseColors.border,
-      backgroundColor: baseColors.background, // Added for consistency
-    },
-    resultText: {
-      fontSize: 16,
-      color: baseColors.text,
-    },
-    tableContainer: Platform.select({
-      web: {
-        flex: 1,
-        overflowX: "auto",
-        borderWidth: 1,
-        borderColor: baseColors.border,
-        borderRadius: 8,
-        marginTop: 16,
-      },
-      default: {},
-    }),
-    table: Platform.select({
-      web: {
-        width: "100%",
-        backgroundColor: baseColors.background,
-        borderCollapse: "collapse",
-      } as any,
-      default: {},
-    }),
-    tableRow: Platform.select({
-      web: {
-        borderBottomWidth: 1,
-        borderBottomColor: baseColors.border,
-        backgroundColor: "transparent",
-        transition: "background-color 0.3s ease",
-        cursor: "pointer",
-        "&:hover": {
-          backgroundColor: baseColors.secondary, // Use colorScheme variable
-        },
-      } as any,
-      default: {},
-    }),
-    tableCell: {
-      padding: 12,
-      color: baseColors.text,
-    },
-    sortableHeader: {
-      cursor: "pointer",
-      userSelect: "none",
-      padding: 8,
-      backgroundColor: baseColors.background,
-      borderBottomWidth: 1,
-      borderBottomColor: baseColors.border,
-      color: baseColors.text,
-      fontWeight: "bold",
-      textAlign: "left",
-    },
-    iosPickerSpecificStyle: iosPickerStyle,
-    androidPickerSpecificStyle: androidPickerStyle,
-    picker: {
-      width: "100%",
-      backgroundColor: baseColors.background,
-      ...(Platform.OS === "ios" ? iosPickerStyle : {}),
-      ...(Platform.OS === "android" ? androidPickerStyle : {}),
-    },
-    webSelect: Platform.select({
-      web: {
-        width: "100%",
-        padding: 8,
-        borderRadius: 4,
-        fontSize: 16,
-        backgroundColor: baseColors.background,
-        color: baseColors.tint,
-        borderColor: baseColors.border,
-        borderWidth: 1,
-      } as TextStyle,
-      default: {} as TextStyle,
-    }),
-    webInput: Platform.select({
-      web: {
-        width: "100%",
-        padding: 8,
-        borderRadius: 4,
-        fontSize: 16,
-        backgroundColor: baseColors.background,
-        color: baseColors.tint,
-        borderColor: baseColors.border,
-        borderWidth: 1,
-      } as TextStyle,
-      default: {} as TextStyle,
-    }),
-    webDateInput: Platform.select({
-      web: {
-        width: "100%",
-        padding: 8,
-        borderRadius: 4,
-        fontSize: 16,
-        backgroundColor: baseColors.background,
-        color: baseColors.tint,
-        borderColor: baseColors.border,
-        borderWidth: 1,
-      } as TextStyle,
-      default: {} as TextStyle,
-    }),
-    searchResults: {
-      position: "absolute",
-      top: "100%",
-      left: 0,
-      right: 0,
-      backgroundColor: baseColors.background,
-      borderRadius: 4,
-      borderColor: baseColors.border,
-      borderWidth: 1,
-      shadowColor: "#000",
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.25,
-      shadowRadius: 3.84,
-      elevation: 5,
-      zIndex: 1000,
-    } as ViewStyle,
-    searchResultItem: {
-      padding: 12,
-      borderBottomWidth: 1,
-      borderBottomColor: baseColors.border,
-      backgroundColor: baseColors.background,
-    } as ViewStyle,
-  };
-};

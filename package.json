@@ -58,6 +58,7 @@
     "expo-task-manager": "~12.0.6",
     "expo-updates": "~0.27.4",
     "expo-web-browser": "~14.0.2",
+    "ical": "^0.8.0",
     "pdfmake": "^0.2.19",
     "react": "18.3.1",
     "react-dom": "18.3.1",
@@ -84,6 +85,7 @@
     "@testing-library/jest-native": "^5.4.3",
     "@testing-library/react": "^16.3.0",
     "@testing-library/react-native": "^13.2.0",
+    "@types/ical": "^0.8.3",
     "@types/jest": "^29.5.14",
     "@types/lodash": "^4.17.16",
     "@types/pdfmake": "^0.2.11",
@@ -92,15 +94,15 @@
     "@vitejs/plugin-react": "^4.3.4",
     "@vitest/ui": "^3.1.1",
     "date-fns": "^4.1.0",
+    "eslint": "^8.57.0",
+    "eslint-config-expo": "~8.0.1",
     "jest": "^29.7.0",
     "jest-expo": "~52.0.6",
     "react-test-renderer": "18.3.1",
     "typescript": "^5.3.3",
     "vite-tsconfig-paths": "^5.1.4",
     "vitest": "^3.1.1",
-    "zustand": "^5.0.3",
-    "eslint": "^8.57.0",
-    "eslint-config-expo": "~8.0.1"
+    "zustand": "^5.0.3"
   },
   "private": true
 }
