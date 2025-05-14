@@ -516,7 +516,7 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
           </ThemedText>
         </View>
         <ThemedText numberOfLines={1} style={[styles.threadMessagePreview, { color: colors.textDim }]}>
-          {latestMessage.sender_role}: {latestMessage.message}
+          {latestMessage.sender_role} ({latestMessage.sender_display_name || "Unknown"}): {latestMessage.message}
         </ThemedText>
         <ThemedText style={[styles.threadTimestamp, { color: colors.textDim }]}>
           {latestMessageDate.toLocaleString()}
@@ -592,6 +592,16 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
       const messageDate = item.created_at ? new Date(item.created_at) : new Date();
       const isCurrentUserSender = item.sender_user_id === currentUser?.id;
 
+      // Add debugging log
+      if (process.env.NODE_ENV === "development") {
+        console.log(`[renderDetailItem] Message ${item.id}:
+          - sender_user_id: ${item.sender_user_id}
+          - currentUser.id: ${currentUser?.id}
+          - isCurrentUserSender: ${isCurrentUserSender}
+          - sender_role: ${item.sender_role}
+          - display_name: ${item.sender_display_name || "Unknown"}`);
+      }
+
       return (
         <View
           key={item.id}
@@ -609,7 +619,7 @@ export const AdminMessages = forwardRef<View, AdminMessagesProps>((props, ref: R
               style={[styles.senderAvatar, { backgroundColor: isCurrentUserSender ? colors.primary : colors.icon }]}
             />
             <ThemedText type="defaultSemiBold">
-              {item.sender_role} {isCurrentUserSender ? "(You)" : ""}
+              {item.sender_role} ({item.sender_display_name || "Unknown"}) {isCurrentUserSender ? "(You)" : ""}
             </ThemedText>
           </View>
           <ThemedText style={{ color: colors.textDim, fontSize: 12, marginBottom: 5 }}>

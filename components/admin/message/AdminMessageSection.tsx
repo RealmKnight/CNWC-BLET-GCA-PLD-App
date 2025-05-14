@@ -505,7 +505,6 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
               {rootMessage.subject || "(No Subject)"}
             </ThemedText>
           </View>
-          {/* Removed original unread dot position */}
         </View>
         {/* Recipient Roles */}
         <ThemedText numberOfLines={1} style={[styles.threadMetaText, { color: colors.textDim }]}>
@@ -513,7 +512,7 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
         </ThemedText>
         {/* Last Message Sender */}
         <ThemedText numberOfLines={1} style={[styles.threadMetaText, { color: colors.textDim }]}>
-          Last from: {latestMessage.sender_role} {/* TODO: Add Name? */}
+          Last from: {latestMessage.sender_role} ({latestMessage.sender_display_name || "Unknown"})
         </ThemedText>
       </TouchableOpacity>
     );
@@ -617,7 +616,7 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
               style={[styles.senderAvatar, { backgroundColor: isCurrentUserSender ? colors.primary : colors.icon }]}
             />
             <ThemedText type="defaultSemiBold">
-              {item.sender_role} {isCurrentUserSender ? "(You)" : ""} {/* TODO: Fetch sender name */}
+              {item.sender_role} ({item.sender_display_name || "Unknown"}) {isCurrentUserSender ? "(You)" : ""}
             </ThemedText>
           </View>
           <ThemedText style={[styles.messageTimestamp, { color: colors.textDim }]}>

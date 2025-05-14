@@ -48,7 +48,7 @@ interface TimeOffRequest {
   request_date: string;
   date?: string; // Add date field for backward compatibility
   leave_type: "PLD" | "SDV";
-  status: "pending" | "approved" | "denied" | "waitlisted" | "cancellation_pending" | "cancelled";
+  status: "pending" | "approved" | "denied" | "waitlisted" | "cancellation_pending" | "cancelled" | "transferred";
   requested_at?: string;
   waitlist_position?: number;
   responded_at?: string;

@@ -4,6 +4,7 @@ export interface AdminMessage {
     updated_at?: string; // timestamp with time zone
     sender_user_id: string; // uuid, FK to auth.users
     sender_role: string | null; // text
+    sender_display_name?: string | null; // From the admin_messages_with_names view
     recipient_roles: string[]; // text[]
     recipient_division_ids?: number[] | null; // integer[] - Added for division targeting
     parent_message_id: string | null; // uuid, FK to admin_messages.id

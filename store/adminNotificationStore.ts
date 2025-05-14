@@ -104,8 +104,8 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
         try {
             // 1. Fetch Messages based on roles and division filter
             let messageQuery = supabase
-                .from("admin_messages")
-                .select("*")
+                .from("admin_messages_with_names")
+                .select(`*`)
                 .order("created_at", { ascending: false });
 
             // --- Filter Logic --- START ---
@@ -139,6 +139,14 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
                     messagesData?.length ?? 0
                 } messages initially.`,
             );
+
+            // Add debug logging for the first few messages
+            if (messagesData && messagesData.length > 0) {
+                console.log(
+                    "[_fetchAndSetMessages] First message data:",
+                    JSON.stringify(messagesData[0], null, 2),
+                );
+            }
 
             // 2. Fetch Read Statuses for the fetched messages and current user
             let readStatusMap: Record<string, boolean> = {};

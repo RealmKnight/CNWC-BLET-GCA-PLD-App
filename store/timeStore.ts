@@ -50,10 +50,11 @@ export interface TimeOffRequest {
         | "denied"
         | "waitlisted"
         | "cancellation_pending"
-        | "cancelled";
+        | "cancelled"
+        | "transferred";
     requested_at: string;
     waitlist_position?: number | null;
-    paid_in_lieu?: boolean | null;
+    paid_in_lieu: boolean | null; // Change from optional to required with null
     is_six_month_request: boolean; // Flag to distinguish origin
     calendar_id?: string | null;
     import_source?: string | null;
@@ -449,24 +450,28 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
                     : null;
                 if (!type) return;
 
-                if (req.paid_in_lieu) {
-                    // Paid in Lieu requests count towards PIL totals regardless of status?
-                    // Assuming only approved PIL count here, as per useMyTime logic
-                    if (req.status === "approved") {
+                if (req.paid_in_lieu === true) { // Explicitly check for true
+                    // Count approved and pending PIL requests
+                    if (req.status === "approved" || req.status === "pending") {
                         paidInLieu[type]++;
-                    } else if (req.status === "pending") {
-                        // Pending PIL might count as requested? Check logic. For now, count approved.
+                        console.log(`[TimeStore] Counting PIL request:`, {
+                            id: req.id,
+                            type,
+                            status: req.status,
+                            isPIL: req.paid_in_lieu,
+                        });
                     }
                 } else {
                     switch (req.status) {
                         case "pending":
-                        case "cancellation_pending": // Count cancellation pending as requested for available calc
+                        case "cancellation_pending":
                             requested[type]++;
                             break;
                         case "waitlisted":
                             waitlisted[type]++;
                             break;
                         case "approved":
+                        case "transferred":
                             approved[type]++;
                             // Count used rollover PLDs
                             if (type === "pld" && req.is_rollover_pld) {
@@ -492,7 +497,7 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
             });
 
             const unusedPlds = Math.max(0, rolledOverPlds - usedRolloverPlds);
-            // Available = Total + RolledOver - (Approved + Requested + Waitlisted + Approved PIL)
+            // Available = Total + RolledOver - (Approved + Requested + Waitlisted + Transferred + Approved PIL)
             const availablePlds = Math.max(
                 0,
                 totalPlds + rolledOverPlds -

@@ -9,18 +9,21 @@ import {
   useAdminCalendarManagementStore,
 } from "@/store/adminCalendarManagementStore";
 import { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
-import { Database, TablesInsert } from "@/types/supabase";
+import { Database } from "@/types/supabase";
 
 type Member = Database["public"]["Tables"]["members"]["Row"];
-type Request = Database["public"]["Tables"]["pld_sdv_requests"]["Row"];
+type BaseRequest = Database["public"]["Tables"]["pld_sdv_requests"]["Row"];
+type RequestStatus = Database["public"]["Enums"]["pld_sdv_status"];
 
-export interface DayRequest extends Request {
+// Extend the base request type to ensure we capture all fields including paid_in_lieu
+export interface DayRequest extends BaseRequest {
   member: {
     id: string | null;
     first_name: string | null;
     last_name: string | null;
     pin_number: number;
   };
+  paid_in_lieu: boolean | null; // Explicitly include this to ensure TypeScript tracks it
 }
 
 export interface DayAllotment {
@@ -40,24 +43,8 @@ interface RequestMember {
   pin_number: number;
 }
 
-interface FullRequestData {
-  id: string;
-  member_id: string | null;
-  pin_number: number | null;
-  calendar_id: string;
-  request_date: string;
-  leave_type: "PLD" | "SDV";
-  status:
-    | "pending"
-    | "approved"
-    | "denied"
-    | "waitlisted"
-    | "cancellation_pending"
-    | "cancelled";
-  requested_at: string;
-  waitlist_position?: number;
-  import_source?: string | null;
-  imported_at?: string | null;
+// Update FullRequestData to also extend from BaseRequest
+interface FullRequestData extends BaseRequest {
   member: RequestMember;
 }
 
@@ -256,7 +243,13 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       const pilRequests = state.requests[date].filter(
         (req) =>
           req.member_id === member.id &&
-          ["approved", "pending", "waitlisted", "cancellation_pending"]
+          [
+            "approved",
+            "pending",
+            "waitlisted",
+            "cancellation_pending",
+            "transferred",
+          ]
             .includes(req.status) &&
           req.paid_in_lieu === true,
       );
@@ -272,7 +265,13 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
     const hasRegularRequest = member?.id && state.requests[date]?.some(
       (req) =>
         req.member_id === member.id &&
-        ["approved", "pending", "waitlisted", "cancellation_pending"].includes(
+        [
+          "approved",
+          "pending",
+          "waitlisted",
+          "cancellation_pending",
+          "transferred",
+        ].includes(
           req.status,
         ),
     );
@@ -330,7 +329,8 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
         req.status === "approved" ||
         req.status === "pending" ||
         req.status === "waitlisted" ||
-        req.status === "cancellation_pending",
+        req.status === "cancellation_pending" ||
+        req.status === "transferred",
     ).length;
 
     const ratio = approvedOrPendingCount / maxAllotment;
@@ -725,7 +725,8 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
           (request.status === "approved" ||
             request.status === "pending" ||
             request.status === "waitlisted" ||
-            request.status === "cancellation_pending") &&
+            request.status === "cancellation_pending" ||
+            request.status === "transferred") &&
           // Exclude paid in lieu requests
           request.paid_in_lieu !== true,
       ) || []
