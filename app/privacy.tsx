@@ -32,15 +32,16 @@ export default function PrivacyPolicyScreen() {
 
         <ThemedText style={styles.title}>Privacy Policy for BLET PLD App</ThemedText>
 
-        <ThemedText style={styles.lastUpdated}>Last Updated: May 7, 2025</ThemedText>
-        {/* <ThemedText style={styles.lastUpdated} onPress={() => Linking.openURL("https://www.bletcnwcgca.org/privacy")}>
+        <ThemedText style={styles.lastUpdated}>Last Updated: May 24, 2024</ThemedText>
+        <ThemedText style={styles.lastUpdated} onPress={() => Linking.openURL("https://www.bletcnwcgca.org/privacy")}>
           https://www.bletcnwcgca.org/privacy
-        </ThemedText> */}
+        </ThemedText>
 
         <ThemedText style={styles.sectionTitle}>Introduction</ThemedText>
         <ThemedText style={styles.paragraph}>
           This privacy policy explains how the BLET PLD App collects, uses, and protects your information when you use
-          our mobile application.
+          our mobile application. We are committed to protecting your privacy and ensuring the security of your personal
+          information.
         </ThemedText>
 
         <ThemedText style={styles.sectionTitle}>Information We Collect</ThemedText>
@@ -68,6 +69,24 @@ export default function PrivacyPolicyScreen() {
           </ThemedText>
         </View>
 
+        <ThemedText style={styles.subSectionTitle}>Mobile Phone Number</ThemedText>
+        <View style={styles.bulletContainer}>
+          <ThemedText style={styles.bulletItem}>
+            • If you opt in to receive SMS notifications, we collect and store your mobile phone number.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • Your mobile phone number is used SOLELY for sending you the notifications you have explicitly requested.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • We DO NOT sell, rent, lease, or share your mobile phone number with any third parties or affiliates for
+            marketing or promotional purposes.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • Your mobile phone number is only shared with Twilio, our SMS service provider, for the sole purpose of
+            delivering the notifications you have requested.
+          </ThemedText>
+        </View>
+
         <ThemedText style={styles.sectionTitle}>How We Use Information</ThemedText>
         <View style={styles.bulletContainer}>
           <ThemedText style={styles.bulletItem}>
@@ -80,6 +99,10 @@ export default function PrivacyPolicyScreen() {
           </ThemedText>
           <ThemedText style={styles.bulletItem}>
             • Your usage data may be collected anonymously to improve the app experience.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • We DO NOT use your mobile phone number or any other personal information for marketing purposes beyond
+            what you have explicitly consented to.
           </ThemedText>
         </View>
 
@@ -95,6 +118,10 @@ export default function PrivacyPolicyScreen() {
           <ThemedText style={styles.bulletItem}>
             • We use Supabase for our backend services, which maintains high security standards for data storage and
             transmission.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • Your mobile phone number is stored securely and is accessible only to authorized personnel who need it to
+            provide the services you have requested.
           </ThemedText>
         </View>
 
@@ -151,6 +178,13 @@ export default function PrivacyPolicyScreen() {
               privacy policy
             </ThemedText>{" "}
             available at twilio.com.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • Your mobile phone number will NEVER be sold, rented, or shared with third parties for marketing or
+            promotional purposes.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • We only use your mobile phone number to send you the specific notifications you have requested.
           </ThemedText>
         </View>
 
@@ -243,6 +277,32 @@ export default function PrivacyPolicyScreen() {
           <ThemedText style={styles.bulletItem}>
             • We use Resend as our email service provider for sending email notifications.
           </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • We DO NOT share your mobile phone number or other personal information with these third-party services for
+            marketing or promotional purposes.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • Third-party services only receive the information necessary to provide the specific services you have
+            requested.
+          </ThemedText>
+        </View>
+
+        <ThemedText style={styles.sectionTitle}>Data Sharing Practices</ThemedText>
+        <View style={styles.bulletContainer}>
+          <ThemedText style={styles.bulletItem}>
+            • We DO NOT sell, rent, lease, or share your mobile phone number or other personal information with any
+            third parties or affiliates for marketing or promotional purposes.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • Your mobile phone number is only shared with Twilio, our SMS service provider, for the sole purpose of
+            delivering the SMS notifications you have explicitly requested.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • We may share anonymized, aggregated data that does not identify you personally for analytical purposes.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • We may disclose your information if required by law or to protect our rights or the rights of others.
+          </ThemedText>
         </View>
 
         <ThemedText style={styles.sectionTitle}>User Rights</ThemedText>
@@ -253,6 +313,14 @@ export default function PrivacyPolicyScreen() {
           <ThemedText style={styles.bulletItem}>
             • You can request information about your data or request deletion by contacting us.
           </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • You have the right to opt out of SMS notifications at any time by replying STOP to any message or changing
+            your preferences in the app.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • You have the right to access, correct, or delete your personal information by contacting us using the
+            information below.
+          </ThemedText>
         </View>
 
         <ThemedText style={styles.sectionTitle}>Changes to This Policy</ThemedText>
@@ -261,7 +329,8 @@ export default function PrivacyPolicyScreen() {
             • We may update this privacy policy periodically. Significant changes will be notified within the app.
           </ThemedText>
           <ThemedText style={styles.bulletItem}>
-            • The latest version will always be available within the app and on our website.
+            • The latest version will always be available within the app and on our website at
+            https://www.bletcnwcgca.org/privacy.
           </ThemedText>
         </View>
 
@@ -275,11 +344,12 @@ export default function PrivacyPolicyScreen() {
               style={[styles.bulletItem, { color: goldAccent }]}
               onPress={() => Linking.openURL("mailto:privacy@bletcnwcgca.org")}
             >
-              • Email: privacy@bletcnwcgca.org
+              • Email: admin@bletcnwcgca.org
             </ThemedText>
             <ThemedText style={styles.bulletItem}>
               • Mail: GCA 910 Privacy Officer, 404 4th St, Fond du Lac, WI 54935
             </ThemedText>
+            <ThemedText style={styles.bulletItem}>• Website: https://www.bletcnwcgca.org/privacy</ThemedText>
           </View>
         </View>
       </ScrollView>

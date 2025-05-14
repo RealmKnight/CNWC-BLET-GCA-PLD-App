@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { StyleSheet, ScrollView, Alert, Modal, Platform, TextInput, View } from "react-native";
+import { StyleSheet, ScrollView, Alert, Modal, Platform, TextInput, View, Linking } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -114,6 +114,9 @@ function NotificationConfirmationModal({
 
 // SMS Confirmation Modal Content
 function SMSConfirmationContent() {
+  const privacyPolicyUrl = `${Constants.expoConfig?.extra?.EXPO_PUBLIC_WEBSITE_URL}/privacy`;
+  console.log("Privacy Policy URL:", privacyPolicyUrl);
+
   return (
     <>
       <ThemedText style={styles.confirmationTitle}>By enabling SMS notifications, you agree to receive:</ThemedText>
@@ -144,12 +147,22 @@ function SMSConfirmationContent() {
         By tapping "I Agree" below, you consent to receive SMS messages from BLET PLD App for the purposes described
         above.
       </ThemedText>
+
+      <ThemedText style={styles.confirmationText}>
+        For more information about how we handle your data, please review our{" "}
+        <ThemedText style={styles.privacyLink} onPress={() => Linking.openURL(privacyPolicyUrl)}>
+          Privacy Policy
+        </ThemedText>
+        .
+      </ThemedText>
     </>
   );
 }
 
 // Email Confirmation Modal Content
 function EmailConfirmationContent() {
+  const privacyPolicyUrl = `${Constants.expoConfig?.extra?.EXPO_PUBLIC_WEBSITE_URL}/privacy`;
+
   return (
     <>
       <ThemedText style={styles.confirmationTitle}>By enabling Email notifications, you agree to receive:</ThemedText>
@@ -178,12 +191,22 @@ function EmailConfirmationContent() {
       <ThemedText style={styles.confirmationText}>
         By tapping "I Agree" below, you consent to receive emails from BLET PLD App for the purposes described above.
       </ThemedText>
+
+      <ThemedText style={styles.confirmationText}>
+        For more information about how we handle your data, please review our{" "}
+        <ThemedText style={styles.privacyLink} onPress={() => Linking.openURL(privacyPolicyUrl)}>
+          Privacy Policy
+        </ThemedText>
+        .
+      </ThemedText>
     </>
   );
 }
 
 // Push Confirmation Modal Content
 function PushConfirmationContent() {
+  const privacyPolicyUrl = `${Constants.expoConfig?.extra?.EXPO_PUBLIC_WEBSITE_URL}/privacy`;
+
   return (
     <>
       <ThemedText style={styles.confirmationTitle}>By enabling Push notifications, you agree to receive:</ThemedText>
@@ -213,6 +236,14 @@ function PushConfirmationContent() {
       <ThemedText style={styles.confirmationText}>
         By tapping "I Agree" below, you consent to receive push notifications from BLET PLD App for the purposes
         described above.
+      </ThemedText>
+
+      <ThemedText style={styles.confirmationText}>
+        For more information about how we handle your data, please review our{" "}
+        <ThemedText style={styles.privacyLink} onPress={() => Linking.openURL(privacyPolicyUrl)}>
+          Privacy Policy
+        </ThemedText>
+        .
       </ThemedText>
     </>
   );
@@ -1436,5 +1467,10 @@ const styles = StyleSheet.create({
   notificationPreferences: {
     gap: 6,
     backgroundColor: Colors.dark.card,
+  },
+  privacyLink: {
+    color: "#b8860b",
+    textDecorationLine: "underline",
+    fontWeight: "600",
   },
 });
