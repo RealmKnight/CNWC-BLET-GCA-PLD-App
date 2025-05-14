@@ -930,6 +930,18 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       padding: 8,
       textAlign: "center",
     },
+    descriptionWarning: {
+      fontSize: 16,
+      lineHeight: 22,
+      textAlign: "center",
+      color: Colors.dark.warning,
+    },
+    descriptionError: {
+      fontSize: 16,
+      lineHeight: 22,
+      textAlign: "center",
+      color: Colors.dark.error,
+    },
     warning: {
       color: Colors.dark.warning,
       fontSize: 16,
@@ -1249,6 +1261,12 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       <ThemedText style={styles.description}>
         Requests for past dates, today, or within 48 hours are automatically approved, remaing requests are
         automatically set to "pending" and processed through the app normally.
+      </ThemedText>
+      <ThemedText style={styles.descriptionError}>
+        ***Make sure you update the request to "approved" after submitting it, if needed***
+      </ThemedText>
+      <ThemedText style={styles.descriptionWarning}>
+        (ie if you are entering already approved requests, etc).
       </ThemedText>
 
       <ScrollView style={styles.content} key={`scroll-${selectedMember?.id || "none"}`}>

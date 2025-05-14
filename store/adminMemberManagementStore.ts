@@ -12,6 +12,7 @@ interface MemberSummary {
     pin_number: number;
     first_name: string;
     last_name: string;
+    calendar_id: string | null;
 }
 
 // Define the data-only Member type
@@ -356,7 +357,9 @@ export const useAdminMemberManagementStore = create<AdminMemberManagementState>(
             try {
                 const { data, error } = await supabase
                     .from("members")
-                    .select("id, pin_number, first_name, last_name")
+                    .select(
+                        "id, pin_number, first_name, last_name, calendar_id",
+                    )
                     .eq("calendar_id", calendarId)
                     .eq("status", "ACTIVE") // Only fetch active members for requests
                     .order("last_name", { ascending: true });
@@ -370,6 +373,7 @@ export const useAdminMemberManagementStore = create<AdminMemberManagementState>(
                     pin_number: member.pin_number,
                     first_name: member.first_name || "",
                     last_name: member.last_name || "",
+                    calendar_id: member.calendar_id,
                 }));
 
                 set((state) => ({
