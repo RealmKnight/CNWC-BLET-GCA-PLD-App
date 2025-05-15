@@ -568,8 +568,9 @@ function RequestDialog({
 
   // filteredRequests memo remains the same
   const filteredRequests = useMemo(() => {
+    if (!localRequests || !Array.isArray(localRequests)) return [];
     if (viewMode === "past" || viewMode === "nearPast") {
-      return localRequests.filter((req) => req.status === "approved");
+      return localRequests.filter((req) => req && req.status === "approved");
     }
     if (isSixMonthRequest) return [];
     return localRequests;
@@ -586,10 +587,12 @@ function RequestDialog({
 
   // userRequest memo handles both regular and PIL requests
   const userRequest = useMemo(() => {
-    if (!member?.id) return null;
+    if (!member?.id || !localRequests || !Array.isArray(localRequests)) return null;
     return localRequests.find(
       (req) =>
+        req &&
         req.member_id === member.id &&
+        req.status &&
         ["approved", "pending", "waitlisted", "cancellation_pending"].includes(req.status)
     );
   }, [localRequests, member?.id]);
@@ -603,7 +606,7 @@ function RequestDialog({
 
   // Modified handleCancelRequest
   const handleCancelRequest = useCallback(() => {
-    if (!userRequest || !selectedDate) return;
+    if (!userRequest || !userRequest.id || !selectedDate) return;
     setCancelType("regular");
     setShowCancelModal(true);
   }, [userRequest, selectedDate]);
@@ -663,12 +666,14 @@ function RequestDialog({
 
   // sortedRequests, approvedPendingRequests, waitlistedRequests memos remain the same
   const sortedRequests = useMemo(() => {
+    if (!localRequests || !Array.isArray(localRequests)) return [];
     const statusPriority: Record<string, number> = { approved: 0, pending: 1, cancellation_pending: 2, waitlisted: 3 };
     return [...localRequests]
-      .filter((r) => !r.paid_in_lieu)
+      .filter((r) => r && r.paid_in_lieu !== true)
       .sort((a, b) => {
-        const aStatusPriority = statusPriority[a.status] ?? 999;
-        const bStatusPriority = statusPriority[b.status] ?? 999;
+        if (!a || !b) return 0;
+        const aStatusPriority = a.status ? statusPriority[a.status] ?? 999 : 999;
+        const bStatusPriority = b.status ? statusPriority[b.status] ?? 999 : 999;
         if (aStatusPriority !== bStatusPriority) return aStatusPriority - bStatusPriority;
         if (a.status === "waitlisted" && b.status === "waitlisted") {
           const aPos = a.waitlist_position ?? Infinity;
@@ -681,11 +686,16 @@ function RequestDialog({
       });
   }, [localRequests]);
 
-  const approvedPendingRequests = useMemo(
-    () => sortedRequests.filter((r) => ["approved", "pending", "cancellation_pending"].includes(r.status)),
-    [sortedRequests]
-  );
-  const waitlistedRequests = useMemo(() => sortedRequests.filter((r) => r.status === "waitlisted"), [sortedRequests]);
+  const approvedPendingRequests = useMemo(() => {
+    if (!sortedRequests || !Array.isArray(sortedRequests)) return [];
+    return sortedRequests.filter(
+      (r) => r && r.status && ["approved", "pending", "cancellation_pending"].includes(r.status)
+    );
+  }, [sortedRequests]);
+  const waitlistedRequests = useMemo(() => {
+    if (!sortedRequests || !Array.isArray(sortedRequests)) return [];
+    return sortedRequests.filter((r) => r && r.status === "waitlisted");
+  }, [sortedRequests]);
 
   // Modified filledSpotsCapped/waitlistCount to use displayAllotment
   const filledSpotsCapped = useMemo(
@@ -788,7 +798,7 @@ function RequestDialog({
 
   // canCancelRequest memo remains the same
   const canCancelRequest = useMemo(
-    () => userRequest && !["cancelled", "denied"].includes(userRequest.status),
+    () => userRequest && userRequest.status && !["cancelled", "denied"].includes(userRequest.status),
     [userRequest]
   );
 
@@ -951,7 +961,7 @@ function RequestDialog({
                 <ThemedText style={dialogStyles.spotNumber}>#{index + 1}</ThemedText>
                 <View style={dialogStyles.spotInfo}>
                   <ThemedText>
-                    {request.member.first_name} {request.member.last_name}
+                    {request?.member?.first_name || ""} {request?.member?.last_name || ""}
                   </ThemedText>
                   <ThemedText
                     style={[
@@ -989,7 +999,7 @@ function RequestDialog({
                     <ThemedText style={dialogStyles.spotNumber}>#{index + 1}</ThemedText>
                     <View style={dialogStyles.spotInfo}>
                       <ThemedText>
-                        {request.member.first_name} {request.member.last_name}
+                        {request?.member?.first_name || ""} {request?.member?.last_name || ""}
                       </ThemedText>
                       <ThemedText style={[dialogStyles.requestStatus, dialogStyles.waitlistedStatus]}>
                         Waitlisted #{request.waitlist_position || index + 1}
