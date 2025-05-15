@@ -40,9 +40,17 @@ export function ThemedTextInput({ containerStyle, style, type = "text", ...props
       multiline,
       numberOfLines,
       placeholderTextColor,
-      textAlignVertical, // Extract textAlignVertical to prevent it from being passed to the DOM
+      textAlignVertical,
+      keyboardType,
+      editable,
       ...restProps
     } = props;
+
+    // Handle the editable prop conversion for web
+    const webProps = {
+      ...restProps,
+      ...(editable === false ? { disabled: true } : {}),
+    };
 
     // Define the web onChange handler
     const handleWebChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -52,13 +60,7 @@ export function ThemedTextInput({ containerStyle, style, type = "text", ...props
     };
 
     return (
-      <input
-        type={type}
-        className="themed-input"
-        style={webStyle}
-        onChange={handleWebChange} // Use the translated handler
-        {...(restProps as any)} // Pass the rest of the props
-      />
+      <input type={type} className="themed-input" style={webStyle} onChange={handleWebChange} {...(webProps as any)} />
     );
   }
 

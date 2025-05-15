@@ -324,6 +324,12 @@ export function prepareImportData(
             requested_at: formattedRequestedAt,
             import_source: "ical",
             imported_at: new Date().toISOString(),
+            metadata: {
+                from_import: true,
+                import_source: "ical",
+                original_status: item.status,
+                imported_at: new Date().toISOString(),
+            },
         };
     });
 }

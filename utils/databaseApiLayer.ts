@@ -36,6 +36,19 @@ export async function insertBatchPldSdvRequests(
         // Prepare the data for insertion
         const importData = prepareImportData(previewItems, selectedItems);
 
+        // Debug info about statuses
+        const statusCounts = {
+            approved: selectedItems.filter((idx) =>
+                previewItems[idx].status === "approved"
+            ).length,
+            waitlisted: selectedItems.filter((idx) =>
+                previewItems[idx].status === "waitlisted"
+            ).length,
+        };
+        console.log(
+            `Import status counts - Approved: ${statusCounts.approved}, Waitlisted: ${statusCounts.waitlisted}`,
+        );
+
         // Insert the data into the database
         const { data, error } = await supabase
             .from("pld_sdv_requests")
@@ -50,6 +63,13 @@ export async function insertBatchPldSdvRequests(
                 failedCount: importData.length,
                 errorMessages: [error.message],
             };
+        }
+
+        // Log success - the database trigger will handle status updates
+        if (data && data.length > 0) {
+            console.log(
+                `Successfully inserted ${data.length} records. Status updates will be handled by database trigger.`,
+            );
         }
 
         // Return success result

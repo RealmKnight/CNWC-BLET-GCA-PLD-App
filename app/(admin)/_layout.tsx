@@ -70,17 +70,16 @@ export default function AdminLayout() {
     <ProtectedRoute requiredAuth="member">
       <AppHeader />
       <Tabs screenOptions={commonScreenOptions}>
-        {userRole === "application_admin" && (
-          <Tabs.Screen
-            name="application_admin"
-            options={{
-              title: "App Admin",
-              tabBarIcon: ({ color, focused }) => (
-                <Ionicons name={focused ? "settings" : "settings-outline"} size={28} color={color} />
-              ),
-            }}
-          />
-        )}
+        <Tabs.Screen
+          name="application_admin"
+          options={{
+            title: "App Admin",
+            tabBarIcon: ({ color, focused }) => (
+              <Ionicons name={focused ? "settings" : "settings-outline"} size={28} color={color} />
+            ),
+            href: userRole === "application_admin" ? undefined : null, // Only show for application_admin
+          }}
+        />
         <Tabs.Screen
           name="union_admin"
           options={{

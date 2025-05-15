@@ -4,6 +4,7 @@ import * as Notifications from "expo-notifications";
 import type { AdminMessage } from "@/types/adminMessages"; // Import AdminMessage type
 import Constants from "expo-constants";
 import * as Device from "expo-device";
+import { createClient } from "@supabase/supabase-js";
 
 const EXPO_PUSH_ENDPOINT = "https://exp.host/--/api/v2/push/send";
 
@@ -41,6 +42,12 @@ interface MessagePayload {
 
 interface AuthUser {
   id: string;
+  email: string | null;
+  phone: string | null;
+}
+
+// Add a new interface for the contact info
+interface UserContactInfo {
   email: string | null;
   phone: string | null;
 }
@@ -409,14 +416,25 @@ export async function sendMessageWithNotification(
           );
         }
 
-        // Get user auth data
-        const { data: userData, error: userError } = await supabase
-          .auth.admin.getUserById(memberData.id);
+        // Get user auth data using our custom function instead of admin API
+        const response = await supabase
+          .rpc("get_user_contact_info", { user_id: memberData.id })
+          .single();
 
-        if (userError) {
+        const userContactInfo = response.data as {
+          email: string | null;
+          phone: string | null;
+        } | null;
+        const userContactError = response.error;
+
+        // Default to empty values if there's an error or no data
+        const email = userContactInfo?.email || null;
+        const phone = userContactInfo?.phone || null;
+
+        if (userContactError) {
           console.error(
             `[Notification] Error fetching auth user data for ${memberData.id}:`,
-            userError,
+            userContactError,
           );
         }
 
@@ -437,8 +455,6 @@ export async function sendMessageWithNotification(
           "in_app";
         const pushToken = userPreferences?.push_token;
         const userId = memberData.id;
-        const email = userData?.user?.email;
-        const phone = userData?.user?.phone;
 
         // Initialize delivery attempts array to track notification attempts
         const deliveryAttempts: NotificationAttempt[] = [];
