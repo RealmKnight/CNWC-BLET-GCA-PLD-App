@@ -289,7 +289,6 @@ export default function RostersScreen() {
       // For mobile platforms, use the Picker component
       return (
         <View style={styles.selectContainer}>
-          <ThemedText style={styles.pickerLabel}>Year</ThemedText>
           <Picker
             selectedValue={selectedYear}
             onValueChange={(itemValue) => setSelectedYear(Number(itemValue))}
@@ -536,7 +535,7 @@ const styles = StyleSheet.create({
   selectContainer: {
     width: "100%",
     maxWidth: 250,
-    minWidth: 120,
+    minWidth: 60,
     borderRadius: 8,
     overflow: "hidden",
     backgroundColor: Colors.dark.card,

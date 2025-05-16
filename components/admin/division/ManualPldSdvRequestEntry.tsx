@@ -1004,6 +1004,7 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     searchResultsContainer: {
       ...(Platform.OS === "android"
         ? {
+            position: "absolute",
             top: "100%",
             left: 0,
             right: 0,
@@ -1027,6 +1028,8 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     searchResults: {
       flex: 1,
       backgroundColor: Colors.dark.card,
+      zIndex: 99999,
+      elevation: 25,
     },
     resultItem: {
       padding: 12,
