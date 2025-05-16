@@ -611,26 +611,26 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
 
         {memberRequests.length > 0 ? (
           <View style={styles.requestsContainer}>
-            {Platform.OS !== "web" ? (
-              // Use FlatList for mobile platforms
-              <>
-                <TableHeader />
-                <FlatList
-                  data={memberRequests}
-                  renderItem={({ item }) => renderRequestItem(item)}
-                  keyExtractor={(item) => item.id}
-                  style={styles.requestsList}
-                  initialNumToRender={5}
-                  maxToRenderPerBatch={10}
-                />
-              </>
-            ) : (
-              // Use ScrollView for web
+            <TableHeader />
+            {Platform.OS === "android" ? (
+              // Special handling for Android
               <ScrollView nestedScrollEnabled={true} style={styles.requestsList}>
-                <View style={styles.requestsTable}>
-                  <TableHeader />
-                  {memberRequests.map((request) => renderRequestItem(request))}
-                </View>
+                {memberRequests.map(renderRequestItem)}
+              </ScrollView>
+            ) : Platform.OS === "ios" ? (
+              // For iOS use FlatList
+              <FlatList
+                data={memberRequests}
+                renderItem={({ item }) => renderRequestItem(item)}
+                keyExtractor={(item) => item.id}
+                style={styles.requestsList}
+                initialNumToRender={5}
+                maxToRenderPerBatch={10}
+              />
+            ) : (
+              // For web use ScrollView
+              <ScrollView nestedScrollEnabled={true} style={styles.requestsList}>
+                <View style={styles.requestsTable}>{memberRequests.map(renderRequestItem)}</View>
               </ScrollView>
             )}
           </View>
@@ -712,6 +712,8 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
                   key={member.id}
                   style={styles.resultItem}
                   onPress={() => handleSelectMember(member)}
+                  activeOpacity={0.7}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 >
                   <ThemedText>
                     {member.last_name}, {member.first_name} ({member.pin_number})
@@ -1008,6 +1010,8 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
             right: 0,
             zIndex: 9999,
             elevation: 20,
+            pointerEvents: "auto",
+            overflow: "visible",
           }
         : {
             top: "100%",
@@ -1030,6 +1034,13 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       borderBottomWidth: 1,
       borderBottomColor: Colors.dark.border,
       backgroundColor: Colors.dark.card,
+      ...(Platform.OS === "android"
+        ? {
+            elevation: 20,
+            zIndex: 10000,
+            pointerEvents: "auto",
+          }
+        : {}),
     },
     selectedMemberContainer: {
       marginTop: 16,

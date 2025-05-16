@@ -811,6 +811,7 @@ export default function MyTimeScreen() {
                     onValueChange={handleSplitWeeksChange}
                     options={splitWeeksOptions}
                     disabled={isSavingSplitWeeks}
+                    style={styles.picker}
                   />
                   {isSavingSplitWeeks && (
                     <ActivityIndicator
@@ -1478,12 +1479,27 @@ const styles = StyleSheet.create({
     ...Platform.select({
       ios: {
         minHeight: 60, // Increased height for iOS
+        width: "80%",
       },
       android: {
         minHeight: 65,
+        width: "80%",
       },
       web: {
         // Keep original height for web
+      },
+    }),
+  },
+  picker: {
+    height: 60,
+    ...Platform.select({
+      ios: {
+        minHeight: 60, // Increased height for iOS
+        width: "100%",
+      },
+      android: {
+        minHeight: 65,
+        width: "100%",
       },
     }),
   },

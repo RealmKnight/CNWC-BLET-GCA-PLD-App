@@ -393,7 +393,7 @@ const styles = StyleSheet.create({
   mobileNotice: {
     fontSize: 16,
     fontStyle: "italic",
-    color: Colors.light.textDim,
+    color: Colors.light.error,
   },
   yearSelectorContainer: {
     flexDirection: "row",
