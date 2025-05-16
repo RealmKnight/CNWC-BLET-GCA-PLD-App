@@ -415,7 +415,7 @@ function isNameVariant(name1: string, name2: string): boolean {
         samuel: ["sam"],
         patrick: ["pat"],
         timothy: ["tim"],
-        nathan: ["nate", "nat"],
+        nathan: ["nate", "nat"], // Added for the Nate/Nathan example
     };
 
     const name1Lower = name1.toLowerCase();
