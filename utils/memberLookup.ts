@@ -1,6 +1,116 @@
 import { supabase } from "@/utils/supabase";
 
 /**
+ * Simple implementation of Double Metaphone phonetic algorithm
+ * for comparing similar-sounding names despite spelling differences
+ */
+function doubleMetaphone(text: string): string {
+    if (!text) return "";
+
+    // Simplification of the double metaphone algorithm
+    const normalized = text.toLowerCase()
+        .replace(/[^a-z]/g, "")
+        .replace(/ph/g, "f")
+        .replace(/ck/g, "k")
+        .replace(/([bcdfghjklmnpqrstvwxz])\1+/g, "$1") // Remove doubled consonants
+        .replace(/([aeiou])[aeiou]+/g, "$1"); // Simplify vowel clusters
+
+    // Further simplify for similar sounds
+    return normalized
+        .replace(/kn|gn|pn|ae|wr/g, "n")
+        .replace(/wh/g, "w")
+        .replace(/x/g, "ks")
+        .replace(/mb$/g, "m") // Ending 'mb' pronounced as 'm'
+        .replace(/ght/g, "t")
+        .replace(/dg|tch/g, "j")
+        .replace(/([^c])ia/g, "$1ya")
+        .replace(/([^c])io/g, "$1yo")
+        .replace(/([^c])iu/g, "$1yu")
+        .replace(/ow/g, "aw")
+        .replace(/ee|ea|ey|ei|ie/g, "e")
+        .replace(/oa|oe|ou|oo|ough/g, "o")
+        .replace(/ai|ay|ae/g, "a")
+        .replace(/^[aeiou]/, "A") // Mark initial vowels
+        .replace(/[aeiou]$/, "A") // Mark final vowels
+        .replace(/[aeiou]/g, "A") // Replace all other vowels with 'A'
+        .replace(/sh|sch|ch/g, "S")
+        .replace(/th/g, "T");
+}
+
+/**
+ * Compare two strings for phonetic similarity
+ * Returns a score between 0 and 1
+ */
+function phoneticSimilarity(str1: string, str2: string): number {
+    if (!str1 || !str2) return 0;
+
+    const phone1 = doubleMetaphone(str1);
+    const phone2 = doubleMetaphone(str2);
+
+    // For debugging
+    // console.log(`[memberLookup] Phonetic comparison: "${str1}" (${phone1}) vs "${str2}" (${phone2})`);
+
+    // Direct phonetic match
+    if (phone1 === phone2) return 1.0;
+
+    // If not exact, calculate string similarity between phonetic codes
+    return calculateStringSimilarity(phone1, phone2);
+}
+
+/**
+ * Check if two strings might be common spelling variations
+ */
+function checkCommonMisspellings(str1: string, str2: string): boolean {
+    // Common pairs of letters that are often misspelled
+    const commonMisspellings = [
+        ["c", "k"],
+        ["s", "c"],
+        ["y", "i"],
+        ["f", "ph"],
+        ["n", "nn"],
+        ["l", "ll"],
+        ["m", "mm"],
+        ["t", "tt"],
+        ["i", "e"],
+        ["a", "e"],
+        ["a", "o"],
+        ["e", "a"],
+        ["ks", "x"],
+        ["z", "s"],
+        ["j", "g"],
+        ["w", "wh"],
+    ];
+
+    // Normalize strings for comparison
+    const s1 = str1.toLowerCase();
+    const s2 = str2.toLowerCase();
+
+    // Check if one string can be derived from the other
+    // by replacing one of the common misspelling pairs
+    for (const [a, b] of commonMisspellings) {
+        if (
+            s1.replace(a, b) === s2 || s2.replace(a, b) === s1 ||
+            s1.replace(b, a) === s2 || s2.replace(b, a) === s1
+        ) {
+            return true;
+        }
+    }
+
+    // These are common transposition errors
+    if (s1.length === s2.length) {
+        for (let i = 0; i < s1.length - 1; i++) {
+            // Check if swapping adjacent characters in s1 gives s2
+            const swapped = s1.substring(0, i) +
+                s1.charAt(i + 1) + s1.charAt(i) +
+                s1.substring(i + 2);
+            if (swapped === s2) return true;
+        }
+    }
+
+    return false;
+}
+
+/**
  * Interface for member data returned from database
  */
 export interface MemberData {
@@ -208,6 +318,51 @@ export async function findMembersByName(
                 }
             }
 
+            // Check for phonetic matches and common misspellings
+            // This is particularly useful for last names like "Wilbur"/"Willbur"
+            if (matchLastName && memberLastName) {
+                // Get phonetic similarity score
+                const lastNamePhoneticSimilarity = phoneticSimilarity(
+                    matchLastName,
+                    memberLastName,
+                );
+
+                // Check for common misspellings
+                const isMisspelling = checkCommonMisspellings(
+                    matchLastName,
+                    memberLastName,
+                );
+
+                // Strong phonetic match with acceptable first name match
+                if (matchFirstName && memberFirstName) {
+                    const isFirstNameMatch =
+                        isNameVariant(matchFirstName, memberFirstName) ||
+                        calculateStringSimilarity(
+                                matchFirstName,
+                                memberFirstName,
+                            ) > 0.6;
+
+                    // If phonetic match is very strong OR it's a common misspelling
+                    if (
+                        (lastNamePhoneticSimilarity > 0.9 || isMisspelling) &&
+                        isFirstNameMatch
+                    ) {
+                        console.log(
+                            `[memberLookup] PHONETIC/SPELLING MATCH for ${member.first_name} ${member.last_name} (phonetic: ${lastNamePhoneticSimilarity}, misspelling: ${isMisspelling})`,
+                        );
+                        return { member, matchConfidence: 92 };
+                    } // Good phonetic match with good first name match
+                    else if (
+                        lastNamePhoneticSimilarity > 0.8 && isFirstNameMatch
+                    ) {
+                        console.log(
+                            `[memberLookup] GOOD PHONETIC MATCH for ${member.first_name} ${member.last_name} (phonetic: ${lastNamePhoneticSimilarity})`,
+                        );
+                        return { member, matchConfidence: 85 };
+                    }
+                }
+            }
+
             // Calculate partial match confidence with more weight on last name
             // Adjust weights based on whether we have a common first name
             // First name similarity (30% weight normally, 20% if common)
@@ -224,6 +379,31 @@ export async function findMembersByName(
                 memberLastName, // Use aggressively normalized DB name
             );
 
+            // Check phonetic matching for last name and boost confidence if it's strong
+            if (matchLastName && memberLastName) {
+                const phoneticScore = phoneticSimilarity(
+                    matchLastName,
+                    memberLastName,
+                );
+                if (phoneticScore > lastNameConfidence) {
+                    console.log(
+                        `[memberLookup] Boosting last name confidence with phonetic match: ${lastNameConfidence} → ${phoneticScore}`,
+                    );
+                    lastNameConfidence = Math.max(
+                        lastNameConfidence,
+                        phoneticScore * 0.9,
+                    );
+                }
+
+                // Check for common misspellings and boost confidence
+                if (checkCommonMisspellings(matchLastName, memberLastName)) {
+                    console.log(
+                        `[memberLookup] Boosting last name confidence due to common misspelling pattern`,
+                    );
+                    lastNameConfidence = Math.max(lastNameConfidence, 0.85);
+                }
+            }
+
             // Boost confidence for partial inclusions (handles abbreviations, nicknames)
             // using aggressively normalized names
             if (matchFirstName && memberFirstName) {
@@ -237,6 +417,11 @@ export async function findMembersByName(
                 // Check if names are variants (nicknames)
                 if (isNameVariant(matchFirstName, memberFirstName)) {
                     firstNameConfidence = Math.max(firstNameConfidence, 0.9); // 90% confidence for nickname variants
+                }
+
+                // Check for common misspellings in first names
+                if (checkCommonMisspellings(matchFirstName, memberFirstName)) {
+                    firstNameConfidence = Math.max(firstNameConfidence, 0.85);
                 }
             }
 

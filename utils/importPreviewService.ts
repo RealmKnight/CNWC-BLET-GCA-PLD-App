@@ -170,29 +170,38 @@ async function findMatchingMember(
             };
         }
 
-        // Check for high confidence matches (exact matches or very high confidence)
-        // Increased threshold from 90 to 95 for stricter matching
-        const highConfidenceMatches = matchedMembers.filter((match) =>
-            match.matchConfidence >= 95
-        );
+        // Check for high confidence matches (exact matches, phonetic matches, or very high confidence)
+        // Match thresholds: 100% (exact), 95% (near exact), 92% (phonetic/spelling match)
+        const highConfidenceThresholds = [100, 95, 92];
 
-        if (highConfidenceMatches.length === 1) {
-            // Single high confidence match found
-            console.log(
-                `[importPreviewService] Single high confidence match found: ${
-                    highConfidenceMatches[0].member.first_name
-                } ${highConfidenceMatches[0].member.last_name} (${
-                    highConfidenceMatches[0].matchConfidence
-                }%)`,
+        // Look for matches at each threshold level
+        for (const threshold of highConfidenceThresholds) {
+            const confidenceMatches = matchedMembers.filter((match) =>
+                match.matchConfidence >= threshold
             );
-            return {
-                status: "matched",
-                member: highConfidenceMatches[0].member,
-            };
+
+            if (confidenceMatches.length === 1) {
+                // Found a single high-confidence match
+                console.log(
+                    `[importPreviewService] Found single ${
+                        threshold === 100
+                            ? "exact"
+                            : threshold === 95
+                            ? "near-exact"
+                            : "phonetic/spelling"
+                    } match: ${confidenceMatches[0].member.first_name} ${
+                        confidenceMatches[0].member.last_name
+                    } (${confidenceMatches[0].matchConfidence}%)`,
+                );
+                return {
+                    status: "matched",
+                    member: confidenceMatches[0].member,
+                };
+            }
         }
 
+        // Handle case with a single match regardless of confidence
         if (matchedMembers.length === 1) {
-            // Single match found
             console.log(
                 `[importPreviewService] Single match found: ${
                     matchedMembers[0].member.first_name
@@ -244,6 +253,8 @@ async function findMatchingMember(
             "matt",
             "will",
             "bill",
+            "nate", // Added for the Nate/Nathan example
+            "nathan",
         ];
         const isCommonFirstName = commonFirstNames.includes(
             firstName.toLowerCase(),
@@ -268,6 +279,30 @@ async function findMatchingMember(
             };
         }
 
+        // If we got this far but the top match is still very high confidence (>= 85%)
+        // and likely a phonetic/misspelling match (hence why we didn't catch it earlier),
+        // we can consider using it if the first name also matches well
+        if (lastName && topMatch.matchConfidence >= 85) {
+            // Check if first name is a close match or variant
+            const isFirstNameMatch =
+                topMatch.member.first_name?.toLowerCase() ===
+                    firstName.toLowerCase() ||
+                isNameVariant(
+                    firstName.toLowerCase(),
+                    topMatch.member.first_name?.toLowerCase() || "",
+                );
+
+            if (isFirstNameMatch) {
+                console.log(
+                    `[importPreviewService] Using phonetic/misspelling match with good first name: ${topMatch.member.first_name} ${topMatch.member.last_name} (${topMatch.matchConfidence}%)`,
+                );
+                return {
+                    status: "matched",
+                    member: topMatch.member,
+                };
+            }
+        }
+
         // Special case: If last names match exactly and first names are similar
         if (firstName && lastName && topMatch.matchConfidence >= 70) {
             const topMatchLastName = topMatch.member.last_name?.toLowerCase() ||
@@ -275,6 +310,51 @@ async function findMatchingMember(
             if (topMatchLastName === lastName.toLowerCase()) {
                 console.log(
                     `[importPreviewService] Using top match with exact last name match: ${topMatch.member.first_name} ${topMatch.member.last_name} (${topMatch.matchConfidence}%)`,
+                );
+                return {
+                    status: "matched",
+                    member: topMatch.member,
+                };
+            }
+        }
+
+        // Check for misspelled name specifically (Wilbur vs Willbur example)
+        // If the top match looks close enough and might be a misspelling
+        const namePatternsDiff = [
+            ["l", "ll"],
+            ["n", "nn"],
+            ["m", "mm"],
+            ["t", "tt"], // doubled consonants
+            ["c", "k"], // common phonetic equivalents
+            ["i", "e"],
+            ["a", "e"],
+            ["a", "o"],
+            ["e", "a"], // common vowel swaps
+        ];
+
+        if (lastName && topMatch.member.last_name) {
+            // Check if the last names differ only by doubled consonants or other common patterns
+            const inputLastName = lastName.toLowerCase();
+            const matchLastName = topMatch.member.last_name.toLowerCase();
+
+            let isMisspellingPattern = false;
+
+            // Simple check for common misspelling patterns
+            for (const [a, b] of namePatternsDiff) {
+                if (
+                    inputLastName.replace(a, b) === matchLastName ||
+                    matchLastName.replace(a, b) === inputLastName ||
+                    inputLastName.replace(b, a) === matchLastName ||
+                    matchLastName.replace(b, a) === inputLastName
+                ) {
+                    isMisspellingPattern = true;
+                    break;
+                }
+            }
+
+            if (isMisspellingPattern && topMatch.matchConfidence >= 65) {
+                console.log(
+                    `[importPreviewService] Using match with likely misspelled last name: ${topMatch.member.first_name} ${topMatch.member.last_name} (${topMatch.matchConfidence}%)`,
                 );
                 return {
                     status: "matched",
@@ -300,6 +380,58 @@ async function findMatchingMember(
             status: "unmatched",
         };
     }
+}
+
+// Helper function to check if two names are variants (shortened version for importPreviewService)
+function isNameVariant(name1: string, name2: string): boolean {
+    if (!name1 || !name2) return false;
+
+    const nameVariants: Record<string, string[]> = {
+        michael: ["mike", "mick"],
+        robert: ["rob", "bob"],
+        william: ["will", "bill"],
+        james: ["jim", "jimmy"],
+        thomas: ["tom"],
+        joseph: ["joe"],
+        daniel: ["dan"],
+        richard: ["rick", "dick"],
+        nicholas: ["nick"],
+        anthony: ["tony"],
+        donald: ["don"],
+        christopher: ["chris"],
+        matthew: ["matt"],
+        steven: ["steve"],
+        alexander: ["alex"],
+        david: ["dave"],
+        jonathan: ["jon", "john"],
+        samuel: ["sam"],
+        patrick: ["pat"],
+        timothy: ["tim"],
+        nathan: ["nate", "nat"],
+    };
+
+    const name1Lower = name1.toLowerCase();
+    const name2Lower = name2.toLowerCase();
+
+    // Check if names are identical
+    if (name1Lower === name2Lower) {
+        return true;
+    }
+
+    // Check if one name is a variant of the other
+    for (const [base, variants] of Object.entries(nameVariants)) {
+        if (name1Lower === base && variants.includes(name2Lower)) {
+            return true;
+        }
+        if (name2Lower === base && variants.includes(name1Lower)) {
+            return true;
+        }
+        if (variants.includes(name1Lower) && variants.includes(name2Lower)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 /**
