@@ -144,8 +144,21 @@ async function findMatchingMember(
         );
 
         console.log(
-            `[importPreviewService] Found ${matchedMembers.length} potential matches`,
+            `[importPreviewService] Found ${matchedMembers.length} potential matches for "${firstName} ${lastName}"`,
         );
+
+        // Debug log the top matches
+        if (matchedMembers.length > 0) {
+            matchedMembers.slice(0, Math.min(3, matchedMembers.length)).forEach(
+                (match, idx) => {
+                    console.log(
+                        `[importPreviewService] Match #${
+                            idx + 1
+                        }: ${match.member.first_name} ${match.member.last_name} (${match.matchConfidence}% confidence)`,
+                    );
+                },
+            );
+        }
 
         if (matchedMembers.length === 0) {
             // No matches found
@@ -158,8 +171,9 @@ async function findMatchingMember(
         }
 
         // Check for high confidence matches (exact matches or very high confidence)
+        // Increased threshold from 90 to 95 for stricter matching
         const highConfidenceMatches = matchedMembers.filter((match) =>
-            match.matchConfidence >= 90
+            match.matchConfidence >= 95
         );
 
         if (highConfidenceMatches.length === 1) {
@@ -167,7 +181,9 @@ async function findMatchingMember(
             console.log(
                 `[importPreviewService] Single high confidence match found: ${
                     highConfidenceMatches[0].member.first_name
-                } ${highConfidenceMatches[0].member.last_name}`,
+                } ${highConfidenceMatches[0].member.last_name} (${
+                    highConfidenceMatches[0].matchConfidence
+                }%)`,
             );
             return {
                 status: "matched",
@@ -180,7 +196,9 @@ async function findMatchingMember(
             console.log(
                 `[importPreviewService] Single match found: ${
                     matchedMembers[0].member.first_name
-                } ${matchedMembers[0].member.last_name}`,
+                } ${matchedMembers[0].member.last_name} (${
+                    matchedMembers[0].matchConfidence
+                }%)`,
             );
             return {
                 status: "matched",
@@ -192,9 +210,53 @@ async function findMatchingMember(
         const topMatch = matchedMembers[0];
         const secondMatch = matchedMembers[1];
 
+        // Log the comparison between top matches for debugging
+        console.log(
+            `[importPreviewService] Top match: ${topMatch.member.first_name} ${topMatch.member.last_name} (${topMatch.matchConfidence}%)`,
+        );
+        console.log(
+            `[importPreviewService] Second match: ${secondMatch.member.first_name} ${secondMatch.member.last_name} (${secondMatch.matchConfidence}%)`,
+        );
+        console.log(
+            `[importPreviewService] Confidence difference: ${
+                topMatch.matchConfidence - secondMatch.matchConfidence
+            }%`,
+        );
+
+        // Check common first name situation
+        // If we're matching a common first name (e.g., "Mike"), be more strict about the confidence
+        // difference required
+        const commonFirstNames = [
+            "mike",
+            "michael",
+            "john",
+            "jim",
+            "dave",
+            "david",
+            "bob",
+            "robert",
+            "tom",
+            "thomas",
+            "joe",
+            "dan",
+            "steve",
+            "chris",
+            "matt",
+            "will",
+            "bill",
+        ];
+        const isCommonFirstName = commonFirstNames.includes(
+            firstName.toLowerCase(),
+        );
+
+        // Adjusted thresholds based on name commonality
+        const requiredConfidence = isCommonFirstName ? 85 : 80;
+        const requiredConfidenceDifference = isCommonFirstName ? 30 : 25;
+
         if (
-            topMatch.matchConfidence >= 80 &&
-            topMatch.matchConfidence - secondMatch.matchConfidence > 20
+            topMatch.matchConfidence >= requiredConfidence &&
+            topMatch.matchConfidence - secondMatch.matchConfidence >
+                requiredConfidenceDifference
         ) {
             // Top match has significantly higher confidence
             console.log(
@@ -204,6 +266,21 @@ async function findMatchingMember(
                 status: "matched",
                 member: topMatch.member,
             };
+        }
+
+        // Special case: If last names match exactly and first names are similar
+        if (firstName && lastName && topMatch.matchConfidence >= 70) {
+            const topMatchLastName = topMatch.member.last_name?.toLowerCase() ||
+                "";
+            if (topMatchLastName === lastName.toLowerCase()) {
+                console.log(
+                    `[importPreviewService] Using top match with exact last name match: ${topMatch.member.first_name} ${topMatch.member.last_name} (${topMatch.matchConfidence}%)`,
+                );
+                return {
+                    status: "matched",
+                    member: topMatch.member,
+                };
+            }
         }
 
         // Multiple viable matches

@@ -63,14 +63,69 @@ export async function findMembersByName(
         query = query.eq("division_id", divisionId);
     }
 
+    // List of common first names/nicknames that should have stricter matching
+    const commonFirstNames = [
+        "mike",
+        "michael",
+        "john",
+        "johnny",
+        "dave",
+        "david",
+        "bob",
+        "robert",
+        "bill",
+        "william",
+        "jim",
+        "james",
+        "tom",
+        "thomas",
+        "joe",
+        "joseph",
+        "dan",
+        "daniel",
+        "steve",
+        "steven",
+        "alex",
+        "alexander",
+        "matt",
+        "matthew",
+        "chris",
+        "christopher",
+        "pat",
+        "patrick",
+        "nick",
+        "nicholas",
+        "sam",
+        "samuel",
+        "tim",
+        "timothy",
+        "rick",
+        "richard",
+        "tony",
+        "anthony",
+        "don",
+        "donald",
+    ];
+
+    // Check if we're dealing with a common first name
+    const isCommonFirstName = commonFirstNames.includes(
+        matchFirstName.toLowerCase(),
+    );
+
     // Build OR condition for names for ILIKE query
     // This fetches members where either first name or last name partially matches
     const nameFilters: string[] = [];
-    if (queryFirstName) {
-        nameFilters.push(`first_name.ilike.%${queryFirstName}%`);
-    }
+
+    // If last name is provided, use it as primary filter
     if (queryLastName) {
         nameFilters.push(`last_name.ilike.%${queryLastName}%`);
+        // Only add first name filter if it exists
+        if (queryFirstName) {
+            nameFilters.push(`first_name.ilike.%${queryFirstName}%`);
+        }
+    } else if (queryFirstName) {
+        // If only first name is provided
+        nameFilters.push(`first_name.ilike.%${queryFirstName}%`);
     }
 
     if (nameFilters.length > 0) {
@@ -117,16 +172,10 @@ export async function findMembersByName(
                 (memberFirstName === matchFirstName &&
                     memberLastName === matchLastName && matchFirstName &&
                     matchLastName) || // Both full names match
-                (memberFirstName === matchFirstName && matchFirstName &&
-                    !matchLastName &&
-                    memberLastName.includes(queryLastName)) || // First name exact, last name not specified for match but part of queryLastName
-                (memberLastName === matchLastName && matchLastName &&
-                    !matchFirstName &&
-                    memberFirstName.includes(queryFirstName)) || // Last name exact, first name not specified for match but part of queryFirstName
-                (memberFirstName.includes(matchFirstName) && matchFirstName && // Partial first name inclusion
-                    memberLastName === matchLastName && matchLastName) ||
-                (memberFirstName === matchFirstName && matchFirstName &&
-                    memberLastName.includes(matchLastName) && matchLastName) // Partial last name inclusion
+                (memberLastName === matchLastName && matchLastName && // Last name exact match
+                    (memberFirstName === matchFirstName || // And first name matches or
+                        // First name is a recognized nickname variant (Mike/Michael, etc.)
+                        (isNameVariant(matchFirstName, memberFirstName))))
             ) {
                 console.log(
                     `[memberLookup] STRONG MATCH (potentially exact) for ${member.first_name} ${member.last_name}`,
@@ -134,9 +183,38 @@ export async function findMembersByName(
                 return { member, matchConfidence: 100 };
             }
 
+            // Special case: If we have both first and last names, and last name is exact match,
+            // give very high confidence even if first name is only a partial match
+            if (
+                matchFirstName && matchLastName &&
+                memberLastName === matchLastName
+            ) {
+                // Check if first name is related/similar at all
+                const firstNameSimilarity = calculateStringSimilarity(
+                    matchFirstName,
+                    memberFirstName,
+                );
+
+                // If the first name has at least some similarity or is a nickname variant
+                if (
+                    firstNameSimilarity > 0.5 ||
+                    isNameVariant(matchFirstName, memberFirstName)
+                ) {
+                    console.log(
+                        `[memberLookup] EXACT LAST NAME MATCH with similar first name for ${member.first_name} ${member.last_name}`,
+                    );
+                    // Not 100% confidence, but high enough to usually be chosen
+                    return { member, matchConfidence: 95 };
+                }
+            }
+
             // Calculate partial match confidence with more weight on last name
-            // First name similarity (40% weight)
-            // Last name similarity (60% weight) - more important for identification
+            // Adjust weights based on whether we have a common first name
+            // First name similarity (30% weight normally, 20% if common)
+            // Last name similarity (70% weight normally, 80% if common)
+            const firstNameWeight = isCommonFirstName ? 0.2 : 0.3;
+            const lastNameWeight = isCommonFirstName ? 0.8 : 0.7;
+
             let firstNameConfidence = calculateStringSimilarity(
                 matchFirstName, // Use aggressively normalized input
                 memberFirstName, // Use aggressively normalized DB name
@@ -155,6 +233,11 @@ export async function findMembersByName(
                 ) {
                     firstNameConfidence = Math.max(firstNameConfidence, 0.8); // 80% confidence for prefix match
                 }
+
+                // Check if names are variants (nicknames)
+                if (isNameVariant(matchFirstName, memberFirstName)) {
+                    firstNameConfidence = Math.max(firstNameConfidence, 0.9); // 90% confidence for nickname variants
+                }
             }
 
             if (matchLastName && memberLastName) {
@@ -167,34 +250,123 @@ export async function findMembersByName(
             }
 
             // Combined weighted confidence
-            const combinedConfidence = (firstNameConfidence * 0.4) +
-                (lastNameConfidence * 0.6);
+            const combinedConfidence = (firstNameConfidence * firstNameWeight) +
+                (lastNameConfidence * lastNameWeight);
+
+            // Require minimum threshold for last name confidence to prevent
+            // matching on first name only when both first and last are provided
+            let finalConfidence = combinedConfidence;
+
+            // If both first and last names were provided in the search,
+            // require a minimum level of last name matching
+            if (matchFirstName && matchLastName) {
+                const lastNameMinimumThreshold = isCommonFirstName ? 0.6 : 0.4;
+
+                // If last name confidence is too low but first name is strong, reduce overall confidence
+                if (lastNameConfidence < lastNameMinimumThreshold) {
+                    // Penalize matches with poor last name match but good first name match
+                    // The more common the first name is, the stricter we are
+                    finalConfidence = combinedConfidence *
+                        (lastNameConfidence / lastNameMinimumThreshold);
+
+                    console.log(
+                        `[memberLookup] Reduced confidence for ${member.first_name} ${member.last_name} due to poor last name match: ${
+                            Math.round(finalConfidence * 100)
+                        }% (was ${Math.round(combinedConfidence * 100)}%)`,
+                    );
+                }
+            }
 
             // Log high confidence matches for debugging
-            if (combinedConfidence > 0.7) {
+            if (finalConfidence > 0.7) {
                 console.log(
                     `[memberLookup] High confidence match (${
-                        Math.round(combinedConfidence * 100)
+                        Math.round(finalConfidence * 100)
                     }%): ${member.first_name} ${member.last_name}`,
                 );
             }
 
             return {
                 member,
-                matchConfidence: Math.round(combinedConfidence * 100), // Convert to 0-100 scale
+                matchConfidence: Math.round(finalConfidence * 100), // Convert to 0-100 scale
             };
         });
 
     // Sort by match confidence (highest first) and filter out very low confidence matches
     const result = matchedMembers
         .sort((a, b) => b.matchConfidence - a.matchConfidence)
-        .filter((match) => match.matchConfidence > 30); // Higher threshold for better matches
+        .filter((match) => {
+            // Higher threshold for common first names
+            const threshold = isCommonFirstName ? 40 : 30;
+            return match.matchConfidence > threshold;
+        });
 
     console.log(
         `[memberLookup] Returning ${result.length} matches above threshold`,
     );
 
     return result;
+}
+
+/**
+ * Check if two names are variants of each other (like Mike/Michael)
+ *
+ * @param name1 - First name to compare
+ * @param name2 - Second name to compare
+ * @returns Boolean indicating if names are variants
+ */
+function isNameVariant(name1: string, name2: string): boolean {
+    const nameVariants: Record<string, string[]> = {
+        michael: ["mike", "mick", "mickey"],
+        robert: ["rob", "bob", "bobby"],
+        william: ["will", "bill", "billy"],
+        james: ["jim", "jimmy"],
+        thomas: ["tom", "tommy"],
+        joseph: ["joe", "joey"],
+        daniel: ["dan", "danny"],
+        richard: ["rick", "ricky", "dick"],
+        nicholas: ["nick", "nicky"],
+        anthony: ["tony"],
+        donald: ["don", "donnie"],
+        edward: ["ed", "eddie", "ned"],
+        christopher: ["chris"],
+        matthew: ["matt"],
+        steven: ["steve"],
+        alexander: ["alex"],
+        david: ["dave"],
+        jonathan: ["jon", "john"],
+        samuel: ["sam"],
+        patrick: ["pat"],
+        timothy: ["tim"],
+        kenneth: ["ken", "kenny"],
+        lawrence: ["larry"],
+        charles: ["chuck", "charlie"],
+        benjamin: ["ben"],
+        // Add more as needed
+    };
+
+    const name1Lower = name1.toLowerCase();
+    const name2Lower = name2.toLowerCase();
+
+    // Check if names are identical
+    if (name1Lower === name2Lower) {
+        return true;
+    }
+
+    // Check if one name is a variant of the other
+    for (const [base, variants] of Object.entries(nameVariants)) {
+        if (name1Lower === base && variants.includes(name2Lower)) {
+            return true;
+        }
+        if (name2Lower === base && variants.includes(name1Lower)) {
+            return true;
+        }
+        if (variants.includes(name1Lower) && variants.includes(name2Lower)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 /**
