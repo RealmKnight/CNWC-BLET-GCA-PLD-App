@@ -255,6 +255,14 @@ async function findMatchingMember(
             "bill",
             "nate", // Added for the Nate/Nathan example
             "nathan",
+            "nick",
+            "nicholas",
+            "anthony",
+            "christopher",
+            "matthew",
+            "steven",
+            "alexander",
+            "jonathan",
         ];
         const isCommonFirstName = commonFirstNames.includes(
             firstName.toLowerCase(),

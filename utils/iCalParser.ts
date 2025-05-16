@@ -229,12 +229,21 @@ export function parseICalForPldSdvRequests(
  * - "{Last Name}, {First Name} {Leave Type}"
  * - "{First Name} {Last Name}-{Leave Type}" (no space between name and leave type)
  * - "{Last Name}, {First Name}-{Leave Type}" (no space between name and leave type)
+ * - "{Last Name}-{Leave Type}" (single name treated as last name)
+ * - "{Last Name} - {Leave Type}" (single name treated as last name, with spaces around dash)
+ * - "{Last Name}- {Leave Type}" (single name treated as last name, with space after dash)
+ * - "{Last Name} -{Leave Type}" (single name treated as last name, with space before dash)
+ * - "{Last Name} {Leave Type}" (single name treated as last name, space separator)
  *
  * Waitlisted formats:
  * - "{First Name} {Last Name} {Leave Type} denied req {MM/DD}"
  * - "{Last Name}, {First Name} {Leave Type} denied req {MM/DD}"
+ * - "{Last Name} {Leave Type} denied req {MM/DD}" (single name treated as last name)
+ *
+ * NOTE: When only a single name is present in the summary (without a comma separator),
+ * we always treat it as a last name and leave the first name empty.
  */
-function parseSummary(summary: string): {
+export function parseSummary(summary: string): {
     firstName: string;
     lastName: string;
     leaveType: "PLD" | "SDV";
@@ -242,6 +251,131 @@ function parseSummary(summary: string): {
     originalRequestMonthDay: string | null;
 } | null {
     console.log(`[iCalParser] Parsing summary: "${summary}"`);
+
+    // Normalize the summary to handle inconsistent spacing around dash
+    // Replace dash with space-dash-space, then collapse multiple spaces
+    const normalizedSummary = summary
+        .replace(/\s*-\s*/g, " - ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+    // Handle the case where we have a single word followed by SDV or PLD with various dash formats
+    // This handles "FORD-SDV", "Ford - SDV", "Ford- SDV", "FORD -SDV"
+    // Single name is always treated as last name
+    const singleNameLeaveTypeRegex = /^([A-Za-z\-\.\']+)\s+-\s+(PLD|SDV)$/i;
+    const singleNameLeaveTypeMatch = normalizedSummary.match(
+        singleNameLeaveTypeRegex,
+    );
+
+    if (singleNameLeaveTypeMatch) {
+        const [, rawName, rawLeaveType] = singleNameLeaveTypeMatch;
+        const lastName = rawName.trim();
+        const leaveType = rawLeaveType.toUpperCase() as "PLD" | "SDV";
+
+        console.log(
+            `[iCalParser] Matched single name with dash format: ${lastName} - ${leaveType}`,
+        );
+
+        return {
+            firstName: "", // Empty first name for single name entries - always treat as last name
+            lastName,
+            leaveType,
+            isWaitlisted: false,
+            originalRequestMonthDay: null,
+        };
+    }
+
+    // Handle waitlisted version of the single name with dash
+    // Single name is always treated as last name
+    const singleNameLeaveTypeWaitlistedRegex =
+        /^([A-Za-z\-\.\']+)\s+-\s+(PLD|SDV)\s+denied\s+req\s+(\d{1,2}\/\d{1,2})$/i;
+    const singleNameLeaveTypeWaitlistedMatch = normalizedSummary.match(
+        singleNameLeaveTypeWaitlistedRegex,
+    );
+
+    if (singleNameLeaveTypeWaitlistedMatch) {
+        const [, rawName, rawLeaveType, originalRequestMonthDay] =
+            singleNameLeaveTypeWaitlistedMatch;
+        const lastName = rawName.trim();
+        const leaveType = rawLeaveType.toUpperCase() as "PLD" | "SDV";
+
+        console.log(
+            `[iCalParser] Matched single name with dash format (waitlisted): ${lastName} - ${leaveType} denied req ${originalRequestMonthDay}`,
+        );
+
+        return {
+            firstName: "", // Empty first name for single name entries - always treat as last name
+            lastName,
+            leaveType,
+            isWaitlisted: true,
+            originalRequestMonthDay,
+        };
+    }
+
+    // Format with no space between name and leave type (like "Ford-PLD")
+    // Single name is always treated as last name
+    let nameWithNoSpaceMatch = summary.match(
+        /^([A-Za-z\-\.\']+)(?:\-)(PLD|SDV)$/,
+    );
+    if (nameWithNoSpaceMatch) {
+        const [, rawName, leaveType] = nameWithNoSpaceMatch;
+        const lastName = rawName.trim();
+        console.log(
+            `[iCalParser] Matched single name with no space before leave type: ${lastName}-${leaveType}`,
+        );
+        return {
+            firstName: "", // Empty first name for single name entries - always treat as last name
+            lastName,
+            leaveType: leaveType as "PLD" | "SDV",
+            isWaitlisted: false,
+            originalRequestMonthDay: null,
+        };
+    }
+
+    // Try to match "Last Name Only" format with space (FORD PLD)
+    // Single name is always treated as last name
+    let lastNameOnlyStandardMatch = summary.match(
+        /^([A-Za-z\-\.\']+)\s+(?:\-\s*)?(PLD|SDV)$/,
+    );
+    if (lastNameOnlyStandardMatch) {
+        const [, rawLastName, leaveType] = lastNameOnlyStandardMatch;
+        const lastName = rawLastName.trim();
+        console.log(
+            `[iCalParser] Matched LastNameOnly standard format: ${lastName} ${leaveType}`,
+        );
+        return {
+            firstName: "", // Empty first name for single name entries - always treat as last name
+            lastName,
+            leaveType: leaveType as "PLD" | "SDV",
+            isWaitlisted: false,
+            originalRequestMonthDay: null,
+        };
+    }
+
+    // Try to match "Last Name Only" waitlisted format
+    // Single name is always treated as last name
+    let lastNameOnlyWaitlistedMatch = summary.match(
+        /^([A-Za-z\-\.\']+)\s+(?:\-\s*)?(PLD|SDV)\s+denied\s+req\s+(\d{1,2}\/\d{1,2})$/,
+    );
+    if (lastNameOnlyWaitlistedMatch) {
+        const [
+            ,
+            rawLastName,
+            leaveType,
+            originalRequestMonthDay,
+        ] = lastNameOnlyWaitlistedMatch;
+        const lastName = rawLastName.trim();
+        console.log(
+            `[iCalParser] Matched LastNameOnly waitlisted format: ${lastName} ${leaveType} denied req ${originalRequestMonthDay}`,
+        );
+        return {
+            firstName: "", // Empty first name for single name entries - always treat as last name
+            lastName,
+            leaveType: leaveType as "PLD" | "SDV",
+            isWaitlisted: true,
+            originalRequestMonthDay,
+        };
+    }
 
     // Define regex patterns for different formats
     // Format with "Last, First PLD"
@@ -256,28 +390,15 @@ function parseSummary(summary: string): {
     const firstLastWaitlistedRegex =
         /^([A-Za-z\-\.\']+)\s+([A-Za-z\-\.\']+)\s+(?:\-\s*)?(PLD|SDV)\s+denied\s+req\s+(\d{1,2}\/\d{1,2})$/;
 
-    // Format with "Last Name Only - PLD"
-    const lastNameOnlyStandardRegex =
-        /^([A-Za-z\-\.\']+)\s+(?:\-\s*)?(PLD|SDV)$/;
-    const lastNameOnlyWaitlistedRegex =
-        /^([A-Za-z\-\.\']+)\s+(?:\-\s*)?(PLD|SDV)\s+denied\s+req\s+(\d{1,2}\/\d{1,2})$/;
-
     // Format with "Initial. LastName - PLD"
     const initialLastNameStandardRegex =
         /^([A-Za-z]\.)\s+([A-Za-z\-\.\']+)\s+(?:\-\s*)?(PLD|SDV)$/;
     const initialLastNameWaitlistedRegex =
         /^([A-Za-z]\.)\s+([A-Za-z\-\.\']+)\s+(?:\-\s*)?(PLD|SDV)\s+denied\s+req\s+(\d{1,2}\/\d{1,2})$/;
 
-    // Format with no space between name and leave type (like "Ford-PLD")
-    const nameWithNoSpaceRegex = /^([A-Za-z\-\.\']+)(?:\-)(PLD|SDV)$/;
-    const twoPartNameWithNoSpaceRegex =
-        /^([A-Za-z\-\.\']+)\s+([A-Za-z\-\.\']+)(?:\-)(PLD|SDV)$/;
-    const lastFirstWithNoSpaceRegex =
-        /^([A-Za-z\-\']+),\s*([A-Za-z\-\']+)(?:\-)(PLD|SDV)$/;
-
     // Try to match the case with no space between name and leave type first
     let twoPartNameWithNoSpaceMatch = summary.match(
-        twoPartNameWithNoSpaceRegex,
+        /([A-Za-z\-\.\']+)\s+([A-Za-z\-\.\']+)\s+(?:\-\s*)?(PLD|SDV)$/,
     );
     if (twoPartNameWithNoSpaceMatch) {
         const [, rawFirstName, rawLastName, leaveType] =
@@ -296,7 +417,9 @@ function parseSummary(summary: string): {
         };
     }
 
-    let lastFirstWithNoSpaceMatch = summary.match(lastFirstWithNoSpaceRegex);
+    let lastFirstWithNoSpaceMatch = summary.match(
+        /^([A-Za-z\-\']+),\s*([A-Za-z\-\']+)(?:\-)(PLD|SDV)$/,
+    );
     if (lastFirstWithNoSpaceMatch) {
         const [, rawLastName, rawFirstName, leaveType] =
             lastFirstWithNoSpaceMatch;
@@ -307,22 +430,6 @@ function parseSummary(summary: string): {
         );
         return {
             firstName,
-            lastName,
-            leaveType: leaveType as "PLD" | "SDV",
-            isWaitlisted: false,
-            originalRequestMonthDay: null,
-        };
-    }
-
-    let nameWithNoSpaceMatch = summary.match(nameWithNoSpaceRegex);
-    if (nameWithNoSpaceMatch) {
-        const [, rawName, leaveType] = nameWithNoSpaceMatch;
-        const lastName = rawName.trim();
-        console.log(
-            `[iCalParser] Matched single name with no space before leave type: ${lastName}-${leaveType}`,
-        );
-        return {
-            firstName: "", // Empty first name for single name entries
             lastName,
             leaveType: leaveType as "PLD" | "SDV",
             isWaitlisted: false,
@@ -405,46 +512,6 @@ function parseSummary(summary: string): {
         );
         return {
             firstName,
-            lastName,
-            leaveType: leaveType as "PLD" | "SDV",
-            isWaitlisted: false,
-            originalRequestMonthDay: null,
-        };
-    }
-
-    // Try to match "Last Name Only" format
-    let lastNameOnlyWaitlistedMatch = summary.match(
-        lastNameOnlyWaitlistedRegex,
-    );
-    if (lastNameOnlyWaitlistedMatch) {
-        const [
-            ,
-            rawLastName,
-            leaveType,
-            originalRequestMonthDay,
-        ] = lastNameOnlyWaitlistedMatch;
-        const lastName = rawLastName.trim();
-        console.log(
-            `[iCalParser] Matched LastNameOnly waitlisted format: ${lastName} ${leaveType} denied req ${originalRequestMonthDay}`,
-        );
-        return {
-            firstName: "", // Empty first name since only last name provided
-            lastName,
-            leaveType: leaveType as "PLD" | "SDV",
-            isWaitlisted: true,
-            originalRequestMonthDay,
-        };
-    }
-
-    let lastNameOnlyStandardMatch = summary.match(lastNameOnlyStandardRegex);
-    if (lastNameOnlyStandardMatch) {
-        const [, rawLastName, leaveType] = lastNameOnlyStandardMatch;
-        const lastName = rawLastName.trim();
-        console.log(
-            `[iCalParser] Matched LastNameOnly standard format: ${lastName} ${leaveType}`,
-        );
-        return {
-            firstName: "", // Empty first name since only last name provided
             lastName,
             leaveType: leaveType as "PLD" | "SDV",
             isWaitlisted: false,
