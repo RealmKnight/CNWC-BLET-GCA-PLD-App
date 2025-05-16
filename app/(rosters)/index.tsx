@@ -11,6 +11,7 @@ import { supabase } from "@/utils/supabase";
 import { Roster, RosterMember, RosterDisplayField } from "@/types/rosters";
 import { getRosterMembers } from "@/utils/roster-utils";
 import { generateRosterPdf } from "@/utils/roster-pdf-generator";
+import { Select } from "@/components/ui/Select";
 
 type ColorSchemeName = keyof typeof Colors;
 
@@ -257,6 +258,9 @@ export default function RostersScreen() {
 
   // Render the year picker based on platform
   const renderYearPicker = () => {
+    // Transform the years into options for Select
+    const yearOptions = availableYears.map((year) => ({ label: year.toString(), value: year }));
+
     if (Platform.OS === "web") {
       return (
         <select
@@ -281,20 +285,15 @@ export default function RostersScreen() {
         </select>
       );
     } else {
-      // For native platforms
+      // For mobile platforms, use the Select component
       return (
-        <View style={styles.pickerContainer}>
-          {availableYears.map((year) => (
-            <TouchableOpacityComponent
-              key={year}
-              style={[styles.yearButton, selectedYear === year && { backgroundColor: Colors[colorScheme].tint }]}
-              onPress={() => setSelectedYear(year)}
-            >
-              <ThemedText style={[styles.yearText, selectedYear === year && { color: Colors[colorScheme].background }]}>
-                {year}
-              </ThemedText>
-            </TouchableOpacityComponent>
-          ))}
+        <View style={styles.selectContainer}>
+          <Select
+            label="Year"
+            value={selectedYear}
+            onValueChange={(value) => setSelectedYear(value as number)}
+            options={yearOptions}
+          />
         </View>
       );
     }
@@ -527,5 +526,17 @@ const styles = StyleSheet.create({
     opacity: 0.8,
     marginRight: 12,
     marginBottom: 3,
+  },
+  selectContainer: {
+    minWidth: 120,
+    maxWidth: 200,
+    ...Platform.select({
+      ios: {
+        minHeight: 60,
+      },
+      android: {
+        minHeight: 65,
+      },
+    }),
   },
 });

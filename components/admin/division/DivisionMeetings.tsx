@@ -1634,10 +1634,10 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.dark.background,
     ...Platform.select({
       ios: {
-        height: 50,
+        height: 60,
       },
       android: {
-        height: 50,
+        height: 65,
         paddingHorizontal: 0,
       },
       web: {
@@ -1648,13 +1648,13 @@ const styles = StyleSheet.create({
   },
   picker: {
     height: Platform.select({
-      ios: 50,
-      android: 50,
+      ios: 60,
+      android: 65,
       web: 40,
     }),
     width: "100%",
     color: Colors.dark.text,
-    backgroundColor: Colors.dark.background,
+    backgroundColor: Colors.dark.card,
     borderColor: Colors.dark.border,
     ...Platform.select({
       android: {

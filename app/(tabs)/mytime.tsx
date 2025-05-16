@@ -1473,12 +1473,14 @@ const styles = StyleSheet.create({
   selectContainer: {
     flexDirection: "row",
     alignItems: "center",
+    minWidth: 120,
+    maxWidth: 200,
     ...Platform.select({
       ios: {
-        minHeight: 50, // Increased height for iOS
+        minHeight: 60, // Increased height for iOS
       },
       android: {
-        minHeight: 55, // Slightly more height for Android
+        minHeight: 65,
       },
       web: {
         // Keep original height for web

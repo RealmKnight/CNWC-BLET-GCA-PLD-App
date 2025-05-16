@@ -26,6 +26,7 @@ import { format, parseISO, addHours } from "date-fns";
 import { insertSinglePldSdvRequest } from "@/utils/databaseApiLayer";
 import { supabase } from "@/utils/supabase";
 import Toast from "react-native-toast-message";
+import { DatePicker } from "@/components/DatePicker";
 
 interface ManualPldSdvRequestEntryProps {
   selectedDivision: string;
@@ -117,7 +118,8 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedMember, setSelectedMember] = useState<any | null>(null);
   const [searchResults, setSearchResults] = useState<any[]>([]);
-  const [requestDate, setRequestDate] = useState(format(new Date(), "yyyy-MM-dd"));
+  const [requestDate, setRequestDate] = useState<string>(format(new Date(), "yyyy-MM-dd"));
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [leaveType, setLeaveType] = useState<"PLD" | "SDV">("PLD");
   const [isPaidInLieu, setIsPaidInLieu] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -533,6 +535,14 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     setError(null);
   }, []);
 
+  // Handle date selection
+  const handleDateChange = useCallback((date: Date | null) => {
+    if (date) {
+      setSelectedDate(date);
+      setRequestDate(format(date, "yyyy-MM-dd"));
+    }
+  }, []);
+
   // Render the member's existing requests
   const renderMemberRequests = () => {
     if (!selectedMember) return null;
@@ -666,7 +676,7 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
             setMemberCalendarName(null);
           }}
           variant="secondary"
-          style={styles.clearButton}
+          style={styles.clearMemberButton}
         >
           Clear Selection
         </Button>
@@ -679,34 +689,20 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     <View style={styles.section}>
       <ThemedText style={styles.sectionTitle}>1. Select Member</ThemedText>
       <View style={styles.searchContainer}>
-        {Platform.OS === "web" ? (
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => handleSearch(e.target.value)}
-            placeholder="Search by name or PIN number (min. 3 characters)"
-            style={
-              {
-                width: "100%",
-                padding: 8,
-                borderRadius: 4,
-                fontSize: 16,
-                backgroundColor: Colors[colorScheme].background,
-                color: Colors[colorScheme].tint,
-                borderColor: Colors[colorScheme].border,
-                borderWidth: 1,
-              } as React.CSSProperties
-            }
-          />
-        ) : (
+        <View style={styles.searchInputWrapper}>
           <TextInput
             value={searchQuery}
             onChangeText={handleSearch}
             placeholder="Search by name or PIN number (min. 3 characters)"
-            style={styles.input}
-            placeholderTextColor={Colors[colorScheme].textDim}
+            style={[styles.searchInput, { color: Colors[colorScheme].text }]}
+            placeholderTextColor={Colors[colorScheme].secondary}
           />
-        )}
+          {searchQuery !== "" && (
+            <ThemedTouchableOpacity style={styles.clearButton} onPress={() => handleSearch("")} activeOpacity={0.7}>
+              <Ionicons name="close-circle" size={20} color={Colors[colorScheme].text} />
+            </ThemedTouchableOpacity>
+          )}
+        </View>
 
         {searchResults.length > 0 && (
           <View style={styles.searchResultsContainer}>
@@ -746,31 +742,13 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
 
         <View style={styles.formRow}>
           <ThemedText style={styles.label}>Request Date:</ThemedText>
-          {Platform.OS === "web" ? (
-            <input
-              type="date"
-              value={requestDate}
-              onChange={(e) => setRequestDate(e.target.value)}
-              style={
-                {
-                  padding: 8,
-                  borderRadius: 4,
-                  fontSize: 16,
-                  backgroundColor: Colors[colorScheme].background,
-                  color: Colors[colorScheme].tint,
-                  borderColor: Colors[colorScheme].border,
-                  borderWidth: 1,
-                } as React.CSSProperties
-              }
-            />
-          ) : (
-            <TextInput
-              value={requestDate}
-              onChangeText={setRequestDate}
-              placeholder="YYYY-MM-DD"
-              style={styles.input}
-            />
-          )}
+          <DatePicker
+            date={selectedDate}
+            onDateChange={handleDateChange}
+            mode="date"
+            placeholder="Select Date"
+            style={styles.datePicker}
+          />
         </View>
 
         <View style={styles.formRow}>
@@ -972,28 +950,76 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     searchContainer: {
       position: "relative",
       marginBottom: 8,
-      width: "80%",
+      width: "100%",
+      maxWidth: Platform.OS === "web" ? "80%" : "100%",
       zIndex: 100,
     },
-    input: {
-      width: "70%",
+    searchInputWrapper: {
+      flexDirection: "row",
+      alignItems: "center",
+      position: "relative",
+      width: "100%",
+    },
+    searchInput: {
+      flex: 1,
       height: 40,
-      paddingHorizontal: 8,
-      borderRadius: 4,
       borderWidth: 1,
       borderColor: Colors.dark.border,
+      borderRadius: 8,
+      paddingHorizontal: 12,
+      paddingRight: 40,
+      ...(Platform.OS === "web" && {
+        outlineColor: Colors.dark.border,
+        outlineWidth: 0,
+      }),
+    },
+    clearButton: {
+      position: "absolute",
+      right: 8,
+      top: 10,
+      padding: 4,
+      zIndex: 1,
+      ...(Platform.OS === "web" && {
+        cursor: "pointer",
+        minWidth: 30,
+        minHeight: 30,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }),
+    },
+    clearMemberButton: {
+      marginTop: 8,
+      alignSelf: "flex-start",
+    },
+    datePicker: {
+      flex: 1,
+      maxWidth: 200,
+      height: Platform.OS === "android" ? 48 : 40,
+      borderRadius: 4,
+      overflow: "hidden",
     },
     searchResultsContainer: {
-      top: "100%",
-      left: 0,
-      right: 0,
-      zIndex: 999,
+      ...(Platform.OS === "android"
+        ? {
+            position: "absolute",
+            top: "100%",
+            left: 0,
+            right: 0,
+            zIndex: 9999,
+            elevation: 20,
+          }
+        : {
+            top: "100%",
+            left: 0,
+            right: 0,
+            zIndex: 999,
+          }),
       maxHeight: 200,
       borderWidth: 1,
       borderColor: Colors.dark.border,
       borderRadius: 4,
-      backgroundColor: Colors.dark.background,
-      elevation: 20,
+      backgroundColor: Colors.dark.card,
     },
     searchResults: {
       flex: 1,
@@ -1032,10 +1058,6 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       fontSize: 14,
       marginBottom: 8,
       color: Colors.dark.warning,
-    },
-    clearButton: {
-      marginTop: 8,
-      alignSelf: "flex-start",
     },
     requestsContainer: {
       maxHeight: Platform.OS === "web" ? 250 : 180,

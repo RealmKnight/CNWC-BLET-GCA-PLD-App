@@ -1,13 +1,11 @@
 import React, { useState, useEffect } from "react";
 import { StyleSheet, View, TouchableOpacity, ScrollView, TextInput, Switch } from "react-native";
-import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedTextInput } from "@/components/ThemedTextInput";
 import { Button } from "@/components/ui/Button";
 import { Ionicons } from "@expo/vector-icons";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
-import { ClientOnlyDatePicker } from "@/components/ClientOnlyDatePicker";
 import { format, parseISO } from "date-fns";
 
 // This will be properly typed in Phase 2
