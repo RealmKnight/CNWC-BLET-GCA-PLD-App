@@ -244,15 +244,27 @@ function parseSummary(summary: string): {
     // Define regex patterns for different formats
     // Format with "Last, First PLD"
     const lastFirstStandardRegex =
-        /^([A-Za-z\-\']+),\s*([A-Za-z\-\']+)\s+(PLD|SDV)$/;
+        /^([A-Za-z\-\']+),\s*([A-Za-z\-\']+)\s+(?:\-\s*)?(PLD|SDV)$/;
     const lastFirstWaitlistedRegex =
-        /^([A-Za-z\-\']+),\s*([A-Za-z\-\']+)\s+(PLD|SDV)\s+denied\s+req\s+(\d{1,2}\/\d{1,2})$/;
+        /^([A-Za-z\-\']+),\s*([A-Za-z\-\']+)\s+(?:\-\s*)?(PLD|SDV)\s+denied\s+req\s+(\d{1,2}\/\d{1,2})$/;
 
     // Format with "First Last PLD"
     const firstLastStandardRegex =
-        /^([A-Za-z\-\']+)\s+([A-Za-z\-\']+)\s+(PLD|SDV)$/;
+        /^([A-Za-z\-\.\']+)\s+([A-Za-z\-\.\']+)\s+(?:\-\s*)?(PLD|SDV)$/;
     const firstLastWaitlistedRegex =
-        /^([A-Za-z\-\']+)\s+([A-Za-z\-\']+)\s+(PLD|SDV)\s+denied\s+req\s+(\d{1,2}\/\d{1,2})$/;
+        /^([A-Za-z\-\.\']+)\s+([A-Za-z\-\.\']+)\s+(?:\-\s*)?(PLD|SDV)\s+denied\s+req\s+(\d{1,2}\/\d{1,2})$/;
+
+    // Format with "Last Name Only - PLD"
+    const lastNameOnlyStandardRegex =
+        /^([A-Za-z\-\.\']+)\s+(?:\-\s*)?(PLD|SDV)$/;
+    const lastNameOnlyWaitlistedRegex =
+        /^([A-Za-z\-\.\']+)\s+(?:\-\s*)?(PLD|SDV)\s+denied\s+req\s+(\d{1,2}\/\d{1,2})$/;
+
+    // Format with "Initial. LastName - PLD"
+    const initialLastNameStandardRegex =
+        /^([A-Za-z]\.)\s+([A-Za-z\-\.\']+)\s+(?:\-\s*)?(PLD|SDV)$/;
+    const initialLastNameWaitlistedRegex =
+        /^([A-Za-z]\.)\s+([A-Za-z\-\.\']+)\s+(?:\-\s*)?(PLD|SDV)\s+denied\s+req\s+(\d{1,2}\/\d{1,2})$/;
 
     // Try to match the "Last, First" format first
     let lastFirstWaitlistedMatch = summary.match(lastFirstWaitlistedRegex);
@@ -336,14 +348,101 @@ function parseSummary(summary: string): {
         };
     }
 
+    // Try to match "Last Name Only" format
+    let lastNameOnlyWaitlistedMatch = summary.match(
+        lastNameOnlyWaitlistedRegex,
+    );
+    if (lastNameOnlyWaitlistedMatch) {
+        const [
+            ,
+            rawLastName,
+            leaveType,
+            originalRequestMonthDay,
+        ] = lastNameOnlyWaitlistedMatch;
+        const lastName = rawLastName.trim();
+        console.log(
+            `[iCalParser] Matched LastNameOnly waitlisted format: ${lastName} ${leaveType} denied req ${originalRequestMonthDay}`,
+        );
+        return {
+            firstName: "", // Empty first name since only last name provided
+            lastName,
+            leaveType: leaveType as "PLD" | "SDV",
+            isWaitlisted: true,
+            originalRequestMonthDay,
+        };
+    }
+
+    let lastNameOnlyStandardMatch = summary.match(lastNameOnlyStandardRegex);
+    if (lastNameOnlyStandardMatch) {
+        const [, rawLastName, leaveType] = lastNameOnlyStandardMatch;
+        const lastName = rawLastName.trim();
+        console.log(
+            `[iCalParser] Matched LastNameOnly standard format: ${lastName} ${leaveType}`,
+        );
+        return {
+            firstName: "", // Empty first name since only last name provided
+            lastName,
+            leaveType: leaveType as "PLD" | "SDV",
+            isWaitlisted: false,
+            originalRequestMonthDay: null,
+        };
+    }
+
+    // Try to match "Initial. LastName" format
+    let initialLastNameWaitlistedMatch = summary.match(
+        initialLastNameWaitlistedRegex,
+    );
+    if (initialLastNameWaitlistedMatch) {
+        const [
+            ,
+            rawFirstInitial,
+            rawLastName,
+            leaveType,
+            originalRequestMonthDay,
+        ] = initialLastNameWaitlistedMatch;
+        const firstName = rawFirstInitial.trim();
+        const lastName = rawLastName.trim();
+        console.log(
+            `[iCalParser] Matched Initial.LastName waitlisted format: ${firstName} ${lastName} ${leaveType} denied req ${originalRequestMonthDay}`,
+        );
+        return {
+            firstName,
+            lastName,
+            leaveType: leaveType as "PLD" | "SDV",
+            isWaitlisted: true,
+            originalRequestMonthDay,
+        };
+    }
+
+    let initialLastNameStandardMatch = summary.match(
+        initialLastNameStandardRegex,
+    );
+    if (initialLastNameStandardMatch) {
+        const [, rawFirstInitial, rawLastName, leaveType] =
+            initialLastNameStandardMatch;
+        const firstName = rawFirstInitial.trim();
+        const lastName = rawLastName.trim();
+        console.log(
+            `[iCalParser] Matched Initial.LastName standard format: ${firstName} ${lastName} ${leaveType}`,
+        );
+        return {
+            firstName,
+            lastName,
+            leaveType: leaveType as "PLD" | "SDV",
+            isWaitlisted: false,
+            originalRequestMonthDay: null,
+        };
+    }
+
     // Handle more complex names with multiple parts
     // Try to extract leave type first, then figure out the name parts
-    const leaveTypeMatch = summary.match(/(PLD|SDV)/);
+    const leaveTypeMatch = summary.match(/(?:\-\s*)?(PLD|SDV)/);
     if (leaveTypeMatch) {
         const leaveType = leaveTypeMatch[1] as "PLD" | "SDV";
-        const leaveTypeIndex = summary.indexOf(leaveType);
+        const leaveTypeIndex = summary.indexOf(leaveTypeMatch[0]);
+        const leaveTypeStartIndex = summary.indexOf(leaveType);
 
-        // Extract the name part (everything before the leave type)
+        // Extract the name part (everything before the leave type or dash+leave type)
         let namePart = summary.substring(0, leaveTypeIndex).trim();
 
         // Check if it contains a comma (Last, First format)
@@ -352,11 +451,11 @@ function parseSummary(summary: string): {
                 part,
             ) => part.trim());
             const lastName = rawLastName.trim();
-            const firstName = rawFirstName.trim();
+            const firstName = rawFirstName ? rawFirstName.trim() : "";
 
             // Check for waitlisted format
             const restOfSummary = summary.substring(
-                leaveTypeIndex + leaveType.length,
+                leaveTypeStartIndex + leaveType.length,
             ).trim();
             const waitlistedMatch = restOfSummary.match(
                 /denied\s+req\s+(\d{1,2}\/\d{1,2})/,
@@ -375,17 +474,67 @@ function parseSummary(summary: string): {
                     : null,
             };
         } else {
-            // Assume First Last format, with last word before leave type as last name
-            const nameParts = namePart.split(/\s+/);
-            if (nameParts.length >= 2) {
-                const rawLastName = nameParts.pop() || "";
-                const rawFirstName = nameParts.join(" ");
+            // Check if there's only one word (Last Name only)
+            const words = namePart.split(/\s+/).filter((w) => w.length > 0);
+
+            if (words.length === 1) {
+                const lastName = words[0].trim();
+
+                // Check for waitlisted format
+                const restOfSummary = summary.substring(
+                    leaveTypeStartIndex + leaveType.length,
+                ).trim();
+                const waitlistedMatch = restOfSummary.match(
+                    /denied\s+req\s+(\d{1,2}\/\d{1,2})/,
+                );
+
+                console.log(
+                    `[iCalParser] Parsed complex LastNameOnly format: ${lastName} ${leaveType}`,
+                );
+                return {
+                    firstName: "",
+                    lastName,
+                    leaveType,
+                    isWaitlisted: !!waitlistedMatch,
+                    originalRequestMonthDay: waitlistedMatch
+                        ? waitlistedMatch[1]
+                        : null,
+                };
+            } // Check if first word is an initial with period
+            else if (words.length >= 2 && /^[A-Za-z]\.$/.test(words[0])) {
+                const firstName = words[0].trim();
+                const lastName = words.slice(1).join(" ").trim();
+
+                // Check for waitlisted format
+                const restOfSummary = summary.substring(
+                    leaveTypeStartIndex + leaveType.length,
+                ).trim();
+                const waitlistedMatch = restOfSummary.match(
+                    /denied\s+req\s+(\d{1,2}\/\d{1,2})/,
+                );
+
+                console.log(
+                    `[iCalParser] Parsed complex Initial.LastName format: ${firstName} ${lastName} ${leaveType}`,
+                );
+                return {
+                    firstName,
+                    lastName,
+                    leaveType,
+                    isWaitlisted: !!waitlistedMatch,
+                    originalRequestMonthDay: waitlistedMatch
+                        ? waitlistedMatch[1]
+                        : null,
+                };
+            } // Assume First Last format, with last word before leave type as last name
+            else if (words.length >= 2) {
+                const rawLastName = words.pop() || "";
+                const rawFirstName = words.join(" ");
                 const lastName = rawLastName.trim();
                 const firstName = rawFirstName.trim();
 
                 // Check for waitlisted format
                 const restOfSummary = summary.substring(
-                    leaveTypeIndex + leaveType.length,
+                    leaveTypeStartIndex + leaveType.length,
                 ).trim();
                 const waitlistedMatch = restOfSummary.match(
                     /denied\s+req\s+(\d{1,2}\/\d{1,2})/,

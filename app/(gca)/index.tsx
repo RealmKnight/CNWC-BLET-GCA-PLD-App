@@ -8,6 +8,12 @@ export default function GCAScreen() {
     <ThemedScrollView style={styles.container}>
       <ThemedView style={styles.content}>
         <NavigationCard
+          title="Announcements"
+          description="Important GCA announcements and updates"
+          icon="megaphone"
+          href="/(gca)/announcements"
+        />
+        <NavigationCard
           title="GCA Officers"
           description="Contact information for GCA officers"
           icon="people"
@@ -20,12 +26,6 @@ export default function GCAScreen() {
           href="/(gca)/minutes"
         />
         <NavigationCard title="Bylaws" description="View GCA bylaws and regulations" icon="book" href="/(gca)/bylaws" />
-        <NavigationCard
-          title="Announcements"
-          description="Important GCA announcements and updates"
-          icon="megaphone"
-          href="/(gca)/announcements"
-        />
         <NavigationCard
           title="Contact GCA"
           description="Get in touch with GCA representatives"
