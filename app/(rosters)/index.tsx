@@ -289,11 +289,12 @@ export default function RostersScreen() {
       // For mobile platforms, use the Picker component
       return (
         <View style={styles.selectContainer}>
-          <ThemedText>Year</ThemedText>
+          <ThemedText style={styles.pickerLabel}>Year</ThemedText>
           <Picker
             selectedValue={selectedYear}
             onValueChange={(itemValue) => setSelectedYear(Number(itemValue))}
             style={styles.picker}
+            dropdownIconColor={Colors[colorScheme].text}
           >
             {availableYears.map((year) => (
               <Picker.Item key={year} label={year.toString()} value={year} />
@@ -533,27 +534,50 @@ const styles = StyleSheet.create({
     marginBottom: 3,
   },
   selectContainer: {
+    width: "100%",
+    maxWidth: 250,
     minWidth: 120,
-    maxWidth: 200,
+    borderRadius: 8,
+    overflow: "hidden",
+    backgroundColor: Colors.dark.card,
+    marginTop: 8,
     ...Platform.select({
       ios: {
         minHeight: 60,
       },
       android: {
-        minHeight: 65,
+        minHeight: 100,
+        paddingHorizontal: 0,
+        flexDirection: "column",
+      },
+      web: {
+        height: 40,
+        minHeight: 40,
       },
     }),
   },
   picker: {
-    flex: 1,
     backgroundColor: Colors.dark.card,
+    color: Colors.dark.text,
+    borderColor: Colors.dark.border,
     ...Platform.select({
       ios: {
-        minHeight: 60,
+        height: 60,
       },
       android: {
-        minHeight: 65,
+        height: 50,
+        width: "100%",
+      },
+      web: {
+        height: 40,
+        paddingRight: 24,
+        cursor: "pointer",
       },
     }),
+  },
+  pickerLabel: {
+    fontSize: 16,
+    fontWeight: "bold",
+    marginBottom: 8,
   },
 });

@@ -695,36 +695,38 @@ export default function MyTimeScreen() {
 
   // Update next_vacation_split and sdv_election in database
   const handleSplitWeeksChange = async (value: string | number | null) => {
-    if (!member || value === null || typeof value === "string") return;
+    if (!member) return;
+
+    // Convert value to number if it's a string, or use 0 if null
+    const numericValue = value === null ? 0 : typeof value === "string" ? parseInt(value) : value;
 
     setIsSavingSplitWeeks(true);
 
     try {
       // Calculate SDVs (6 per split week)
-      const sdvs = value * 6;
+      const sdvs = numericValue * 6;
 
       const { error } = await supabase
         .from("members")
         .update({
-          next_vacation_split: value,
+          next_vacation_split: numericValue,
           sdv_election: sdvs,
         })
         .eq("id", member.id);
 
       if (error) throw error;
 
-      setNextYearSplitWeeks(value);
+      setNextYearSplitWeeks(numericValue);
 
       Toast.show({
         type: "success",
         text1: "Split Weeks Updated",
-        text2: `Your split weeks election for next year has been updated to ${value}.`,
+        text2: `Your split weeks election for next year has been updated to ${numericValue}.`,
         position: "bottom",
         visibilityTime: 3000,
       });
 
       // Refresh data to update the UI with new values
-      // Pass the member.id instead of an empty string
       refreshData(member.id || "");
     } catch (error) {
       console.error("[MyTimeScreen] Error updating split weeks:", error);
@@ -806,12 +808,13 @@ export default function MyTimeScreen() {
                 </ThemedText>
 
                 <ThemedView style={styles.selectContainer}>
-                  <ThemedText>Split Weeks for NEXT year</ThemedText>
+                  <ThemedText style={styles.splitWeeksLabel}>Select split weeks:</ThemedText>
                   <Picker
                     selectedValue={nextYearSplitWeeks}
-                    onValueChange={handleSplitWeeksChange}
+                    onValueChange={(itemValue) => handleSplitWeeksChange(Number(itemValue))}
                     enabled={!isSavingSplitWeeks}
                     style={styles.picker}
+                    dropdownIconColor={Colors[colorScheme ?? "light"].text}
                   >
                     {splitWeeksOptions.map((option) => (
                       <Picker.Item key={option.value} label={option.label} value={option.value} />
@@ -1476,18 +1479,21 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   selectContainer: {
-    flex: 1,
+    width: "100%",
+    maxWidth: 250,
     minWidth: 150,
     borderRadius: 8,
     overflow: "hidden",
-    backgroundColor: Colors.dark.background,
+    backgroundColor: Colors.dark.card,
+    marginBottom: 16,
     ...Platform.select({
       ios: {
         height: 60,
       },
       android: {
-        height: 65,
+        minHeight: 100,
         paddingHorizontal: 0,
+        flexDirection: "column",
       },
       web: {
         height: 40,
@@ -1496,22 +1502,20 @@ const styles = StyleSheet.create({
     }),
   },
   picker: {
-    height: Platform.select({
-      ios: 60,
-      android: 65,
-      web: 40,
-    }),
-    width: "100%",
-    color: Colors.dark.text,
     backgroundColor: Colors.dark.card,
+    color: Colors.dark.text,
     borderColor: Colors.dark.border,
     ...Platform.select({
+      ios: {
+        height: 60,
+      },
       android: {
-        paddingHorizontal: 0,
-        cursor: "pointer",
+        height: 50,
+        width: "100%",
       },
       web: {
-        paddingRight: 24, // Space for dropdown arrow
+        height: 40,
+        paddingRight: 24,
         cursor: "pointer",
       },
     }),
@@ -1530,5 +1534,10 @@ const styles = StyleSheet.create({
     marginLeft: 12,
     fontSize: 16,
     flex: 1,
+  },
+  splitWeeksLabel: {
+    fontSize: 16,
+    fontWeight: "bold",
+    marginBottom: 8,
   },
 });
