@@ -32,6 +32,7 @@ export function ImportPldSdvComponent({
   const [year, setYear] = useState<number>(new Date().getFullYear());
   const [previewData, setPreviewData] = useState<ImportPreviewItem[] | null>(null);
   const [showPreview, setShowPreview] = useState(false);
+  const [parsingStatus, setParsingStatus] = useState<string>("");
 
   // Add internal state for selected calendar
   const [selectedCalendarId, setSelectedCalendarId] = useState<string | null>(propSelectedCalendarId || null);
@@ -104,25 +105,66 @@ export function ImportPldSdvComponent({
 
     setIsLoading(true);
     setError(null);
+    setParsingStatus("Starting to process file...");
+
+    // Setup console interception
+    const originalConsoleLog = console.log;
+    let matchedCount = 0;
+
+    // Replace console.log to show matching progress
+    console.log = function (...args) {
+      originalConsoleLog.apply(console, args);
+
+      // Only intercept during matching phase
+      if (typeof args[0] === "string") {
+        const message = args[0];
+
+        if (message.includes("[importPreviewService] Finding matching member for")) {
+          // Extract the name being matched
+          const nameMatch = message.match(/\"([^\"]+)\"/);
+          if (nameMatch && nameMatch[1]) {
+            matchedCount++;
+            setParsingStatus(`Matching member ${matchedCount}: ${nameMatch[1]}`);
+          }
+        } else if (message.includes("[memberLookup] High confidence match")) {
+          // Extract the match result
+          const parts = message.split(":");
+          if (parts.length > 1) {
+            setParsingStatus(`Found match: ${parts[1].trim()}`);
+          }
+        } else if (message.includes("[importPreviewService] Single match found:")) {
+          const parts = message.split(":");
+          if (parts.length > 1) {
+            setParsingStatus(`Confirmed match: ${parts[1].trim()}`);
+          }
+        }
+      }
+    };
 
     try {
       // Log the first few characters of the file content for debugging
       console.log("File content preview:", fileContent.substring(0, 100) + "...");
 
       // Normalize the iCal content
+      setParsingStatus("Normalizing calendar data...");
       const normalizedContent = normalizeICalContent(fileContent);
 
       // Parse the iCal content to extract PLD/SDV requests for the target year
       console.log(`[ImportPldSdvComponent] Parsing iCal content for year ${year}...`);
+      setParsingStatus(`Parsing calendar entries for ${year}...`);
+
       const parsedRequests = parseICalForPldSdvRequests(normalizedContent, year);
 
       if (parsedRequests.length === 0) {
+        // Restore console.log
+        console.log = originalConsoleLog;
         setError(`No valid PLD/SDV requests found for year ${year}. Check the file format and year.`);
         setIsLoading(false);
         return;
       }
 
       console.log(`[ImportPldSdvComponent] Found ${parsedRequests.length} requests in iCal file`);
+      setParsingStatus(`Found ${parsedRequests.length} requests. Starting member matching...`);
 
       // Generate preview data with member matching and duplicate detection
       let divisionId: number | undefined;
@@ -141,11 +183,8 @@ export function ImportPldSdvComponent({
       }
 
       // Fallback or alternative: if selectedDivision prop is a numeric string AND divisionId is still undefined
-      // This might be less reliable if selectedDivision prop is not meant to be the direct ID.
       if (divisionId === undefined && selectedDivision && /^\d+$/.test(selectedDivision)) {
         const parsedSelectedDivision = parseInt(selectedDivision, 10);
-        // Potentially add a check here if parsedSelectedDivision is a plausible ID, e.g. by querying divisions table
-        // For now, we assume if it's numeric, it might be the ID, but the calendar source is preferred.
         divisionId = parsedSelectedDivision;
         console.log(`[ImportPldSdvComponent] Used selectedDivision prop as divisionId: ${divisionId} (fallback).`);
       }
@@ -154,10 +193,6 @@ export function ImportPldSdvComponent({
         console.warn(
           `[ImportPldSdvComponent] divisionId is undefined. Member lookup will not be filtered by division.`
         );
-        // Optionally, you could prevent proceeding or throw an error if divisionId is critical
-        // setError("Could not determine the division ID for member filtering.");
-        // setIsLoading(false);
-        // return;
       }
 
       console.log(
@@ -167,13 +202,25 @@ export function ImportPldSdvComponent({
         ` (selectedDivision: "${selectedDivision}", selectedCalendarId: "${selectedCalendarId}")`
       );
 
+      // This will generate logs that our interceptor will catch to show matching progress
       const previewItems = await generateImportPreview(parsedRequests, selectedCalendarId, divisionId);
 
+      // Restore console.log
+      console.log = originalConsoleLog;
+
       console.log(`[ImportPldSdvComponent] Generated preview with ${previewItems.length} items`);
+      setParsingStatus(`Preview ready with ${previewItems.length} items`);
+
+      // Small delay to ensure the user sees the final status message before showing the preview
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
       setPreviewData(previewItems);
       setShowPreview(true);
     } catch (err: any) {
+      // Restore console.log in case of error
+      console.log = originalConsoleLog;
       console.error("Error processing iCal file:", err);
+
       // Provide more detailed error message
       let errorMessage = "Failed to process iCal file";
       if (err.message) {
@@ -191,6 +238,8 @@ export function ImportPldSdvComponent({
         );
       }
     } finally {
+      // Always restore console.log in case it hasn't been restored yet
+      console.log = originalConsoleLog;
       setIsLoading(false);
     }
   }, [file, fileContent, selectedCalendarId, year, selectedDivision, currentDivisionCalendars]);
@@ -348,7 +397,14 @@ export function ImportPldSdvComponent({
       {renderYearSelection()}
       {renderPreviewButton()}
 
-      {isLoading && <ActivityIndicator size="large" color={Colors[colorScheme].tint} style={styles.loading} />}
+      {isLoading && (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={Colors[colorScheme].tint} />
+          <View style={styles.statusBox}>
+            <ThemedText style={styles.parsingStatus}>{parsingStatus || "Processing..."}</ThemedText>
+          </View>
+        </View>
+      )}
 
       {error && <ThemedText style={styles.error}>{error}</ThemedText>}
     </ThemedView>
@@ -421,8 +477,28 @@ const styles = StyleSheet.create({
   loading: {
     marginVertical: 20,
   },
+  loadingContainer: {
+    marginVertical: 20,
+    alignItems: "center",
+  },
+  parsingStatus: {
+    fontSize: 16,
+    textAlign: "center",
+    fontWeight: "500",
+    color: Colors.dark.text,
+  },
   error: {
     color: Colors.light.error,
     marginVertical: 16,
+  },
+  statusBox: {
+    marginTop: 15,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    borderRadius: 8,
+    backgroundColor: Colors.dark.card,
+    width: "100%",
+    maxWidth: 500,
   },
 });

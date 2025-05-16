@@ -227,6 +227,8 @@ export function parseICalForPldSdvRequests(
  * Standard formats:
  * - "{First Name} {Last Name} {Leave Type}"
  * - "{Last Name}, {First Name} {Leave Type}"
+ * - "{First Name} {Last Name}-{Leave Type}" (no space between name and leave type)
+ * - "{Last Name}, {First Name}-{Leave Type}" (no space between name and leave type)
  *
  * Waitlisted formats:
  * - "{First Name} {Last Name} {Leave Type} denied req {MM/DD}"
@@ -266,7 +268,69 @@ function parseSummary(summary: string): {
     const initialLastNameWaitlistedRegex =
         /^([A-Za-z]\.)\s+([A-Za-z\-\.\']+)\s+(?:\-\s*)?(PLD|SDV)\s+denied\s+req\s+(\d{1,2}\/\d{1,2})$/;
 
-    // Try to match the "Last, First" format first
+    // Format with no space between name and leave type (like "Ford-PLD")
+    const nameWithNoSpaceRegex = /^([A-Za-z\-\.\']+)(?:\-)(PLD|SDV)$/;
+    const twoPartNameWithNoSpaceRegex =
+        /^([A-Za-z\-\.\']+)\s+([A-Za-z\-\.\']+)(?:\-)(PLD|SDV)$/;
+    const lastFirstWithNoSpaceRegex =
+        /^([A-Za-z\-\']+),\s*([A-Za-z\-\']+)(?:\-)(PLD|SDV)$/;
+
+    // Try to match the case with no space between name and leave type first
+    let twoPartNameWithNoSpaceMatch = summary.match(
+        twoPartNameWithNoSpaceRegex,
+    );
+    if (twoPartNameWithNoSpaceMatch) {
+        const [, rawFirstName, rawLastName, leaveType] =
+            twoPartNameWithNoSpaceMatch;
+        const firstName = rawFirstName.trim();
+        const lastName = rawLastName.trim();
+        console.log(
+            `[iCalParser] Matched FirstLast with no space before leave type: ${firstName} ${lastName}-${leaveType}`,
+        );
+        return {
+            firstName,
+            lastName,
+            leaveType: leaveType as "PLD" | "SDV",
+            isWaitlisted: false,
+            originalRequestMonthDay: null,
+        };
+    }
+
+    let lastFirstWithNoSpaceMatch = summary.match(lastFirstWithNoSpaceRegex);
+    if (lastFirstWithNoSpaceMatch) {
+        const [, rawLastName, rawFirstName, leaveType] =
+            lastFirstWithNoSpaceMatch;
+        const lastName = rawLastName.trim();
+        const firstName = rawFirstName.trim();
+        console.log(
+            `[iCalParser] Matched Last,First with no space before leave type: ${lastName}, ${firstName}-${leaveType}`,
+        );
+        return {
+            firstName,
+            lastName,
+            leaveType: leaveType as "PLD" | "SDV",
+            isWaitlisted: false,
+            originalRequestMonthDay: null,
+        };
+    }
+
+    let nameWithNoSpaceMatch = summary.match(nameWithNoSpaceRegex);
+    if (nameWithNoSpaceMatch) {
+        const [, rawName, leaveType] = nameWithNoSpaceMatch;
+        const lastName = rawName.trim();
+        console.log(
+            `[iCalParser] Matched single name with no space before leave type: ${lastName}-${leaveType}`,
+        );
+        return {
+            firstName: "", // Empty first name for single name entries
+            lastName,
+            leaveType: leaveType as "PLD" | "SDV",
+            isWaitlisted: false,
+            originalRequestMonthDay: null,
+        };
+    }
+
+    // Try to match the "Last, First" format
     let lastFirstWaitlistedMatch = summary.match(lastFirstWaitlistedRegex);
     if (lastFirstWaitlistedMatch) {
         const [
@@ -436,7 +500,7 @@ function parseSummary(summary: string): {
 
     // Handle more complex names with multiple parts
     // Try to extract leave type first, then figure out the name parts
-    const leaveTypeMatch = summary.match(/(?:\-\s*)?(PLD|SDV)/);
+    const leaveTypeMatch = summary.match(/(?:(?:\s|\-))(PLD|SDV)/);
     if (leaveTypeMatch) {
         const leaveType = leaveTypeMatch[1] as "PLD" | "SDV";
         const leaveTypeIndex = summary.indexOf(leaveTypeMatch[0]);
