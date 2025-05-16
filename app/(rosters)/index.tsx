@@ -546,7 +546,7 @@ const styles = StyleSheet.create({
         minHeight: 60,
       },
       android: {
-        minHeight: 100,
+        minHeight: 65,
         paddingHorizontal: 0,
         flexDirection: "column",
       },
@@ -563,10 +563,12 @@ const styles = StyleSheet.create({
     ...Platform.select({
       ios: {
         height: 60,
+        cursor: "pointer",
       },
       android: {
-        height: 50,
+        height: 65,
         width: "100%",
+        cursor: "pointer",
       },
       web: {
         height: 40,

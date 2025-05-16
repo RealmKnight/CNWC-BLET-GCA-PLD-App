@@ -1485,19 +1485,16 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     overflow: "hidden",
     backgroundColor: Colors.dark.card,
+    padding: 4,
     marginBottom: 16,
     ...Platform.select({
       ios: {
-        height: 60,
+        height: 120,
       },
       android: {
-        minHeight: 100,
+        minHeight: 120,
         paddingHorizontal: 0,
         flexDirection: "column",
-      },
-      web: {
-        height: 40,
-        minHeight: 40,
       },
     }),
   },
@@ -1505,13 +1502,17 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.dark.card,
     color: Colors.dark.text,
     borderColor: Colors.dark.border,
+    borderWidth: 1,
+    borderRadius: 8,
     ...Platform.select({
       ios: {
         height: 60,
+        cursor: "pointer",
       },
       android: {
-        height: 50,
+        height: 65,
         width: "100%",
+        cursor: "pointer",
       },
       web: {
         height: 40,
