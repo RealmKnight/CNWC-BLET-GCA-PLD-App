@@ -12,6 +12,7 @@ import { Roster, RosterMember, RosterDisplayField } from "@/types/rosters";
 import { getRosterMembers } from "@/utils/roster-utils";
 import { generateRosterPdf } from "@/utils/roster-pdf-generator";
 import { Select } from "@/components/ui/Select";
+import { Picker } from "@react-native-picker/picker";
 
 type ColorSchemeName = keyof typeof Colors;
 
@@ -285,15 +286,19 @@ export default function RostersScreen() {
         </select>
       );
     } else {
-      // For mobile platforms, use the Select component
+      // For mobile platforms, use the Picker component
       return (
         <View style={styles.selectContainer}>
-          <Select
-            label="Year"
-            value={selectedYear}
-            onValueChange={(value) => setSelectedYear(value as number)}
-            options={yearOptions}
-          />
+          <ThemedText>Year</ThemedText>
+          <Picker
+            selectedValue={selectedYear}
+            onValueChange={(itemValue) => setSelectedYear(Number(itemValue))}
+            style={styles.picker}
+          >
+            {availableYears.map((year) => (
+              <Picker.Item key={year} label={year.toString()} value={year} />
+            ))}
+          </Picker>
         </View>
       );
     }
@@ -530,6 +535,18 @@ const styles = StyleSheet.create({
   selectContainer: {
     minWidth: 120,
     maxWidth: 200,
+    ...Platform.select({
+      ios: {
+        minHeight: 60,
+      },
+      android: {
+        minHeight: 65,
+      },
+    }),
+  },
+  picker: {
+    flex: 1,
+    backgroundColor: Colors.dark.card,
     ...Platform.select({
       ios: {
         minHeight: 60,

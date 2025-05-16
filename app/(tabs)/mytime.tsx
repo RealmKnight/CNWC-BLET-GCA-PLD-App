@@ -30,6 +30,7 @@ import { Database } from "@/types/supabase";
 import { PaidInLieuModal } from "@/components/modals/PaidInLieuModal";
 import { Select } from "@/components/ui/Select";
 import { supabase } from "@/utils/supabase";
+import { Picker } from "@react-native-picker/picker";
 
 interface LeaveRowProps {
   label: string;
@@ -805,14 +806,17 @@ export default function MyTimeScreen() {
                 </ThemedText>
 
                 <ThemedView style={styles.selectContainer}>
-                  <Select
-                    label="Split Weeks for NEXT year"
-                    value={nextYearSplitWeeks}
+                  <ThemedText>Split Weeks for NEXT year</ThemedText>
+                  <Picker
+                    selectedValue={nextYearSplitWeeks}
                     onValueChange={handleSplitWeeksChange}
-                    options={splitWeeksOptions}
-                    disabled={isSavingSplitWeeks}
+                    enabled={!isSavingSplitWeeks}
                     style={styles.picker}
-                  />
+                  >
+                    {splitWeeksOptions.map((option) => (
+                      <Picker.Item key={option.value} label={option.label} value={option.value} />
+                    ))}
+                  </Picker>
                   {isSavingSplitWeeks && (
                     <ActivityIndicator
                       size="small"
@@ -1472,34 +1476,43 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   selectContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    minWidth: 120,
-    maxWidth: 200,
+    flex: 1,
+    minWidth: 150,
+    borderRadius: 8,
+    overflow: "hidden",
+    backgroundColor: Colors.dark.background,
     ...Platform.select({
       ios: {
-        minHeight: 60, // Increased height for iOS
-        width: "80%",
+        height: 60,
       },
       android: {
-        minHeight: 65,
-        width: "80%",
+        height: 65,
+        paddingHorizontal: 0,
       },
       web: {
-        // Keep original height for web
+        height: 40,
+        minHeight: 40,
       },
     }),
   },
   picker: {
-    height: 60,
+    height: Platform.select({
+      ios: 60,
+      android: 65,
+      web: 40,
+    }),
+    width: "100%",
+    color: Colors.dark.text,
+    backgroundColor: Colors.dark.card,
+    borderColor: Colors.dark.border,
     ...Platform.select({
-      ios: {
-        minHeight: 60, // Increased height for iOS
-        width: "100%",
-      },
       android: {
-        minHeight: 65,
-        width: "100%",
+        paddingHorizontal: 0,
+        cursor: "pointer",
+      },
+      web: {
+        paddingRight: 24, // Space for dropdown arrow
+        cursor: "pointer",
       },
     }),
   },

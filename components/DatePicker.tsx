@@ -85,7 +85,7 @@ export function DatePicker({
     borderWidth: 1,
     borderRadius: 8,
     paddingHorizontal: 12,
-    backgroundColor: Colors[colorScheme].background,
+    backgroundColor: Colors.dark.card,
     borderColor: error ? Colors[colorScheme].error : Colors[colorScheme].border,
     flexDirection: "row",
     alignItems: "center",
@@ -133,12 +133,7 @@ export function DatePicker({
 
         <Modal visible={showPicker} transparent animationType="fade" onRequestClose={() => setShowPicker(false)}>
           <View style={styles.modalOverlay}>
-            <View
-              style={[
-                styles.modalContent,
-                { backgroundColor: Colors[colorScheme].background, borderColor: Colors[colorScheme].border },
-              ]}
-            >
+            <View style={[styles.modalContent]}>
               <ThemedText style={styles.modalTitle}>{placeholder}</ThemedText>
 
               {minDate && maxDate && (
@@ -268,6 +263,7 @@ const styles = StyleSheet.create({
     maxWidth: 400,
     alignItems: "center",
     gap: 16,
+    backgroundColor: Colors.dark.card,
   },
   modalTitle: {
     fontSize: 18,

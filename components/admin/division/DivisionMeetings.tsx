@@ -1659,6 +1659,7 @@ const styles = StyleSheet.create({
     ...Platform.select({
       android: {
         paddingHorizontal: 0,
+        cursor: "pointer",
       },
       web: {
         paddingRight: 24, // Space for dropdown arrow
