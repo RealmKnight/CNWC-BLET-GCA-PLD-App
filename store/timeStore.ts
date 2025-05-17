@@ -1068,6 +1068,8 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
                     leave_type: leaveType,
                     status: "pending", // Initial status
                     paid_in_lieu: isPaidInLieu,
+                    import_source: "app", // Add this to satisfy the trigger function
+                    imported_at: new Date().toISOString(), // Add timestamp
                 })
                 .select() // Select the inserted row to confirm
                 .single();
@@ -1113,6 +1115,7 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
                     calendar_id: member.calendar_id,
                     request_date: date,
                     leave_type: leaveType,
+                    metadata: { import_source: "app" }, // Add metadata with import source instead
                 })
                 .select()
                 .single();
