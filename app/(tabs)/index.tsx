@@ -31,7 +31,7 @@ export default function HomeScreen() {
             <ThemedText style={styles.welcomeText}>Welcome, {member?.first_name}</ThemedText>
           </ThemedView>
           <ThemedText style={styles.noticeText}>
-            Most of the links below are only placeholders for future functionality of the app. They work, but the
+            The links below "Agreements" are only placeholders for future functionality of the app. They work, but the
             subsequent links on the pages they lead to do not.
           </ThemedText>
           <NavigationCard
@@ -134,6 +134,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     textAlign: "center",
     marginBottom: 16,
-    color: Colors.dark.disabled,
+    color: Colors.dark.warning,
   },
 });

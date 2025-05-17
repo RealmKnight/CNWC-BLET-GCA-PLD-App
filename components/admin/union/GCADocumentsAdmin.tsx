@@ -474,7 +474,7 @@ export function GCADocumentsAdmin() {
           <ThemedText style={styles.buttonText}>Uploading... {Math.round(uploadProgress * 100)}%</ThemedText>
         ) : (
           <>
-            <Ionicons name="cloud-upload-outline" size={20} color="#FFFFFF" />
+            <Ionicons name="cloud-upload-outline" size={20} color={Colors.dark.buttonText} />
             <ThemedText style={styles.buttonText}>Upload Document</ThemedText>
           </>
         )}
@@ -537,8 +537,8 @@ export function GCADocumentsAdmin() {
                 style={[styles.actionButton, styles.deleteButton]}
                 onPress={() => handleDeleteDocument(doc.id)}
               >
-                <Ionicons name="trash-outline" size={18} color={"#d32f2f"} />
-                <ThemedText style={[styles.actionButtonText, { color: "#d32f2f" }]}>Delete</ThemedText>
+                <Ionicons name="trash-outline" size={18} color={Colors.dark.buttonText} />
+                <ThemedText style={[styles.actionButtonText, { color: Colors.dark.buttonText }]}>Delete</ThemedText>
               </TouchableOpacity>
             </ThemedView>
           )}
@@ -824,6 +824,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     fontSize: 14,
     backgroundColor: Colors.dark.card,
+    color: Colors.dark.text,
   },
   textArea: {
     minHeight: 80,
@@ -946,6 +947,7 @@ const styles = StyleSheet.create({
   deleteButton: {
     borderColor: Colors.dark.error,
     backgroundColor: Colors.dark.error,
+    color: Colors.dark.buttonText,
   },
   modalOverlay: {
     flex: 1,

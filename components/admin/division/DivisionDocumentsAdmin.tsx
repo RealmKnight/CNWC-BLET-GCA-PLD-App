@@ -497,8 +497,8 @@ export function DivisionDocumentsAdmin({ division }: DivisionDocumentsAdminProps
                 style={[styles.actionButton, styles.deleteButton]}
                 onPress={() => handleDeleteDocument(document.id)}
               >
-                <Ionicons name="trash-outline" size={18} color={"#d32f2f"} />
-                <ThemedText style={[styles.actionButtonText, { color: "#d32f2f" }]}>Delete</ThemedText>
+                <Ionicons name="trash-outline" size={18} color={Colors.dark.buttonText} />
+                <ThemedText style={[styles.actionButtonText, { color: Colors.dark.buttonText }]}>Delete</ThemedText>
               </TouchableOpacity>
             </ThemedView>
           )}
@@ -834,24 +834,24 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: Colors.light.border,
-    backgroundColor: Colors.light.inputBackground,
+    borderColor: Colors.dark.border,
+    backgroundColor: Colors.dark.background,
   },
   categoryButtonActive: {
-    backgroundColor: Colors.light.tint,
-    borderColor: Colors.light.tint,
+    backgroundColor: Colors.dark.tint,
+    borderColor: Colors.dark.tint,
   },
   categoryButtonText: {
     fontSize: 12,
   },
   categoryButtonTextActive: {
-    color: Colors.light.background,
+    color: Colors.dark.background,
   },
   uploadButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.dark.tint,
     borderRadius: 6,
     paddingVertical: 12,
     marginTop: 8,
@@ -860,7 +860,7 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   uploadButtonText: {
-    color: Colors.light.buttonText,
+    color: Colors.dark.buttonText,
     fontWeight: "500",
     marginLeft: 8,
   },
@@ -881,15 +881,15 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 4,
     borderWidth: 1,
-    borderColor: Colors.light.border,
+    borderColor: Colors.dark.border,
   },
   actionButtonText: {
     fontSize: 12,
     marginLeft: 4,
   },
   deleteButton: {
-    borderColor: "#ffcdd2",
-    backgroundColor: "#ffebee",
+    borderColor: Colors.dark.error,
+    backgroundColor: Colors.dark.error,
   },
   modalOverlay: {
     flex: 1,

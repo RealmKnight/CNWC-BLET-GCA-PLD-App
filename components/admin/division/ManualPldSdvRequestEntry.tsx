@@ -27,6 +27,7 @@ import { insertSinglePldSdvRequest } from "@/utils/databaseApiLayer";
 import { supabase } from "@/utils/supabase";
 import Toast from "react-native-toast-message";
 import { DatePicker } from "@/components/DatePicker";
+import { Picker } from "@react-native-picker/picker";
 
 interface ManualPldSdvRequestEntryProps {
   selectedDivision: string;
@@ -80,6 +81,7 @@ async function updateRequestToApproved(requestId: string, adminUserId: string): 
 async function updateRequestStatus(
   requestId: string,
   newStatus: string,
+  newLeaveType: string,
   adminUserId: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
@@ -87,6 +89,7 @@ async function updateRequestStatus(
       .from("pld_sdv_requests")
       .update({
         status: newStatus,
+        leave_type: newLeaveType,
         responded_at: new Date().toISOString(),
         responded_by: adminUserId,
       })
@@ -136,9 +139,11 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
   const [showEditModal, setShowEditModal] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [selectedStatus, setSelectedStatus] = useState<string>("");
+  const [selectedLeaveType, setSelectedLeaveType] = useState<"PLD" | "SDV">("PLD");
 
   // Available statuses for admin editing
   const availableStatuses = ["approved", "pending", "waitlisted", "denied", "cancelled"];
+  const availableLeaveTypes = ["PLD", "SDV"];
 
   // Fetch calendar names when the component loads
   useEffect(() => {
@@ -483,7 +488,7 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     try {
       setIsUpdating(true);
 
-      const result = await updateRequestStatus(editingRequest.id, selectedStatus, adminUser.id);
+      const result = await updateRequestStatus(editingRequest.id, selectedStatus, selectedLeaveType, adminUser.id);
 
       if (result.success) {
         // Close modal and refresh requests
@@ -493,8 +498,8 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
         // Show success toast
         Toast.show({
           type: "success",
-          text1: "Status Updated",
-          text2: `Request for ${selectedMember.first_name} ${selectedMember.last_name} updated to ${selectedStatus}`,
+          text1: "Request Updated",
+          text2: `Request for ${selectedMember.first_name} ${selectedMember.last_name} updated to ${selectedStatus} (${selectedLeaveType})`,
         });
 
         // Refresh member requests
@@ -519,12 +524,13 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     } finally {
       setIsUpdating(false);
     }
-  }, [editingRequest, selectedStatus, adminUser, selectedMember, fetchMemberRequests]);
+  }, [editingRequest, selectedStatus, selectedLeaveType, adminUser, selectedMember, fetchMemberRequests]);
 
   // Function to open the edit modal
   const handleEditRequest = useCallback((request: PldSdvRequest) => {
     setEditingRequest(request);
     setSelectedStatus(request.status);
+    setSelectedLeaveType(request.leave_type as "PLD" | "SDV");
     setShowEditModal(true);
   }, []);
 
@@ -814,7 +820,7 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
         <View style={styles.modalOverlay}>
           <ThemedView style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <ThemedText style={styles.modalTitle}>Update Request Status</ThemedText>
+              <ThemedText style={styles.modalTitle}>Update Request</ThemedText>
               <ThemedTouchableOpacity onPress={handleCloseEditModal} style={styles.closeModalButton}>
                 <Ionicons name="close" size={24} color={Colors[colorScheme].text} />
               </ThemedTouchableOpacity>
@@ -826,7 +832,25 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
                 Member: {selectedMember?.first_name} {selectedMember?.last_name}
               </ThemedText>
               <ThemedText style={styles.modalInfoText}>Date: {formattedDate}</ThemedText>
-              <ThemedText style={styles.modalInfoText}>Type: {editingRequest.leave_type}</ThemedText>
+
+              {/* Leave Type Selector */}
+              <View style={styles.selectorContainer}>
+                <ThemedText style={styles.label}>Leave Type:</ThemedText>
+                <View style={styles.pickerContainer}>
+                  <Picker
+                    selectedValue={selectedLeaveType}
+                    onValueChange={(itemValue) => setSelectedLeaveType(itemValue as "PLD" | "SDV")}
+                    style={styles.picker}
+                    dropdownIconColor={Colors[colorScheme].text}
+                    enabled={!isUpdating}
+                  >
+                    {availableLeaveTypes.map((type) => (
+                      <Picker.Item key={type} label={type} value={type} />
+                    ))}
+                  </Picker>
+                </View>
+              </View>
+
               <ThemedText style={styles.modalInfoText}>
                 Current Status:{" "}
                 <ThemedText style={{ color: getStatusColor(editingRequest.status) }}>
@@ -858,10 +882,10 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
                 </View>
               </View>
 
-              {selectedStatus !== editingRequest.status && (
+              {(selectedStatus !== editingRequest.status || selectedLeaveType !== editingRequest.leave_type) && (
                 <ThemedText style={styles.updateWarning}>
                   <Ionicons name="warning-outline" size={16} color={Colors[colorScheme].warning} />
-                  This will update the request status and may trigger database calculations.
+                  This will update the request and may trigger database calculations.
                 </ThemedText>
               )}
 
@@ -876,9 +900,13 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
                   onPress={handleUpdateRequestStatus}
                   variant="primary"
                   style={styles.modalButton}
-                  disabled={isUpdating || selectedStatus === editingRequest.status || !selectedStatus}
+                  disabled={
+                    isUpdating ||
+                    (selectedStatus === editingRequest.status && selectedLeaveType === editingRequest.leave_type) ||
+                    !selectedStatus
+                  }
                 >
-                  {isUpdating ? "Updating..." : "Update Status"}
+                  {isUpdating ? "Updating..." : "Update Request"}
                 </Button>
               </View>
             </View>
@@ -1279,6 +1307,45 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     modalButton: {
       marginLeft: 8,
       minWidth: 100,
+    },
+    pickerContainer: {
+      flexDirection: "row",
+      overflow: "hidden",
+      marginBottom: 10,
+      backgroundColor: Colors.dark.card,
+      ...Platform.select({
+        ios: {
+          height: 120,
+        },
+        android: {
+          height: 50,
+        },
+        web: {
+          height: 40,
+        },
+      }),
+    },
+    picker: {
+      color: Colors.dark.text,
+      backgroundColor: Colors.dark.card,
+      borderColor: Colors.dark.border,
+      ...Platform.select({
+        android: {
+          height: 50,
+        },
+        ios: {
+          height: 120,
+        },
+        web: {
+          height: 40,
+        },
+      }),
+    },
+    selectorContainer: {
+      marginBottom: 16,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-evenly",
     },
   });
 
