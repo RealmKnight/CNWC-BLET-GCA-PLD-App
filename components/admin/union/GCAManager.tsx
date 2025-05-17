@@ -5,6 +5,7 @@ import { ThemedText } from "@/components/ThemedText";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { TabBar, Tab } from "@/components/admin/TabBar";
+import { GCADocumentsAdmin } from "./GCADocumentsAdmin";
 
 // Placeholder components for GCA management tabs
 const OfficersTab = () => (
@@ -22,12 +23,6 @@ const SettingsTab = () => (
 const MeetingsTab = () => (
   <ThemedView style={styles.tabContent}>
     <ThemedText>GCA Meetings Management Coming Soon</ThemedText>
-  </ThemedView>
-);
-
-const DocumentsTab = () => (
-  <ThemedView style={styles.tabContent}>
-    <ThemedText>GCA Documents Management Coming Soon</ThemedText>
   </ThemedView>
 );
 
@@ -51,7 +46,7 @@ export function GCAManager() {
       case "meetings":
         return <MeetingsTab />;
       case "documents":
-        return <DocumentsTab />;
+        return <GCADocumentsAdmin />;
       default:
         return null;
     }

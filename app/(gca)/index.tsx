@@ -14,16 +14,22 @@ export default function GCAScreen() {
           href="/(gca)/announcements"
         />
         <NavigationCard
-          title="GCA Officers"
-          description="Contact information for GCA officers"
-          icon="people"
-          href="/(gca)/officers"
+          title="Documents"
+          description="View general GCA documents and resources"
+          icon="document-text"
+          href="/(gca)/documents"
         />
         <NavigationCard
           title="Meeting Minutes"
           description="Access GCA meeting minutes and notes"
           icon="document-text"
           href="/(gca)/minutes"
+        />
+        <NavigationCard
+          title="GCA Officers and Members"
+          description="Contact information for GCA officers and members"
+          icon="people"
+          href="/(gca)/gca-officers"
         />
         <NavigationCard title="Bylaws" description="View GCA bylaws and regulations" icon="book" href="/(gca)/bylaws" />
         <NavigationCard

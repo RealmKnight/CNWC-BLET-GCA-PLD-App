@@ -28,6 +28,24 @@ export default function GCALayout() {
             title: "GCA Resources",
           }}
         />
+        <Stack.Screen
+          name="gca-officers"
+          options={{
+            title: "GCA Officers and Members",
+          }}
+        />
+        <Stack.Screen
+          name="documents"
+          options={{
+            title: "GCA Documents",
+          }}
+        />
+        <Stack.Screen
+          name="bylaws"
+          options={{
+            title: "GCA Bylaws",
+          }}
+        />
       </Stack>
     </LayoutWithAppHeader>
   );

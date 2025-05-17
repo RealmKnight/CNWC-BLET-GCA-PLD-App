@@ -68,6 +68,15 @@ export default function DivisionLayout() {
             },
           }}
         />
+        <Stack.Screen
+          name="[divisionName]/documents"
+          options={{
+            title: "Division Documents",
+            headerTitle: ({ children }) => {
+              return <ThemedText style={{ fontSize: 17, fontWeight: "600" }}>Documents</ThemedText>;
+            },
+          }}
+        />
       </Stack>
     </LayoutWithAppHeader>
   );

@@ -9,6 +9,7 @@ import { DivisionOfficers } from "./DivisionOfficers";
 import Animated, { FadeIn, FadeOut, SlideInRight, SlideOutLeft } from "react-native-reanimated";
 import { DivisionMeetings } from "./DivisionMeetings";
 import { useDivisionManagementStore, DivisionView } from "@/store/divisionManagementStore";
+import { DivisionDocumentsAdmin } from "./DivisionDocumentsAdmin";
 
 const AnimatedThemedView = Animated.createAnimatedComponent(ThemedView);
 
@@ -76,9 +77,7 @@ export function DivisionManagement({ division }: DivisionManagementProps) {
             contentContainerStyle={styles.contentContainer}
             nestedScrollEnabled={true}
           >
-            <ThemedView style={styles.placeholderContainer}>
-              <ThemedText style={styles.placeholderText}>Documents Management Coming Soon</ThemedText>
-            </ThemedView>
+            <DivisionDocumentsAdmin division={division} />
           </ScrollView>
         );
       case "officers":

@@ -28,6 +28,36 @@ export default function AgreementsLayout() {
             title: "Agreements",
           }}
         />
+        <Stack.Screen
+          name="current"
+          options={{
+            title: "Current Agreement",
+          }}
+        />
+        <Stack.Screen
+          name="local"
+          options={{
+            title: "Local Agreements",
+          }}
+        />
+        <Stack.Screen
+          name="side-letters"
+          options={{
+            title: "Side Letters",
+          }}
+        />
+        <Stack.Screen
+          name="historical"
+          options={{
+            title: "Historical Agreements",
+          }}
+        />
+        <Stack.Screen
+          name="updates"
+          options={{
+            title: "Agreement Updates",
+          }}
+        />
       </Stack>
     </LayoutWithAppHeader>
   );
