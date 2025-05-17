@@ -65,16 +65,16 @@ export default function HomeScreen() {
             href="/(claims)"
           />
           <NavigationCard
-            title="Tools & Links"
-            description="Access helpful tools and important links"
-            icon="construct"
-            href="/(tools)"
-          />
-          <NavigationCard
             title="Safety"
             description="Report safety concerns and access safety resources"
             icon="shield-checkmark"
             href="/(safety)"
+          />
+          <NavigationCard
+            title="Tools & Links"
+            description="Access helpful tools and important links"
+            icon="construct"
+            href="/(tools)"
           />
           <NavigationCard
             title="Training"

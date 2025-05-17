@@ -417,8 +417,11 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
                 const firstPattern = data[0];
                 set({ selectedMeetingPatternId: firstPattern.id });
 
-                // Fetch occurrences for the first pattern
-                await get().fetchMeetingOccurrences(firstPattern.id);
+                // Fetch occurrences for the first pattern (both past and future)
+                await get().fetchMeetingOccurrences(firstPattern.id, {
+                    start: addMonths(new Date(), -12),
+                    end: addMonths(new Date(), 12),
+                });
             }
 
             // Set up realtime subscriptions for this division
@@ -435,12 +438,18 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
     fetchMeetingOccurrences: async (
         patternId: string,
         dateRange?: { start: Date; end: Date },
+        includePastMeetings: boolean = true,
     ) => {
         set({ isLoading: true, error: null });
         try {
-            // Use provided date range or default to next 12 months
-            const start = dateRange?.start || new Date();
+            // Default end date is always 12 months in the future
             const end = dateRange?.end || addMonths(new Date(), 12);
+
+            // For start date:
+            // - If includePastMeetings is true, default to 12 months in the past
+            // - Otherwise use provided date or current date
+            const start = dateRange?.start ||
+                (includePastMeetings ? addMonths(new Date(), -12) : new Date());
 
             console.log(
                 `Fetching occurrences for pattern: ${patternId} from ${
@@ -448,17 +457,29 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
                 } to ${format(end, "yyyy-MM-dd")}`,
             );
 
-            // Query occurrences within the date range
-            const { data, error } = await supabase
+            // Build the query
+            let query = supabase
                 .from("meeting_occurrences")
                 .select("*")
                 .eq("meeting_pattern_id", patternId)
-                .gte(
+                .order("actual_scheduled_datetime_utc", { ascending: true });
+
+            // Apply date filters if specified
+            if (start) {
+                query = query.gte(
                     "actual_scheduled_datetime_utc",
                     format(start, "yyyy-MM-dd"),
-                )
-                .lte("actual_scheduled_datetime_utc", format(end, "yyyy-MM-dd"))
-                .order("actual_scheduled_datetime_utc", { ascending: true });
+                );
+            }
+
+            if (end) {
+                query = query.lte(
+                    "actual_scheduled_datetime_utc",
+                    format(end, "yyyy-MM-dd"),
+                );
+            }
+
+            const { data, error } = await query;
 
             if (error) throw error;
 

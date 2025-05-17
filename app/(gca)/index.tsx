@@ -8,10 +8,10 @@ export default function GCAScreen() {
     <ThemedScrollView style={styles.container}>
       <ThemedView style={styles.content}>
         <NavigationCard
-          title="Announcements"
+          title="GCA Announcements"
           description="Important GCA announcements and updates"
           icon="megaphone"
-          href="/(gca)/announcements"
+          href="/(gca)/gca-announcements"
         />
         <NavigationCard
           title="Documents"

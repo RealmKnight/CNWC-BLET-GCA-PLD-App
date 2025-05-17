@@ -102,6 +102,13 @@ export function DivisionMeetings({ division, isAdmin = false }: DivisionMeetings
     notes: "",
   });
 
+  // Date filter state for minutes tab
+  const [dateFilterType, setDateFilterType] = useState<"all" | "upcoming" | "past" | "custom">("all");
+  const [customDateRange, setCustomDateRange] = useState<{ start: Date | null; end: Date | null }>({
+    start: null,
+    end: null,
+  });
+
   // Use the store with individual selectors
   const meetings = useDivisionMeetingStore((state) => state.meetings);
   const occurrences = useDivisionMeetingStore((state) => state.occurrences);
@@ -270,6 +277,53 @@ export function DivisionMeetings({ division, isAdmin = false }: DivisionMeetings
     },
     [division, updateFormState]
   );
+
+  // Handle date filter change
+  const handleDateFilterChange = useCallback(
+    (filterType: "all" | "upcoming" | "past" | "custom") => {
+      setDateFilterType(filterType);
+
+      if (!selectedMeetingPatternId) return;
+
+      switch (filterType) {
+        case "all":
+          // Fetch both past and upcoming meetings (last 12 months to next 12 months)
+          fetchMeetingOccurrences(selectedMeetingPatternId, {
+            start: addMonths(new Date(), -12),
+            end: addMonths(new Date(), 12),
+          });
+          break;
+        case "upcoming":
+          // Fetch only upcoming meetings
+          fetchMeetingOccurrences(selectedMeetingPatternId, {
+            start: new Date(),
+            end: addMonths(new Date(), 12),
+          });
+          break;
+        case "past":
+          // Fetch only past meetings
+          fetchMeetingOccurrences(selectedMeetingPatternId, {
+            start: addMonths(new Date(), -12),
+            end: new Date(),
+          });
+          break;
+        case "custom":
+          // Will be handled when date range is specified
+          break;
+      }
+    },
+    [selectedMeetingPatternId, fetchMeetingOccurrences]
+  );
+
+  // Handle custom date range application
+  const applyCustomDateRange = useCallback(() => {
+    if (!selectedMeetingPatternId || !customDateRange.start || !customDateRange.end) return;
+
+    fetchMeetingOccurrences(selectedMeetingPatternId, {
+      start: customDateRange.start,
+      end: customDateRange.end,
+    });
+  }, [selectedMeetingPatternId, customDateRange, fetchMeetingOccurrences]);
 
   const setEditingMinutes = useCallback(
     (value: any) => {
@@ -983,6 +1037,8 @@ export function DivisionMeetings({ division, isAdmin = false }: DivisionMeetings
     const patternOccurrences = selectedMeetingPatternId ? occurrences[selectedMeetingPatternId] || [] : [];
     const patternMinutes = selectedOccurrenceId ? meetingMinutes[selectedOccurrenceId] || [] : [];
 
+    // Use the handler functions defined at component level
+
     return (
       <ThemedView style={styles.contentContainer}>
         <ThemedText style={styles.sectionTitle}>Meeting Minutes Management</ThemedText>
@@ -995,7 +1051,38 @@ export function DivisionMeetings({ division, isAdmin = false }: DivisionMeetings
               onValueChange={(value) => {
                 if (value) {
                   setSelectedOccurrenceId(null);
-                  fetchMeetingOccurrences(value);
+
+                  // Apply current date filter when changing pattern
+                  switch (dateFilterType) {
+                    case "all":
+                      fetchMeetingOccurrences(value, {
+                        start: addMonths(new Date(), -12),
+                        end: addMonths(new Date(), 12),
+                      });
+                      break;
+                    case "upcoming":
+                      fetchMeetingOccurrences(value, {
+                        start: new Date(),
+                        end: addMonths(new Date(), 12),
+                      });
+                      break;
+                    case "past":
+                      fetchMeetingOccurrences(value, {
+                        start: addMonths(new Date(), -12),
+                        end: new Date(),
+                      });
+                      break;
+                    case "custom":
+                      if (customDateRange.start && customDateRange.end) {
+                        fetchMeetingOccurrences(value, {
+                          start: customDateRange.start,
+                          end: customDateRange.end,
+                        });
+                      } else {
+                        fetchMeetingOccurrences(value);
+                      }
+                      break;
+                  }
                 }
               }}
               style={styles.picker}
@@ -1015,36 +1102,157 @@ export function DivisionMeetings({ division, isAdmin = false }: DivisionMeetings
         </View>
 
         {selectedMeetingPatternId && (
-          <View style={styles.occurrenceSelector}>
-            <ThemedText style={styles.selectorLabel}>Select Meeting Occurrence:</ThemedText>
-            <View style={styles.pickerContainer}>
-              <Picker
-                selectedValue={selectedOccurrenceId || ""}
-                onValueChange={(value) => {
-                  if (value) {
-                    setSelectedOccurrenceId(value);
-                    // Fetch minutes for this occurrence
-                    fetchMeetingMinutes(value);
-                    // Update selected occurrence
-                    setSelectedOccurrence(patternOccurrences.find((o) => o.id === value));
-                  }
-                }}
-                style={styles.picker}
-              >
-                <Picker.Item label="Select a meeting occurrence" value="" />
-                {patternOccurrences.map((occurrence) => {
-                  const dateTime = new Date(occurrence.actual_scheduled_datetime_utc);
-                  return (
-                    <Picker.Item
-                      key={occurrence.id}
-                      label={`${format(dateTime, "MMM d, yyyy")} at ${format(dateTime, "h:mm a")}`}
-                      value={occurrence.id}
+          <>
+            <View style={styles.dateFilterContainer}>
+              <ThemedText style={styles.selectorLabel}>Meeting Date Filter:</ThemedText>
+              <View style={styles.dateFilterButtons}>
+                <TouchableOpacity
+                  style={[styles.dateFilterButton, dateFilterType === "all" && styles.dateFilterButtonActive]}
+                  onPress={() => handleDateFilterChange("all")}
+                >
+                  <ThemedText
+                    style={[styles.dateFilterButtonText, dateFilterType === "all" && styles.dateFilterButtonTextActive]}
+                  >
+                    All Meetings
+                  </ThemedText>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.dateFilterButton, dateFilterType === "upcoming" && styles.dateFilterButtonActive]}
+                  onPress={() => handleDateFilterChange("upcoming")}
+                >
+                  <ThemedText
+                    style={[
+                      styles.dateFilterButtonText,
+                      dateFilterType === "upcoming" && styles.dateFilterButtonTextActive,
+                    ]}
+                  >
+                    Upcoming
+                  </ThemedText>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.dateFilterButton, dateFilterType === "past" && styles.dateFilterButtonActive]}
+                  onPress={() => handleDateFilterChange("past")}
+                >
+                  <ThemedText
+                    style={[
+                      styles.dateFilterButtonText,
+                      dateFilterType === "past" && styles.dateFilterButtonTextActive,
+                    ]}
+                  >
+                    Past
+                  </ThemedText>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.dateFilterButton, dateFilterType === "custom" && styles.dateFilterButtonActive]}
+                  onPress={() => handleDateFilterChange("custom")}
+                >
+                  <ThemedText
+                    style={[
+                      styles.dateFilterButtonText,
+                      dateFilterType === "custom" && styles.dateFilterButtonTextActive,
+                    ]}
+                  >
+                    Custom Range
+                  </ThemedText>
+                </TouchableOpacity>
+              </View>
+
+              {dateFilterType === "custom" && (
+                <View style={styles.customDateRangeContainer}>
+                  <View style={styles.dateInputContainer}>
+                    <ThemedText style={styles.dateInputLabel}>Start Date:</ThemedText>
+                    <TextInput
+                      style={styles.dateInput}
+                      placeholder="YYYY-MM-DD"
+                      value={customDateRange.start ? format(customDateRange.start, "yyyy-MM-dd") : ""}
+                      onChangeText={(text) => {
+                        try {
+                          // Basic validation
+                          if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+                            setCustomDateRange({
+                              ...customDateRange,
+                              start: parseISO(text),
+                            });
+                          }
+                        } catch (e) {
+                          // Handle invalid date
+                          console.error("Invalid date format", e);
+                        }
+                      }}
                     />
-                  );
-                })}
-              </Picker>
+                  </View>
+
+                  <View style={styles.dateInputContainer}>
+                    <ThemedText style={styles.dateInputLabel}>End Date:</ThemedText>
+                    <TextInput
+                      style={styles.dateInput}
+                      placeholder="YYYY-MM-DD"
+                      value={customDateRange.end ? format(customDateRange.end, "yyyy-MM-dd") : ""}
+                      onChangeText={(text) => {
+                        try {
+                          // Basic validation
+                          if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+                            setCustomDateRange({
+                              ...customDateRange,
+                              end: parseISO(text),
+                            });
+                          }
+                        } catch (e) {
+                          // Handle invalid date
+                          console.error("Invalid date format", e);
+                        }
+                      }}
+                    />
+                  </View>
+
+                  <Button
+                    variant="secondary"
+                    onPress={applyCustomDateRange}
+                    disabled={!customDateRange.start || !customDateRange.end}
+                  >
+                    Apply
+                  </Button>
+                </View>
+              )}
             </View>
-          </View>
+
+            <View style={styles.occurrenceSelector}>
+              <ThemedText style={styles.selectorLabel}>Select Meeting Occurrence:</ThemedText>
+              <View style={styles.pickerContainer}>
+                <Picker
+                  selectedValue={selectedOccurrenceId || ""}
+                  onValueChange={(value) => {
+                    if (value) {
+                      setSelectedOccurrenceId(value);
+                      // Fetch minutes for this occurrence
+                      fetchMeetingMinutes(value);
+                      // Update selected occurrence
+                      setSelectedOccurrence(patternOccurrences.find((o) => o.id === value));
+                    }
+                  }}
+                  style={styles.picker}
+                >
+                  <Picker.Item label="Select a meeting occurrence" value="" />
+                  {patternOccurrences.map((occurrence) => {
+                    const dateTime = new Date(occurrence.actual_scheduled_datetime_utc);
+                    const isPast = dateTime < new Date();
+                    return (
+                      <Picker.Item
+                        key={occurrence.id}
+                        label={`${format(dateTime, "MMM d, yyyy")} at ${format(dateTime, "h:mm a")}${
+                          isPast ? " (Past)" : ""
+                        }`}
+                        value={occurrence.id}
+                      />
+                    );
+                  })}
+                </Picker>
+              </View>
+            </View>
+          </>
         )}
 
         {selectedOccurrenceId && (
@@ -1898,5 +2106,63 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     justifyContent: "center",
     alignItems: "center",
+  },
+  // New styles for date filtering UI
+  dateFilterContainer: {
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    borderRadius: 8,
+    padding: 12,
+  },
+  dateFilterButtons: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 12,
+  },
+  dateFilterButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    borderRadius: 6,
+  },
+  dateFilterButtonActive: {
+    backgroundColor: Colors.light.tint,
+    borderColor: Colors.light.tint,
+  },
+  dateFilterButtonText: {
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  dateFilterButtonTextActive: {
+    color: Colors.light.background,
+  },
+  customDateRangeContainer: {
+    marginTop: 12,
+    padding: 12,
+    borderTopWidth: 1,
+    borderTopColor: Colors.light.border,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 16,
+  },
+  dateInputContainer: {
+    flex: 1,
+    minWidth: 150,
+  },
+  dateInputLabel: {
+    fontSize: 14,
+    marginBottom: 6,
+    fontWeight: "500",
+  },
+  dateInput: {
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    borderRadius: 6,
+    padding: 10,
+    fontSize: 14,
   },
 });
