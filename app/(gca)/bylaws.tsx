@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { StyleSheet } from "react-native";
+import { StyleSheet, Platform } from "react-native";
 import { useRouter } from "expo-router";
 import { supabase } from "@/utils/supabase";
 import { ThemedView } from "@/components/ThemedView";
@@ -219,6 +219,8 @@ export default function GCABylawsScreen() {
         animationType="slide"
         transparent={false}
         onRequestClose={() => setViewerVisible(false)}
+        hardwareAccelerated={Platform.OS === "android"}
+        statusBarTranslucent={false}
       >
         {selectedDocument && (
           <DocumentViewer

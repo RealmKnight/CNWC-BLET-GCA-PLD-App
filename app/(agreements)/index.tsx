@@ -31,12 +31,12 @@ export default function AgreementsScreen() {
           icon="time"
           href="/(agreements)/historical"
         />
-        <NavigationCard
+        {/* <NavigationCard
           title="Agreement Updates"
           description="View recent changes and updates to agreements"
           icon="git-compare"
           href="/(agreements)/updates"
-        />
+        /> */}
       </ThemedView>
     </ThemedScrollView>
   );

@@ -21,7 +21,7 @@ import { useSupabaseStorage } from "@/hooks/useSupabaseStorage";
 import { useDocumentManagement, Document, DocumentMetadata } from "@/hooks/useDocumentManagement";
 import { supabase } from "@/utils/supabase";
 import { DocumentBrowser } from "@/components/DocumentBrowser";
-import { DocumentViewer } from "@/components/DocumentViewer";
+import { DocumentViewer, Document as ViewerDocument } from "@/components/DocumentViewer";
 
 type ColorSchemeName = keyof typeof Colors;
 
@@ -42,6 +42,25 @@ const DOCUMENT_CATEGORIES: DocumentCategoryOption[] = [
 
 interface DivisionDocumentsAdminProps {
   division: string;
+}
+
+// Document type adapter function to convert between document types
+function adaptDocument(doc: Document): ViewerDocument {
+  return {
+    ...doc,
+    division_id: doc.division_id,
+    gca_id: doc.gca_id,
+    document_category: doc.document_category || undefined,
+  } as ViewerDocument;
+}
+
+function adaptViewerDocument(doc: ViewerDocument): Document {
+  return {
+    ...doc,
+    division_id: doc.division_id ?? null,
+    gca_id: doc.gca_id ?? null,
+    document_category: doc.document_category || "general",
+  } as Document;
 }
 
 export function DivisionDocumentsAdmin({ division }: DivisionDocumentsAdminProps) {
@@ -272,20 +291,22 @@ export function DivisionDocumentsAdmin({ division }: DivisionDocumentsAdminProps
   };
 
   // Handle document selection for viewing
-  const handleSelectDocument = async (document: Document) => {
-    setSelectedDocument(document);
+  const handleSelectDocument = async (doc: ViewerDocument) => {
+    // Convert ViewerDocument to Document type
+    const documentToUse = adaptViewerDocument(doc);
+    setSelectedDocument(documentToUse);
 
     try {
       // Get signed URL for the document
       const { data: urlData } = await supabase.storage
         .from(divisionDocBucket)
-        .createSignedUrl(document.storage_path, 3600);
+        .createSignedUrl(documentToUse.storage_path, 3600);
 
       if (urlData && urlData.signedUrl) {
         setDocumentUrl(urlData.signedUrl);
 
         // Fetch document versions
-        const versions = await fetchDocumentVersions(document.document_group_id);
+        const versions = await fetchDocumentVersions(documentToUse.document_group_id);
         setDocumentVersions(versions.data.filter((doc) => !doc.is_deleted));
 
         setViewerVisible(true);
@@ -317,11 +338,13 @@ export function DivisionDocumentsAdmin({ division }: DivisionDocumentsAdminProps
   };
 
   // Handle edit metadata
-  const handleEditMetadata = (document: Document) => {
-    setDocumentToEdit(document);
-    setEditName(document.display_name);
-    setEditDescription(document.description || "");
-    setEditCategory(document.document_category || "general");
+  const handleEditMetadata = (doc: ViewerDocument) => {
+    // Convert ViewerDocument to Document type
+    const documentToUse = adaptViewerDocument(doc);
+    setDocumentToEdit(documentToUse);
+    setEditName(documentToUse.display_name);
+    setEditDescription(documentToUse.description || "");
+    setEditCategory(documentToUse.document_category || "general");
     setEditReason("");
     setIsEditingMetadata(true);
   };
@@ -455,7 +478,7 @@ export function DivisionDocumentsAdmin({ division }: DivisionDocumentsAdminProps
         <ThemedText style={styles.sectionTitle}>Division Documents</ThemedText>
 
         <DocumentBrowser
-          documents={documents}
+          documents={documents.map(adaptDocument)}
           onSelectDocument={handleSelectDocument}
           onSearch={(term) => {
             setSearchTerm(term);
@@ -472,14 +495,15 @@ export function DivisionDocumentsAdmin({ division }: DivisionDocumentsAdminProps
           categories={DOCUMENT_CATEGORIES}
           onDownload={(documentId) => {
             const doc = documents.find((d) => d.id === documentId);
-            if (doc) handleSelectDocument(doc);
+            if (doc) handleSelectDocument(adaptDocument(doc));
           }}
           renderCustomActions={(document) => (
             <ThemedView style={styles.customActionsContainer}>
               <TouchableOpacity
                 style={styles.actionButton}
                 onPress={() => {
-                  setDocumentForNewVersion(document);
+                  const docToUse = adaptViewerDocument(document);
+                  setDocumentForNewVersion(docToUse);
                   setIsUploadingNewVersion(true);
                   resetDocument();
                 }}
@@ -516,12 +540,14 @@ export function DivisionDocumentsAdmin({ division }: DivisionDocumentsAdminProps
         animationType="slide"
         transparent={false}
         onRequestClose={() => setViewerVisible(false)}
+        hardwareAccelerated={Platform.OS === "android"} // Improves performance on Android
+        statusBarTranslucent={false} // Better compatibility on Android
       >
         {selectedDocument && documentUrl && (
           <DocumentViewer
-            document={selectedDocument}
+            document={adaptDocument(selectedDocument)}
             fileUrl={documentUrl}
-            versions={documentVersions}
+            versions={documentVersions.map(adaptDocument)}
             onClose={() => setViewerVisible(false)}
           />
         )}
@@ -533,6 +559,8 @@ export function DivisionDocumentsAdmin({ division }: DivisionDocumentsAdminProps
         animationType="fade"
         transparent={true}
         onRequestClose={() => setIsUploadingNewVersion(false)}
+        hardwareAccelerated={Platform.OS === "android"} // Improves performance on Android
+        statusBarTranslucent={false} // Better compatibility on Android
       >
         <ThemedView style={styles.modalOverlay}>
           <ThemedView style={styles.modalContent}>
@@ -609,6 +637,8 @@ export function DivisionDocumentsAdmin({ division }: DivisionDocumentsAdminProps
         animationType="fade"
         transparent={true}
         onRequestClose={() => setIsEditingMetadata(false)}
+        hardwareAccelerated={Platform.OS === "android"} // Improves performance on Android
+        statusBarTranslucent={false} // Better compatibility on Android
       >
         <ThemedView style={styles.modalOverlay}>
           <ThemedView style={styles.modalContent}>
@@ -738,7 +768,7 @@ const styles = StyleSheet.create({
   uploadSection: {
     width: 320,
     borderRightWidth: 1,
-    borderRightColor: Colors.light.border,
+    borderRightColor: Colors.dark.border,
   },
   documentsSection: {
     flex: 1,
@@ -768,13 +798,13 @@ const styles = StyleSheet.create({
   },
   textInput: {
     borderWidth: 1,
-    borderColor: Colors.light.border,
+    borderColor: Colors.dark.border,
     borderRadius: 6,
     paddingHorizontal: 12,
     paddingVertical: 8,
     fontSize: 14,
-    backgroundColor: Colors.light.inputBackground,
-    color: Colors.light.text,
+    backgroundColor: Colors.dark.background,
+    color: Colors.dark.text,
   },
   textArea: {
     minHeight: 80,
@@ -788,11 +818,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: Colors.light.border,
+    borderColor: Colors.dark.border,
     borderRadius: 6,
     borderStyle: "dashed",
     padding: 16,
-    backgroundColor: Colors.light.inputBackground,
+    backgroundColor: Colors.dark.background,
   },
   selectFileText: {
     marginLeft: 8,
@@ -802,10 +832,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     borderWidth: 1,
-    borderColor: Colors.light.border,
+    borderColor: Colors.dark.border,
     borderRadius: 6,
     padding: 12,
-    backgroundColor: Colors.light.inputBackground,
+    backgroundColor: Colors.dark.background,
   },
   selectedFileInfo: {
     flex: 1,
@@ -899,7 +929,7 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   modalContent: {
-    backgroundColor: Colors.light.background,
+    backgroundColor: Colors.dark.background,
     borderRadius: 8,
     padding: 20,
     width: "100%",
@@ -926,7 +956,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 4,
     borderWidth: 1,
-    borderColor: Colors.light.border,
+    borderColor: Colors.dark.border,
   },
   modalCancelButtonText: {
     fontSize: 14,
@@ -935,13 +965,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 4,
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.dark.tint,
   },
   modalSubmitButtonDisabled: {
     opacity: 0.5,
   },
   modalSubmitButtonText: {
     fontSize: 14,
-    color: Colors.light.buttonText,
+    color: Colors.dark.buttonText,
   },
 });

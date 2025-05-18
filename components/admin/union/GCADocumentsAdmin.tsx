@@ -556,6 +556,8 @@ export function GCADocumentsAdmin() {
         animationType="slide"
         transparent={false}
         onRequestClose={() => setViewerVisible(false)}
+        hardwareAccelerated={Platform.OS === "android"}
+        statusBarTranslucent={false}
       >
         {selectedDocument && documentUrl && (
           <DocumentViewer
@@ -573,6 +575,8 @@ export function GCADocumentsAdmin() {
         animationType="fade"
         transparent={true}
         onRequestClose={() => setIsUploadingNewVersion(false)}
+        hardwareAccelerated={Platform.OS === "android"}
+        statusBarTranslucent={false}
       >
         <ThemedView style={styles.modalOverlay}>
           <ThemedView style={styles.modalContent}>
@@ -649,6 +653,8 @@ export function GCADocumentsAdmin() {
         animationType="fade"
         transparent={true}
         onRequestClose={() => setIsEditingMetadata(false)}
+        hardwareAccelerated={Platform.OS === "android"}
+        statusBarTranslucent={false}
       >
         <ThemedView style={styles.modalOverlay}>
           <ThemedView style={styles.modalContent}>

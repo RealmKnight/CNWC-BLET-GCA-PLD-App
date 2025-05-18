@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { StyleSheet, TouchableOpacity } from "react-native";
+import { StyleSheet, TouchableOpacity, Platform } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { supabase } from "@/utils/supabase";
 import { ThemedView } from "@/components/ThemedView";
@@ -292,6 +292,8 @@ export default function DivisionDocumentsScreen() {
         animationType="slide"
         transparent={false}
         onRequestClose={() => setViewerVisible(false)}
+        hardwareAccelerated={Platform.OS === "android"}
+        statusBarTranslucent={false}
       >
         {selectedDocument && (
           <DocumentViewer

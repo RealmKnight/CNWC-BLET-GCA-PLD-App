@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { StyleSheet, Modal } from "react-native";
+import { StyleSheet, Modal, Platform } from "react-native";
 import { useRouter } from "expo-router";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -195,6 +195,8 @@ export default function LocalAgreementsScreen() {
         animationType="slide"
         transparent={false}
         onRequestClose={() => setViewerVisible(false)}
+        hardwareAccelerated={Platform.OS === "android"}
+        statusBarTranslucent={false}
       >
         {selectedDocument && (
           <DocumentViewer

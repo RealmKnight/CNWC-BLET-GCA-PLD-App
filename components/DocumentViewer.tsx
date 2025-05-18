@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { StyleSheet, TouchableOpacity, View, Platform, Image } from "react-native";
+import { StyleSheet, TouchableOpacity, View, Platform, Image, Linking } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { format, parseISO } from "date-fns";
 import * as WebBrowser from "expo-web-browser";
@@ -7,6 +7,7 @@ import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
 // Import our platform-specific PDF viewer
 import PdfViewer from "./PdfViewer";
+import { PdfViewerProps } from "./PdfViewer";
 import { WebView } from "react-native-webview";
 
 import { ThemedView } from "./ThemedView";
@@ -95,6 +96,20 @@ export function DocumentViewer({
     try {
       setIsDownloading(true);
 
+      const isAndroid = Platform.OS === "android";
+
+      // For Android, use WebBrowser for simpler file opening
+      if (isAndroid) {
+        try {
+          await WebBrowser.openBrowserAsync(fileUrl);
+          setIsDownloading(false);
+          return;
+        } catch (webError) {
+          console.log("WebBrowser failed, falling back to download:", webError);
+          // Continue with download as fallback
+        }
+      }
+
       // Ensure the directory exists
       const fileUri = FileSystem.documentDirectory + document.file_name;
 
@@ -105,18 +120,35 @@ export function DocumentViewer({
       });
 
       const result = await downloadResumable.downloadAsync();
-
       setIsDownloading(false);
 
       if (result && result.uri) {
         // Share the downloaded file
         if (await Sharing.isAvailableAsync()) {
           await Sharing.shareAsync(result.uri);
+        } else if (isAndroid) {
+          // If sharing isn't available on Android, try to open with Intent
+          try {
+            await WebBrowser.openBrowserAsync(`file://${result.uri}`);
+          } catch (e) {
+            console.error("Could not open file with WebBrowser:", e);
+            // Last resort - try direct link
+            Linking.openURL(fileUrl).catch((err) => console.error("Could not open URL:", err));
+          }
         }
       }
     } catch (error) {
       console.error("Download error:", error);
       setIsDownloading(false);
+
+      // For Android, try direct URL as last resort
+      if (Platform.OS === "android") {
+        try {
+          await Linking.openURL(fileUrl);
+        } catch (linkError) {
+          console.error("Could not open URL:", linkError);
+        }
+      }
     }
   };
 
@@ -130,26 +162,58 @@ export function DocumentViewer({
       );
     }
 
-    const isPdf = document.file_type.toLowerCase() === "pdf";
+    const fileType = document.file_type.toLowerCase();
+    const isPdf = fileType === "pdf";
+    const isImage = fileType.match(/^(png|jpg|jpeg|gif)$/) !== null;
+    const isAndroid = Platform.OS === "android";
 
+    // For PDFs, use our cross-platform PDF viewer
     if (isPdf) {
-      // Use our platform-specific PDF viewer
       return <PdfViewer url={fileUrl} title={document.display_name} />;
-    } else if (document.file_type.toLowerCase().match(/^(png|jpg|jpeg|gif)$/)) {
-      // For images
+    }
+    // For images
+    else if (isImage) {
       return (
         <View style={styles.imageContainer}>
           <Image source={{ uri: fileUrl }} style={styles.image} resizeMode="contain" />
         </View>
       );
-    } else {
-      // For other file types, show file info and download button
+    }
+    // For Office documents on Android, provide direct open option
+    else if (isAndroid && fileType.match(/^(doc|docx|xls|xlsx|ppt|pptx)$/)) {
+      return (
+        <ThemedView style={styles.fileInfoContainer}>
+          <Ionicons name="document-outline" size={64} color={Colors[colorScheme].text} style={styles.fileIcon} />
+          <ThemedText style={styles.fileInfoText}>
+            This file type ({document.file_type}) cannot be previewed in the app.
+          </ThemedText>
+          <ThemedText style={styles.fileInfoSubtext}>File size: {formatFileSize(document.file_size)}</ThemedText>
+          <TouchableOpacity style={styles.downloadButton} onPress={handleDownload} disabled={isDownloading}>
+            {isDownloading ? (
+              <ThemedView style={styles.downloadProgressContainer}>
+                <ThemedText style={styles.downloadButtonText}>
+                  Downloading... {Math.round(downloadProgress * 100)}%
+                </ThemedText>
+              </ThemedView>
+            ) : (
+              <>
+                <Ionicons name="open-outline" size={20} color={Colors[colorScheme].buttonText} />
+                <ThemedText style={styles.downloadButtonText}>Open in External App</ThemedText>
+              </>
+            )}
+          </TouchableOpacity>
+        </ThemedView>
+      );
+    }
+    // For all other file types, or on other platforms
+    else {
       return (
         <ThemedView style={styles.fileInfoContainer}>
           <Ionicons name="document-outline" size={64} color={Colors[colorScheme].text} style={styles.fileIcon} />
           <ThemedText style={styles.fileInfoText}>
             This file type ({document.file_type}) cannot be previewed.
           </ThemedText>
+          <ThemedText style={styles.fileInfoSubtext}>File size: {formatFileSize(document.file_size)}</ThemedText>
           <TouchableOpacity style={styles.downloadButton} onPress={handleDownload} disabled={isDownloading}>
             {isDownloading ? (
               <ThemedView style={styles.downloadProgressContainer}>
@@ -324,9 +388,9 @@ const styles = StyleSheet.create({
   },
   loadingContainer: {
     flex: 1,
-    justifyContent: "center",
     alignItems: "center",
-    padding: 20,
+    justifyContent: "center",
+    height: 300,
   },
   pdfContainer: {
     flex: 1,
@@ -362,6 +426,13 @@ const styles = StyleSheet.create({
     marginBottom: 24,
     lineHeight: 22,
   },
+  fileInfoSubtext: {
+    fontSize: 14,
+    textAlign: "center",
+    marginTop: 4,
+    marginBottom: 12,
+    opacity: 0.7,
+  },
   downloadButton: {
     backgroundColor: "#B4975A",
     borderRadius: 8,
@@ -376,8 +447,8 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   downloadProgressContainer: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
   },
   actionBar: {
     flexDirection: "row",
@@ -443,5 +514,31 @@ const styles = StyleSheet.create({
     opacity: 0.7,
     textAlign: "center",
     padding: 12,
+  },
+  fallbackContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+    height: 300,
+  },
+  fallbackText: {
+    textAlign: "center",
+    fontSize: 16,
+    opacity: 0.8,
+    marginVertical: 10,
+  },
+  androidButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+    marginTop: 16,
+    backgroundColor: "#B4975A",
+  },
+  androidButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "600",
+    fontSize: 16,
+    textAlign: "center",
   },
 });

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { StyleSheet, Modal, View } from "react-native";
+import { StyleSheet, Modal, View, Platform } from "react-native";
 import { useRouter } from "expo-router";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -254,10 +254,11 @@ export default function HistoricalAgreementsScreen() {
       {/* Modal always in component tree, just controlled by visibility */}
       <Modal
         visible={viewerVisible}
-        animationType="fade"
+        animationType="slide"
         transparent={false}
-        onRequestClose={closeViewer}
-        hardwareAccelerated={true}
+        onRequestClose={() => setViewerVisible(false)}
+        hardwareAccelerated={Platform.OS === "android"}
+        statusBarTranslucent={false}
         onShow={() => console.log("[HistoricalAgreements] Modal shown")}
       >
         {(() => {
