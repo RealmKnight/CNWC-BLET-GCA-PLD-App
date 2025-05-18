@@ -2,7 +2,16 @@ import { useEffect, useState } from "react";
 import { StyleSheet, TouchableOpacity, Platform, useWindowDimensions, Modal } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { format, parseISO, addDays, isAfter, differenceInHours, differenceInMinutes, differenceInDays } from "date-fns";
+import {
+  format,
+  parseISO,
+  addDays,
+  isAfter,
+  differenceInHours,
+  differenceInMinutes,
+  differenceInDays,
+  addHours,
+} from "date-fns";
 import { DateData } from "react-native-calendars";
 
 // Components
@@ -17,6 +26,7 @@ import { Calendar } from "react-native-calendars";
 import { MeetingOccurrence, MeetingMinute } from "@/store/divisionMeetingStore";
 import { MinutesBrowser } from "@/components/MinutesBrowser";
 import { MinutesReader } from "@/components/MinutesReader";
+import { handleCalendarExport } from "@/utils/calendarExport";
 
 type ColorSchemeName = keyof typeof Colors;
 
@@ -180,11 +190,27 @@ export default function MeetingsPage() {
       if (!occurrence.meeting_pattern_id) return;
 
       const calendarData = await exportCalendar(occurrence.meeting_pattern_id);
-      // This should handle the platform-specific calendar export
-      console.log("Calendar data generated:", calendarData);
 
-      // Here we would integrate with the device's calendar
-      // This implementation would be expanded in Phase 6
+      // Get meeting pattern details for the occurrence
+      const pattern = getMeetingPattern(occurrence);
+      const meetingDate = parseISO(occurrence.actual_scheduled_datetime_utc);
+      const meetingEndDate = addHours(meetingDate, 1); // Assume meetings last 1 hour
+
+      // Format the meeting details
+      const meetingDetails = {
+        title: pattern?.meeting_type ? `${pattern.meeting_type} Meeting` : "Division Meeting",
+        startDate: meetingDate,
+        endDate: meetingEndDate,
+        location: occurrence.location_name || pattern?.location_name || "",
+        notes: occurrence.agenda || pattern?.default_agenda || "",
+      };
+
+      // Handle export based on platform
+      const success = await handleCalendarExport(calendarData, meetingDetails);
+
+      if (!success) {
+        console.warn("Calendar export was not completed");
+      }
     } catch (error) {
       console.error("Error exporting calendar", error);
     }

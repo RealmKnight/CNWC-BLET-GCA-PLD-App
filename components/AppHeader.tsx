@@ -51,7 +51,7 @@ export function AppHeader() {
   // Initialize admin notifications for admin users
   useEffect(() => {
     if (isAdmin && user?.id && !hasInitializedRef.current) {
-      console.log("[AppHeader] Initializing admin notifications store for badging");
+      // console.log("[AppHeader] Initializing admin notifications store for badging");
 
       const cleanup = initializeAdminNotifications(
         user.id,
@@ -67,7 +67,7 @@ export function AppHeader() {
         // Only clean up on unmount if we're actually unmounting the entire component
         // or if the user/admin state changes
         if (cleanupRef.current) {
-          console.log("[AppHeader] Cleaning up admin notifications store on unmount");
+          // console.log("[AppHeader] Cleaning up admin notifications store on unmount");
           cleanupRef.current();
           cleanupRef.current = null;
           // Don't reset hasInitializedRef here to prevent re-initialization on re-renders
@@ -81,7 +81,7 @@ export function AppHeader() {
     return () => {
       // This will run when the component is fully unmounted
       if (cleanupRef.current) {
-        console.log("[AppHeader] Component unmounting, doing final cleanup");
+        // console.log("[AppHeader] Component unmounting, doing final cleanup");
         cleanupRef.current();
         cleanupAdminNotifications();
         cleanupRef.current = null;
@@ -90,44 +90,44 @@ export function AppHeader() {
     };
   }, []);
 
-  console.log("[AppHeader] State:", {
-    pathname,
-    segments,
-    isAdminRoute,
-    isAdmin,
-    userRole,
-    userId: user?.id,
-    memberPinNumber: member?.pin_number,
-    unreadAdminMessageCount: unreadCount,
-    showAdminBadge,
-    authStatus,
-    isLoggingOut,
-    isStoreInitialized: isInitialized,
-    hasInitializedLocally: hasInitializedRef.current,
-  });
+  // console.log("[AppHeader] State:", {
+  //   pathname,
+  //   segments,
+  //   isAdminRoute,
+  //   isAdmin,
+  //   userRole,
+  //   userId: user?.id,
+  //   memberPinNumber: member?.pin_number,
+  //   unreadAdminMessageCount: unreadCount,
+  //   showAdminBadge,
+  //   authStatus,
+  //   isLoggingOut,
+  //   isStoreInitialized: isInitialized,
+  //   hasInitializedLocally: hasInitializedRef.current,
+  // });
 
   // If we've signOut out, let the redirect in index.tsx handle the navigation
   if (isLoggingOut && authStatus === "signedOut") {
-    console.log("[AppHeader] Auth state is now signedOut, redirecting");
+    // console.log("[AppHeader] Auth state is now signedOut, redirecting");
     return <Redirect href="/(auth)/sign-in" />;
   }
 
   const handleHomePress = () => {
-    console.log("[AppHeader] Going to home tab");
+    // console.log("[AppHeader] Going to home tab");
     router.push("/(tabs)");
   };
 
   const handleSettingsPress = () => {
     // Already in admin? Go home.
     if (isAdminRoute) {
-      console.log("[AppHeader] Admin in admin route, going home");
+      // console.log("[AppHeader] Admin in admin route, going home");
       router.push("/(tabs)");
       return; // Exit early
     }
 
     // Not in admin route, check if user IS admin and has a role string
     if (isAdmin && typeof userRole === "string") {
-      console.log("[AppHeader] Going to admin page with role:", userRole);
+      // console.log("[AppHeader] Going to admin page with role:", userRole);
       switch (userRole) {
         case "division_admin":
           router.push("/(admin)/division_admin");
@@ -139,31 +139,31 @@ export function AppHeader() {
           router.push("/(admin)/application_admin");
           break;
         default:
-          console.warn("[AppHeader] Unknown member admin role, cannot navigate:", userRole);
+          // console.warn("[AppHeader] Unknown member admin role, cannot navigate:", userRole);
           // Optional: Navigate to a default admin route or show error
           // router.push("/(admin)");
           break;
       }
     } else {
       // Not an admin or role is not a string
-      console.log("[AppHeader] Settings pressed but user is not an admin or role unknown/invalid");
+      // console.log("[AppHeader] Settings pressed but user is not an admin or role unknown/invalid");
     }
   };
 
   const handleProfilePress = () => {
     if (member?.id) {
-      console.log("[AppHeader] Navigating to profile with member ID:", member.id);
+      // console.log("[AppHeader] Navigating to profile with member ID:", member.id);
       router.push(`/(profile)/${member.id}`);
     } else if (user?.id) {
-      console.log("[AppHeader] Navigating to profile with user ID:", user.id);
+      // console.log("[AppHeader] Navigating to profile with user ID:", user.id);
       router.push(`/(profile)/${user.id}`);
     } else {
-      console.log("[AppHeader] Profile pressed but no user ID or member ID available");
+      // console.log("[AppHeader] Profile pressed but no user ID or member ID available");
     }
   };
 
   const handleLogoutPress = async () => {
-    console.log("[AppHeader] Logging out");
+    // console.log("[AppHeader] Logging out");
     setIsLoggingOut(true);
     try {
       await signOut();
@@ -218,7 +218,7 @@ export function AppHeader() {
           <ThemedText type="title" style={styles.headerTitle}>
             {(() => {
               const title = getTabTitle();
-              console.log("[AppHeader] Rendering title:", { title, segments, isTabsRoute });
+              // console.log("[AppHeader] Rendering title:", { title, segments, isTabsRoute });
               return title;
             })()}
           </ThemedText>

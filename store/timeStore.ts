@@ -172,9 +172,9 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
                 .single();
             if (memberError) throw memberError;
             memberPin = memberData?.pin_number ?? null;
-            console.log(
-                `[TimeStore] Fetched PIN for member ${memberId}: ${memberPin}`,
-            );
+            // console.log(
+            //     `[TimeStore] Fetched PIN for member ${memberId}: ${memberPin}`,
+            // );
         } catch (error) {
             console.error(
                 `[TimeStore] Error fetching PIN for member ${memberId}:`,
@@ -393,9 +393,9 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
             const totalSdvs = safeParseInt(memberData.sdv_entitlement, 0);
             const rolledOverPlds = safeParseInt(memberData.pld_rolled_over, 0);
 
-            console.log(
-                `[TimeStore] Fetched base member stats: TotalPLD=${totalPlds}, TotalSDV=${totalSdvs}, RolledOver=${rolledOverPlds}`,
-            );
+            // console.log(
+            //     `[TimeStore] Fetched base member stats: TotalPLD=${totalPlds}, TotalSDV=${totalSdvs}, RolledOver=${rolledOverPlds}`,
+            // );
 
             // --- Step 2: Fetch Current Year Requests ---
             const regularRequestsPromise = supabase
@@ -455,12 +455,12 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
                     // Count approved and pending PIL requests
                     if (req.status === "approved" || req.status === "pending") {
                         paidInLieu[type]++;
-                        console.log(`[TimeStore] Counting PIL request:`, {
-                            id: req.id,
-                            type,
-                            status: req.status,
-                            isPIL: req.paid_in_lieu,
-                        });
+                        // console.log(`[TimeStore] Counting PIL request:`, {
+                        //     id: req.id,
+                        //     type,
+                        //     status: req.status,
+                        //     isPIL: req.paid_in_lieu,
+                        // });
                     }
                 } else {
                     switch (req.status) {

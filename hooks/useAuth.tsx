@@ -68,6 +68,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const pendingAuthUpdate = useRef<{ session: Session | null; source: string } | null>(null);
   const appStateTimeout = useRef<NodeJS.Timeout | null>(null);
   const initialAuthCompleteRef = useRef(false);
+  // Add a ref to track successfully initialized user IDs
+  const initializedUserIdRef = useRef<string | null>(null);
   // Refs for cleanup functions
   const notificationCleanupRef = useRef<(() => void) | null>(null);
   const calendarCleanupRef = useRef<(() => void) | null>(null);
@@ -318,17 +320,23 @@ export function AuthProvider({ children }: AuthProviderProps) {
       // --- Smart Cleanup Logic ---
       const previousUserId = user?.id; // Store current user ID before potential state changes
       const newUserId = newSession?.user?.id;
+
+      // Enhanced cleanup check logic - only cleanup if:
+      // 1. User has changed AND
+      // 2. This is not the user we've just initialized successfully
       const needsCleanup =
-        previousUserId !== newUserId || // User ID changed (includes login/logout/switch)
-        (!newUserId && previousUserId); // Explicitly handle logout (new is null, previous existed)
+        (previousUserId !== newUserId || (!newUserId && previousUserId)) && // User change
+        newUserId !== initializedUserIdRef.current; // Not the user we just initialized
 
       if (needsCleanup) {
         console.log(
           `[Auth] User change detected (Previous: ${previousUserId}, New: ${newUserId}). Running cleanup actions.`
         );
         runCleanupActions();
+      } else if (newUserId === initializedUserIdRef.current) {
+        console.log(`[Auth] Skipping cleanup for already initialized user ID: ${newUserId}`);
       } else {
-        console.log(`[Auth] User ID unchanged (${newUserId}). Skipping initial cleanup.`);
+        console.log(`[Auth] User ID unchanged (${newUserId}). Skipping cleanup.`);
       }
       // --- End Smart Cleanup Logic ---
 
@@ -409,6 +417,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
                 // Example condition
                 await initializeAdminStores(refreshedUser.id, "company_admin");
               }
+
+              // Mark this user as successfully initialized
+              initializedUserIdRef.current = refreshedUser.id;
+              console.log(`[Auth] Marked user ${refreshedUser.id} as successfully initialized`);
             } else {
               // MEMBER FLOW - Try to get member data
               console.log("[Auth] Checking for member data...");
@@ -452,6 +464,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
                       );
                     }
                   }
+
+                  // Mark this user as successfully initialized
+                  initializedUserIdRef.current = fetchedMemberData.id;
+                  console.log(`[Auth] Marked user ${fetchedMemberData.id} as successfully initialized`);
                 } else {
                   console.error("[Auth] Member data has null ID, cannot initialize stores");
                 }
@@ -481,6 +497,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
             setMember(null);
             setUserRole(null);
             setIsCompanyAdmin(false);
+          }
+
+          // Clear the initialized user ID ref on sign out
+          if (initializedUserIdRef.current) {
+            console.log(`[Auth] Clearing initialized user ID: ${initializedUserIdRef.current}`);
+            initializedUserIdRef.current = null;
           }
         }
 
@@ -638,6 +660,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const signOut = async () => {
     try {
       console.log("[Auth] Signing out and cleaning up all state...");
+
+      // Clear the initialized user ID before cleanup
+      initializedUserIdRef.current = null;
 
       // First, run our cleanup function to properly release resources
       runCleanupActions();

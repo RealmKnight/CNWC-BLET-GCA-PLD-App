@@ -85,7 +85,7 @@ function AuthAwareRouteHandler() {
 
   // If authStatus is not loading, assume we are ready to render the rest of the app
   // Let specific pages handle redirects based on the actual authStatus ('signedOut', 'needsAssociation', etc.)
-  console.log(`[Router] Auth status is '${authStatus}'. Rendering Slot.`);
+  // console.log(`[Router] Auth status is '${authStatus}'. Rendering Slot.`);
   return (
     <Suspense fallback={<LoadingScreen />} key="client-only-suspense">
       <Slot />

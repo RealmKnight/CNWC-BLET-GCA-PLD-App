@@ -73,6 +73,13 @@
           "photosPermission": "Allow BLET PLD App to access your photos to let you select images for uploading to use for advertisements.",
           "cameraPermission": "Allow BLET PLD App to access your camera to take photos for uploading to use for advertisements."
         }
+      ],
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "Allow BLET PLD App to access your calendar to add division meeting events.",
+          "remindersPermission": "Allow BLET PLD App to access your reminders to add meeting notifications."
+        }
       ]
     ],
     "experiments": {

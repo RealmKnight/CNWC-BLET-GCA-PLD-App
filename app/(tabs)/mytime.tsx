@@ -469,18 +469,18 @@ export default function MyTimeScreen() {
   } = useMyTime();
 
   // <<< --- ADDED DEBUG LOGGING useEffect --- >>>
-  useEffect(() => {
-    console.log("[MyTimeScreen] timeOffRequests changed in useEffect:", timeOffRequests);
-  }, [timeOffRequests]);
-  // <<< --- END DEBUG LOGGING useEffect --- >>>
+  // useEffect(() => {
+  //   console.log("[MyTimeScreen] timeOffRequests changed in useEffect:", timeOffRequests);
+  // }, [timeOffRequests]);
+  // // <<< --- END DEBUG LOGGING useEffect --- >>>
 
-  // <<< --- ADD DEBUG LOGGING --- >>>
-  console.log("[MyTimeScreen] Rendering with values:", {
-    isLoading,
-    error,
-    hasTimeStats: !!timeStats,
-    // timeStats, // Avoid logging large object directly unless needed
-  });
+  // // <<< --- ADD DEBUG LOGGING --- >>>
+  // console.log("[MyTimeScreen] Rendering with values:", {
+  //   isLoading,
+  //   error,
+  //   hasTimeStats: !!timeStats,
+  //   // timeStats, // Avoid logging large object directly unless needed
+  // });
   // <<< --- END DEBUG LOGGING --- >>>
 
   // Local UI state (non-data related) - Keep these
@@ -657,7 +657,7 @@ export default function MyTimeScreen() {
 
   // Added for SDV election
   const [isSavingSplitWeeks, setIsSavingSplitWeeks] = useState(false);
-  const [nextYearSplitWeeks, setNextYearSplitWeeks] = useState<number | null>(null);
+  const [nextYearSplitWeeks, setNextYearSplitWeeks] = useState<number>(0);
   const now = new Date();
   const currentYear = now.getFullYear();
 
@@ -682,8 +682,8 @@ export default function MyTimeScreen() {
 
         if (error) throw error;
 
-        if (data && data.next_vacation_split !== null) {
-          setNextYearSplitWeeks(data.next_vacation_split);
+        if (data) {
+          setNextYearSplitWeeks(data.next_vacation_split ?? 0);
         }
       } catch (error) {
         console.error("[MyTimeScreen] Error fetching next_vacation_split:", error);
@@ -810,7 +810,7 @@ export default function MyTimeScreen() {
                 <ThemedView style={styles.selectContainer}>
                   <ThemedText style={styles.splitWeeksLabel}>Select split weeks:</ThemedText>
                   <Picker
-                    selectedValue={nextYearSplitWeeks}
+                    selectedValue={nextYearSplitWeeks ?? 0}
                     onValueChange={(itemValue) => handleSplitWeeksChange(Number(itemValue))}
                     enabled={!isSavingSplitWeeks}
                     style={styles.picker}
