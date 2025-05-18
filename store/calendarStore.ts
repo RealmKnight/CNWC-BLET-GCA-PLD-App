@@ -1177,6 +1177,9 @@ export function setupCalendarSubscriptions() {
             requestDate: payload.eventType === "INSERT"
               ? payload.new.request_date
               : payload.old?.request_date,
+            requestId: payload.eventType === "INSERT"
+              ? payload.new.id
+              : payload.old?.id,
           },
         );
 
@@ -1201,14 +1204,49 @@ export function setupCalendarSubscriptions() {
           } else if (payload.eventType === "DELETE") {
             // Remove the date from sixMonthRequestDays
             const newSixMonthRequestDays = { ...state.sixMonthRequestDays };
-            delete newSixMonthRequestDays[payload.old.request_date];
+
             console.log(
-              "[CalendarStore Realtime] Removing six-month request date from state:",
+              "[CalendarStore Realtime] DELETE event received for six-month request. Request date:",
               payload.old.request_date,
-              "Updated days:",
+              "RequestId:",
+              payload.old.id,
+              "Current sixMonthRequestDays:",
               Object.keys(newSixMonthRequestDays),
             );
-            state.setSixMonthRequestDays(newSixMonthRequestDays);
+
+            if (payload.old && payload.old.request_date) {
+              delete newSixMonthRequestDays[payload.old.request_date];
+              console.log(
+                "[CalendarStore Realtime] Removing six-month request date from state:",
+                payload.old.request_date,
+                "Updated days:",
+                Object.keys(newSixMonthRequestDays),
+              );
+
+              // Force a state update with the new object
+              state.setSixMonthRequestDays({ ...newSixMonthRequestDays });
+
+              // Force a refresh of the timeStore data as well
+              try {
+                const timeStore = useTimeStore.getState();
+                if (timeStore.memberId) {
+                  console.log(
+                    "[CalendarStore Realtime] Triggering timeStore refresh after six-month cancellation",
+                  );
+                  timeStore.triggerPldSdvRefresh();
+                }
+              } catch (refreshError) {
+                console.error(
+                  "[CalendarStore Realtime] Error refreshing timeStore:",
+                  refreshError,
+                );
+              }
+            } else {
+              console.error(
+                "[CalendarStore Realtime] DELETE event missing payload.old.request_date:",
+                payload,
+              );
+            }
           } else if (payload.eventType === "UPDATE") {
             console.log(
               "[CalendarStore Realtime] Detected UPDATE for six-month request:",

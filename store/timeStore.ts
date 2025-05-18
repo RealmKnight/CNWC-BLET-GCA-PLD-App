@@ -6,6 +6,7 @@ import {
 } from "@supabase/supabase-js";
 import { Database } from "@/types/supabase";
 import { useUserStore } from "@/store/userStore"; // Import user store
+import { useCalendarStore } from "@/store/calendarStore"; // Import calendar store
 // Import specific table types
 type DbMembers = Database["public"]["Tables"]["members"]["Row"];
 type DbPldSdvRequests = Database["public"]["Tables"]["pld_sdv_requests"]["Row"];
@@ -926,11 +927,14 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
         set({ isSubmittingAction: true, error: null });
 
         try {
-            // Call the verified database function
-            const { data, error } = await supabase.rpc("cancel_leave_request", {
-                p_request_id: requestId,
-                p_member_id: memberId,
-            });
+            // Call the verified database function with schema name
+            const { data, error } = await supabase.schema("public").rpc(
+                "cancel_leave_request",
+                {
+                    p_request_id: requestId,
+                    p_member_id: memberId,
+                },
+            );
 
             if (error) throw error;
 
@@ -988,7 +992,30 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
             return false;
         }
         try {
-            const { error } = await supabase
+            // First, get the request date for debugging
+            const { data: requestData, error: fetchError } = await supabase
+                .schema("public")
+                .from("six_month_requests")
+                .select("id, request_date")
+                .eq("id", requestId)
+                .eq("member_id", memberId)
+                .single();
+
+            if (fetchError) {
+                console.error(
+                    `[TimeStore] Error fetching six-month request before deletion:`,
+                    fetchError,
+                );
+            } else {
+                console.log(
+                    `[TimeStore] Found six-month request to cancel:`,
+                    requestData,
+                );
+            }
+
+            // Execute the delete operation
+            const { data, error } = await supabase
+                .schema("public")
                 .from("six_month_requests")
                 .delete()
                 .eq("id", requestId)
@@ -997,10 +1024,36 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
 
             if (error) throw error;
 
+            console.log("[TimeStore] Six-month request deletion result:", data);
             set({ isSubmittingAction: false });
             console.log("[TimeStore] Cancel six-month request successful");
+
             // Refresh data after cancellation
             await get().refreshAll(memberId);
+
+            // Update the sixMonthRequestDays in calendarStore if available
+            try {
+                const calendarStore = useCalendarStore.getState();
+                if (
+                    requestData?.request_date &&
+                    calendarStore.setSixMonthRequestDays
+                ) {
+                    const currentDays = {
+                        ...calendarStore.sixMonthRequestDays,
+                    };
+                    delete currentDays[requestData.request_date];
+                    console.log(
+                        `[TimeStore] Manually updating calendarStore.sixMonthRequestDays for date ${requestData.request_date}`,
+                    );
+                    calendarStore.setSixMonthRequestDays(currentDays);
+                }
+            } catch (calendarError) {
+                console.error(
+                    "[TimeStore] Error updating calendarStore:",
+                    calendarError,
+                );
+            }
+
             return true;
         } catch (error) {
             console.error(
@@ -1059,7 +1112,9 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
         set({ isSubmittingAction: true, error: null });
 
         try {
+            // Try with explicit schema name
             const { data, error } = await supabase
+                .schema("public")
                 .from("pld_sdv_requests")
                 .insert({
                     member_id: memberId,
@@ -1068,10 +1123,10 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
                     leave_type: leaveType,
                     status: "pending", // Initial status
                     paid_in_lieu: isPaidInLieu,
-                    import_source: "app", // Add this to satisfy the trigger function
-                    imported_at: new Date().toISOString(), // Add timestamp
+                    import_source: "app",
+                    imported_at: new Date().toISOString(),
                 })
-                .select() // Select the inserted row to confirm
+                .select()
                 .single();
 
             if (error) throw error;
@@ -1108,14 +1163,16 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
         }
         set({ isSubmittingAction: true, error: null });
         try {
+            // Try with explicit schema name
             const { data, error } = await supabase
+                .schema("public")
                 .from("six_month_requests")
                 .insert({
                     member_id: memberId,
                     calendar_id: member.calendar_id,
                     request_date: date,
                     leave_type: leaveType,
-                    metadata: { import_source: "app" }, // Add metadata with import source instead
+                    // No metadata needed - validation trigger has been removed
                 })
                 .select()
                 .single();
