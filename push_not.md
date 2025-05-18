@@ -1102,19 +1102,20 @@ Users should have finer control over which notifications they receive as push no
       code TEXT NOT NULL UNIQUE,
       description TEXT,
       default_importance TEXT NOT NULL DEFAULT 'medium',
+      is_mandatory BOOLEAN DEFAULT false,
       created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
       updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
   );
 
-  INSERT INTO notification_categories (name, code, description, default_importance) VALUES
-  ('System Alerts', 'system_alert', 'Critical system-wide alerts and announcements', 'high'),
-  ('Must-Read Messages', 'must_read', 'Important messages requiring acknowledgment', 'high'),
-  ('Admin Messages', 'admin_message', 'Messages from administrators', 'high'),
-  ('GCA Announcements', 'gca_announcement', 'General Chairman Association announcements', 'medium'),
-  ('Division Announcements', 'division_announcement', 'Division-specific announcements', 'medium'),
-  ('Status Updates', 'status_update', 'Updates on request statuses', 'medium'),
-  ('Roster Changes', 'roster_change', 'Changes to rosters or assignments', 'medium'),
-  ('General Messages', 'general_message', 'Regular messages from other users', 'low');
+  INSERT INTO notification_categories (name, code, description, default_importance, is_mandatory) VALUES
+  ('System Alerts', 'system_alert', 'Critical system-wide alerts and announcements', 'high', true),
+  ('Must-Read Messages', 'must_read', 'Important messages requiring acknowledgment', 'high', true),
+  ('Admin Messages', 'admin_message', 'Messages from administrators', 'high', false),
+  ('GCA Announcements', 'gca_announcement', 'General Chairman Association announcements', 'medium', false),
+  ('Division Announcements', 'division_announcement', 'Division-specific announcements', 'medium', false),
+  ('Status Updates', 'status_update', 'Updates on request statuses', 'medium', false),
+  ('Roster Changes', 'roster_change', 'Changes to rosters or assignments', 'medium', false),
+  ('General Messages', 'general_message', 'Regular messages from other users', 'low', false);
   ```
 
 - [ ] **Create User Notification Preferences System**
@@ -1134,9 +1135,9 @@ Users should have finer control over which notifications they receive as push no
   );
   ```
 
-- [ ] **Update Profile UI for Notification Preferences**
+- [ ] **Update Profile UI for Notification Preferences with Hybrid Priority Approach**
 
-  - [ ] Add expanded notification settings screen with category controls
+  - [ ] Add expanded notification settings screen with category controls that respects system priorities for critical notifications
 
   ```typescript
   // app/(profile)/notification-preferences.tsx
@@ -1153,6 +1154,7 @@ Users should have finer control over which notifications they receive as push no
 
   type ColorScheme = keyof typeof Colors;
 
+  // Delivery method options for notifications
   const deliveryMethods = [
     { id: "default", label: "Default (Based on Contact Preference)" },
     { id: "push", label: "Push Notification" },
@@ -1212,7 +1214,21 @@ Users should have finer control over which notifications they receive as push no
       setLoading(false);
     }
 
-    async function updatePreference(categoryCode, field, value) {
+    async function updatePreference(categoryCode, field, value, isMandatory) {
+      // If this is a mandatory notification and the user is trying to disable it,
+      // we won't allow that change
+      if (isMandatory && field === "enabled" && value === false) {
+        alert("This notification type cannot be disabled as it contains critical information.");
+        return;
+      }
+
+      // If this is a mandatory notification and the user is trying to set to "none",
+      // we won't allow that change
+      if (isMandatory && field === "deliveryMethod" && value === "none") {
+        alert("Critical notifications cannot be set to 'None'. Please choose a different delivery method.");
+        return;
+      }
+
       // Update local state immediately for responsive UI
       setPreferences((prev) => ({
         ...prev,
@@ -1253,19 +1269,28 @@ Users should have finer control over which notifications they receive as push no
               enabled: true,
             };
 
+            const isMandatory = category.is_mandatory;
+
             return (
               <ThemedView key={category.code} style={styles.categoryItem}>
                 <ThemedView style={styles.categoryHeader}>
                   <ThemedText type="subtitle">{category.name}</ThemedText>
                   <Switch
                     value={pref.enabled}
-                    onValueChange={(value) => updatePreference(category.code, "enabled", value)}
+                    onValueChange={(value) => updatePreference(category.code, "enabled", value, isMandatory)}
                     trackColor={{ false: "#767577", true: Colors[theme].tint }}
                     thumbColor="#f4f3f4"
+                    disabled={isMandatory} // Disable toggle for mandatory notifications
                   />
                 </ThemedView>
 
                 <ThemedText style={styles.categoryDescription}>{category.description}</ThemedText>
+
+                {isMandatory && (
+                  <ThemedView style={styles.mandatoryTag}>
+                    <ThemedText style={styles.mandatoryText}>Required</ThemedText>
+                  </ThemedView>
+                )}
 
                 <ThemedView style={styles.deliveryMethodContainer}>
                   <ThemedText style={styles.deliveryLabel}>Delivery Method:</ThemedText>
@@ -1273,15 +1298,30 @@ Users should have finer control over which notifications they receive as push no
                   {deliveryMethods.map((method) => (
                     <ThemedView key={method.id} style={styles.radioOption}>
                       <TouchableOpacity
-                        onPress={() => updatePreference(category.code, "deliveryMethod", method.id)}
+                        onPress={() => updatePreference(category.code, "deliveryMethod", method.id, isMandatory)}
                         style={styles.radioButton}
+                        disabled={isMandatory && method.id === "none"} // Disable "None" option for mandatory notifications
                       >
                         <Ionicons
                           name={pref.deliveryMethod === method.id ? "radio-button-on" : "radio-button-off"}
                           size={24}
-                          color={pref.deliveryMethod === method.id ? Colors[theme].tint : Colors[theme].textDim}
+                          color={
+                            isMandatory && method.id === "none"
+                              ? Colors[theme].textDimmer // Dimmed color for disabled option
+                              : pref.deliveryMethod === method.id
+                              ? Colors[theme].tint
+                              : Colors[theme].textDim
+                          }
                         />
-                        <ThemedText style={styles.radioLabel}>{method.label}</ThemedText>
+                        <ThemedText
+                          style={[
+                            styles.radioLabel,
+                            isMandatory && method.id === "none" ? { color: Colors[theme].textDimmer } : null,
+                          ]}
+                        >
+                          {method.label}
+                          {isMandatory && method.id === "none" && " (Not Available)"}
+                        </ThemedText>
                       </TouchableOpacity>
                     </ThemedView>
                   ))}
@@ -1313,7 +1353,8 @@ Users should have finer control over which notifications they receive as push no
                       },
                     ]}
                   >
-                    Importance: {category.default_importance.toUpperCase()}
+                    Priority: {category.default_importance.toUpperCase()}
+                    {isMandatory ? " (Fixed)" : ""}
                   </ThemedText>
                 </ThemedView>
               </ThemedView>
@@ -1387,14 +1428,28 @@ Users should have finer control over which notifications they receive as push no
       fontSize: 12,
       fontWeight: "600",
     },
+    mandatoryTag: {
+      backgroundColor: "rgba(255, 59, 48, 0.1)",
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 4,
+      alignSelf: "flex-start",
+      marginBottom: 12,
+    },
+    mandatoryText: {
+      fontSize: 12,
+      fontWeight: "600",
+      color: "#ff3b30",
+    },
   });
   ```
 
 ### Notification Delivery Logic
 
-- [ ] **Update Notification Sending Functions**
+- [ ] **Update Notification Sending Functions with Hybrid Priority Approach**
 
   - [ ] Check user preference for specific notification category
+  - [ ] Enforce system priorities for mandatory notifications
   - [ ] Default to global preference if no category-specific preference exists
 
   ```typescript
@@ -1406,7 +1461,25 @@ Users should have finer control over which notifications they receive as push no
     importance: string
   ): Promise<boolean> {
     try {
-      // First check if the user has a specific preference for this category
+      // First check if the category is mandatory (system-critical)
+      const { data: category, error: categoryError } = await supabase
+        .from("notification_categories")
+        .select("is_mandatory, default_importance")
+        .eq("code", categoryCode)
+        .single();
+
+      if (categoryError) {
+        console.error("Error checking category:", categoryError);
+        // Default to sending for safety if we can't determine
+        return true;
+      }
+
+      // If this is a mandatory high-importance notification, always send it
+      if (category?.is_mandatory && category.default_importance === "high") {
+        return true;
+      }
+
+      // Check if the user has a specific preference for this category
       const { data: categoryPref, error: catError } = await supabase
         .from("user_notification_preferences")
         .select("delivery_method, enabled")
@@ -1420,12 +1493,20 @@ Users should have finer control over which notifications they receive as push no
       }
 
       // If user has a specific preference for this category and it's enabled
-      if (categoryPref && categoryPref.enabled) {
+      if (categoryPref) {
+        // If the category is explicitly disabled and not mandatory, don't send
+        if (!categoryPref.enabled && !category?.is_mandatory) return false;
+
         // Return true if delivery method is 'push'
         if (categoryPref.delivery_method === "push") return true;
 
-        // Return false if delivery method is 'in_app' or 'none'
-        if (categoryPref.delivery_method === "in_app" || categoryPref.delivery_method === "none") return false;
+        // Return false if delivery method is 'in_app' or 'none' (unless mandatory)
+        if (
+          categoryPref.delivery_method === "in_app" ||
+          (categoryPref.delivery_method === "none" && !category?.is_mandatory)
+        ) {
+          return false;
+        }
       }
 
       // If we're here, either no specific preference exists or it's set to "default"
@@ -1438,7 +1519,7 @@ Users should have finer control over which notifications they receive as push no
 
       if (userError) {
         console.error("Error checking user preference:", userError);
-        return false;
+        return category?.is_mandatory || false; // If mandatory, still send even if error
       }
 
       // If global preference is push, check importance level
@@ -1451,76 +1532,11 @@ Users should have finer control over which notifications they receive as push no
         return importance !== "low"; // Send medium and high only
       }
 
-      return false;
+      // Final fallback - send mandatory notifications, don't send others
+      return category?.is_mandatory || false;
     } catch (error) {
       console.error("Error in shouldSendPushNotification:", error);
       return false;
-    }
-  }
-
-  export async function sendNotification(
-    userId: string,
-    title: string,
-    body: string,
-    categoryCode: string,
-    messageId: string,
-    importance: "high" | "medium" | "low" = "medium",
-    additionalData: Record<string, any> = {}
-  ) {
-    try {
-      // Always insert into notifications table (for in-app)
-      const { data: notification, error: notifError } = await supabase
-        .from("notifications")
-        .insert({
-          user_id: userId,
-          title: title,
-          message: body,
-          notification_type: categoryCode,
-          related_id: messageId,
-          importance_level: importance,
-          data: additionalData,
-        })
-        .select()
-        .single();
-
-      if (notifError) {
-        console.error("Error inserting notification:", notifError);
-        return false;
-      }
-
-      // Check if we should send a push notification based on user preferences
-      const shouldSendPush = await shouldSendPushNotification(userId, categoryCode, importance);
-
-      if (shouldSendPush) {
-        // Get notification type from category code
-        const notificationType = getNotificationTypeFromCategory(categoryCode);
-
-        // Send push notification
-        return await sendTypedPushNotification(userId, title, body, notificationType, messageId, {
-          ...additionalData,
-          importance: importance,
-          categoryCode: categoryCode,
-        });
-      }
-
-      return true; // Successfully processed (even if no push was sent)
-    } catch (error) {
-      console.error("Error sending notification:", error);
-      return false;
-    }
-  }
-
-  // Helper to map category codes to notification types
-  function getNotificationTypeFromCategory(categoryCode: string): NotificationType {
-    switch (categoryCode) {
-      case "admin_message":
-        return NotificationType.ADMIN_MESSAGE;
-      case "gca_announcement":
-        return NotificationType.GCA_ANNOUNCEMENT;
-      case "division_announcement":
-        return NotificationType.DIVISION_ANNOUNCEMENT;
-      default:
-        return NotificationType.REGULAR_MESSAGE;
     }
   }
   ```
@@ -2407,3 +2423,296 @@ Since users in your industry may have devices off for extended periods (up to 12
       }
     };
     ```
+
+## Hybrid Notification Priority System
+
+The notification system will implement a hybrid approach that balances system-defined priorities with user preferences:
+
+- [ ] **System-Defined Critical Priorities**
+
+  - [ ] Maintain fixed high priority for critical notifications:
+    - System alerts will always use maximum priority
+    - Must-read messages will always use high priority
+    - Messages marked as requiring acknowledgment maintain high priority
+    - Safety-critical communications cannot be downgraded by user preferences
+
+- [ ] **User-Controlled Subscription Model**
+
+  - [ ] Allow users to subscribe/unsubscribe from non-critical notification types:
+
+    - Division announcements
+    - GCA announcements
+    - Regular messages
+    - Status updates
+    - Roster changes
+
+  - [ ] Allow delivery method customization while preserving priority:
+
+    ```typescript
+    // Example API for sending with hybrid priority approach
+    async function sendNotificationWithHybridPriority(
+      userId: string,
+      notification: {
+        title: string;
+        body: string;
+        categoryCode: string;
+        messageId: string;
+        requiresAcknowledgment?: boolean;
+      }
+    ) {
+      // Get the category's default importance and mandatory status
+      const { data: category } = await supabase
+        .from("notification_categories")
+        .select("default_importance, is_mandatory")
+        .eq("code", notification.categoryCode)
+        .single();
+
+      // If requires acknowledgment, force high importance
+      const importance = notification.requiresAcknowledgment ? "high" : category?.default_importance || "medium";
+
+      // Check if we should send via push based on user preferences
+      // but honor the system-defined priority if it's sent
+      const shouldSendPush = await shouldSendPushNotification(userId, notification.categoryCode, importance);
+
+      if (shouldSendPush) {
+        // System-defined priority is preserved even if user subscribed to this category
+        // This ensures critical notifications are always delivered with appropriate urgency
+        const notificationType = getNotificationTypeFromCategory(notification.categoryCode);
+        const priority = getPriorityForNotification(notification.categoryCode, importance);
+
+        await sendPushWithSystemPriority(
+          userId,
+          notification.title,
+          notification.body,
+          notificationType,
+          notification.messageId,
+          priority
+        );
+      }
+    }
+    ```
+
+- [ ] **Priority Enforcement**
+
+  - [ ] Create logic in notification service to enforce system-defined priorities:
+
+    ```typescript
+    // Example of priority enforcement logic
+    function getPriorityForNotification(
+      categoryCode: string,
+      userSelectedImportance: string
+    ): AndroidNotificationPriority {
+      // System-defined overrides
+      if (categoryCode === "system_alert") return Notifications.AndroidNotificationPriority.MAX;
+      if (categoryCode === "must_read") return Notifications.AndroidNotificationPriority.HIGH;
+
+      // Map importance to Android priority levels
+      switch (userSelectedImportance) {
+        case "high":
+          return Notifications.AndroidNotificationPriority.HIGH;
+        case "medium":
+          return Notifications.AndroidNotificationPriority.DEFAULT;
+        case "low":
+          return Notifications.AndroidNotificationPriority.LOW;
+        default:
+          return Notifications.AndroidNotificationPriority.DEFAULT;
+      }
+    }
+    ```
+
+The hybrid approach ensures that:
+
+1. Critical safety communications are always delivered with appropriate urgency
+2. Users have control over which non-critical notifications they receive
+3. System-defined priorities for critical notifications cannot be downgraded
+4. The user experience remains consistent with the importance of the notification content
+
+## Notification System Architecture Overview
+
+The push notification system architecture follows a modern, scalable approach using Zustand stores for state management rather than React Context providers. This section provides a comprehensive overview of how the entire system fits together.
+
+### System Bootstrapping and Initialization
+
+- [ ] **Root-Level Initialization in `_layout.tsx`**
+
+  ```typescript
+  // app/_layout.tsx
+  import * as Notifications from "expo-notifications";
+  import { useEffect } from "react";
+  import { usePushTokenStore } from "@/store/pushTokenStore";
+  import { useAuth } from "@/hooks/useAuth";
+  import { configureNotifications } from "@/utils/notificationConfig";
+  import { AppState, Platform } from "react-native";
+
+  export default function RootLayout() {
+    const { session, authStatus } = useAuth();
+    const { registerDevice, unregisterDevice, refreshToken } = usePushTokenStore();
+
+    // One-time notification configuration
+    useEffect(() => {
+      // Platform-specific configuration (independent of auth state)
+      if (Platform.OS !== "web") {
+        configureNotifications();
+      }
+
+      // Set up notification response handler
+      const responseListener = setupNotificationTapHandler();
+
+      // Check for initial notification (app opened from notification)
+      getInitialNotification();
+
+      return () => {
+        // Clean up listener on unmount
+        if (responseListener) {
+          Notifications.removeNotificationSubscription(responseListener);
+        }
+      };
+    }, []);
+
+    // Auth-dependent token registration
+    useEffect(() => {
+      if (authStatus === "authenticated" && session?.user?.id && Platform.OS !== "web") {
+        console.log("[PushNotification] Auth initialized, registering token");
+        registerDevice(session.user.id);
+
+        return () => {
+          if (authStatus !== "authenticated") {
+            unregisterDevice();
+          }
+        };
+      }
+    }, [authStatus, session?.user?.id]);
+
+    // AppState handler for token refresh
+    useEffect(() => {
+      if (Platform.OS === "web") return;
+
+      const subscription = AppState.addEventListener("change", (nextAppState) => {
+        if (nextAppState === "active" && authStatus === "authenticated" && session?.user?.id) {
+          // Refresh token when app comes to foreground
+          refreshToken(session.user.id);
+        }
+      });
+
+      return () => {
+        subscription.remove();
+      };
+    }, [authStatus, session?.user?.id]);
+
+    // Rest of layout component...
+  }
+  ```
+
+### State Management Architecture
+
+Instead of using React Context for notification state, we use a collection of focused Zustand stores:
+
+- [ ] **Dedicated Stores for Different Concerns**
+
+  1. **`pushTokenStore`**: Manages device registration and push tokens
+
+     - Handles token generation, registration, and refresh
+     - Tracks device information and app version
+     - Provides token status to the rest of the app
+
+  2. **`badgeStore`**: Manages notification badge counts
+
+     - Tracks unread message counts
+     - Updates app badge numbers
+     - Synchronizes across devices via Supabase
+
+  3. **`notificationPreferencesStore`**: Manages user notification preferences
+     - Loads user preferences for different notification categories
+     - Provides an API for updating preferences
+     - Caches preferences for better performance
+
+  ```typescript
+  // Example of how stores interact without a context provider
+  import { usePushTokenStore } from "@/store/pushTokenStore";
+  import { useBadgeStore } from "@/store/badgeStore";
+
+  function NotificationScreen() {
+    // Get notification state from stores directly - no context needed
+    const pushToken = usePushTokenStore((state) => state.expoPushToken);
+    const unreadCount = useBadgeStore((state) => state.unreadCount);
+    const fetchUnreadCount = useBadgeStore((state) => state.fetchUnreadCount);
+    const { session } = useAuth();
+
+    useEffect(() => {
+      if (session?.user?.id) {
+        fetchUnreadCount(session.user.id);
+      }
+    }, [session?.user?.id]);
+
+    // Rest of component...
+  }
+  ```
+
+### Information Flow Architecture
+
+The notification system's information flow follows this pattern:
+
+1. **Initialization Flow**:
+
+   ```
+   App Start → Platform Config → Auth State → Token Registration → Realtime Subscriptions
+   ```
+
+2. **Notification Reception Flow**:
+
+   ```
+   Server Sends Notification → Expo Push Service → Device Receives → Handler Processes → UI Updates
+   ```
+
+3. **Notification Response Flow**:
+
+   ```
+   User Taps Notification → Response Handler → Route Determination → Navigation → Read Status Update
+   ```
+
+4. **Background Processing Flow**:
+
+   ```
+   Background Notification → Task Handler → Database Update → Badge Update → System Notification
+   ```
+
+### Component Integration Without Context
+
+Since we're using Zustand, components can directly access notification state without props or context:
+
+```typescript
+// Any component can access notification state directly
+function MessageItem({ message }) {
+  // Pull just the pieces of state needed by this component
+  const markAsRead = usePushTokenStore((state) => state.markAsRead);
+
+  const handlePress = () => {
+    markAsRead(message.id);
+    // Navigate to message detail
+  };
+
+  return <TouchableOpacity onPress={handlePress}>{/* Message UI */}</TouchableOpacity>;
+}
+```
+
+### Advantages of This Architecture
+
+1. **Reduced Component Tree Complexity**: No need for nested context providers
+2. **Better Performance**: Zustand is optimized for frequent state updates
+3. **Selective Re-rendering**: Components only re-render when their specific slice of state changes
+4. **Simpler Testing**: Easier to test components in isolation
+5. **More Modular**: Each store handles a specific concern
+6. **Persistence Built-in**: Zustand's persistence middleware simplifies storing state
+
+### Integration with Existing Systems
+
+The notification system integrates with other app systems:
+
+- **Authentication**: Coordinated with auth state to register tokens
+- **Navigation**: Uses Expo Router for deep linking and navigation
+- **Database**: Uses Supabase for persistance and realtime updates
+- **App State**: Responds to foreground/background transitions
+- **Permissions**: Manages notification permissions gracefully
+- **User Preferences**: Respects user delivery preferences
+
+This architecture provides a scalable, maintainable notification system that avoids the common pitfalls of Context-based approaches while providing clean separation of concerns and efficient state management.
