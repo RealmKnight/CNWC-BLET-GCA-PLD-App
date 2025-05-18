@@ -12,14 +12,13 @@ import { useColorScheme } from "@/hooks/useColorScheme";
 import { Database } from "@/types/supabase";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
-import { sendPasswordResetEmail } from "@/utils/notificationService";
 import Constants from "expo-constants";
-import { DatePicker } from "@/components/DatePicker";
 import { parseISO, format, differenceInYears, isAfter } from "date-fns";
 import Toast from "react-native-toast-message";
 import { ChangePasswordModal } from "@/components/ui/ChangePasswordModal";
 import { MemberMessageModal } from "@/components/MemberMessageModal";
 import { MeetingNotificationPreferences } from "@/components/ui/MeetingNotificationPreferences";
+import { ClientOnlyDatePicker } from "@/components/ClientOnlyDatePicker";
 
 type Member = Database["public"]["Tables"]["members"]["Row"];
 type ContactPreference = "in_app" | "phone" | "text" | "email" | "push";
@@ -419,6 +418,7 @@ function DateOfBirthModal({
 
       // Update date_of_birth in members table
       const { error: updateError } = await supabase
+        .schema("public")
         .from("members")
         .update({ date_of_birth: formattedDate })
         .eq("user_id", session.user.id);
@@ -458,7 +458,7 @@ function DateOfBirthModal({
           )}
 
           <ThemedView style={styles.inputContainer}>
-            <DatePicker
+            <ClientOnlyDatePicker
               date={selectedDate}
               onDateChange={setSelectedDate}
               mode="date"
@@ -684,6 +684,7 @@ export default function ProfileScreen() {
         // 1. Fetch member data using the validated profileID
         console.log(`[ProfileScreen] Fetching profile data for ID: ${profileID}`);
         const { data: memberData, error: memberError } = await supabase
+          .schema("public")
           .from("members")
           .select("*") // Select all member fields
           .eq("id", profileID)
@@ -706,6 +707,7 @@ export default function ProfileScreen() {
 
         // 2. Fetch user preferences using the fetched member's user_id (which is memberData.id)
         const { data: preferencesData, error: preferencesError } = await supabase
+          .schema("public")
           .from("user_preferences")
           .select("*")
           .eq("user_id", memberData.id) // Use memberData.id which is the auth user ID
@@ -724,6 +726,7 @@ export default function ProfileScreen() {
         // 3. Fetch division name using memberData.division_id
         if (memberData.division_id) {
           const { data: divisionData, error: divisionError } = await supabase
+            .schema("public")
             .from("divisions")
             .select("name")
             .eq("id", memberData.division_id)
@@ -740,6 +743,7 @@ export default function ProfileScreen() {
         // 4. Fetch zone name using memberData.current_zone_id
         if (memberData.current_zone_id) {
           const { data: zoneData, error: zoneError } = await supabase
+            .schema("public")
             .from("zones")
             .select("name")
             .eq("id", memberData.current_zone_id)
@@ -771,6 +775,7 @@ export default function ProfileScreen() {
     console.log("[ProfileScreen] Creating default preferences for user:", userId);
     try {
       const { data, error } = await supabase
+        .schema("public")
         .from("user_preferences")
         .insert({
           user_id: userId,
@@ -869,6 +874,7 @@ export default function ProfileScreen() {
 
       // Upsert preferences
       const { data, error } = await supabase
+        .schema("public")
         .from("user_preferences")
         .upsert(
           {

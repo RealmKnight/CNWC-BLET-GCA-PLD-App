@@ -89,11 +89,11 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
     _fetchAndSetMessages: async (userId, divisionFilterId) => {
         // Get effective roles from state
         const effectiveRoles = get().effectiveRoles;
-        console.log(
-            `[_fetchAndSetMessages] Fetching for user ${userId}, roles: [${
-                effectiveRoles.join(", ")
-            }], division filter: ${divisionFilterId}`,
-        );
+        // console.log(
+        //     `[_fetchAndSetMessages] Fetching for user ${userId}, roles: [${
+        //         effectiveRoles.join(", ")
+        //     }], division filter: ${divisionFilterId}`,
+        // );
         if (!userId) {
             console.error("[_fetchAndSetMessages] User ID is required.");
             set({ isLoading: false, error: "User ID not provided" });
@@ -130,23 +130,23 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
             }
             // --- Filter Logic --- END ---
 
-            console.log("[_fetchAndSetMessages] Executing query...");
+            // console.log("[_fetchAndSetMessages] Executing query...");
             const { data: messagesData, error: messagesError } =
                 await messageQuery;
             if (messagesError) throw messagesError;
-            console.log(
-                `[_fetchAndSetMessages] Query returned ${
-                    messagesData?.length ?? 0
-                } messages initially.`,
-            );
+            // console.log(
+            //     `[_fetchAndSetMessages] Query returned ${
+            //         messagesData?.length ?? 0
+            //     } messages initially.`,
+            // );
 
             // Add debug logging for the first few messages
-            if (messagesData && messagesData.length > 0) {
-                console.log(
-                    "[_fetchAndSetMessages] First message data:",
-                    JSON.stringify(messagesData[0], null, 2),
-                );
-            }
+            // if (messagesData && messagesData.length > 0) {
+            //     console.log(
+            //         "[_fetchAndSetMessages] First message data:",
+            //         JSON.stringify(messagesData[0], null, 2),
+            //     );
+            // }
 
             // 2. Fetch Read Statuses for the fetched messages and current user
             let readStatusMap: Record<string, boolean> = {};
@@ -199,9 +199,9 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
                 }
             }
 
-            console.log(
-                `[_fetchAndSetMessages] Fetched ${messagesData.length} messages, Calculated ${calculatedUnreadCount} unread.`,
-            );
+            // console.log(
+            //     `[_fetchAndSetMessages] Fetched ${messagesData.length} messages, Calculated ${calculatedUnreadCount} unread.`,
+            // );
 
             set({
                 messages: messagesData,

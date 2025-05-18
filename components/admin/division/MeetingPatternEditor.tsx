@@ -9,7 +9,6 @@ import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { Picker } from "@react-native-picker/picker";
 import { Calendar } from "react-native-calendars";
-import { DatePicker } from "@/components/DatePicker";
 import { ClientOnlyDatePicker } from "@/components/ClientOnlyDatePicker";
 import { format, addMonths, parse, parseISO, isValid } from "date-fns";
 import { MeetingPattern, DivisionMeeting, useDivisionMeetingStore } from "@/store/divisionMeetingStore";

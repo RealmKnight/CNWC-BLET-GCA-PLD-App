@@ -26,7 +26,7 @@ import { format, parseISO, addHours } from "date-fns";
 import { insertSinglePldSdvRequest } from "@/utils/databaseApiLayer";
 import { supabase } from "@/utils/supabase";
 import Toast from "react-native-toast-message";
-import { DatePicker } from "@/components/DatePicker";
+import { ClientOnlyDatePicker } from "@/components/ClientOnlyDatePicker";
 import { Picker } from "@react-native-picker/picker";
 
 interface ManualPldSdvRequestEntryProps {
@@ -750,7 +750,7 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
 
         <View style={styles.formRow}>
           <ThemedText style={styles.label}>Request Date:</ThemedText>
-          <DatePicker
+          <ClientOnlyDatePicker
             date={selectedDate}
             onDateChange={handleDateChange}
             mode="date"

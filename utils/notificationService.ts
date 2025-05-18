@@ -84,6 +84,7 @@ export async function getUnreadMessageCount(
 ): Promise<number> {
   try {
     const { count, error } = await supabase
+      .schema("public")
       .from("messages")
       .select("*", { count: "exact", head: true })
       .eq("recipient_pin_number", pinNumber.toString())
@@ -122,6 +123,7 @@ export async function markMessageRead(
     const now = new Date().toISOString();
 
     const { error } = await supabase
+      .schema("public")
       .from("messages")
       .update({
         read_by: readBy,
@@ -345,7 +347,9 @@ export async function sendMessageWithNotification(
     const recipientPins = recipientPinNumbers.map((pin) => pin.toString());
 
     // Create message records for each recipient
-    const { data: messages, error: messageError } = await supabase.from(
+    const { data: messages, error: messageError } = await supabase.schema(
+      "public",
+    ).from(
       "messages",
     ).insert(
       recipientPins.map((recipientPin) => ({
@@ -375,6 +379,7 @@ export async function sendMessageWithNotification(
       try {
         // Get member data first
         const { data: memberData, error: memberError } = await supabase
+          .schema("public")
           .from("members")
           .select(`
             id, 
@@ -401,6 +406,7 @@ export async function sendMessageWithNotification(
         // Then get user preferences
         const { data: userPreferences, error: preferencesError } =
           await supabase
+            .schema("public")
             .from("user_preferences")
             .select(`
             contact_preference,
@@ -418,6 +424,7 @@ export async function sendMessageWithNotification(
 
         // Get user auth data using our custom function instead of admin API
         const response = await supabase
+          .schema("public")
           .rpc("get_user_contact_info", { user_id: memberData.id })
           .single();
 
@@ -523,6 +530,7 @@ export async function sendMessageWithNotification(
 
           // Update message metadata with delivery attempts
           await supabase
+            .schema("public")
             .from("messages")
             .update({
               metadata: {
@@ -587,6 +595,7 @@ async function attemptPushNotification(
 
     // Create a delivery record
     const { error: deliveryError } = await supabase
+      .schema("public")
       .from("push_notification_deliveries")
       .insert({
         message_id: messageId,
@@ -607,6 +616,7 @@ async function attemptPushNotification(
 
     // Update the delivery status
     await supabase
+      .schema("public")
       .from("push_notification_deliveries")
       .update({
         status: success ? "sent" : "failed",
@@ -628,6 +638,7 @@ async function attemptPushNotification(
 export async function markNotificationDelivered(messageId: string) {
   try {
     await supabase
+      .schema("public")
       .from("push_notification_deliveries")
       .update({
         status: "delivered",

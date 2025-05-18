@@ -15,7 +15,7 @@ import DateTimePickerModal from "react-native-modal-datetime-picker";
 import Toast from "react-native-toast-message";
 import { supabase } from "@/utils/supabase";
 import { Modal } from "@/components/ui/Modal";
-import { DatePicker } from "@/components/DatePicker";
+import { ClientOnlyDatePicker } from "@/components/ClientOnlyDatePicker";
 
 const AnimatedThemedView = Animated.createAnimatedComponent(ThemedView);
 const isWeb = Platform.OS === "web";
@@ -275,7 +275,7 @@ export function DivisionOfficers({ division }: DivisionOfficersProps) {
         >
           <View style={styles.webDatePickerContainer}>
             {/* Use DatePicker for consistent UX */}
-            <DatePicker
+            <ClientOnlyDatePicker
               date={selectedDate}
               onDateChange={(date) => {
                 if (date) setSelectedDate(date);

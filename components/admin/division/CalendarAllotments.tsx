@@ -23,7 +23,7 @@ import { format, parseISO } from "date-fns";
 import { Tooltip } from "../../../components/Tooltip";
 import { useAdminCalendarManagementStore } from "@/store/adminCalendarManagementStore";
 import Toast from "react-native-toast-message";
-import { DatePicker } from "@/components/DatePicker";
+import { ClientOnlyDatePicker } from "@/components/ClientOnlyDatePicker";
 import { Accordion } from "@/components/Accordion";
 
 type AllotmentType = "pld_sdv" | "vacation";
@@ -660,14 +660,14 @@ export function CalendarAllotments({ calendarId, selectedDivision }: CalendarAll
             {activeTab === "vacation" ? "Weekly Vacation Override" : "Daily Override"}
           </ThemedText>
           <ThemedView style={styles.dateRangeContainer}>
-            <DatePicker
+            <ClientOnlyDatePicker
               date={startDate}
               onDateChange={setStartDate}
               mode="date"
               placeholder="Start Date"
               style={styles.datePicker}
             />
-            <DatePicker
+            <ClientOnlyDatePicker
               date={endDate}
               onDateChange={setEndDate}
               mode="date"

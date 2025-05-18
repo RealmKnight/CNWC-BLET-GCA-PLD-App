@@ -13,7 +13,7 @@ import { format } from "date-fns";
 import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system";
 import Toast from "react-native-toast-message";
-import { DatePicker } from "@/components/DatePicker";
+import { ClientOnlyDatePicker } from "@/components/ClientOnlyDatePicker";
 import { AdvertisementStatusToggle } from "./AdvertisementStatusToggle";
 import { useUserStore } from "@/store/userStore";
 
@@ -381,7 +381,7 @@ export function CreateEditAdvertisement({ advertisementId, onSave }: CreateEditA
         <ThemedView style={styles.row}>
           <ThemedView style={styles.formField}>
             <ThemedText style={styles.label}>Start Date</ThemedText>
-            <DatePicker
+            <ClientOnlyDatePicker
               date={advertisement.start_date}
               onDateChange={(date) => date && setAdvertisement((prev) => ({ ...prev, start_date: date }))}
               placeholder="Select start date"
@@ -393,7 +393,7 @@ export function CreateEditAdvertisement({ advertisementId, onSave }: CreateEditA
 
           <ThemedView style={styles.formField}>
             <ThemedText style={styles.label}>End Date</ThemedText>
-            <DatePicker
+            <ClientOnlyDatePicker
               date={advertisement.end_date}
               onDateChange={(date) => date && setAdvertisement((prev) => ({ ...prev, end_date: date }))}
               placeholder="Select end date"

@@ -106,35 +106,46 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
       set({ isLoading: true, error: null });
 
       // First, get the member data to find the pin number
-      const { data: memberData, error: memberError } = await supabase
-        .from("members")
-        .select("pin_number, id")
-        .eq("id", userId)
-        .single();
-
-      if (memberError) {
-        console.error(
-          "[NotificationStore] Error getting member data:",
-          memberError,
+      let pinNumber;
+      // Check if userId might actually be a pin number
+      if (!isNaN(Number(userId))) {
+        // If userId is numeric, treat it as a pin_number directly
+        pinNumber = Number(userId);
+        console.log(
+          `[NotificationStore] Using numeric userId as pin_number: ${pinNumber}`,
         );
-        throw memberError;
-      }
+      } else {
+        // Query by UUID as before
+        const { data: memberData, error: memberError } = await supabase
+          .from("members")
+          .select("pin_number, id")
+          .eq("id", userId)
+          .single();
 
-      if (!memberData?.pin_number) {
-        console.warn(
-          "[NotificationStore] No pin number found for user ID:",
-          userId,
-        );
-        set({
-          messages: [],
-          unreadCount: 0,
-          isLoading: false,
-          error: "User pin number not found.",
-        });
-        return;
-      }
+        if (memberError) {
+          console.error(
+            "[NotificationStore] Error getting member data:",
+            memberError,
+          );
+          throw memberError;
+        }
 
-      const pinNumber = memberData.pin_number;
+        if (!memberData?.pin_number) {
+          console.warn(
+            "[NotificationStore] No pin number found for user ID:",
+            userId,
+          );
+          set({
+            messages: [],
+            unreadCount: 0,
+            isLoading: false,
+            error: "User pin number not found.",
+          });
+          return;
+        }
+
+        pinNumber = memberData.pin_number;
+      }
 
       // Revert to original select to include push_notification_deliveries
       const { data: messages, error: messagesError } = await supabase
@@ -148,7 +159,13 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
             error_message
           )
         `)
-        .or(`recipient_pin_number.eq.${pinNumber},recipient_id.eq.${userId}`)
+        .or(
+          !isNaN(Number(userId))
+            // If userId is a pin number, only query by recipient_pin_number
+            ? `recipient_pin_number.eq.${pinNumber}`
+            // If userId is a UUID, query by both recipient_pin_number and recipient_id
+            : `recipient_pin_number.eq.${pinNumber},recipient_id.eq.${userId}`,
+        )
         .eq("is_deleted", false)
         .order("created_at", { ascending: false });
 
@@ -719,7 +736,13 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
             error_message
           )
         `)
-        .or(`recipient_pin_number.eq.${pinNumber},recipient_id.eq.${userId}`)
+        .or(
+          !isNaN(Number(userId))
+            // If userId is a pin number, only query by recipient_pin_number
+            ? `recipient_pin_number.eq.${pinNumber}`
+            // If userId is a UUID, query by both recipient_pin_number and recipient_id
+            : `recipient_pin_number.eq.${pinNumber},recipient_id.eq.${userId}`,
+        )
         .eq("is_deleted", false)
         .order("created_at", { ascending: false });
 
