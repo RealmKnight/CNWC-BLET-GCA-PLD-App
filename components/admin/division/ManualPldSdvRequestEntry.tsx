@@ -11,6 +11,8 @@ import {
   TextStyle,
   Modal,
   FlatList,
+  Dimensions,
+  TouchableWithoutFeedback,
 } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -145,6 +147,10 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
   const availableStatuses = ["approved", "pending", "waitlisted", "denied", "cancelled"];
   const availableLeaveTypes = ["PLD", "SDV"];
 
+  // Add state for search input layout
+  const [searchInputLayout, setSearchInputLayout] = useState({ x: 0, y: 0, width: 0, height: 0 });
+  const [showMobileSearchModal, setShowMobileSearchModal] = useState(false);
+
   // Fetch calendar names when the component loads
   useEffect(() => {
     async function fetchCalendarNames() {
@@ -270,6 +276,7 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       setSearchQuery(query);
       if (query.length < 3) {
         setSearchResults([]);
+        // Don't close the modal on mobile when clearing search results
         return;
       }
 
@@ -285,6 +292,7 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       );
 
       setSearchResults(results);
+      // No need to set modal visibility here as it's already shown when input is focused
     },
     [membersByCalendar]
   );
@@ -296,6 +304,11 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       setSelectedMember(member);
       setSearchQuery(`${member.last_name}, ${member.first_name} (${member.pin_number})`);
       setSearchResults([]);
+
+      // Close mobile search modal if open
+      if (Platform.OS !== "web") {
+        setShowMobileSearchModal(false);
+      }
 
       // Get calendar name for UI display
       if (member.calendar_id && calendarNames[member.calendar_id]) {
@@ -311,6 +324,12 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     },
     [fetchMemberRequests, calendarNames]
   );
+
+  // Update search input layout when it renders
+  const handleSearchInputLayout = (event: any) => {
+    const { x, y, width, height } = event.nativeEvent.layout;
+    setSearchInputLayout({ x, y, width, height });
+  };
 
   // Add a function to check for duplicate requests
   const checkForDuplicateRequest = useCallback(
@@ -554,33 +573,59 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     if (!selectedMember) return null;
 
     // Render a single row of the requests table
-    const renderRequestItem = (request: PldSdvRequest) => (
-      <View key={request.id} style={styles.tableRow}>
-        <View style={styles.dateCell}>
-          <ThemedText style={styles.tableCell}>{format(parseISO(request.request_date), "MMM dd, yyyy")}</ThemedText>
-        </View>
-        <View style={styles.typeCell}>
-          <ThemedText style={styles.tableCell}>{request.leave_type}</ThemedText>
-        </View>
-        <View style={styles.statusCell}>
-          <View style={styles.statusContainer}>
-            <View style={[styles.statusDot, { backgroundColor: getStatusColor(request.status) }]} />
-            <ThemedText style={styles.tableCell}>{request.status}</ThemedText>
+    const renderRequestItem = (request: PldSdvRequest) => {
+      // Row content that will be wrapped differently based on platform
+      const rowContent = (
+        <>
+          <View style={styles.dateCell}>
+            <ThemedText style={styles.tableCell}>{format(parseISO(request.request_date), "MMM dd, yyyy")}</ThemedText>
           </View>
-        </View>
-        <View style={styles.paidCell}>
-          <ThemedText style={styles.tableCell}>{request.paid_in_lieu ? "Yes" : "No"}</ThemedText>
-        </View>
-        <View style={styles.calendarCell}>
-          <ThemedText style={styles.tableCell}>{request.calendar_name}</ThemedText>
-        </View>
-        <View style={styles.actionCell}>
-          <ThemedTouchableOpacity style={styles.editButton} onPress={() => handleEditRequest(request)}>
-            <Ionicons name="create-outline" size={18} color={Colors[colorScheme].tint} />
+          <View style={styles.typeCell}>
+            <ThemedText style={styles.tableCell}>{request.leave_type}</ThemedText>
+          </View>
+          <View style={styles.statusCell}>
+            <View style={styles.statusContainer}>
+              <View style={[styles.statusDot, { backgroundColor: getStatusColor(request.status) }]} />
+              <ThemedText style={styles.tableCell}>{request.status}</ThemedText>
+            </View>
+          </View>
+          <View style={styles.paidCell}>
+            <ThemedText style={styles.tableCell}>{request.paid_in_lieu ? "Yes" : "No"}</ThemedText>
+          </View>
+          <View style={styles.calendarCell}>
+            <ThemedText style={styles.tableCell}>{request.calendar_name}</ThemedText>
+          </View>
+          {Platform.OS === "web" && (
+            <View style={styles.actionCell}>
+              <ThemedTouchableOpacity style={styles.editButton} onPress={() => handleEditRequest(request)}>
+                <Ionicons name="create-outline" size={18} color={Colors[colorScheme].tint} />
+              </ThemedTouchableOpacity>
+            </View>
+          )}
+        </>
+      );
+
+      // On mobile, make the entire row clickable
+      if (Platform.OS !== "web") {
+        return (
+          <ThemedTouchableOpacity
+            key={request.id}
+            style={[styles.tableRow, styles.clickableRow]}
+            onPress={() => handleEditRequest(request)}
+            activeOpacity={0.7}
+          >
+            {rowContent}
           </ThemedTouchableOpacity>
+        );
+      }
+
+      // On web, only the edit button is clickable
+      return (
+        <View key={request.id} style={styles.tableRow}>
+          {rowContent}
         </View>
-      </View>
-    );
+      );
+    };
 
     // Table header component
     const TableHeader = () => (
@@ -618,26 +663,28 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
         {memberRequests.length > 0 ? (
           <View style={styles.requestsContainer}>
             <TableHeader />
-            {Platform.OS === "android" ? (
-              // Special handling for Android
-              <ScrollView nestedScrollEnabled={true} style={styles.requestsList}>
+            {Platform.OS === "web" ? (
+              // For web use ScrollView
+              <ScrollView
+                nestedScrollEnabled={true}
+                style={styles.requestsList}
+                contentContainerStyle={styles.requestsListContent}
+              >
                 {memberRequests.map(renderRequestItem)}
               </ScrollView>
-            ) : Platform.OS === "ios" ? (
-              // For iOS use FlatList
+            ) : (
+              // For mobile platforms use FlatList (both Android and iOS)
               <FlatList
                 data={memberRequests}
                 renderItem={({ item }) => renderRequestItem(item)}
                 keyExtractor={(item) => item.id}
                 style={styles.requestsList}
+                contentContainerStyle={styles.requestsListContent}
                 initialNumToRender={5}
                 maxToRenderPerBatch={10}
+                removeClippedSubviews={false}
+                ListEmptyComponent={null}
               />
-            ) : (
-              // For web use ScrollView
-              <ScrollView nestedScrollEnabled={true} style={styles.requestsList}>
-                <View style={styles.requestsTable}>{memberRequests.map(renderRequestItem)}</View>
-              </ScrollView>
             )}
           </View>
         ) : (
@@ -690,11 +737,97 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     );
   };
 
-  // Render the member search
+  // Render mobile search modal for Android and iOS
+  const renderMobileSearchModal = () => {
+    // Don't render on web
+    if (Platform.OS === "web") return null;
+
+    return (
+      <Modal
+        visible={showMobileSearchModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowMobileSearchModal(false)}
+      >
+        <TouchableWithoutFeedback onPress={() => setShowMobileSearchModal(false)}>
+          <View style={styles.modalOverlay}>
+            <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
+              <View style={styles.mobileSearchModalContent}>
+                <View style={styles.mobileSearchHeader}>
+                  <ThemedText style={styles.mobileSearchTitle}>Select Member</ThemedText>
+                  <ThemedTouchableOpacity
+                    style={styles.closeModalButton}
+                    onPress={() => setShowMobileSearchModal(false)}
+                  >
+                    <Ionicons name="close" size={24} color={Colors[colorScheme].text} />
+                  </ThemedTouchableOpacity>
+                </View>
+
+                <View style={styles.searchInputWrapper}>
+                  <TextInput
+                    value={searchQuery}
+                    onChangeText={handleSearch}
+                    placeholder="Search by name or PIN number (min. 3 characters)"
+                    style={[styles.searchInput, { color: Colors[colorScheme].text }]}
+                    placeholderTextColor={Colors[colorScheme].secondary}
+                    onFocus={() => {
+                      // For mobile, open the modal immediately when the search input is focused
+                      if (Platform.OS !== "web") {
+                        setShowMobileSearchModal(true);
+                      }
+                    }}
+                  />
+                  {searchQuery !== "" && (
+                    <ThemedTouchableOpacity
+                      style={styles.clearButton}
+                      onPress={() => handleSearch("")}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="close-circle" size={20} color={Colors[colorScheme].text} />
+                    </ThemedTouchableOpacity>
+                  )}
+                </View>
+
+                {searchResults.length > 0 ? (
+                  <FlatList
+                    data={searchResults}
+                    keyExtractor={(item) => item.id}
+                    style={styles.mobileSearchResults}
+                    renderItem={({ item }) => (
+                      <ThemedTouchableOpacity
+                        style={styles.resultItem}
+                        onPress={() => handleSelectMember(item)}
+                        activeOpacity={0.7}
+                      >
+                        <ThemedText>
+                          {item.last_name}, {item.first_name} ({item.pin_number})
+                          {item.calendar_id && calendarNames[item.calendar_id]
+                            ? ` - ${calendarNames[item.calendar_id]}`
+                            : " - Calendar will be checked"}
+                        </ThemedText>
+                      </ThemedTouchableOpacity>
+                    )}
+                  />
+                ) : (
+                  <ThemedText style={styles.noResultsText}>
+                    {searchQuery.length < 3
+                      ? "Type at least 3 characters to search"
+                      : "No members found matching your search"}
+                  </ThemedText>
+                )}
+              </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
+    );
+  };
+
+  // Render the member search - modified for platform specifics
   const renderMemberSearch = () => (
     <View style={styles.section}>
       <ThemedText style={styles.sectionTitle}>1. Select Member</ThemedText>
-      <View style={styles.searchContainer}>
+      <View style={styles.searchContainer} onLayout={Platform.OS !== "web" ? handleSearchInputLayout : undefined}>
         <View style={styles.searchInputWrapper}>
           <TextInput
             value={searchQuery}
@@ -702,6 +835,12 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
             placeholder="Search by name or PIN number (min. 3 characters)"
             style={[styles.searchInput, { color: Colors[colorScheme].text }]}
             placeholderTextColor={Colors[colorScheme].secondary}
+            onFocus={() => {
+              // For mobile, open the modal immediately when the search input is focused
+              if (Platform.OS !== "web") {
+                setShowMobileSearchModal(true);
+              }
+            }}
           />
           {searchQuery !== "" && (
             <ThemedTouchableOpacity style={styles.clearButton} onPress={() => handleSearch("")} activeOpacity={0.7}>
@@ -710,7 +849,8 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
           )}
         </View>
 
-        {searchResults.length > 0 && (
+        {/* Only show inline results on web */}
+        {Platform.OS === "web" && searchResults.length > 0 && (
           <View style={styles.searchResultsContainer}>
             <ScrollView style={styles.searchResults} nestedScrollEnabled={true}>
               {searchResults.map((member) => (
@@ -735,6 +875,7 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       </View>
 
       {selectedMember && renderMemberInfo()}
+      {renderMobileSearchModal()}
     </View>
   );
 
@@ -1042,62 +1183,6 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     searchResults: {
       flex: 1,
       backgroundColor: Colors.dark.card,
-      zIndex: 99999,
-      elevation: 25,
-    },
-    resultItem: {
-      padding: 12,
-      borderBottomWidth: 1,
-      borderBottomColor: Colors.dark.border,
-      backgroundColor: Colors.dark.card,
-      ...(Platform.OS === "android"
-        ? {
-            elevation: 20,
-            zIndex: 10000,
-            pointerEvents: "auto",
-          }
-        : {}),
-    },
-    selectedMemberContainer: {
-      marginTop: 16,
-      padding: 12,
-      borderWidth: 1,
-      borderColor: Colors.dark.border,
-      borderRadius: 8,
-      backgroundColor: Colors.dark.card,
-      zIndex: 1,
-    },
-    selectedMemberTitle: {
-      fontSize: 16,
-      fontWeight: "600",
-      marginBottom: 4,
-    },
-    selectedMemberInfo: {
-      fontSize: 16,
-      marginBottom: 8,
-    },
-    calendarInfo: {
-      fontSize: 14,
-      marginBottom: 8,
-      color: Colors.dark.success,
-    },
-    calendarWarning: {
-      fontSize: 14,
-      marginBottom: 8,
-      color: Colors.dark.warning,
-    },
-    requestsContainer: {
-      maxHeight: Platform.OS === "web" ? 250 : 180,
-      borderWidth: 1,
-      borderColor: Colors.dark.border,
-      borderRadius: 8,
-      overflow: "hidden",
-    },
-    requestsList: {
-      flex: 1,
-    },
-    requestsTable: {
-      width: "100%",
     },
     tableRow: {
       flexDirection: "row",
@@ -1105,6 +1190,13 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       borderBottomColor: Colors.dark.border,
       paddingVertical: 8,
       width: "100%",
+    },
+    clickableRow: {
+      backgroundColor: Colors.dark.card,
+      // Add visual feedback for touchable rows on mobile
+      ...(Platform.OS !== "web" && {
+        paddingRight: 36, // Add space for a visual indicator on the right
+      }),
     },
     tableHeader: {
       backgroundColor: Colors.dark.card,
@@ -1332,6 +1424,91 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       flexDirection: "row",
       alignItems: "center",
       justifyContent: "space-evenly",
+    },
+    requestsContainer: {
+      height: Platform.OS === "web" ? 350 : 340,
+      borderWidth: 1,
+      borderColor: Colors.dark.border,
+      borderRadius: 8,
+      overflow: "hidden",
+    },
+    requestsList: {
+      flex: 1,
+      height: Platform.OS === "web" ? 350 : 340,
+    },
+    requestsListContent: {
+      flexGrow: 1,
+    },
+    requestsTable: {
+      width: "100%",
+    },
+    selectedMemberContainer: {
+      marginTop: 16,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: Colors.dark.border,
+      borderRadius: 8,
+      backgroundColor: Colors.dark.card,
+      zIndex: 1,
+    },
+    selectedMemberTitle: {
+      fontSize: 16,
+      fontWeight: "600",
+      marginBottom: 4,
+    },
+    selectedMemberInfo: {
+      fontSize: 16,
+      marginBottom: 8,
+    },
+    calendarInfo: {
+      fontSize: 14,
+      marginBottom: 8,
+      color: Colors.dark.success,
+    },
+    calendarWarning: {
+      fontSize: 14,
+      marginBottom: 8,
+      color: Colors.dark.warning,
+    },
+    mobileSearchModalContent: {
+      width: "90%",
+      maxHeight: "80%",
+      backgroundColor: Colors.dark.card,
+      borderRadius: 8,
+      padding: 16,
+      elevation: 24,
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.25,
+      shadowRadius: 3.84,
+    },
+    mobileSearchHeader: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: Colors.dark.border,
+      paddingBottom: 8,
+    },
+    mobileSearchTitle: {
+      fontSize: 18,
+      fontWeight: "bold",
+    },
+    mobileSearchResults: {
+      flex: 1,
+      marginTop: 8,
+    },
+    noResultsText: {
+      textAlign: "center",
+      marginTop: 20,
+      fontStyle: "italic",
+    },
+    resultItem: {
+      padding: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: Colors.dark.border,
+      backgroundColor: Colors.dark.card,
     },
   });
 
