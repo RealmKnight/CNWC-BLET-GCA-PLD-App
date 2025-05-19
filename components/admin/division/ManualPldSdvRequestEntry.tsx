@@ -726,6 +726,7 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
             setSearchQuery("");
             setMemberRequests([]);
             setMemberCalendarName(null);
+            setSuccessMessage(null);
           }}
           variant="secondary"
           style={styles.clearMemberButton}
