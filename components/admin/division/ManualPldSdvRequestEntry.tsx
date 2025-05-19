@@ -680,10 +680,9 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
                 keyExtractor={(item) => item.id}
                 style={styles.requestsList}
                 contentContainerStyle={styles.requestsListContent}
-                initialNumToRender={5}
-                maxToRenderPerBatch={10}
-                removeClippedSubviews={false}
-                ListEmptyComponent={null}
+                initialNumToRender={memberRequests.length}
+                scrollEnabled={false}
+                nestedScrollEnabled={false}
               />
             )}
           </View>
@@ -1424,7 +1423,9 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       justifyContent: "space-evenly",
     },
     requestsContainer: {
-      height: Platform.OS === "web" ? 350 : 340,
+      minHeight: Platform.OS === "web" ? 250 : 340,
+      maxHeight: Platform.OS === "web" ? 250 : undefined,
+      flexGrow: 1,
       borderWidth: 1,
       borderColor: Colors.dark.border,
       borderRadius: 8,
@@ -1432,7 +1433,8 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     },
     requestsList: {
       flex: 1,
-      height: Platform.OS === "web" ? 350 : 340,
+      minHeight: Platform.OS === "web" ? 250 : 340,
+      flexGrow: 1,
     },
     requestsListContent: {
       flexGrow: 1,
