@@ -331,41 +331,540 @@ The app uses an AuthProvider in `hooks/useAuth.tsx` with the following character
     }, []);
     ```
 
-  - [ ] Update notification payload structure for sending different types:
+- [ ] **Notification Payload Structure**:
+
+  ```typescript
+  // Example notification payload structure in notificationService.ts
+  interface NotificationPayload {
+    messageId: string;
+    notificationType: NotificationType;
+    title: string;
+    body: string;
+    requiresAcknowledgment?: boolean;
+    // Type-specific fields
+    divisionName?: string; // For division announcements - use name not ID
+    // Other metadata
+    timestamp: number;
+  }
+
+  // Update send function to include type
+  async function sendTypedPushNotification(
+    userId: string,
+    title: string,
+    body: string,
+    type: NotificationType,
+    messageId: string,
+    additionalData: Record<string, any> = {}
+  ) {
+    // Combine data
+    const data = {
+      messageId,
+      notificationType: type,
+      timestamp: Date.now(),
+      ...additionalData,
+    };
+
+    return await sendPushNotificationToUser(userId, title, body, data);
+  }
+  ```
+
+- [ ] **Deep Linking Edge Case Handling**
+
+  - [ ] Implement content validation before navigation:
 
     ```typescript
-    // Example notification payload structure in notificationService.ts
-    interface NotificationPayload {
-      messageId: string;
-      notificationType: NotificationType;
-      title: string;
-      body: string;
-      requiresAcknowledgment?: boolean;
-      // Type-specific fields
-      divisionName?: string; // For division announcements - use name not ID
-      // Other metadata
-      timestamp: number;
+    // Enhanced notification tap handler with content validation
+    export function setupNotificationTapHandler() {
+      return Notifications.addNotificationResponseReceivedListener(async (response) => {
+        const data = response.notification.request.content.data;
+        const messageId = data?.messageId;
+        const notificationType = data?.notificationType || NotificationType.REGULAR_MESSAGE;
+        const userId = await getUserId(); // Get current user ID from auth
+
+        console.log("[PushNotification] Notification tapped:", data);
+
+        // Validate content before navigation with parallel checks
+        const [contentExists, hasAccess, expirationStatus, archiveStatus] = await Promise.all([
+          validateContentExists(notificationType, messageId),
+          validateUserHasAccess(notificationType, messageId, userId),
+          checkContentExpiration(notificationType, messageId),
+          checkContentArchiveStatus(notificationType, messageId),
+        ]);
+
+        // Handle invalid content
+        if (!contentExists) {
+          showContentUnavailableMessage(notificationType);
+          navigateToFallbackScreen(notificationType);
+          trackNotificationNavigationResult(data, false, "content_not_found");
+          return;
+        }
+
+        // Handle permission issues
+        if (!hasAccess) {
+          Toast.show({
+            type: "error",
+            text1: "Access Denied",
+            text2: "You do not have permission to view this content.",
+          });
+          navigateToFallbackScreen(notificationType);
+          trackNotificationNavigationResult(data, false, "access_denied");
+          return;
+        }
+
+        // Handle expired content
+        if (expirationStatus.isExpired) {
+          Toast.show({
+            type: "info",
+            text1: "Expired Content",
+            text2: expirationStatus.message,
+          });
+          navigateToFallbackScreen(notificationType);
+          trackNotificationNavigationResult(data, false, "content_expired");
+          return;
+        }
+
+        // Handle archived content
+        if (archiveStatus.isArchived) {
+          Toast.show({
+            type: "info",
+            text1: "Archived Content",
+            text2: archiveStatus.message,
+          });
+          navigateToFallbackScreen(notificationType);
+          trackNotificationNavigationResult(data, false, "content_archived");
+          return;
+        }
+
+        // Content is valid - continue with standard routing
+        navigateBasedOnNotificationType(data);
+        trackNotificationNavigationResult(data, true);
+
+        // Handle acknowledgment if needed
+        if (data?.requiresAcknowledgment && messageId) {
+          // Mark as read based on type
+          if (notificationType === NotificationType.ADMIN_MESSAGE) {
+            markAdminMessageAsRead(messageId);
+          } else {
+            markMessageAsRead(messageId);
+          }
+        }
+      });
     }
 
-    // Update send function to include type
-    async function sendTypedPushNotification(
-      userId: string,
-      title: string,
-      body: string,
-      type: NotificationType,
-      messageId: string,
-      additionalData: Record<string, any> = {}
-    ) {
-      // Combine data
-      const data = {
-        messageId,
-        notificationType: type,
-        timestamp: Date.now(),
-        ...additionalData,
-      };
+    // Route based on notification type
+    function navigateBasedOnNotificationType(data) {
+      const messageId = data?.messageId;
+      const notificationType = data?.notificationType || NotificationType.REGULAR_MESSAGE;
 
-      return await sendPushNotificationToUser(userId, title, body, data);
+      switch (notificationType) {
+        case NotificationType.ADMIN_MESSAGE:
+          router.push(`/(admin)/division_admin/DivisionAdminPanel/AdminMessages${messageId ? `/${messageId}` : ""}`);
+          break;
+
+        case NotificationType.GCA_ANNOUNCEMENT:
+          router.push(`/(gca)/gca-announcements${messageId ? `/${messageId}` : ""}`);
+          break;
+
+        case NotificationType.DIVISION_ANNOUNCEMENT:
+          const divisionName = data?.divisionName;
+          if (divisionName) {
+            router.push(`/(division)/${divisionName}/announcements${messageId ? `/${messageId}` : ""}`);
+          } else {
+            router.push("/(division)");
+          }
+          break;
+
+        case NotificationType.REGULAR_MESSAGE:
+        default:
+          if (messageId) {
+            router.push(`/(tabs)/notifications/${messageId}`);
+          } else {
+            router.push("/(tabs)/notifications");
+          }
+          break;
+      }
     }
+    ```
+
+  - [ ] Add content validation functions:
+
+    ```typescript
+    // Content validation helper functions
+    async function validateContentExists(notificationType, messageId) {
+      if (!messageId) return false;
+
+      try {
+        // Check if referenced content still exists based on type
+        switch (notificationType) {
+          case NotificationType.ADMIN_MESSAGE:
+            const { data: adminMessage } = await supabase
+              .from("admin_messages")
+              .select("id")
+              .eq("id", messageId)
+              .single();
+            return !!adminMessage;
+
+          case NotificationType.GCA_ANNOUNCEMENT:
+            const { data: announcement } = await supabase
+              .from("announcements")
+              .select("id")
+              .eq("id", messageId)
+              .eq("type", "gca")
+              .single();
+            return !!announcement;
+
+          case NotificationType.DIVISION_ANNOUNCEMENT:
+            const { data: divAnnouncement } = await supabase
+              .from("announcements")
+              .select("id")
+              .eq("id", messageId)
+              .eq("type", "division")
+              .single();
+            return !!divAnnouncement;
+
+          default:
+            const { data: message } = await supabase.from("messages").select("id").eq("id", messageId).single();
+            return !!message;
+        }
+      } catch (error) {
+        console.error("[PushNotification] Error validating content:", error);
+        return false;
+      }
+    }
+
+    async function validateUserHasAccess(notificationType, messageId, userId) {
+      if (!messageId || !userId) return false;
+
+      try {
+        switch (notificationType) {
+          case NotificationType.DIVISION_ANNOUNCEMENT:
+            // Check if user belongs to the division
+            const { data: announcement } = await supabase
+              .from("announcements")
+              .select("division_id")
+              .eq("id", messageId)
+              .single();
+
+            if (!announcement) return false;
+
+            const { data: userDivision } = await supabase
+              .from("user_divisions")
+              .select("division_id")
+              .eq("user_id", userId)
+              .eq("division_id", announcement.division_id)
+              .single();
+
+            return !!userDivision;
+
+          case NotificationType.ADMIN_MESSAGE:
+            // Check if user is recipient of admin message
+            const { data: adminMessage } = await supabase
+              .from("admin_messages")
+              .select("recipient_ids")
+              .eq("id", messageId)
+              .single();
+
+            return adminMessage && (adminMessage.recipient_ids === null || adminMessage.recipient_ids.includes(userId));
+
+          case NotificationType.REGULAR_MESSAGE:
+            // Check if user is recipient of message
+            const { data: message } = await supabase
+              .from("messages")
+              .select("recipient_id")
+              .eq("id", messageId)
+              .single();
+
+            return message && message.recipient_id === userId;
+
+          // GCA announcements are visible to all users
+          case NotificationType.GCA_ANNOUNCEMENT:
+            return true;
+
+          default:
+            return true; // Default to allowing access if no specific check
+        }
+      } catch (error) {
+        console.error("[PushNotification] Error validating access:", error);
+        return false;
+      }
+    }
+
+    async function checkContentExpiration(notificationType, messageId) {
+      if (!messageId) return { isExpired: false };
+
+      try {
+        const now = new Date().toISOString();
+
+        switch (notificationType) {
+          case NotificationType.GCA_ANNOUNCEMENT:
+          case NotificationType.DIVISION_ANNOUNCEMENT:
+            const { data: announcement } = await supabase
+              .from("announcements")
+              .select("id, expiry_date")
+              .eq("id", messageId)
+              .single();
+
+            if (announcement?.expiry_date && announcement.expiry_date < now) {
+              return {
+                isExpired: true,
+                message: "This announcement has expired.",
+              };
+            }
+            break;
+
+          case NotificationType.ADMIN_MESSAGE:
+            const { data: adminMessage } = await supabase
+              .from("admin_messages")
+              .select("id, expiry_date")
+              .eq("id", messageId)
+              .single();
+
+            if (adminMessage?.expiry_date && adminMessage.expiry_date < now) {
+              return {
+                isExpired: true,
+                message: "This admin message has expired.",
+              };
+            }
+            break;
+        }
+
+        return { isExpired: false };
+      } catch (error) {
+        console.error("[PushNotification] Error checking expiration:", error);
+        return { isExpired: false };
+      }
+    }
+
+    async function checkContentArchiveStatus(notificationType, messageId) {
+      if (!messageId) return { isArchived: false };
+
+      try {
+        switch (notificationType) {
+          case NotificationType.ADMIN_MESSAGE:
+            const { data: message } = await supabase
+              .from("admin_messages")
+              .select("id, is_archived")
+              .eq("id", messageId)
+              .single();
+
+            if (message?.is_archived) {
+              return {
+                isArchived: true,
+                message: "This message has been archived.",
+              };
+            }
+            break;
+
+          case NotificationType.GCA_ANNOUNCEMENT:
+          case NotificationType.DIVISION_ANNOUNCEMENT:
+            const { data: announcement } = await supabase
+              .from("announcements")
+              .select("id, is_archived")
+              .eq("id", messageId)
+              .single();
+
+            if (announcement?.is_archived) {
+              return {
+                isArchived: true,
+                message: "This announcement has been archived.",
+              };
+            }
+            break;
+        }
+
+        return { isArchived: false };
+      } catch (error) {
+        console.error("[PushNotification] Error checking archive status:", error);
+        return { isArchived: false };
+      }
+    }
+    ```
+
+  - [ ] Implement graceful fallbacks:
+
+    ```typescript
+    // Fallback navigation for invalid links
+    function navigateToFallbackScreen(notificationType) {
+      // Determine appropriate fallback destination based on notification type
+      switch (notificationType) {
+        case NotificationType.ADMIN_MESSAGE:
+          router.push("/(admin)/division_admin/DivisionAdminPanel/AdminMessages");
+          break;
+        case NotificationType.GCA_ANNOUNCEMENT:
+          router.push("/(gca)/gca-announcements");
+          break;
+        case NotificationType.DIVISION_ANNOUNCEMENT:
+          router.push("/(division)");
+          break;
+        default:
+          router.push("/(tabs)/notifications");
+          break;
+      }
+    }
+
+    // User feedback for unavailable content
+    function showContentUnavailableMessage(notificationType) {
+      // Show appropriate toast/message based on notification type
+      let message = "The content you requested is no longer available.";
+
+      switch (notificationType) {
+        case NotificationType.ADMIN_MESSAGE:
+          message = "This admin message is no longer available.";
+          break;
+        case NotificationType.GCA_ANNOUNCEMENT:
+          message = "This announcement is no longer available.";
+          break;
+        case NotificationType.DIVISION_ANNOUNCEMENT:
+          message = "This division announcement is no longer available.";
+          break;
+      }
+
+      // Use existing toast mechanism
+      Toast.show({
+        type: "info",
+        text1: "Content Unavailable",
+        text2: message,
+      });
+    }
+    ```
+
+  - [ ] Add analytics tracking for deep linking results:
+
+    ```typescript
+    // Track notification navigation success/failure
+    function trackNotificationNavigationResult(data, success, reason = null) {
+      try {
+        // Log notification navigation result to analytics
+        const analyticsData = {
+          notification_type: data.notificationType,
+          message_id: data.messageId,
+          success,
+          reason,
+          timestamp: new Date().toISOString(),
+        };
+
+        // Log to Supabase
+        supabase
+          .from("notification_analytics")
+          .insert([analyticsData])
+          .then(() => {
+            console.log("[PushNotification] Tracked navigation result:", success);
+          })
+          .catch((error) => {
+            console.error("[PushNotification] Error logging analytics:", error);
+          });
+      } catch (error) {
+        console.error("[PushNotification] Error tracking navigation:", error);
+      }
+    }
+    ```
+
+  - [ ] Update cold start handling with validation:
+
+    ```typescript
+    // Enhanced cold start handling with validation
+    async function getInitialNotification() {
+      const initialNotification = await Notifications.getLastNotificationResponseAsync();
+
+      if (initialNotification) {
+        // App was launched by a notification
+        const data = initialNotification.notification.request.content.data;
+        const messageId = data?.messageId;
+        const notificationType = data?.notificationType || NotificationType.REGULAR_MESSAGE;
+        const userId = await getUserId(); // Get current user ID from auth
+
+        console.log("[PushNotification] App launched from notification:", data);
+
+        // Validate content before navigation
+        const [contentExists, hasAccess, expirationStatus, archiveStatus] = await Promise.all([
+          validateContentExists(notificationType, messageId),
+          validateUserHasAccess(notificationType, messageId, userId),
+          checkContentExpiration(notificationType, messageId),
+          checkContentArchiveStatus(notificationType, messageId),
+        ]);
+
+        // Wait for app to initialize fully before navigating
+        setTimeout(() => {
+          if (!contentExists) {
+            showContentUnavailableMessage(notificationType);
+            navigateToFallbackScreen(notificationType);
+            trackNotificationNavigationResult(data, false, "content_not_found");
+            return;
+          }
+
+          if (!hasAccess) {
+            Toast.show({
+              type: "error",
+              text1: "Access Denied",
+              text2: "You do not have permission to view this content.",
+            });
+            navigateToFallbackScreen(notificationType);
+            trackNotificationNavigationResult(data, false, "access_denied");
+            return;
+          }
+
+          if (expirationStatus.isExpired) {
+            Toast.show({
+              type: "info",
+              text1: "Expired Content",
+              text2: expirationStatus.message,
+            });
+            navigateToFallbackScreen(notificationType);
+            trackNotificationNavigationResult(data, false, "content_expired");
+            return;
+          }
+
+          if (archiveStatus.isArchived) {
+            Toast.show({
+              type: "info",
+              text1: "Archived Content",
+              text2: archiveStatus.message,
+            });
+            navigateToFallbackScreen(notificationType);
+            trackNotificationNavigationResult(data, false, "content_archived");
+            return;
+          }
+
+          // Content valid, has access, not expired, not archived - navigate
+          navigateBasedOnNotificationType(data);
+          trackNotificationNavigationResult(data, true);
+        }, 1000);
+      }
+    }
+    ```
+
+  - [ ] Add database schema for tracking notification analytics:
+
+    ```sql
+    -- Add a table to track notification navigation failures
+    CREATE TABLE IF NOT EXISTS public.notification_analytics (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        notification_type TEXT NOT NULL,
+        message_id UUID,
+        user_id UUID REFERENCES auth.users(id),
+        success BOOLEAN NOT NULL,
+        reason TEXT,
+        timestamp TIMESTAMP WITH TIME ZONE DEFAULT now()
+    );
+
+    -- Add indices for analytics queries
+    CREATE INDEX IF NOT EXISTS idx_notification_analytics_success ON public.notification_analytics(success);
+    CREATE INDEX IF NOT EXISTS idx_notification_analytics_type ON public.notification_analytics(notification_type);
+    CREATE INDEX IF NOT EXISTS idx_notification_analytics_timestamp ON public.notification_analytics(timestamp);
+    ```
+
+  - [ ] Update message/announcement schemas to support archiving and expiration:
+
+    ```sql
+    -- Add expiration and archiving fields to admin messages if not already present
+    ALTER TABLE public.admin_messages
+    ADD COLUMN IF NOT EXISTS expiry_date TIMESTAMP WITH TIME ZONE,
+    ADD COLUMN IF NOT EXISTS is_archived BOOLEAN DEFAULT false;
+
+    -- Add expiration and archiving fields to announcements if not already present
+    ALTER TABLE public.announcements
+    ADD COLUMN IF NOT EXISTS expiry_date TIMESTAMP WITH TIME ZONE,
+    ADD COLUMN IF NOT EXISTS is_archived BOOLEAN DEFAULT false;
     ```
 
 - [ ] **Update admin message screens to handle deep linking**:
@@ -547,28 +1046,23 @@ CREATE TABLE IF NOT EXISTS public.notification_categories (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
--- Add RLS policies for security
+-- Enable RLS for user_push_tokens table
 ALTER TABLE public.user_push_tokens ENABLE ROW LEVEL SECURITY;
 
--- Policy to allow users to select their own tokens
-CREATE POLICY select_own_tokens ON public.user_push_tokens
-    FOR SELECT
-    USING (auth.uid() = user_id);
-
--- Policy to allow users to insert their own tokens
-CREATE POLICY insert_own_tokens ON public.user_push_tokens
-    FOR INSERT
+-- Single comprehensive policy for user_push_tokens
+CREATE POLICY manage_own_tokens ON public.user_push_tokens
+    FOR ALL
+    USING (auth.uid() = user_id)
     WITH CHECK (auth.uid() = user_id);
 
--- Policy to allow users to update their own tokens
-CREATE POLICY update_own_tokens ON public.user_push_tokens
-    FOR UPDATE
-    USING (auth.uid() = user_id);
+-- Enable RLS for user_notification_preferences table
+ALTER TABLE public.user_notification_preferences ENABLE ROW LEVEL SECURITY;
 
--- Policy to allow users to delete their own tokens
-CREATE POLICY delete_own_tokens ON public.user_push_tokens
-    FOR DELETE
-    USING (auth.uid() = user_id);
+-- Single comprehensive policy for user_notification_preferences
+CREATE POLICY manage_own_preferences ON public.user_notification_preferences
+    FOR ALL
+    USING (auth.uid() = user_id)
+    WITH CHECK (auth.uid() = user_id);
 ```
 
 ### Notification Configuration (notificationConfig.ts)
