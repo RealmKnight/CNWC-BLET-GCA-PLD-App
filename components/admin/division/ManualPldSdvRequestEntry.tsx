@@ -958,9 +958,10 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     },
     content: {
       flex: 1,
+      padding: 16,
     },
     section: {
-      marginBottom: 24,
+      marginBottom: 48,
       position: "relative",
       zIndex: 10,
     },
@@ -982,7 +983,7 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       marginBottom: 8,
       width: "100%",
       maxWidth: Platform.OS === "web" ? "80%" : "100%",
-      zIndex: 100,
+      zIndex: 1000,
     },
     searchInputWrapper: {
       flexDirection: "row",
@@ -1030,27 +1031,12 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       overflow: "hidden",
     },
     searchResultsContainer: {
-      ...(Platform.OS === "android"
-        ? {
-            position: "absolute",
-            top: "100%",
-            left: 0,
-            right: 0,
-            zIndex: 9999,
-            elevation: 20,
-            pointerEvents: "auto",
-            overflow: "visible",
-          }
-        : {
-            top: "100%",
-            left: 0,
-            right: 0,
-            zIndex: 999,
-          }),
-      maxHeight: 200,
+      position: "relative",
+      marginTop: 4,
       borderWidth: 1,
       borderColor: Colors.dark.border,
       borderRadius: 4,
+      maxHeight: 200,
       backgroundColor: Colors.dark.card,
     },
     searchResults: {

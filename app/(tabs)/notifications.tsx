@@ -757,7 +757,6 @@ const styles = StyleSheet.create({
   },
   // Advertisement banner styles
   topAdBanner: {
-    marginHorizontal: 16,
     marginTop: 16,
   },
   bottomAdBanner: {

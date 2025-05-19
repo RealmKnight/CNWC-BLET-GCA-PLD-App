@@ -172,6 +172,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     overflow: "hidden",
     backgroundColor: "transparent",
+    padding: 1,
   },
   image: {
     width: "100%",

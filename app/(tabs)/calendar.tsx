@@ -1521,9 +1521,9 @@ function DateControls({ selectedDate, onDateChange, onCurrentDateChange, onClear
 const controlStyles = StyleSheet.create({
   container: {
     flexDirection: "row",
+    flexWrap: "wrap",
     justifyContent: "space-between",
     alignItems: "center",
-    paddingHorizontal: 16,
     paddingVertical: 8,
     backgroundColor: Colors.dark.card,
     ...(Platform.OS === "web" && {
@@ -1533,9 +1533,6 @@ const controlStyles = StyleSheet.create({
     }),
   } as ViewStyle,
   datePickerContainer: Platform.select({
-    web: {
-      marginRight: 16,
-    },
     default: {
       backgroundColor: Colors.dark.card,
     },

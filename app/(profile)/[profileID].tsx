@@ -1448,6 +1448,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 16,
     backgroundColor: Colors.dark.card,
+    flexWrap: "wrap",
   },
   contactAdminButton: {
     flexDirection: "row",
@@ -1457,6 +1458,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 20,
     gap: 6,
+    marginTop: 8,
   },
   contactAdminText: {
     color: Colors.dark.buttonText,
