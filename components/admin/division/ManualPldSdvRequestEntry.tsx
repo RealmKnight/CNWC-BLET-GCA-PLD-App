@@ -770,12 +770,7 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
                     placeholder="Search by name or PIN number (min. 3 characters)"
                     style={[styles.searchInput, { color: Colors[colorScheme].text }]}
                     placeholderTextColor={Colors[colorScheme].secondary}
-                    onFocus={() => {
-                      // For mobile, open the modal immediately when the search input is focused
-                      if (Platform.OS !== "web") {
-                        setShowMobileSearchModal(true);
-                      }
-                    }}
+                    autoFocus={true}
                   />
                   {searchQuery !== "" && (
                     <ThemedTouchableOpacity
@@ -788,33 +783,36 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
                   )}
                 </View>
 
-                {searchResults.length > 0 ? (
-                  <FlatList
-                    data={searchResults}
-                    keyExtractor={(item) => item.id}
-                    style={styles.mobileSearchResults}
-                    renderItem={({ item }) => (
-                      <ThemedTouchableOpacity
-                        style={styles.resultItem}
-                        onPress={() => handleSelectMember(item)}
-                        activeOpacity={0.7}
-                      >
-                        <ThemedText>
-                          {item.last_name}, {item.first_name} ({item.pin_number})
-                          {item.calendar_id && calendarNames[item.calendar_id]
-                            ? ` - ${calendarNames[item.calendar_id]}`
-                            : " - Calendar will be checked"}
-                        </ThemedText>
-                      </ThemedTouchableOpacity>
-                    )}
-                  />
-                ) : (
-                  <ThemedText style={styles.noResultsText}>
-                    {searchQuery.length < 3
-                      ? "Type at least 3 characters to search"
-                      : "No members found matching your search"}
-                  </ThemedText>
-                )}
+                <View style={styles.mobileSearchResults}>
+                  {searchResults.length > 0 ? (
+                    <FlatList
+                      data={searchResults}
+                      keyExtractor={(item) => item.id}
+                      style={{ flex: 1 }}
+                      contentContainerStyle={{ flexGrow: 1, paddingBottom: 20 }}
+                      renderItem={({ item }) => (
+                        <ThemedTouchableOpacity
+                          style={styles.resultItem}
+                          onPress={() => handleSelectMember(item)}
+                          activeOpacity={0.7}
+                        >
+                          <ThemedText>
+                            {item.last_name}, {item.first_name} ({item.pin_number})
+                            {item.calendar_id && calendarNames[item.calendar_id]
+                              ? ` - ${calendarNames[item.calendar_id]}`
+                              : " - Calendar will be checked"}
+                          </ThemedText>
+                        </ThemedTouchableOpacity>
+                      )}
+                    />
+                  ) : (
+                    <ThemedText style={styles.noResultsText}>
+                      {searchQuery.length < 3
+                        ? "Type at least 3 characters to search"
+                        : "No members found matching your search"}
+                    </ThemedText>
+                  )}
+                </View>
               </View>
             </TouchableWithoutFeedback>
           </View>
@@ -1472,7 +1470,7 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     },
     mobileSearchModalContent: {
       width: "90%",
-      maxHeight: "80%",
+      height: "80%", // Fixed height instead of maxHeight
       backgroundColor: Colors.dark.card,
       borderRadius: 8,
       padding: 16,
@@ -1481,6 +1479,7 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       shadowOffset: { width: 0, height: 2 },
       shadowOpacity: 0.25,
       shadowRadius: 3.84,
+      flexDirection: "column", // Explicitly set direction
     },
     mobileSearchHeader: {
       flexDirection: "row",
@@ -1498,11 +1497,15 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     mobileSearchResults: {
       flex: 1,
       marginTop: 8,
+      borderWidth: 1,
+      borderColor: Colors.dark.border,
+      borderRadius: 4,
     },
     noResultsText: {
       textAlign: "center",
       marginTop: 20,
       fontStyle: "italic",
+      padding: 20,
     },
     resultItem: {
       padding: 12,
