@@ -8,10 +8,12 @@ import {
   Platform,
   KeyboardAvoidingView,
   Modal,
+  Alert,
 } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { Ionicons } from "@expo/vector-icons";
+import { showSuccessToast, showErrorToast } from "@/app/company-admin";
 
 /**
  * AdminMessageSection Component
@@ -277,28 +279,66 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
       await replyAsAdmin(selectedThreadId, replyText);
       console.log(`Reply Sent to thread ${selectedThreadId}!`);
       setReplyText("");
+
+      // Show success toast on web
+      if (Platform.OS === "web") {
+        showSuccessToast("Success", "Reply sent successfully");
+      }
     } catch (error: any) {
       console.error("Failed to send reply:", error);
-      // TODO: Show error feedback
+
+      // Show error feedback
+      if (Platform.OS === "web") {
+        showErrorToast("Error", "Failed to send reply");
+      } else {
+        Alert.alert("Error", "Failed to send reply");
+      }
     }
   };
 
   const handleArchiveAction = (threadId: string | null) => {
     if (!threadId) return;
     console.log(`Calling archiveThread for thread ${threadId} (Admin context)`);
-    archiveThread(threadId).catch((err: Error) => {
-      console.error("Failed to archive thread:", err);
-      // TODO: Show error feedback
-    });
+    archiveThread(threadId)
+      .then(() => {
+        // Show success toast on web
+        if (Platform.OS === "web") {
+          showSuccessToast("Success", "Thread archived successfully");
+        }
+      })
+      .catch((err: Error) => {
+        console.error("Failed to archive thread:", err);
+
+        // Show error feedback
+        if (Platform.OS === "web") {
+          showErrorToast("Error", "Failed to archive thread");
+        } else {
+          Alert.alert("Error", "Failed to archive thread");
+        }
+      });
+
     if (selectedThreadId === threadId) setSelectedThreadId(null);
   };
 
   const handleMarkUnreadAction = (threadId: string | null) => {
     if (!threadId) return;
-    markThreadAsUnread(threadId).catch((err: Error) => {
-      console.error("Failed to mark thread as unread:", err);
-      // TODO: Show error feedback
-    });
+    markThreadAsUnread(threadId)
+      .then(() => {
+        // Show success toast on web
+        if (Platform.OS === "web") {
+          showSuccessToast("Success", "Thread marked as unread");
+        }
+      })
+      .catch((err: Error) => {
+        console.error("Failed to mark thread as unread:", err);
+
+        // Show error feedback
+        if (Platform.OS === "web") {
+          showErrorToast("Error", "Failed to mark thread as unread");
+        } else {
+          Alert.alert("Error", "Failed to mark thread as unread");
+        }
+      });
   };
 
   // --- Handler for Acknowledgment ---
@@ -309,10 +349,23 @@ export function AdminMessageSection(props: AdminMessageSectionProps) {
       const latestMessage = thread[thread.length - 1];
       if (latestMessage.requires_acknowledgment && !latestMessage.acknowledged_by?.includes(currentUser.id)) {
         console.log(`Acknowledging message ${latestMessage.id} (Admin context)`);
-        acknowledgeMessage(latestMessage.id, currentUser.id).catch((err: Error) => {
-          console.error(`Failed to acknowledge message ${latestMessage.id}:`, err);
-          // TODO: Show error feedback
-        });
+        acknowledgeMessage(latestMessage.id, currentUser.id)
+          .then(() => {
+            // Show success toast on web
+            if (Platform.OS === "web") {
+              showSuccessToast("Success", "Message acknowledged");
+            }
+          })
+          .catch((err: Error) => {
+            console.error(`Failed to acknowledge message ${latestMessage.id}:`, err);
+
+            // Show error feedback
+            if (Platform.OS === "web") {
+              showErrorToast("Error", "Failed to acknowledge message");
+            } else {
+              Alert.alert("Error", "Failed to acknowledge message");
+            }
+          });
       }
     }
   };

@@ -57,7 +57,9 @@ CREATE TABLE public.announcements (
   require_acknowledgment BOOLEAN DEFAULT false NOT NULL,
   target_type TEXT NOT NULL, -- 'division' (for specific divisions), 'GCA' (for all GCA/union members)
   target_division_ids INTEGER[] DEFAULT '{}'::integer[], -- Required if target_type is 'division'. Stores division_id(s).
-  document_ids UUID[] DEFAULT '{}'::uuid[] -- References to documents table if attachments exist. Maximum 3 attachments, 25 MB file size limit.. Upload/linking integrated into creation flow.
+  document_ids UUID[] DEFAULT '{}'::uuid[], -- References to documents in storage bucket
+  read_by TEXT[] DEFAULT '{}'::text[], -- Array of pin numbers who have read this announcement
+  acknowledged_by TEXT[] DEFAULT '{}'::text[] -- Array of pin numbers who have acknowledged this announcement
 );
 
 -- Add trigger for updated_at
@@ -77,6 +79,8 @@ CREATE TABLE public.announcement_read_status (
   PRIMARY KEY (announcement_id, user_id)
 );
 ```
+
+**Note:** This table is optional as we're already tracking read status in the announcements table using the read_by array. This table provides additional detail about when each announcement was read, which can be useful for analytics.
 
 **Step 3: Create View for Announcements with Author Names**
 
@@ -286,23 +290,63 @@ CREATE POLICY "Admin_view_read_status" ON public.announcement_read_status
 
 **Step 7: Create Helper Functions for Read Status Management**
 
-We'll leverage the existing pattern from `mark_admin_message_read` for our announcement read status tracking:
+We'll leverage the existing pattern from messages system for our announcement read status tracking:
 
 ```sql
 CREATE OR REPLACE FUNCTION public.mark_announcement_as_read(announcement_id UUID)
 RETURNS void AS $$
+DECLARE
+  v_user_id UUID := auth.uid();
+  v_pin_number TEXT;
+BEGIN
+  -- Get the user's pin number
+  SELECT pin_number::text INTO v_pin_number
+  FROM public.members
+  WHERE id = v_user_id;
+
+  IF v_pin_number IS NULL THEN
+    RAISE EXCEPTION 'User pin number not found';
+  END IF;
+
+  -- Track detailed read timestamp in the read_status table if it exists
   INSERT INTO public.announcement_read_status (announcement_id, user_id)
   VALUES (announcement_id, auth.uid())
   ON CONFLICT (announcement_id, user_id) DO
     UPDATE SET read_at = timezone('utc'::text, now());
-$$ LANGUAGE sql SECURITY DEFINER;
+
+  -- Add to the read_by array in the announcements table if not already there
+  UPDATE public.announcements
+  SET read_by = array_append(read_by, v_pin_number)
+  WHERE id = announcement_id AND NOT (v_pin_number = ANY(read_by));
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Also add function to mark as unread if needed
 CREATE OR REPLACE FUNCTION public.mark_announcement_as_unread(announcement_id UUID)
 RETURNS void AS $$
+DECLARE
+  v_user_id UUID := auth.uid();
+  v_pin_number TEXT;
+BEGIN
+  -- Get the user's pin number
+  SELECT pin_number::text INTO v_pin_number
+  FROM public.members
+  WHERE id = v_user_id;
+
+  IF v_pin_number IS NULL THEN
+    RAISE EXCEPTION 'User pin number not found';
+  END IF;
+
+  -- Remove from read_status table
   DELETE FROM public.announcement_read_status
   WHERE announcement_id = $1 AND user_id = auth.uid();
-$$ LANGUAGE sql SECURITY DEFINER;
+
+  -- Remove from read_by array
+  UPDATE public.announcements
+  SET read_by = array_remove(read_by, v_pin_number)
+  WHERE id = announcement_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 ```
 
 **Step 8: Create Functions for Creating and Managing Announcements**
@@ -419,27 +463,34 @@ END;
 $$;
 ```
 
-**Step 9: Implement Announcement Acknowledgment System**
+**Step 9: Implement Announcement Acknowledgment Functions**
 
-For announcements with `require_acknowledgment = true`, create functions to handle acknowledgment:
+For announcements with `require_acknowledgment = true`, create functions to handle acknowledgment similar to the existing message acknowledgment system:
 
 ```sql
--- Column for tracking acknowledgments
-ALTER TABLE public.announcements ADD COLUMN acknowledged_by UUID[] DEFAULT '{}'::uuid[];
-
--- Function to acknowledge an announcement
+-- Function to acknowledge an announcement (using string pin numbers like the current message system)
 CREATE OR REPLACE FUNCTION public.acknowledge_announcement(announcement_id UUID)
 RETURNS void AS $$
 DECLARE
   v_user_id UUID := auth.uid();
+  v_pin_number TEXT;
 BEGIN
+  -- Get the user's pin number
+  SELECT pin_number::text INTO v_pin_number
+  FROM public.members
+  WHERE id = v_user_id;
+
+  IF v_pin_number IS NULL THEN
+    RAISE EXCEPTION 'User pin number not found';
+  END IF;
+
   -- First mark as read
   PERFORM public.mark_announcement_as_read(announcement_id);
 
   -- Then add to acknowledged_by array if not already there
   UPDATE public.announcements
-  SET acknowledged_by = array_append(acknowledged_by, v_user_id)
-  WHERE id = announcement_id AND NOT (v_user_id = ANY(acknowledged_by));
+  SET acknowledged_by = array_append(acknowledged_by, v_pin_number)
+  WHERE id = announcement_id AND NOT (v_pin_number = ANY(acknowledged_by));
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ```
@@ -506,6 +557,8 @@ import { create } from "zustand";
 import { supabase } from "@/utils/supabase";
 import type { Announcement, AnnouncementReadStatus, AnnouncementAnalytics } from "@/types/announcements";
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from "@supabase/supabase-js";
+import { Platform } from "react-native";
+import * as Notifications from "expo-notifications";
 
 interface AnnouncementStore {
   announcements: Announcement[];
@@ -520,7 +573,7 @@ interface AnnouncementStore {
   error: string | null;
   isInitialized: boolean;
   viewingDivisionId: number | null;
-  realtimeChannel: RealtimeChannel | null;
+  subscriptionStatus: "none" | "subscribing" | "subscribed" | "error";
 
   // Fetch helpers
   _fetchAndSetAnnouncements: (userId: string, divisionId: number | null) => Promise<void>;
@@ -549,10 +602,13 @@ interface AnnouncementStore {
   deleteAnnouncement: (id: string) => Promise<void>;
   getAnnouncementAnalytics: (announcementId: string) => Promise<AnnouncementAnalytics | null>;
   cleanupAnnouncementStore: () => void;
+  setIsInitialized: (initialized: boolean) => void;
+  refreshAnnouncements: (userId: string, divisionId: number | null, force?: boolean) => Promise<void>;
+  subscribeToAnnouncements: (userId: string) => () => void;
 }
 
 export const useAnnouncementStore = create<AnnouncementStore>((set, get) => ({
-  // Implementation will follow the pattern in adminNotificationStore.ts
+  // Implementation following pattern in notificationStore.ts
   announcements: [],
   readStatusMap: {},
   acknowledgedMap: {},
@@ -565,10 +621,33 @@ export const useAnnouncementStore = create<AnnouncementStore>((set, get) => ({
   error: null,
   isInitialized: false,
   viewingDivisionId: null,
-  realtimeChannel: null,
+  subscriptionStatus: "none",
 
-  // Implementation details for fetching and real-time updates will be similar to adminNotificationStore
+  setIsInitialized: (initialized: boolean) => {
+    console.log(`[AnnouncementStore] Setting isInitialized to ${initialized}`);
+    set({ isInitialized: initialized });
+  },
+
+  // Implementation details will follow patterns from notificationStore.ts
+  // with realtime subscriptions and proper badge update handling
   // ...
+
+  // Helper function to update announcement badge counts
+  _updateAnnouncementBadges: (unreadCounts) => {
+    if (Platform.OS !== "web") {
+      // Update badge counts but keep separate from notification badges
+      // Only used internally by the store
+    }
+  },
+
+  // Subscription handling similar to notificationStore.ts
+  subscribeToAnnouncements: (userId: string) => {
+    // Will implement following pattern from notificationStore.ts
+    // Creates and manages multiple realtime channels for different announcement types
+    return () => {
+      // Cleanup function
+    };
+  },
 }));
 ```
 
@@ -664,8 +743,8 @@ export function AnnouncementBadge({ style, targetType }: AnnouncementBadgeProps)
 
 **Important User Experience Requirements:**
 
-- Announcements requiring acknowledgment must use a modal approach, blocking access to other content until acknowledged
-- Unread announcements should retain unread status across user sessions (logout/login)
+- Announcements requiring acknowledgment must use a modal approach (similar to existing notification acknowledgement system), blocking access to other content until acknowledged
+- Unread announcements should retain unread status across user sessions (logout/login) using the same database persistence as existing notifications
 - Important announcements should have special visual styling to highlight their significance
 - Expired announcements should remain visible but be clearly marked as expired
 
@@ -676,13 +755,15 @@ export function AnnouncementBadge({ style, targetType }: AnnouncementBadgeProps)
 
 import React from "react";
 import { useAnnouncementStore } from "@/store/announcementStore";
+import { useUserStore } from "@/store/userStore";
 // ... other imports
 
 export default function DivisionAnnouncementsPage() {
   // Implementation of the division announcements viewing page
   // - Display division-specific announcements
   // - Mark as read functionality
-  // - Document viewing
+  // - Document viewing using existing document viewer components
+  // - Implement acknowledgment modal for required announcements
 }
 ```
 
@@ -693,13 +774,15 @@ export default function DivisionAnnouncementsPage() {
 
 import React from "react";
 import { useAnnouncementStore } from "@/store/announcementStore";
+import { useUserStore } from "@/store/userStore";
 // ... other imports
 
 export default function UnionAnnouncementsPage() {
   // Implementation of the union announcements viewing page
   // - Display union/GCA-level announcements
   // - Mark as read functionality
-  // - Document viewing
+  // - Document viewing using existing document viewer components
+  // - Implement acknowledgment modal for required announcements
 }
 ```
 
@@ -707,7 +790,8 @@ export default function UnionAnnouncementsPage() {
 
 ```typescript
 // Modify app/(tabs)/index.tsx to add badges to navigation cards
-// Modify navigation components to show badges where appropriate
+// Add badge components to GCA and Division cards based on unread announcement counts
+// Follow existing pattern in navigation components for badge placement
 ```
 
 - [ ] ### Phase 5: Notification and Analytics Enhancements
@@ -795,48 +879,53 @@ export async function sendAnnouncementNotification(announcementId: string) {
 
 ### Admin Message System Integration
 
-- Leverage existing admin message read status tracking
-- Use similar UI patterns for consistency
-- Reuse badge components where possible
+- Leverage existing admin message read status tracking from the messages system
+- Use similar UI patterns for consistency with existing admin interfaces
+- Reuse badge notification system from notificationStore.ts but keep announcement badges separate
 
 ### Document System Integration
 
-- Use existing document storage for announcement attachments
-- Integrate with document viewer components
+- Use existing document storage system through Supabase Storage
+- Integrate with existing document upload and viewer components
 - Enforce 25 MB file size limit and maximum of 3 attachments per announcement
-- Apply appropriate validation on the client and server sides
+- Apply appropriate validation on the client and server sides following existing patterns
 
 ### User Role System Integration
 
-- Utilize the existing role-based access control
-- Leverage division assignments for targeting
+- Utilize the existing role-based access control in the members table (members.role)
+- Initialize announcement store after auth completion following the pattern in useAuth.tsx
+- Follow current role validation patterns for division/union admins in existing admin components
 
 ## Technical Considerations
 
 ### Performance Optimization
 
-- Implement pagination for announcement lists
+- Implement pagination for announcement lists following existing patterns
 - Use appropriate indices for database queries
 - Optimize read analytics for large user bases
+- Implement appropriate caching strategy similar to existing Zustand stores
 
 ### Security Considerations
 
-- Ensure proper RLS policies for all tables
-- Validate input on both client and server
-- Implement appropriate permission checks in UI
+- Ensure proper RLS policies for all tables following current database security patterns
+- Validate input on both client and server using consistent validation approaches
+- Implement appropriate permission checks in UI based on user roles
 
 ### Realtime Updates
 
-- Use Supabase realtime for immediate updates to both announcement content and notification badges
-- New announcements should appear for online users without requiring page refresh
-- Badge counts should update in real-time as announcements are published or read
-- Maintain Zustand store consistency with backend through realtime subscription
+- Use Supabase realtime subscriptions following the pattern in notificationStore.ts
+- Set up multiple subscription channels for different announcement types
+- Implement proper subscription cleanup in the store's initialization function
+- Maintain error handling and reconnection strategies consistent with existing code
+- Update badge counts using the same mechanism as notification badges but keep them separate
 
 ## Integration with Existing Messages/Notifications System
 
-- Update the existing messages/notifications system to use the same modal approach for Must_Read/Acknowledgement Required messages
+- Follow the same modal approach for acknowledgment as used in the existing notification system
 - Ensure consistency between announcement acknowledgment UX and message acknowledgment UX
-- Consider unified notification center that distinguishes between different notification types while maintaining consistent interaction patterns
+- Keep announcements as a separate system from regular messages but maintain consistent UI patterns
+- Update the auth hook initialization function to initialize the announcement store following the pattern for other stores
+- Initialize the announcement store after the notification store in the initialization sequence in useAuth.tsx
 
 ## Future Enhancements (Post-MVP)
 

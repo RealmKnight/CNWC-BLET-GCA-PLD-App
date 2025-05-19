@@ -11,6 +11,7 @@ import { supabase } from "@/utils/supabase";
 import { sendMessageWithNotification } from "@/utils/notificationService";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { ThemedView } from "@/components/ThemedView";
+import { showSuccessToast, showErrorToast, showConfirmToast } from "@/app/company-admin";
 
 interface Member {
   pin_number: string;
@@ -250,7 +251,13 @@ export function PldSdvSection() {
       setPendingRequests(transformedData);
     } catch (error) {
       console.error("Error fetching pending requests:", error);
-      Alert.alert("Error", "Failed to load pending requests");
+
+      // Show error notification based on platform
+      if (Platform.OS === "web") {
+        showErrorToast("Error", "Failed to load pending requests");
+      } else {
+        Alert.alert("Error", "Failed to load pending requests");
+      }
     }
   }, [user?.id]);
 
@@ -267,6 +274,13 @@ export function PldSdvSection() {
       setDenialReasons(data);
     } catch (error) {
       console.error("Error fetching denial reasons:", error);
+
+      // Show error notification based on platform
+      if (Platform.OS === "web") {
+        showErrorToast("Error", "Failed to load denial reasons");
+      } else {
+        Alert.alert("Error", "Failed to load denial reasons");
+      }
     }
   }, []);
 
@@ -435,28 +449,54 @@ export function PldSdvSection() {
         );
       } catch (pinError) {
         console.error("Error with recipient PIN:", pinError);
-        Alert.alert(
-          "Partial Success",
-          "Request was approved, but notification could not be sent due to invalid recipient data."
-        );
+        if (Platform.OS === "web") {
+          showErrorToast(
+            "Partial Success",
+            "Request was approved, but notification could not be sent due to invalid recipient data."
+          );
+        } else {
+          Alert.alert(
+            "Partial Success",
+            "Request was approved, but notification could not be sent due to invalid recipient data."
+          );
+        }
       }
 
       // Refresh the list regardless of notification success
       await fetchPendingRequests();
-      Alert.alert("Success", "Request approved successfully");
+
+      // Show success message
+      if (Platform.OS === "web") {
+        showSuccessToast("Success", "Request approved successfully");
+      } else {
+        Alert.alert("Success", "Request approved successfully");
+      }
     } catch (error) {
       console.error("Error approving request:", error);
 
       // If the error is related to PIN validation but the database update succeeded
       if ((error as Error)?.message?.includes("PIN")) {
         console.log("Request approved but notification failed due to PIN issue");
-        Alert.alert(
-          "Partial Success",
-          "Request was approved, but notification could not be sent due to invalid recipient data."
-        );
+
+        if (Platform.OS === "web") {
+          showErrorToast(
+            "Partial Success",
+            "Request was approved, but notification could not be sent due to invalid recipient data."
+          );
+        } else {
+          Alert.alert(
+            "Partial Success",
+            "Request was approved, but notification could not be sent due to invalid recipient data."
+          );
+        }
+
         await fetchPendingRequests();
       } else {
-        Alert.alert("Error", "Failed to approve request");
+        if (Platform.OS === "web") {
+          showErrorToast("Error", "Failed to approve request");
+        } else {
+          Alert.alert("Error", "Failed to approve request");
+        }
       }
     } finally {
       setIsRequestLoading(false);
@@ -519,10 +559,17 @@ export function PldSdvSection() {
         );
       } catch (pinError) {
         console.error("Error with recipient PIN:", pinError);
-        Alert.alert(
-          "Partial Success",
-          "Request was denied, but notification could not be sent due to invalid recipient data."
-        );
+        if (Platform.OS === "web") {
+          showErrorToast(
+            "Partial Success",
+            "Request was denied, but notification could not be sent due to invalid recipient data."
+          );
+        } else {
+          Alert.alert(
+            "Partial Success",
+            "Request was denied, but notification could not be sent due to invalid recipient data."
+          );
+        }
       }
 
       setIsDenialModalVisible(false);
@@ -530,7 +577,13 @@ export function PldSdvSection() {
       setSelectedDenialReason(null);
       setDenialComment("");
       await fetchPendingRequests();
-      Alert.alert("Success", "Request denied successfully");
+
+      // Show success message
+      if (Platform.OS === "web") {
+        showSuccessToast("Success", "Request denied successfully");
+      } else {
+        Alert.alert("Success", "Request denied successfully");
+      }
     } catch (error) {
       console.error("Error denying request:", error);
 
@@ -543,13 +596,25 @@ export function PldSdvSection() {
         setSelectedDenialReason(null);
         setDenialComment("");
 
-        Alert.alert(
-          "Partial Success",
-          "Request was denied, but notification could not be sent due to invalid recipient data."
-        );
+        if (Platform.OS === "web") {
+          showErrorToast(
+            "Partial Success",
+            "Request was denied, but notification could not be sent due to invalid recipient data."
+          );
+        } else {
+          Alert.alert(
+            "Partial Success",
+            "Request was denied, but notification could not be sent due to invalid recipient data."
+          );
+        }
+
         await fetchPendingRequests();
       } else {
-        Alert.alert("Error", "Failed to deny request");
+        if (Platform.OS === "web") {
+          showErrorToast("Error", "Failed to deny request");
+        } else {
+          Alert.alert("Error", "Failed to deny request");
+        }
       }
     } finally {
       setIsRequestLoading(false);
@@ -612,43 +677,52 @@ export function PldSdvSection() {
         );
       } catch (pinError) {
         console.error("Error with recipient PIN:", pinError);
-        Alert.alert(
-          "Partial Success",
-          "Request was cancelled, but notification could not be sent due to invalid recipient data."
-        );
-      }
-
-      await fetchPendingRequests();
-      Alert.alert("Success", "Cancellation approved successfully");
-    } catch (error) {
-      console.error("Error approving cancellation:", error);
-
-      // Update the database entry even if notification fails
-      if ((error as Error)?.message?.includes("PIN")) {
-        console.log("Attempting to update request status despite notification error...");
-        try {
-          await supabase
-            .from("pld_sdv_requests")
-            .update({
-              status: "cancelled",
-              actioned_by: user?.id,
-              actioned_at: new Date().toISOString(),
-              responded_at: new Date().toISOString(),
-              responded_by: user?.id,
-            })
-            .eq("id", selectedRequest.id);
-
+        if (Platform.OS === "web") {
+          showErrorToast(
+            "Partial Success",
+            "Request was cancelled, but notification could not be sent due to invalid recipient data."
+          );
+        } else {
           Alert.alert(
             "Partial Success",
             "Request was cancelled, but notification could not be sent due to invalid recipient data."
           );
-          await fetchPendingRequests();
-        } catch (dbError) {
-          console.error("Failed to update request status:", dbError);
-          Alert.alert("Error", "Failed to approve cancellation");
         }
+      }
+
+      // Refresh list and show success message
+      await fetchPendingRequests();
+      if (Platform.OS === "web") {
+        showSuccessToast("Success", "Cancellation request approved successfully");
       } else {
-        Alert.alert("Error", "Failed to approve cancellation");
+        Alert.alert("Success", "Cancellation request approved successfully");
+      }
+    } catch (error) {
+      console.error("Error approving cancellation:", error);
+
+      // If the error is related to PIN validation but the database update succeeded
+      if ((error as Error)?.message?.includes("PIN")) {
+        console.log("Cancellation approved but notification failed due to PIN issue");
+
+        if (Platform.OS === "web") {
+          showErrorToast(
+            "Partial Success",
+            "Cancellation was approved, but notification could not be sent due to invalid recipient data."
+          );
+        } else {
+          Alert.alert(
+            "Partial Success",
+            "Cancellation was approved, but notification could not be sent due to invalid recipient data."
+          );
+        }
+
+        await fetchPendingRequests();
+      } else {
+        if (Platform.OS === "web") {
+          showErrorToast("Error", "Failed to approve cancellation request");
+        } else {
+          Alert.alert("Error", "Failed to approve cancellation request");
+        }
       }
     } finally {
       setIsRequestLoading(false);
