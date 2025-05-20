@@ -19,6 +19,7 @@ import { ChangePasswordModal } from "@/components/ui/ChangePasswordModal";
 import { MemberMessageModal } from "@/components/MemberMessageModal";
 import { MeetingNotificationPreferences } from "@/components/ui/MeetingNotificationPreferences";
 import { ClientOnlyDatePicker } from "@/components/ClientOnlyDatePicker";
+import { useRouter } from "expo-router";
 
 type Member = Database["public"]["Tables"]["members"]["Row"];
 type ContactPreference = "in_app" | "phone" | "text" | "email" | "push";
@@ -630,6 +631,7 @@ export default function ProfileScreen() {
   const profileID = params.profileID as string | undefined;
   const { user, session, member: loggedInMember } = useAuth(); // Use loggedInMember to avoid confusion
   const theme = (useColorScheme() ?? "light") as ColorScheme;
+  const router = useRouter();
 
   // State for the profile being viewed
   const [profile, setProfile] = useState<Member | null>(null);
@@ -1165,6 +1167,16 @@ export default function ProfileScreen() {
                     Push Notifications
                   </ThemedText>
                 </TouchableOpacity>
+
+                {/* Advanced PUSH Notification Settings Button */}
+
+                <TouchableOpacity
+                  style={styles.advancedSettingsButton}
+                  onPress={() => router.push("/(profile)/notification-settings")}
+                >
+                  <Ionicons name="notifications-outline" size={20} color={Colors[theme].tint} />
+                  <ThemedText style={styles.advancedSettingsText}>Advanced PUSH Notification Settings</ThemedText>
+                </TouchableOpacity>
               </ThemedView>
             )}
 
@@ -1289,6 +1301,9 @@ const styles = StyleSheet.create({
   pushNotificationContainer: {
     width: "100%",
     backgroundColor: Colors.dark.card,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
   },
   pushNotificationButton: {
     width: "100%",
@@ -1480,5 +1495,20 @@ const styles = StyleSheet.create({
     color: "#b8860b",
     textDecorationLine: "underline",
     fontWeight: "600",
+  },
+  advancedSettingsButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.dark.buttonBorder,
+    backgroundColor: Colors.dark.buttonBackground,
+    marginTop: 8,
+  },
+  advancedSettingsText: {
+    color: Colors.dark.buttonText,
+    fontWeight: "600",
+    marginLeft: 8,
   },
 });

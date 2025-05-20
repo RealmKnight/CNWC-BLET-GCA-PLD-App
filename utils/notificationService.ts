@@ -1,3 +1,37 @@
+// Notification Service - Implementation of the hybrid notification approach with robust retry mechanism
+//
+// This service handles all notification-related functionality:
+// - It implements a hybrid notification approach that balances system-defined priorities with user preferences
+// - Critical system messages will always be delivered with appropriate urgency
+// - Non-critical notifications respect user preferences
+// - Users can customize delivery methods on a per-category basis
+// - The system supports multiple delivery methods: push, in-app, email, and SMS
+//
+// ROBUST RETRY MECHANISM:
+// - Implements a reliable delivery system for push notifications with an exponential backoff retry strategy
+// - Notifications are added to a persistent queue (push_notification_queue table) for processing
+// - A dedicated Edge Function (process-notification-queue) processes the queue every minute via a cron job
+// - Failed deliveries are automatically retried with increasing intervals:
+//   * First 3 retries: 20 seconds apart
+//   * Next 3 retries: ~3 minutes apart
+//   * Next 6 retries: hourly
+//   * Beyond that: every 2 hours until max attempts
+// - This allows handling cases where users have devices off for extended periods (up to 12-24 hours)
+// - Delivery metrics are tracked for analytics and monitoring
+// - Stuck notifications can be automatically detected and manually reprocessed
+//
+// Key functions:
+// - sendNotificationWithHybridPriority: Main function for sending notifications that respects user preferences
+// - shouldSendPushNotification: Determines if a notification should be sent via push based on preferences
+// - enqueueNotification: Adds a notification to the queue for reliable delivery with retry
+// - Helper functions for specific notification types (e.g., sendAdminMessageHybrid)
+//
+// Integration points:
+// - This service integrates with user_notification_preferences table for user settings
+// - It checks notification_categories for system-defined importance levels
+// - All notification sending in the app should go through this service
+// - Delivery monitoring is handled through push_notification_deliveries and notification_analytics tables
+
 import { supabase } from "./supabase";
 import { Alert, Platform } from "react-native";
 import * as Notifications from "expo-notifications";
@@ -5,6 +39,8 @@ import type { AdminMessage } from "@/types/adminMessages"; // Import AdminMessag
 import Constants from "expo-constants";
 import * as Device from "expo-device";
 import { createClient } from "@supabase/supabase-js";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { NotificationType } from "./notificationConfig";
 
 const EXPO_PUSH_ENDPOINT = "https://exp.host/--/api/v2/push/send";
 
@@ -79,21 +115,20 @@ interface MemberWithPreferences {
 }
 
 // Function to get unread message count for a user
-export async function getUnreadMessageCount(
-  pinNumber: number,
-): Promise<number> {
+export async function getUnreadMessageCount(userId: number): Promise<number> {
   try {
+    // Query unread messages count
     const { count, error } = await supabase
-      .schema("public")
-      .from("messages")
+      .from("user_notifications")
       .select("*", { count: "exact", head: true })
-      .eq("recipient_pin_number", pinNumber.toString())
-      .is("read_at", null);
+      .eq("user_id", userId)
+      .eq("is_read", false);
 
     if (error) throw error;
+
     return count || 0;
   } catch (error) {
-    console.error("[Notification] Error getting unread count:", error);
+    console.error("[NotificationService] Error getting unread count:", error);
     return 0;
   }
 }
@@ -101,92 +136,207 @@ export async function getUnreadMessageCount(
 // Function to mark a message as read
 export async function markMessageRead(
   messageId: string,
-  pinNumber: number,
+  userId?: string,
 ): Promise<void> {
   try {
-    // First get current read_by array
-    const { data: message, error: fetchError } = await supabase
-      .from("messages")
-      .select("read_by")
-      .eq("id", messageId)
-      .single();
-
-    if (fetchError) throw fetchError;
-
-    // Update with new array
-    const readBy = message?.read_by || [];
-    const pinString = pinNumber.toString();
-    if (!readBy.includes(pinString)) {
-      readBy.push(pinString);
-    }
-
-    const now = new Date().toISOString();
-
     const { error } = await supabase
-      .schema("public")
-      .from("messages")
-      .update({
-        read_by: readBy,
-        read_at: now, // Set the read timestamp
-      })
-      .eq("id", messageId)
-      .eq("recipient_pin_number", pinString);
+      .from("user_notifications")
+      .update({ is_read: true, read_at: new Date().toISOString() })
+      .eq("id", messageId);
 
     if (error) throw error;
+
+    // If we have a userId, update badge count
+    if (userId) {
+      try {
+        // Dynamically import to avoid circular dependencies
+        const { useBadgeStore } = await import("@/store/badgeStore");
+        const { fetchUnreadCount } = useBadgeStore.getState();
+        // Update badge count after marking as read
+        await fetchUnreadCount(userId);
+      } catch (err) {
+        console.error("[NotificationService] Error updating badge count:", err);
+      }
+    }
   } catch (error) {
-    console.error("[Notification] Error marking message as read:", error);
-    throw error;
+    console.error(
+      "[NotificationService] Error marking message as read:",
+      error,
+    );
   }
 }
 
+/**
+ * Enqueue a notification for reliable delivery with retry mechanism
+ *
+ * This function adds a notification to the push_notification_queue table,
+ * which will be processed by the process-notification-queue Edge Function.
+ * The queue processor implements an exponential backoff retry strategy:
+ * - First 3 retries: 20 seconds apart
+ * - Next 3 retries: ~3 minutes apart
+ * - Next 6 retries: hourly
+ * - Beyond that: every 2 hours until max attempts (default: 10)
+ *
+ * This allows handling cases where users have devices off for extended periods
+ * (up to 12-24 hours) while maintaining reliable delivery.
+ *
+ * @param userId The user ID who will receive the notification
+ * @param pushToken The push token of the device to send to
+ * @param title Notification title
+ * @param body Notification body
+ * @param data Additional data to include with the notification
+ * @param notificationId Optional ID of the notification for tracking
+ * @param priority Optional priority ('default' | 'normal' | 'high')
+ * @param maxAttempts Maximum number of retry attempts (default: 10)
+ * @returns The ID of the queued notification or null if failed
+ */
+export async function enqueueNotification(
+  userId: string,
+  pushToken: string,
+  title: string,
+  body: string,
+  data: Record<string, any> = {},
+  notificationId?: string,
+  priority: "default" | "normal" | "high" = "default",
+  maxAttempts: number = 10,
+): Promise<string | null> {
+  try {
+    // Set scheduled time for immediate processing
+    const now = new Date().toISOString();
+
+    // Prepare the queue entry with proper typing
+    const queueEntry: {
+      user_id: string;
+      push_token: string;
+      title: string;
+      body: string;
+      data: Record<string, any>;
+      status: string;
+      retry_count: number;
+      next_attempt_at: string;
+      max_attempts: number;
+      created_at: string;
+      updated_at: string;
+      notification_id?: string;
+    } = {
+      user_id: userId,
+      push_token: pushToken,
+      title,
+      body,
+      data: {
+        ...data,
+        // Add priority to data for the push notification handler
+        importance: priority,
+      },
+      status: "pending",
+      retry_count: 0,
+      next_attempt_at: now,
+      max_attempts: maxAttempts,
+      created_at: now,
+      updated_at: now,
+    };
+
+    // Add notification_id if provided
+    if (notificationId) {
+      queueEntry.notification_id = notificationId;
+    }
+
+    // Insert into queue
+    const { data: insertedData, error } = await supabase
+      .from("push_notification_queue")
+      .insert(queueEntry)
+      .select("id")
+      .single();
+
+    if (error) {
+      console.error(
+        "[NotificationService] Error enqueueing notification:",
+        error,
+      );
+      return null;
+    }
+
+    console.log(
+      `[NotificationService] Notification enqueued with ID: ${insertedData.id}`,
+    );
+    return insertedData.id;
+  } catch (error) {
+    console.error(
+      "[NotificationService] Exception enqueueing notification:",
+      error,
+    );
+    return null;
+  }
+}
+
+// Update the existing sendPushNotification function to use the queue for robust delivery
 export async function sendPushNotification(
   message: PushMessage,
 ): Promise<boolean> {
   try {
-    // Ensure the message follows Expo's push notification format
-    const expoPushMessage = {
-      to: message.to,
-      sound: message.sound || "default",
-      title: message.title,
-      body: message.body,
-      data: message.data || {},
-      badge: message.badge,
-      channelId: Platform.OS === "android" ? "default" : undefined,
-      priority: message.priority || "high", // Can be 'default' | 'normal' | 'high'
-      // Additional Expo-specific properties as needed
-      _displayInForeground: true, // This ensures the notification is shown even if the app is in the foreground
-    };
+    // For immediate delivery with reliability, use the queue
+    const queueId = await enqueueNotification(
+      message.data?.userId as string || "unknown",
+      message.to,
+      message.title,
+      message.body,
+      message.data || {},
+      message.data?.messageId as string,
+      message.priority || "default",
+      10, // Max attempts
+    );
 
-    console.log("Sending push notification to:", message.to);
-
-    const response = await fetch(EXPO_PUSH_ENDPOINT, {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Accept-encoding": "gzip, deflate",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(expoPushMessage),
-    });
-
-    const result = await response.json();
-
-    console.log("Push notification response:", result);
-
-    if (result.data?.status === "ok") {
-      console.log("Push notification sent successfully");
-      return true;
-    } else {
-      console.error(
-        "Push notification sending failed:",
-        result.errors || result.data?.details,
-      );
-      return false;
-    }
+    // Return success if we successfully enqueued the notification
+    return !!queueId;
   } catch (error) {
-    console.error("Error sending push notification:", error);
+    console.error(
+      "[NotificationService] Error sending push notification:",
+      error,
+    );
     return false;
   }
+}
+
+// Helper function to determine the iOS category identifier based on notification type
+function getIOSCategoryForNotificationType(
+  notificationType?: string,
+  categoryCode?: string,
+): string | undefined {
+  if (!notificationType && !categoryCode) return undefined;
+
+  // First check based on notificationType
+  if (notificationType) {
+    switch (notificationType) {
+      case "system_alert":
+      case "must_read":
+        return "urgent";
+      case "admin_message":
+        return "admin_message";
+      case "gca_announcement":
+      case "division_announcement":
+        return "announcement";
+      case "regular_message":
+        return "message";
+    }
+  }
+
+  // Fallback to categoryCode if available
+  if (categoryCode) {
+    switch (categoryCode) {
+      case "system_alert":
+      case "must_read":
+        return "urgent";
+      case "admin_message":
+        return "admin_message";
+      case "gca_announcement":
+      case "division_announcement":
+        return "announcement";
+      default:
+        return "message";
+    }
+  }
+
+  return "message"; // Default fallback
 }
 
 // Function to send SMS using Twilio through Supabase Edge Function
@@ -227,6 +377,92 @@ async function sendEmail(
 function truncateForSMS(content: string): string {
   if (content.length <= 30) return content;
   return content.substring(0, 27) + "...";
+}
+
+// Function to check if a push notification should be sent based on user preferences
+export async function shouldSendPushNotification(
+  userId: string,
+  categoryCode: string,
+  importance: string,
+): Promise<boolean> {
+  try {
+    // First check if the category is mandatory (system-critical)
+    const { data: category, error: categoryError } = await supabase
+      .from("notification_categories")
+      .select("is_mandatory, default_importance")
+      .eq("code", categoryCode)
+      .single();
+
+    if (categoryError) {
+      console.error("Error checking category:", categoryError);
+      // Default to sending for safety if we can't determine
+      return true;
+    }
+
+    // If this is a mandatory high-importance notification, always send it
+    if (category?.is_mandatory && category.default_importance === "high") {
+      return true;
+    }
+
+    // Check if the user has a specific preference for this category
+    const { data: categoryPref, error: catError } = await supabase
+      .from("user_notification_preferences")
+      .select("delivery_method, enabled")
+      .eq("user_id", userId)
+      .eq("category_code", categoryCode)
+      .single();
+
+    if (catError && catError.code !== "PGRST116") {
+      // PGRST116 is "no rows returned"
+      console.error("Error checking category preference:", catError);
+    }
+
+    // If user has a specific preference for this category and it's enabled
+    if (categoryPref) {
+      // If the category is explicitly disabled and not mandatory, don't send
+      if (!categoryPref.enabled && !category?.is_mandatory) return false;
+
+      // Return true if delivery method is 'push'
+      if (categoryPref.delivery_method === "push") return true;
+
+      // Return false if delivery method is 'in_app' or 'none' (unless mandatory)
+      if (
+        categoryPref.delivery_method === "in_app" ||
+        (categoryPref.delivery_method === "none" && !category?.is_mandatory)
+      ) {
+        return false;
+      }
+    }
+
+    // If we're here, either no specific preference exists or it's set to "default"
+    // So we check the global preference
+    const { data: userPref, error: userError } = await supabase
+      .from("user_preferences")
+      .select("contact_preference")
+      .eq("user_id", userId)
+      .single();
+
+    if (userError) {
+      console.error("Error checking user preference:", userError);
+      return category?.is_mandatory || false; // If mandatory, still send even if error
+    }
+
+    // If global preference is push, check importance level
+    if (userPref?.contact_preference === "push") {
+      // Always send high importance notifications
+      if (importance === "high") return true;
+
+      // For medium and low importance, check additional preferences
+      // This could be expanded to check more complex rules
+      return importance !== "low"; // Send medium and high only
+    }
+
+    // Final fallback - send mandatory notifications, don't send others
+    return category?.is_mandatory || false;
+  } catch (error) {
+    console.error("Error in shouldSendPushNotification:", error);
+    return false;
+  }
 }
 
 // After the truncateForSMS function, add a new function to format HTML emails
@@ -323,7 +559,7 @@ interface NotificationAttempt {
   error?: string;
 }
 
-// Update the sendMessageWithNotification function to handle different notification types
+// Update the sendMessageWithNotification function to use our hybrid notification approach for determining delivery methods. Keep the basic flow the same, but incorporate hybrid preference checks.
 
 export async function sendMessageWithNotification(
   senderPinNumber: number,
@@ -466,15 +702,50 @@ export async function sendMessageWithNotification(
         // Initialize delivery attempts array to track notification attempts
         const deliveryAttempts: NotificationAttempt[] = [];
 
+        // Determine notification category and importance based on message type
+        let categoryCode = "general_message";
+        let importance = "medium";
+
+        switch (messageType) {
+          case "must_read":
+            categoryCode = "must_read";
+            importance = "high";
+            break;
+          case "admin_message":
+            categoryCode = "admin_message";
+            importance = "high";
+            break;
+          case "news":
+            categoryCode = "gca_announcement";
+            importance = "medium";
+            break;
+          default:
+            categoryCode = "general_message";
+            importance = requiresAcknowledgment ? "high" : "medium";
+            break;
+        }
+
         // Process each message for this recipient
         for (const msg of recipientMessages) {
           console.log(
             `[Notification] Processing message ${msg.id} for recipient ${recipientPin} with preference ${contactPreference}`,
           );
 
-          // Based on contact preference, send the appropriate notification
+          // First always create an in-app notification regardless of preference
+          deliveryAttempts.push({
+            method: "in_app",
+            success: true,
+          });
+
+          // Check if push notification should be sent based on hybrid preferences
           if (
-            contactPreference === "push" && pushToken && Platform.OS !== "web"
+            pushToken && Platform.OS !== "web" &&
+            (contactPreference === "push" ||
+              await shouldSendPushNotification(
+                userId,
+                categoryCode,
+                importance,
+              ))
           ) {
             // Send push notification
             const pushSuccess = await attemptPushNotification(
@@ -486,7 +757,7 @@ export async function sendMessageWithNotification(
               requiresAcknowledgment,
               0, // unreadCount will be updated by the client
               {},
-              recipientPin,
+              userId, // Send userId instead of recipientPin
             );
 
             deliveryAttempts.push({
@@ -518,13 +789,6 @@ export async function sendMessageWithNotification(
               method: "text",
               success: smsSuccess,
               error: smsSuccess ? undefined : "Failed to send SMS notification",
-            });
-          } else {
-            // For "in_app" preference or if preferred method fails, default to in-app notification
-            deliveryAttempts.push({
-              method: "in_app",
-              success: true,
-              error: undefined,
             });
           }
 
@@ -578,20 +842,68 @@ async function attemptPushNotification(
   recipientId: string,
 ): Promise<boolean> {
   try {
-    const pushMessage: PushMessage = {
-      to: pushToken,
-      title: subject,
-      body: content,
-      data: {
-        messageId,
-        messageType,
-        requiresAcknowledgment,
-        ...payload,
-      },
-      sound: messageType === "must_read" ? "default" : null,
-      priority: messageType === "must_read" ? "high" : "normal",
-      badge: unreadCount + 1,
+    // Determine the category code based on message type
+    let categoryCode = "general_message";
+    let importance = "medium";
+
+    // Map message types to notification categories
+    switch (messageType) {
+      case "must_read":
+        categoryCode = "must_read";
+        importance = "high";
+        break;
+      case "admin_message":
+        categoryCode = "admin_message";
+        importance = "high";
+        break;
+      case "news":
+        categoryCode = "gca_announcement";
+        importance = "medium";
+        break;
+      default:
+        categoryCode = "general_message";
+        importance = "medium";
+        break;
+    }
+
+    // If requires acknowledgment, increase importance
+    if (requiresAcknowledgment) {
+      importance = "high";
+    }
+
+    // Check if we should send the push notification based on user preferences
+    const shouldSend = await shouldSendPushNotification(
+      recipientId,
+      categoryCode,
+      importance,
+    );
+
+    // If we shouldn't send based on user preferences, exit early
+    if (!shouldSend) {
+      console.log(
+        `[Push Notification] Skipping push based on user preferences for recipient ${recipientId}, category ${categoryCode}`,
+      );
+      return true; // Return true so we don't count this as a failure since it's by design
+    }
+
+    // Create notification data payload
+    const notificationData = {
+      messageId,
+      messageType,
+      requiresAcknowledgment,
+      categoryCode,
+      importance,
+      userId: recipientId,
+      unreadCount,
+      ...payload,
     };
+
+    // Build priority from importance
+    const priority = importance === "high"
+      ? "high"
+      : importance === "medium"
+      ? "normal"
+      : "default";
 
     // Create a delivery record
     const { error: deliveryError } = await supabase
@@ -608,24 +920,31 @@ async function attemptPushNotification(
       console.error(
         `[Push Notification] Error creating delivery record: ${deliveryError.message}`,
       );
-      return false;
     }
 
-    // Send the push notification using the enhanced function
-    const success = await sendPushNotification(pushMessage);
+    // Add to the push notification queue for reliable delivery with retry
+    const queueId = await enqueueNotification(
+      recipientId,
+      pushToken,
+      subject,
+      content,
+      notificationData,
+      messageId,
+      priority as "default" | "normal" | "high",
+      12, // Max attempts (about 24 hours with our backoff strategy)
+    );
 
-    // Update the delivery status
+    // Update the delivery record with queued status
     await supabase
       .schema("public")
       .from("push_notification_deliveries")
       .update({
-        status: success ? "sent" : "failed",
-        sent_at: success ? new Date().toISOString() : null,
-        error_message: success ? null : "Failed to send push notification",
+        status: queueId ? "queued" : "failed",
+        error_message: queueId ? null : "Failed to enqueue notification",
       })
       .eq("message_id", messageId);
 
-    return success;
+    return !!queueId;
   } catch (error) {
     console.error(
       "[Push Notification] Error sending push notification:",
@@ -638,15 +957,17 @@ async function attemptPushNotification(
 export async function markNotificationDelivered(messageId: string) {
   try {
     await supabase
-      .schema("public")
-      .from("push_notification_deliveries")
+      .from("user_notifications")
       .update({
-        status: "delivered",
+        is_delivered: true,
         delivered_at: new Date().toISOString(),
       })
-      .eq("message_id", messageId);
+      .eq("id", messageId);
   } catch (error) {
-    console.error("Error marking notification as delivered:", error);
+    console.error(
+      "[NotificationService] Error marking notification as delivered:",
+      error,
+    );
   }
 }
 
@@ -789,81 +1110,1027 @@ async function sendPasswordResetEmailViaEdgeFunction(
   }
 }
 
-// TODO: Implement helper functions (potentially Edge Functions) for push notifications.
-// See push_notifications.md for detailed requirements.
-
-async function registerForPushNotificationsAsync() {
+// Register for push notifications
+export async function registerForPushNotificationsAsync() {
   let token;
-  let errorMessage = "";
 
+  if (!Device.isDevice) {
+    console.warn(
+      "[NotificationService] Push notifications require a physical device",
+    );
+    return null;
+  }
+
+  // Check existing permissions
+  const { status: existingStatus } = await Notifications.getPermissionsAsync();
+  let finalStatus = existingStatus;
+
+  // Request permissions if not granted
+  if (existingStatus !== "granted") {
+    const { status } = await Notifications.requestPermissionsAsync();
+    finalStatus = status;
+  }
+
+  if (finalStatus !== "granted") {
+    console.log("[NotificationService] Permission denied for notifications");
+    return null;
+  }
+
+  // Get project ID from app config
+  const projectId = Constants.expoConfig?.extra?.eas?.projectId;
+
+  if (!projectId) {
+    console.error("[NotificationService] Project ID not found in app config");
+    return null;
+  }
+
+  // Get Expo push token
   try {
-    if (Platform.OS === "web") {
-      console.log("Push notifications are not supported on web platform");
-      return null;
-    }
-
-    if (!Device.isDevice) {
-      console.log("Push notifications require a physical device");
-      return null;
-    }
-
-    // Check if we have permission
-    const { status: existingStatus } = await Notifications
-      .getPermissionsAsync();
-    console.log("Existing notification permission status:", existingStatus);
-
-    let finalStatus = existingStatus;
-    if (existingStatus !== "granted") {
-      console.log("Requesting notification permission...");
-      const { status } = await Notifications.requestPermissionsAsync();
-      finalStatus = status;
-      console.log("New notification permission status:", finalStatus);
-    }
-
-    if (finalStatus !== "granted") {
-      errorMessage = "Permission not granted for push notifications";
-      throw new Error(errorMessage);
-    }
-
-    // Create a notification channel for Android
-    if (Platform.OS === "android") {
-      await Notifications.setNotificationChannelAsync("default", {
-        name: "default",
-        importance: Notifications.AndroidImportance.MAX,
-        vibrationPattern: [0, 250, 250, 250],
-        lightColor: "#FF231F7C",
-      });
-    }
-
-    console.log("Getting Expo push token...");
-    // Get the project ID from Constants (this is important for EAS builds)
-    const projectId = Constants.expoConfig?.extra?.eas?.projectId ||
-      Constants.easConfig?.projectId;
-
-    if (!projectId) {
-      console.error(
-        "Project ID not found. Make sure you're using an EAS build or have configured the projectId.",
-      );
-      throw new Error("Project ID not found for push notifications");
-    }
-
-    const response = await Notifications.getExpoPushTokenAsync({
+    const expoPushToken = await Notifications.getExpoPushTokenAsync({
       projectId,
     });
-    token = response.data;
-    console.log("Successfully obtained push token:", token);
+    token = expoPushToken.data;
+  } catch (error) {
+    console.error("[NotificationService] Error getting push token:", error);
+    return null;
+  }
+
+  return token;
+}
+
+// Register a device token for a user
+export async function registerDeviceToken(
+  userId: string,
+  token: string,
+  deviceInfo: {
+    deviceId: string;
+    deviceName: string;
+    platform: string;
+    appVersion: string;
+  },
+) {
+  if (!userId || !token) {
+    console.error("[NotificationService] Missing userId or token");
+    return null;
+  }
+
+  try {
+    // Store token in database
+    const { error } = await supabase.from("user_push_tokens").upsert({
+      user_id: userId,
+      push_token: token,
+      device_id: deviceInfo.deviceId,
+      device_name: deviceInfo.deviceName,
+      platform: deviceInfo.platform,
+      app_version: deviceInfo.appVersion,
+      is_active: true,
+      last_used: new Date().toISOString(),
+    }, {
+      onConflict: "user_id, device_id",
+    });
+
+    if (error) throw error;
+
+    // Store in localStorage for persistence
+    await AsyncStorage.setItem(
+      "@pushToken",
+      JSON.stringify({
+        expoPushToken: token,
+        lastRegistrationDate: new Date().toISOString(),
+      }),
+    );
 
     return token;
   } catch (error) {
-    console.error("Error setting up push notifications:", error);
-    Alert.alert(
-      "Push Notification Setup Error",
-      errorMessage ||
-        "Failed to set up push notifications. Please check your device settings and try again.",
+    console.error(
+      "[NotificationService] Error registering device token:",
+      error,
     );
     return null;
   }
 }
 
-// Export the registerForPushNotificationsAsync function for use in the app
-export { registerForPushNotificationsAsync };
+// Unregister a device token
+export async function unregisterDeviceToken(token: string | null) {
+  if (!token) {
+    console.log("[NotificationService] No token to unregister");
+    return;
+  }
+
+  try {
+    // Mark token as inactive in database
+    const { error } = await supabase
+      .from("user_push_tokens")
+      .update({ is_active: false, last_used: new Date().toISOString() })
+      .eq("push_token", token);
+
+    if (error) {
+      console.error("[NotificationService] Error unregistering token:", error);
+    }
+
+    // Clear from local storage
+    await AsyncStorage.removeItem("@pushToken");
+
+    // Reset badge count for proper cleanup
+    if (Platform.OS !== "web") {
+      await Notifications.setBadgeCountAsync(0);
+    }
+
+    console.log("[NotificationService] Device token unregistered successfully");
+  } catch (error) {
+    console.error("[NotificationService] Error unregistering device:", error);
+  }
+}
+
+// Clean up old tokens for a user
+export async function cleanupOldTokensForUser(userId: string) {
+  if (!userId) return;
+
+  try {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    // Mark old tokens as inactive
+    const { error } = await supabase
+      .from("user_push_tokens")
+      .update({ is_active: false })
+      .eq("user_id", userId)
+      .lt("last_used", thirtyDaysAgo.toISOString());
+
+    if (error) {
+      console.error(
+        "[NotificationService] Error cleaning up old tokens:",
+        error,
+      );
+    } else {
+      console.log(
+        "[NotificationService] Old tokens cleaned up for user:",
+        userId,
+      );
+    }
+  } catch (error) {
+    console.error(
+      "[NotificationService] Error in cleanupOldTokensForUser:",
+      error,
+    );
+  }
+}
+
+// Get a unique device identifier
+export async function getUniqueDeviceId(): Promise<string> {
+  try {
+    // Try to get a stored device ID
+    const storedId = await AsyncStorage.getItem("@deviceId");
+
+    if (storedId) {
+      return storedId;
+    }
+
+    // Generate a new one if not found
+    const newId = Device.deviceName
+      ? `${Device.deviceName}-${Date.now()}`
+      : `${Platform.OS}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+    await AsyncStorage.setItem("@deviceId", newId);
+    return newId;
+  } catch (error) {
+    // Fallback in case of errors
+    return `${Platform.OS}-${Date.now()}-${
+      Math.random().toString(36).slice(2)
+    }`;
+  }
+}
+
+/**
+ * Standardized notification type formatting functions
+ */
+
+// Base function for sending typed push notifications
+export async function sendTypedPushNotification(
+  userId: string,
+  title: string,
+  body: string,
+  notificationType: NotificationType,
+  messageId?: string,
+  extraData: Record<string, any> = {},
+): Promise<boolean> {
+  try {
+    // Map NotificationType to categoryCode for hybrid notifications
+    let categoryCode: string;
+    let importance: string = "medium";
+
+    switch (notificationType) {
+      case NotificationType.ADMIN_MESSAGE:
+        categoryCode = "admin_message";
+        importance = "high";
+        break;
+      case NotificationType.GCA_ANNOUNCEMENT:
+        categoryCode = "gca_announcement";
+        importance = "medium";
+        break;
+      case NotificationType.DIVISION_ANNOUNCEMENT:
+        categoryCode = "division_announcement";
+        importance = "medium";
+        break;
+      case NotificationType.SYSTEM_ALERT:
+        categoryCode = "system_alert";
+        importance = "high";
+        break;
+      case NotificationType.MUST_READ:
+        categoryCode = "must_read";
+        importance = "high";
+        break;
+      default:
+        categoryCode = "general_message";
+        importance = "medium";
+        break;
+    }
+
+    // Use our hybrid notification system
+    return await sendNotificationWithHybridPriority(userId, {
+      title,
+      body,
+      categoryCode,
+      messageId,
+      requiresAcknowledgment: extraData?.requiresAcknowledgment,
+      divisionName: extraData?.divisionName,
+      extraData,
+    });
+  } catch (error) {
+    console.error(
+      "[NotificationService] sendTypedPushNotification error:",
+      error,
+    );
+    return false;
+  }
+}
+
+// Regular messages
+export async function sendMessageNotification(
+  userId: string,
+  subject: string,
+  body: string,
+  messageId: string,
+  requiresAcknowledgment: boolean = false,
+): Promise<boolean> {
+  // Use hybrid approach directly
+  return sendNotificationWithHybridPriority(userId, {
+    title: subject,
+    body,
+    categoryCode: requiresAcknowledgment ? "must_read" : "general_message",
+    messageId,
+    requiresAcknowledgment,
+  });
+}
+
+// Admin messages
+export async function sendAdminMessageNotification(
+  userId: string,
+  subject: string,
+  body: string,
+  messageId: string,
+): Promise<boolean> {
+  // Use admin message hybrid function
+  return sendAdminMessageHybrid(userId, subject, body, messageId, true);
+}
+
+// GCA announcements
+export async function sendGCAAnnouncementNotification(
+  userId: string,
+  title: string,
+  body: string,
+  announcementId: string,
+): Promise<boolean> {
+  // Use GCA announcement hybrid function
+  return sendGCAAnnouncementHybrid(userId, title, body, announcementId);
+}
+
+// Division announcements
+export async function sendDivisionAnnouncementNotification(
+  userId: string,
+  title: string,
+  body: string,
+  announcementId: string,
+  divisionName: string,
+): Promise<boolean> {
+  // Use division announcement hybrid function
+  return sendDivisionAnnouncementHybrid(
+    userId,
+    title,
+    body,
+    announcementId,
+    divisionName,
+  );
+}
+
+// Must read notifications
+export async function sendMustReadNotification(
+  userId: string,
+  title: string,
+  body: string,
+  messageId: string,
+): Promise<boolean> {
+  // Use must-read hybrid function
+  return sendMustReadHybrid(userId, title, body, messageId);
+}
+
+// System alerts
+export async function sendSystemAlertNotification(
+  userId: string,
+  title: string,
+  body: string,
+  alertId?: string,
+): Promise<boolean> {
+  // Use system alert hybrid function
+  return sendSystemAlertHybrid(userId, title, body, alertId);
+}
+
+/**
+ * Send a notification using the hybrid priority approach
+ *
+ * This checks user preferences at both category and global levels
+ * while respecting system-defined priorities for critical notifications
+ */
+export async function sendNotificationWithHybridPriority(
+  userId: string,
+  notification: {
+    title: string;
+    body: string;
+    categoryCode: string;
+    messageId?: string;
+    requiresAcknowledgment?: boolean;
+    divisionName?: string;
+    extraData?: Record<string, any>;
+  },
+): Promise<boolean> {
+  try {
+    // Default values
+    let importance: string = "medium";
+    let isMandatory: boolean = false;
+
+    // Get the category's default importance and mandatory status
+    const { data: category, error: categoryError } = await supabase
+      .from("notification_categories")
+      .select("default_importance, is_mandatory")
+      .eq("code", notification.categoryCode)
+      .single();
+
+    if (categoryError) {
+      console.error(
+        "[NotificationService] Error getting category info:",
+        categoryError,
+      );
+      // Use defaults set above
+    } else {
+      // Update based on category information
+      importance = notification.requiresAcknowledgment
+        ? "high"
+        : (category?.default_importance || "medium");
+      isMandatory = category?.is_mandatory || false;
+    }
+
+    // Map category code to notification type
+    let notificationType: NotificationType;
+    switch (notification.categoryCode) {
+      case "admin_message":
+        notificationType = NotificationType.ADMIN_MESSAGE;
+        break;
+      case "gca_announcement":
+        notificationType = NotificationType.GCA_ANNOUNCEMENT;
+        break;
+      case "division_announcement":
+        notificationType = NotificationType.DIVISION_ANNOUNCEMENT;
+        break;
+      case "must_read":
+        notificationType = NotificationType.MUST_READ;
+        break;
+      case "system_alert":
+        notificationType = NotificationType.SYSTEM_ALERT;
+        break;
+      default:
+        notificationType = NotificationType.REGULAR_MESSAGE;
+        break;
+    }
+
+    // Check if we should send via push based on user preferences
+    const shouldSendPush = await shouldSendPushNotification(
+      userId,
+      notification.categoryCode,
+      importance,
+    );
+
+    // Build extra data with all the necessary fields
+    const extraData = {
+      requiresAcknowledgment: notification.requiresAcknowledgment || false,
+      categoryCode: notification.categoryCode,
+      importance,
+      isMandatory,
+      ...(notification.divisionName
+        ? { divisionName: notification.divisionName }
+        : {}),
+      ...(notification.extraData || {}),
+    };
+
+    if (shouldSendPush) {
+      // Send push notification since user preferences allow it
+      return await sendTypedPushNotification(
+        userId,
+        notification.title,
+        notification.body,
+        notificationType,
+        notification.messageId,
+        extraData,
+      );
+    } else {
+      console.log(
+        `[NotificationService] Not sending push notification to ${userId} based on preferences`,
+      );
+
+      // If notification should be delivered but not as push, store in the database
+      // for in-app retrieval if it has a message ID
+      if (notification.messageId) {
+        await supabase.from("notifications").upsert({
+          id: notification.messageId,
+          user_id: userId,
+          title: notification.title,
+          message: notification.body,
+          notification_type: notificationType,
+          category_code: notification.categoryCode,
+          is_read: false,
+          requires_acknowledgment: notification.requiresAcknowledgment || false,
+          importance: importance,
+          metadata: extraData,
+          created_at: new Date().toISOString(),
+        }, { onConflict: "id" });
+
+        return true; // Successfully stored for in-app delivery
+      }
+
+      return false; // No push sent and no message ID to store
+    }
+  } catch (error) {
+    console.error(
+      "[NotificationService] Error in sendNotificationWithHybridPriority:",
+      error,
+    );
+    return false;
+  }
+}
+
+/**
+ * Send admin message notification using the hybrid approach
+ */
+export async function sendAdminMessageHybrid(
+  userId: string,
+  title: string,
+  body: string,
+  messageId: string,
+  requiresAcknowledgment: boolean = true,
+): Promise<boolean> {
+  return sendNotificationWithHybridPriority(userId, {
+    title,
+    body,
+    categoryCode: "admin_message",
+    messageId,
+    requiresAcknowledgment,
+  });
+}
+
+/**
+ * Send GCA announcement notification using the hybrid approach
+ */
+export async function sendGCAAnnouncementHybrid(
+  userId: string,
+  title: string,
+  body: string,
+  announcementId: string,
+): Promise<boolean> {
+  return sendNotificationWithHybridPriority(userId, {
+    title,
+    body,
+    categoryCode: "gca_announcement",
+    messageId: announcementId,
+  });
+}
+
+/**
+ * Send division announcement notification using the hybrid approach
+ */
+export async function sendDivisionAnnouncementHybrid(
+  userId: string,
+  title: string,
+  body: string,
+  announcementId: string,
+  divisionName: string,
+): Promise<boolean> {
+  return sendNotificationWithHybridPriority(userId, {
+    title,
+    body,
+    categoryCode: "division_announcement",
+    messageId: announcementId,
+    divisionName,
+  });
+}
+
+/**
+ * Send must-read notification using the hybrid approach
+ */
+export async function sendMustReadHybrid(
+  userId: string,
+  title: string,
+  body: string,
+  messageId: string,
+): Promise<boolean> {
+  return sendNotificationWithHybridPriority(userId, {
+    title,
+    body,
+    categoryCode: "must_read",
+    messageId,
+    requiresAcknowledgment: true,
+  });
+}
+
+/**
+ * Send system alert notification using the hybrid approach
+ */
+export async function sendSystemAlertHybrid(
+  userId: string,
+  title: string,
+  body: string,
+  alertId?: string,
+): Promise<boolean> {
+  // Use system alert hybrid function
+  return sendNotificationWithHybridPriority(userId, {
+    title,
+    body,
+    categoryCode: "system_alert",
+    messageId: alertId,
+    requiresAcknowledgment: true,
+  });
+}
+
+/**
+ * Send a grouped notification that will be visually grouped in the notification center
+ *
+ * @param userId User to send the notification to
+ * @param title Notification title
+ * @param body Notification body
+ * @param categoryCode Category code for priority and user preferences
+ * @param messageId Message ID for tracking and deep linking
+ * @param groupKey Key used to group similar notifications together
+ * @param groupSummary Text to display for the group summary (e.g. "3 new messages")
+ * @param extraData Additional data to include with the notification
+ */
+export async function sendGroupedNotification(
+  userId: string,
+  title: string,
+  body: string,
+  categoryCode: string,
+  messageId: string,
+  groupKey: string,
+  groupSummary: string = `${groupKey} Updates`,
+  extraData: Record<string, any> = {},
+): Promise<boolean> {
+  // Use the hybrid notification system with grouping parameters
+  return sendNotificationWithHybridPriority(userId, {
+    title,
+    body,
+    categoryCode,
+    messageId,
+    extraData: {
+      ...extraData,
+      groupKey,
+      groupSummary,
+    },
+  });
+}
+
+// Helper function to map notification types to category codes
+export function getNotificationCategoryFromType(
+  notificationType: NotificationType,
+): string {
+  switch (notificationType) {
+    case NotificationType.ADMIN_MESSAGE:
+      return "admin_message";
+    case NotificationType.GCA_ANNOUNCEMENT:
+      return "gca_announcement";
+    case NotificationType.DIVISION_ANNOUNCEMENT:
+      return "division_announcement";
+    case NotificationType.SYSTEM_ALERT:
+      return "system_alert";
+    case NotificationType.MUST_READ:
+      return "must_read";
+    default:
+      return "general_message";
+  }
+}
+
+/**
+ * Handle platform-specific deep linking when a user taps on a notification
+ * This function should be called from notification response handlers
+ */
+export async function handleNotificationDeepLink(
+  notificationData: any,
+  actionIdentifier?: string,
+): Promise<void> {
+  try {
+    if (!notificationData) {
+      console.warn(
+        "[NotificationService] No notification data provided for deep linking",
+      );
+      return;
+    }
+
+    // Extract common data regardless of platform
+    const messageId = notificationData.messageId as string;
+    const notificationType = notificationData.notificationType as string;
+    const divisionName = notificationData.divisionName as string;
+    const requiresAcknowledgment = notificationData
+      .requiresAcknowledgment as boolean;
+    const meetingId = notificationData.meetingId as string;
+
+    console.log("[NotificationService] Processing notification deep link:", {
+      messageId,
+      notificationType,
+      divisionName,
+      requiresAcknowledgment,
+      meetingId,
+      actionIdentifier,
+    });
+
+    // Mark as delivered first
+    if (messageId) {
+      markNotificationDelivered(messageId);
+    }
+
+    // Handle specific platform behaviors
+    if (Platform.OS === "ios") {
+      // iOS-specific handling for interactive notification actions
+      if (actionIdentifier) {
+        switch (actionIdentifier) {
+          case "READ_ACTION":
+            // Mark as read without necessarily navigating
+            if (messageId) {
+              await markMessageRead(messageId);
+              console.log(
+                "[NotificationService] iOS: Message marked as read via action",
+              );
+            }
+            return; // Don't navigate for this action
+
+          case "ACKNOWLEDGE_ACTION":
+            // Mark as acknowledged and navigate
+            if (messageId) {
+              await markMessageRead(messageId);
+              console.log(
+                "[NotificationService] iOS: Message acknowledged via action",
+              );
+            }
+            break; // Continue with navigation
+
+          case "DISMISS_ACTION":
+            // Just dismiss without navigation
+            console.log(
+              "[NotificationService] iOS: Notification dismissed via action",
+            );
+            return; // Don't navigate
+
+          case "REPLY_ACTION":
+            // Handle inline reply
+            console.log("[NotificationService] iOS: Reply action handled");
+            // Note: The actual reply text would be handled in the notification response handler
+            break;
+
+          default:
+            // For default action (or VIEW_ACTION), continue with navigation
+            break;
+        }
+      }
+    } else if (Platform.OS === "android") {
+      // Android-specific handling
+      if (actionIdentifier) {
+        // Similar to iOS but with potential Android-specific differences
+        switch (actionIdentifier) {
+          case "READ_ACTION":
+            if (messageId) {
+              await markMessageRead(messageId);
+              console.log(
+                "[NotificationService] Android: Message marked as read via action",
+              );
+            }
+            return;
+
+          case "ACKNOWLEDGE_ACTION":
+            if (messageId) {
+              await markMessageRead(messageId);
+              console.log(
+                "[NotificationService] Android: Message acknowledged via action",
+              );
+            }
+            break;
+
+          default:
+            break;
+        }
+      }
+    }
+
+    // For all platforms: Navigate based on notification type
+    // Import the router dynamically to avoid circular dependencies
+    const { router } = require("expo-router");
+
+    // Shared navigation logic
+    switch (notificationType) {
+      case "admin_message":
+        if (messageId) {
+          router.push(
+            `/(admin)/division_admin/DivisionAdminPanel/AdminMessages/${messageId}`,
+          );
+        } else {
+          router.push(
+            `/(admin)/division_admin/DivisionAdminPanel/AdminMessages`,
+          );
+        }
+        break;
+
+      case "gca_announcement":
+        if (messageId) {
+          router.push(`/(gca)/gca-announcements/${messageId}`);
+        } else {
+          router.push(`/(gca)/gca-announcements`);
+        }
+        break;
+
+      case "division_announcement":
+        if (divisionName && messageId) {
+          router.push(`/(division)/${divisionName}/announcements/${messageId}`);
+        } else if (divisionName) {
+          router.push(`/(division)/${divisionName}/announcements`);
+        } else {
+          router.push("/(division)");
+        }
+        break;
+
+      case "meeting_reminder":
+        if (meetingId && divisionName) {
+          router.push(`/(division)/${divisionName}/meetings/${meetingId}`);
+        } else if (divisionName) {
+          router.push(`/(division)/${divisionName}/meetings`);
+        } else {
+          router.push("/(tabs)/divisions");
+        }
+        break;
+
+      case "regular_message":
+      default:
+        if (messageId) {
+          router.push(`/(tabs)/notifications/${messageId}`);
+        } else {
+          router.push("/(tabs)/notifications");
+        }
+        break;
+    }
+
+    // If the message requires acknowledgment, mark it as read after navigation
+    if (requiresAcknowledgment && messageId) {
+      await markMessageRead(messageId);
+    }
+  } catch (error) {
+    console.error(
+      "[NotificationService] Error handling notification deep link:",
+      error,
+    );
+    // Fallback navigation to notifications tab
+    try {
+      const { router } = require("expo-router");
+      router.push("/(tabs)/notifications");
+    } catch (navError) {
+      console.error(
+        "[NotificationService] Failed to navigate to fallback screen:",
+        navError,
+      );
+    }
+  }
+}
+
+/**
+ * Get the status of a queued notification
+ *
+ * @param queueId The ID of the queued notification to check
+ * @returns The notification queue entry or null if not found
+ */
+export async function getQueuedNotificationStatus(
+  queueId: string,
+): Promise<any | null> {
+  try {
+    const { data, error } = await supabase
+      .from("push_notification_queue")
+      .select("*")
+      .eq("id", queueId)
+      .single();
+
+    if (error) {
+      console.error(
+        "[NotificationService] Error getting notification status:",
+        error,
+      );
+      return null;
+    }
+
+    return data;
+  } catch (error) {
+    console.error(
+      "[NotificationService] Exception getting notification status:",
+      error,
+    );
+    return null;
+  }
+}
+
+/**
+ * Get delivery metrics for a notification
+ *
+ * @param messageId The message ID to check
+ * @returns Delivery metrics or null if not found
+ */
+export async function getNotificationDeliveryMetrics(
+  messageId: string,
+): Promise<any | null> {
+  try {
+    // Get delivery status
+    const { data: deliveryData, error: deliveryError } = await supabase
+      .from("push_notification_deliveries")
+      .select("*")
+      .eq("message_id", messageId);
+
+    if (deliveryError) {
+      console.error(
+        "[NotificationService] Error getting delivery metrics:",
+        deliveryError,
+      );
+      return null;
+    }
+
+    // Get analytics data
+    const { data: analyticsData, error: analyticsError } = await supabase
+      .from("notification_analytics")
+      .select("*")
+      .eq("notification_id", messageId);
+
+    if (analyticsError) {
+      console.error(
+        "[NotificationService] Error getting analytics metrics:",
+        analyticsError,
+      );
+    }
+
+    return {
+      deliveries: deliveryData || [],
+      analytics: analyticsData || [],
+    };
+  } catch (error) {
+    console.error(
+      "[NotificationService] Exception getting delivery metrics:",
+      error,
+    );
+    return null;
+  }
+}
+
+/**
+ * Check if any notifications are stuck and need manual retry
+ *
+ * @param olderThanHours Only check notifications older than this many hours
+ * @param limit Maximum number of notifications to return
+ * @returns List of stuck notifications that need intervention
+ */
+export async function checkForStuckNotifications(
+  olderThanHours: number = 24,
+  limit: number = 50,
+): Promise<any[]> {
+  try {
+    // Calculate cutoff time
+    const cutoffTime = new Date();
+    cutoffTime.setHours(cutoffTime.getHours() - olderThanHours);
+
+    // Find notifications that have reached max attempts or haven't been updated in a long time
+    const { data, error } = await supabase
+      .from("push_notification_queue")
+      .select("*")
+      .or(`status.eq.failed,retry_count.gte.max_attempts`)
+      .lt("updated_at", cutoffTime.toISOString())
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      console.error(
+        "[NotificationService] Error checking for stuck notifications:",
+        error,
+      );
+      return [];
+    }
+
+    return data || [];
+  } catch (error) {
+    console.error(
+      "[NotificationService] Exception checking for stuck notifications:",
+      error,
+    );
+    return [];
+  }
+}
+
+/**
+ * Manually retry a failed notification
+ *
+ * @param queueId The ID of the queued notification to retry
+ * @returns True if successfully reset for retry, false otherwise
+ */
+export async function retryFailedNotification(
+  queueId: string,
+): Promise<boolean> {
+  try {
+    const now = new Date().toISOString();
+
+    // Reset notification for retry
+    const { error } = await supabase
+      .from("push_notification_queue")
+      .update({
+        status: "pending",
+        next_attempt_at: now,
+        updated_at: now,
+        error: null,
+      })
+      .eq("id", queueId);
+
+    if (error) {
+      console.error(
+        "[NotificationService] Error retrying notification:",
+        error,
+      );
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error(
+      "[NotificationService] Exception retrying notification:",
+      error,
+    );
+    return false;
+  }
+}
+
+/**
+ * Send a meeting reminder notification with the hybrid priority system
+ *
+ * @param userId The user ID who will receive the notification
+ * @param title Notification title
+ * @param body Notification body
+ * @param meetingId The ID of the meeting
+ * @param divisionName The name of the division
+ * @param timeFrame Optional timeframe of the reminder ("hour", "day", "week")
+ * @returns Promise<boolean> whether the notification was sent
+ */
+export async function sendMeetingReminderHybrid(
+  userId: string,
+  title: string,
+  body: string,
+  meetingId: string,
+  divisionName: string,
+  timeFrame: "hour" | "day" | "week" = "hour",
+): Promise<boolean> {
+  return await sendNotificationWithHybridPriority(userId, {
+    title,
+    body,
+    categoryCode: "meeting_reminder",
+    messageId: `meeting_${meetingId}_${timeFrame}`,
+    divisionName,
+    extraData: {
+      meetingId,
+      notificationType: NotificationType.MEETING_REMINDER,
+      timeFrame,
+    },
+  });
+}
+
+/**
+ * Legacy function for backward compatibility
+ */
+export async function sendMeetingReminderNotification(
+  userId: string,
+  title: string,
+  body: string,
+  meetingId: string,
+  divisionName: string,
+  timeFrame: "hour" | "day" | "week" = "hour",
+): Promise<boolean> {
+  return sendMeetingReminderHybrid(
+    userId,
+    title,
+    body,
+    meetingId,
+    divisionName,
+    timeFrame,
+  );
+}

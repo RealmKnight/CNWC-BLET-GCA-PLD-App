@@ -1,17 +1,26 @@
 import React, { useEffect, useState, Suspense } from "react";
 import { Slot, usePathname, useSegments, useRootNavigation } from "expo-router";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { StyleSheet, Platform } from "react-native";
+import { StyleSheet, Platform, AppState } from "react-native";
 import { Colors } from "@/constants/Colors";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedToast } from "@/components/ThemedToast";
-import { configureNotifications, setupNotificationListeners } from "@/utils/notificationConfig";
+import {
+  configureNotifications,
+  setupNotificationListeners,
+  getInitialNotification,
+  initializeBadgeCount,
+} from "@/utils/notificationConfig";
 import { handlePasswordResetURL } from "@/utils/authRedirects";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { ChangePasswordModal } from "@/components/ui/ChangePasswordModal";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { usePushTokenStore } from "@/store/pushTokenStore";
+import { useBadgeStore } from "@/store/badgeStore";
+import { RealtimeChannel } from "@supabase/supabase-js";
+import { supabase } from "@/utils/supabase";
 
 // Separate loading screen component
 function LoadingScreen() {
@@ -25,12 +34,32 @@ function LoadingScreen() {
 // Auth-aware route handler component that focuses on initialization
 // We'll let index.tsx handle the actual redirects
 function AuthAwareRouteHandler() {
-  const { authStatus, isPasswordRecoveryFlow, clearPasswordRecoveryFlag } = useAuth();
+  const { session, authStatus, isPasswordRecoveryFlow, clearPasswordRecoveryFlag } = useAuth();
   const segments = useSegments();
   const pathname = usePathname();
   const [isInitialized, setIsInitialized] = useState(false);
   const [hasSeenAuthResponse, setHasSeenAuthResponse] = useState(false);
   const [showRecoveryModal, setShowRecoveryModal] = useState(false);
+
+  // Push notification state
+  const { registerDevice, refreshToken, unregisterDevice, init, checkPermissionStatus } = usePushTokenStore();
+
+  // Initialize push token store when component mounts
+  useEffect(() => {
+    // Initialize push token store if available
+    if (init) {
+      console.log("[PushNotification] Starting token store initialization");
+      init()
+        .then(() => {
+          console.log("[PushNotification] Token store initialization successful");
+        })
+        .catch((error) => {
+          console.error("[PushNotification] Error initializing push token store:", error);
+        });
+    } else {
+      console.log("[PushNotification] Token store initialization function not available");
+    }
+  }, [init]);
 
   // Add root navigation hook to check if router is ready
   const rootNavigation = useRootNavigation();
@@ -40,13 +69,168 @@ function AuthAwareRouteHandler() {
     handlePasswordResetURL();
   }, []);
 
-  // Configure basic notifications on app start
+  // Configure notifications and set up listeners
   useEffect(() => {
-    configureNotifications();
-    const cleanupNotifications = setupNotificationListeners();
-    console.log("[Notifications] Basic notification configuration complete");
-    return () => cleanupNotifications();
-  }, []);
+    if (Platform.OS !== "web") {
+      // Configure platform-specific notification settings
+      configureNotifications();
+
+      // Setup listeners for notification interactions
+      const cleanupListeners = setupNotificationListeners();
+
+      // Check for app opened from notification
+      getInitialNotification().catch((error) => {
+        console.error("[PushNotification] Error checking initial notification:", error);
+      });
+
+      // Check notification permissions
+      checkPermissionStatus().catch((error) => {
+        console.error("[PushNotification] Error checking permission status:", error);
+      });
+
+      console.log("[Notifications] Notification configuration complete");
+
+      return () => {
+        // Clean up listeners when component unmounts
+        cleanupListeners();
+      };
+    }
+  }, [checkPermissionStatus]);
+
+  // Handle push token registration based on auth state
+  useEffect(() => {
+    const isAuthenticated = authStatus === "signedInMember" || authStatus === "signedInAdmin";
+
+    if (isAuthenticated && session?.user?.id && Platform.OS !== "web") {
+      console.log("[PushNotification] Auth initialized, registering token");
+      // Using the centralized token registration
+      registerDevice(session.user.id).catch((error) => {
+        console.error("[PushNotification] Error registering device:", error);
+      });
+
+      // Initialize badge count
+      initializeBadgeCount(session.user.id);
+
+      return () => {
+        // Clean up on auth change or unmount
+        if (authStatus !== "signedInMember" && authStatus !== "signedInAdmin") {
+          unregisterDevice().catch((error) => {
+            console.error("[PushNotification] Error unregistering device:", error);
+          });
+        }
+      };
+    }
+  }, [authStatus, session?.user?.id, registerDevice, unregisterDevice]);
+
+  // Badge syncing using the badge store
+  useEffect(() => {
+    const isAuthenticated = authStatus === "signedInMember" || authStatus === "signedInAdmin";
+    let messageSubscription: RealtimeChannel | null = null;
+
+    const setupBadgeSyncing = async () => {
+      if (isAuthenticated && session?.user?.id) {
+        console.log("[BadgeStore] Setting up badge syncing for user:", session.user.id);
+
+        // Access badge store functions
+        const { fetchUnreadCount } = useBadgeStore.getState();
+
+        // Initial fetch of unread count
+        try {
+          await fetchUnreadCount(session.user.id);
+          console.log("[BadgeStore] Initial badge count fetched");
+        } catch (error) {
+          console.error("[BadgeStore] Error fetching initial badge count:", error);
+        }
+
+        // Only set up realtime subscription on non-web platforms or if explicitly supported
+        if (Platform.OS !== "web" || (Platform.OS === "web" && typeof supabase.channel === "function")) {
+          try {
+            // Subscribe to message changes to keep badge count updated in realtime
+            messageSubscription = supabase
+              .channel("badge_updates")
+              .on(
+                "postgres_changes",
+                {
+                  event: "*",
+                  schema: "public",
+                  table: "messages",
+                  filter: `recipient_id=eq.${session.user.id}`,
+                },
+                async (payload) => {
+                  console.log("[BadgeStore] Message change detected, updating badge count");
+                  try {
+                    // Update badge count when messages change
+                    await fetchUnreadCount(session.user.id);
+                  } catch (error) {
+                    console.error("[BadgeStore] Error updating badge count after change:", error);
+                  }
+                }
+              )
+              .subscribe((status) => {
+                console.log("[BadgeStore] Realtime subscription status:", status);
+              });
+          } catch (error) {
+            console.error("[BadgeStore] Error setting up realtime subscription:", error);
+          }
+        } else {
+          console.log("[BadgeStore] Skipping realtime subscription on web platform");
+
+          // For web, set up a periodic refresh instead
+          const intervalId = setInterval(() => {
+            fetchUnreadCount(session.user.id).catch((error) =>
+              console.error("[BadgeStore] Error in periodic refresh:", error)
+            );
+          }, 30000); // Refresh every 30 seconds
+
+          return () => clearInterval(intervalId);
+        }
+      }
+    };
+
+    setupBadgeSyncing();
+
+    return () => {
+      // Clean up subscription
+      if (messageSubscription) {
+        console.log("[BadgeStore] Cleaning up badge subscription");
+        try {
+          supabase.removeChannel(messageSubscription);
+        } catch (error) {
+          console.error("[BadgeStore] Error removing channel:", error);
+        }
+      }
+    };
+  }, [authStatus, session?.user?.id]);
+
+  // Handle app state changes (background/foreground)
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+
+    const subscription = AppState.addEventListener("change", (nextAppState) => {
+      const isAuthenticated = authStatus === "signedInMember" || authStatus === "signedInAdmin";
+
+      if (nextAppState === "active" && isAuthenticated && session?.user?.id) {
+        // Refresh token when app comes to foreground using centralized store
+        console.log("[PushNotification] App returned to foreground, refreshing token");
+        refreshToken(session.user.id).catch((error) => {
+          console.error("[PushNotification] Error refreshing token:", error);
+        });
+
+        // Update badge count using our new badge store
+        try {
+          const { fetchUnreadCount } = useBadgeStore.getState();
+          fetchUnreadCount(session.user.id);
+          console.log("[BadgeStore] Badge count refreshed on app foreground");
+        } catch (error) {
+          console.error("[BadgeStore] Error refreshing badge count:", error);
+        }
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [authStatus, session?.user?.id, refreshToken]);
 
   // Mark initialization complete after a short delay
   useEffect(() => {

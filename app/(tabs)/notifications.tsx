@@ -190,8 +190,7 @@ export default function NotificationsScreen() {
   const windowWidth = Dimensions.get("window").width;
   const isMobileWeb = isWeb && windowWidth < 768; // 768px is a common breakpoint for tablets/desktops
 
-  const { messages, isLoading, error, fetchMessages, markAsRead, deleteMessage, subscribeToMessages } =
-    useNotificationStore();
+  const { messages, isLoading, error, fetchMessages, markAsRead, deleteMessage } = useNotificationStore();
 
   // Filter and group messages
   const filteredAndGroupedMessages = useMemo(() => {
@@ -236,6 +235,16 @@ export default function NotificationsScreen() {
       return groups;
     }, {} as Record<string, Message[]>);
   }, [messages, groupBy, filterType, searchQuery]);
+
+  // Initial data fetch when component mounts or member changes
+  useEffect(() => {
+    if (member?.pin_number && member?.id) {
+      console.log("[Notifications] Fetching messages for member:", member.pin_number);
+      fetchMessages(String(member.pin_number), member.id).catch((error) => {
+        console.error("[Notifications] Error fetching messages:", error);
+      });
+    }
+  }, [member?.pin_number, member?.id, fetchMessages]);
 
   const handleRefresh = useCallback(async () => {
     if (!member?.pin_number || !member?.id) return;

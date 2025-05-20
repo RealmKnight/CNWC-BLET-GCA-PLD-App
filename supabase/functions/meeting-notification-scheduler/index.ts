@@ -106,6 +106,23 @@ async function sendNotificationsForMeetings(
                 continue;
             }
 
+            // Get division name
+            const { data: divisionData, error: divisionError } = await supabase
+                .from("divisions")
+                .select("name")
+                .eq("id", divisionId)
+                .single();
+
+            if (divisionError || !divisionData) {
+                console.error(
+                    `[Meeting Notifications] Error getting division name for division ${divisionId}:`,
+                    divisionError,
+                );
+                continue;
+            }
+
+            const divisionName = divisionData.name;
+
             // Get members of this division
             const { data: divisionMembers, error: membersError } =
                 await supabase
@@ -200,36 +217,35 @@ async function sendNotificationsForMeetings(
                         userPref.contact_preference === "push" &&
                         userPref.push_token
                     ) {
-                        // Insert notification into push_notification_deliveries table
-                        // to be processed by the push notification worker
+                        // Use push_notification_queue instead of push_notification_deliveries
                         const { error: insertError } = await supabase
-                            .from("push_notification_deliveries")
+                            .from("push_notification_queue")
                             .insert({
-                                message_id:
-                                    `meeting_${meeting.id}_${timeFrame}_${userPref.user_id}`,
-                                recipient_id: userPref.user_id,
+                                user_id: userPref.user_id,
                                 push_token: userPref.push_token,
-                                status: "queued",
-                                metadata: {
-                                    title: `Meeting in ${
-                                        timeFrame === "hour"
-                                            ? "one hour"
-                                            : timeFrame === "day"
-                                            ? "one day"
-                                            : "one week"
-                                    }`,
-                                    body:
-                                        `Upcoming meeting at ${meetingLocation} on ${formattedTime}`,
-                                    data: {
-                                        meetingId: meeting.id,
-                                        meetingPatternId:
-                                            meeting.meeting_pattern_id,
-                                        screen: "meetings",
-                                        type: "meeting_reminder",
-                                    },
-                                    sound: "default",
+                                title: `Meeting in ${
+                                    timeFrame === "hour"
+                                        ? "one hour"
+                                        : timeFrame === "day"
+                                        ? "one day"
+                                        : "one week"
+                                }`,
+                                body:
+                                    `Upcoming meeting at ${meetingLocation} on ${formattedTime}`,
+                                data: {
+                                    meetingId: meeting.id,
+                                    meetingPatternId:
+                                        meeting.meeting_pattern_id,
+                                    divisionName: divisionName,
+                                    notificationType: "meeting_reminder",
+                                    timeFrame: timeFrame,
                                     priority: "high",
+                                    categoryCode: "meeting_reminder",
+                                    importance: "medium",
+                                    channelId: "default",
                                 },
+                                status: "pending",
+                                next_attempt_at: new Date().toISOString(),
                             });
 
                         if (insertError) {
