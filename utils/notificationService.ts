@@ -1763,6 +1763,89 @@ export async function handleNotificationDeepLink(
       markNotificationDelivered(messageId);
     }
 
+    // Get current user ID from auth
+    const userId = await getUserId();
+
+    // Validate content before navigation with parallel checks for performance
+    if (messageId) {
+      try {
+        const [contentExists, hasAccess, expirationStatus, archiveStatus] =
+          await Promise.all([
+            validateContentExists(notificationType, messageId),
+            validateUserHasAccess(notificationType, messageId, userId),
+            checkContentExpiration(notificationType, messageId),
+            checkContentArchiveStatus(notificationType, messageId),
+          ]);
+
+        // Handle invalid content
+        if (!contentExists) {
+          showContentUnavailableMessage(notificationType);
+          navigateToFallbackScreen(notificationType);
+          trackNotificationNavigationResult(
+            notificationData,
+            false,
+            "content_not_found",
+          );
+          return;
+        }
+
+        // Handle permission issues
+        if (!hasAccess) {
+          showToast({
+            type: "error",
+            text1: "Access Denied",
+            text2: "You do not have permission to view this content.",
+          });
+          navigateToFallbackScreen(notificationType);
+          trackNotificationNavigationResult(
+            notificationData,
+            false,
+            "access_denied",
+          );
+          return;
+        }
+
+        // Handle expired content
+        if (expirationStatus.isExpired) {
+          showToast({
+            type: "info",
+            text1: "Expired Content",
+            text2: expirationStatus.message || "This content has expired.",
+          });
+          navigateToFallbackScreen(notificationType);
+          trackNotificationNavigationResult(
+            notificationData,
+            false,
+            "content_expired",
+          );
+          return;
+        }
+
+        // Handle archived content
+        if (archiveStatus.isArchived) {
+          showToast({
+            type: "info",
+            text1: "Archived Content",
+            text2: archiveStatus.message || "This content has been archived.",
+          });
+          navigateToFallbackScreen(notificationType);
+          trackNotificationNavigationResult(
+            notificationData,
+            false,
+            "content_archived",
+          );
+          return;
+        }
+      } catch (validationError) {
+        console.error(
+          "[NotificationService] Validation error:",
+          validationError,
+        );
+        // Continue with navigation in case of validation errors
+        // This ensures users can still try to access content even if our validation fails
+      }
+    }
+
     // Handle specific platform behaviors
     if (Platform.OS === "ios") {
       // iOS-specific handling for interactive notification actions
@@ -1835,11 +1918,41 @@ export async function handleNotificationDeepLink(
       }
     }
 
-    // For all platforms: Navigate based on notification type
-    // Import the router dynamically to avoid circular dependencies
+    // We've passed all validation checks, navigate to the proper destination
+    navigateBasedOnNotificationType(notificationData);
+    trackNotificationNavigationResult(notificationData, true);
+
+    // If the message requires acknowledgment, mark it as read after navigation
+    if (requiresAcknowledgment && messageId) {
+      await markMessageRead(messageId);
+    }
+  } catch (error) {
+    console.error(
+      "[NotificationService] Error handling notification deep link:",
+      error,
+    );
+    // Fallback navigation to notifications tab
+    try {
+      const { router } = require("expo-router");
+      router.push("/(tabs)/notifications");
+    } catch (navError) {
+      console.error(
+        "[NotificationService] Failed to navigate to fallback screen:",
+        navError,
+      );
+    }
+  }
+}
+
+// Route based on notification type
+function navigateBasedOnNotificationType(data: any) {
+  try {
+    const messageId = data?.messageId as string || "";
+    const notificationType = data?.notificationType as string || "";
+    const divisionName = data?.divisionName as string || "";
+    const meetingId = data?.meetingId as string || "";
     const { router } = require("expo-router");
 
-    // Shared navigation logic
     switch (notificationType) {
       case "admin_message":
         if (messageId) {
@@ -1890,26 +2003,447 @@ export async function handleNotificationDeepLink(
         }
         break;
     }
+  } catch (error) {
+    console.error("[NotificationService] Navigation error:", error);
+    fallbackNavigation();
+  }
+}
 
-    // If the message requires acknowledgment, mark it as read after navigation
-    if (requiresAcknowledgment && messageId) {
-      await markMessageRead(messageId);
+// Fallback navigation for invalid links
+function navigateToFallbackScreen(notificationType: string) {
+  try {
+    const { router } = require("expo-router");
+
+    // Determine appropriate fallback destination based on notification type
+    switch (notificationType) {
+      case "admin_message":
+        router.push("/(admin)/division_admin/DivisionAdminPanel/AdminMessages");
+        break;
+      case "gca_announcement":
+        router.push("/(gca)/gca-announcements");
+        break;
+      case "division_announcement":
+        router.push("/(division)");
+        break;
+      case "meeting_reminder":
+        router.push("/(tabs)/divisions");
+        break;
+      default:
+        router.push("/(tabs)/notifications");
+        break;
     }
   } catch (error) {
+    console.error("[NotificationService] Error navigating to fallback:", error);
+    fallbackNavigation();
+  }
+}
+
+// Generic fallback navigation
+function fallbackNavigation() {
+  try {
+    const { router } = require("expo-router");
+    router.push("/(tabs)/notifications");
+  } catch (error) {
+    console.error("[NotificationService] Critical navigation error:", error);
+  }
+}
+
+// User feedback for unavailable content
+function showContentUnavailableMessage(notificationType: string) {
+  // Show appropriate toast/message based on notification type
+  let message = "The content you requested is no longer available.";
+
+  switch (notificationType) {
+    case "admin_message":
+      message = "This admin message is no longer available.";
+      break;
+    case "gca_announcement":
+      message = "This announcement is no longer available.";
+      break;
+    case "division_announcement":
+      message = "This division announcement is no longer available.";
+      break;
+    case "meeting_reminder":
+      message = "The meeting information is no longer available.";
+      break;
+  }
+
+  // Use toast mechanism
+  showToast({
+    type: "info",
+    text1: "Content Unavailable",
+    text2: message,
+  });
+}
+
+// Toast helper function
+function showToast(
+  { type, text1, text2 }: { type: string; text1: string; text2: string },
+) {
+  try {
+    // Try to import Toast from react-native-toast-message
+    // This is just a placeholder - in actual implementation,
+    // you should be using your app's toast mechanism
+    console.log(`[Toast] ${type}: ${text1} - ${text2}`);
+
+    // If we have Alert from react-native as a fallback
+    Alert.alert(text1, text2);
+  } catch (error) {
+    console.log(`[Toast] ${text1}: ${text2}`);
+  }
+}
+
+// Track notification navigation success/failure
+async function trackNotificationNavigationResult(
+  data: any,
+  success: boolean,
+  reason: string | null = null,
+) {
+  try {
+    const userId = await getUserId();
+
+    // Analytics data
+    const analyticsData = {
+      notification_type: data.notificationType,
+      message_id: data.messageId,
+      user_id: userId,
+      success,
+      reason,
+      timestamp: new Date().toISOString(),
+    };
+
+    // Log to analytics
+    console.log("[NotificationService] Navigation result:", analyticsData);
+
+    // Log to Supabase
+    try {
+      const { error: insertError } = await supabase
+        .from("notification_analytics")
+        .insert([analyticsData]);
+
+      if (insertError) {
+        console.error(
+          "[NotificationService] Error logging analytics:",
+          insertError,
+        );
+      } else {
+        console.log(
+          "[NotificationService] Tracked navigation result:",
+          success,
+        );
+      }
+    } catch (error: unknown) {
+      console.error("[NotificationService] Error logging analytics:", error);
+    }
+  } catch (error) {
+    console.error("[NotificationService] Error tracking navigation:", error);
+  }
+}
+
+// Helper to get current user ID
+async function getUserId(): Promise<string | null> {
+  try {
+    const { data } = await supabase.auth.getSession();
+    return data?.session?.user?.id || null;
+  } catch (error) {
+    console.error("[NotificationService] Error getting user ID:", error);
+    return null;
+  }
+}
+
+// Content validation functions
+async function validateContentExists(
+  notificationType: string,
+  messageId: string,
+): Promise<boolean> {
+  if (!messageId) return false;
+
+  try {
+    // Check if referenced content still exists based on type
+    switch (notificationType) {
+      case "admin_message":
+        const { data: adminMessage } = await supabase
+          .from("admin_messages")
+          .select("id")
+          .eq("id", messageId)
+          .single();
+        return !!adminMessage;
+
+      case "gca_announcement":
+        const { data: announcement } = await supabase
+          .from("announcements")
+          .select("id")
+          .eq("id", messageId)
+          .eq("type", "gca")
+          .single();
+        return !!announcement;
+
+      case "division_announcement":
+        const { data: divAnnouncement } = await supabase
+          .from("announcements")
+          .select("id")
+          .eq("id", messageId)
+          .eq("type", "division")
+          .single();
+        return !!divAnnouncement;
+
+      case "meeting_reminder":
+        const { data: meeting } = await supabase
+          .from("meetings")
+          .select("id")
+          .eq("id", messageId)
+          .single();
+        return !!meeting;
+
+      default:
+        const { data: message } = await supabase
+          .from("messages")
+          .select("id")
+          .eq("id", messageId)
+          .single();
+        return !!message;
+    }
+  } catch (error) {
+    console.error("[NotificationService] Error validating content:", error);
+    return false;
+  }
+}
+
+async function validateUserHasAccess(
+  notificationType: string,
+  messageId: string,
+  userId: string | null,
+): Promise<boolean> {
+  if (!messageId || !userId) return false;
+
+  try {
+    switch (notificationType) {
+      case "division_announcement":
+        // Check if user belongs to the division
+        const { data: announcement } = await supabase
+          .from("announcements")
+          .select("division_id")
+          .eq("id", messageId)
+          .single();
+
+        if (!announcement) return false;
+
+        const { data: userDivision } = await supabase
+          .from("user_divisions")
+          .select("division_id")
+          .eq("user_id", userId)
+          .eq("division_id", announcement.division_id)
+          .single();
+
+        return !!userDivision;
+
+      case "admin_message":
+        // Check if user is recipient of admin message
+        const { data: adminMessage } = await supabase
+          .from("admin_messages")
+          .select("recipient_ids")
+          .eq("id", messageId)
+          .single();
+
+        if (!adminMessage) return false;
+
+        if (adminMessage.recipient_ids === null) return true;
+
+        return Array.isArray(adminMessage.recipient_ids) &&
+          adminMessage.recipient_ids.includes(userId);
+
+      case "meeting_reminder":
+        // Check if user belongs to the division that owns the meeting
+        const { data: meeting } = await supabase
+          .from("meetings")
+          .select("division_id")
+          .eq("id", messageId)
+          .single();
+
+        if (!meeting) return false;
+
+        const { data: meetingUserDivision } = await supabase
+          .from("user_divisions")
+          .select("division_id")
+          .eq("user_id", userId)
+          .eq("division_id", meeting.division_id)
+          .single();
+
+        return !!meetingUserDivision;
+
+      case "regular_message":
+        // Check if user is recipient of message
+        const { data: message } = await supabase
+          .from("messages")
+          .select("recipient_id, recipient_pin_number")
+          .eq("id", messageId)
+          .single();
+
+        if (!message) return false;
+
+        // Check if recipient_id matches userId directly
+        if (message.recipient_id === userId) return true;
+
+        // If not, fetch member data to check pin number
+        const { data: member } = await supabase
+          .from("members")
+          .select("pin_number")
+          .eq("id", userId)
+          .single();
+
+        if (!member) return false;
+
+        // Check if pin number matches recipient_pin_number
+        return member.pin_number === message.recipient_pin_number;
+
+      // GCA announcements are visible to all users
+      case "gca_announcement":
+        return true;
+
+      default:
+        return true; // Default to allowing access if no specific check
+    }
+  } catch (error) {
+    console.error("[NotificationService] Error validating access:", error);
+    return false;
+  }
+}
+
+async function checkContentExpiration(
+  notificationType: string,
+  messageId: string,
+): Promise<{ isExpired: boolean; message?: string }> {
+  if (!messageId) return { isExpired: false };
+
+  try {
+    const now = new Date().toISOString();
+
+    switch (notificationType) {
+      case "gca_announcement":
+      case "division_announcement":
+        const { data: announcement } = await supabase
+          .from("announcements")
+          .select("id, expiry_date")
+          .eq("id", messageId)
+          .single();
+
+        if (announcement?.expiry_date && announcement.expiry_date < now) {
+          return {
+            isExpired: true,
+            message: "This announcement has expired.",
+          };
+        }
+        break;
+
+      case "admin_message":
+        const { data: adminMessage } = await supabase
+          .from("admin_messages")
+          .select("id, expiry_date")
+          .eq("id", messageId)
+          .single();
+
+        if (adminMessage?.expiry_date && adminMessage.expiry_date < now) {
+          return {
+            isExpired: true,
+            message: "This admin message has expired.",
+          };
+        }
+        break;
+
+      case "meeting_reminder":
+        const { data: meeting } = await supabase
+          .from("meetings")
+          .select("id, meeting_date")
+          .eq("id", messageId)
+          .single();
+
+        if (meeting?.meeting_date) {
+          const meetingDate = new Date(meeting.meeting_date);
+          const currentDate = new Date();
+
+          // If meeting was more than 1 day ago, consider it expired
+          if (
+            meetingDate <
+              new Date(currentDate.setDate(currentDate.getDate() - 1))
+          ) {
+            return {
+              isExpired: true,
+              message: "This meeting has already taken place.",
+            };
+          }
+        }
+        break;
+    }
+
+    return { isExpired: false };
+  } catch (error) {
+    console.error("[NotificationService] Error checking expiration:", error);
+    return { isExpired: false };
+  }
+}
+
+async function checkContentArchiveStatus(
+  notificationType: string,
+  messageId: string,
+): Promise<{ isArchived: boolean; message?: string }> {
+  if (!messageId) return { isArchived: false };
+
+  try {
+    switch (notificationType) {
+      case "admin_message":
+        const { data: message } = await supabase
+          .from("admin_messages")
+          .select("id, is_archived")
+          .eq("id", messageId)
+          .single();
+
+        if (message?.is_archived) {
+          return {
+            isArchived: true,
+            message: "This message has been archived.",
+          };
+        }
+        break;
+
+      case "gca_announcement":
+      case "division_announcement":
+        const { data: announcement } = await supabase
+          .from("announcements")
+          .select("id, is_archived")
+          .eq("id", messageId)
+          .single();
+
+        if (announcement?.is_archived) {
+          return {
+            isArchived: true,
+            message: "This announcement has been archived.",
+          };
+        }
+        break;
+
+      case "regular_message":
+        const { data: regularMessage } = await supabase
+          .from("messages")
+          .select("id, is_archived")
+          .eq("id", messageId)
+          .single();
+
+        if (regularMessage?.is_archived) {
+          return {
+            isArchived: true,
+            message: "This message has been archived.",
+          };
+        }
+        break;
+    }
+
+    return { isArchived: false };
+  } catch (error) {
     console.error(
-      "[NotificationService] Error handling notification deep link:",
+      "[NotificationService] Error checking archive status:",
       error,
     );
-    // Fallback navigation to notifications tab
-    try {
-      const { router } = require("expo-router");
-      router.push("/(tabs)/notifications");
-    } catch (navError) {
-      console.error(
-        "[NotificationService] Failed to navigate to fallback screen:",
-        navError,
-      );
-    }
+    return { isArchived: false };
   }
 }
 

@@ -935,3 +935,52 @@ export async function sendAnnouncementNotification(announcementId: string) {
 4. **Categories/Tags** - Organize announcements by topic
 5. **Priority Levels** - Mark certain announcements as high priority
 6. **Email Integration** - Send important announcements via email
+
+[ ] **Update admin message screens to handle deep linking**:
+
+```typescript
+// In app/(admin)/messages/[messageId].tsx or equivalent SEARCH CODEBASE TO MAKE SURE CORRECT PATH IS USED
+import { useLocalSearchParams } from "expo-router";
+
+export default function AdminMessageDetailScreen() {
+  const { messageId } = useLocalSearchParams();
+  const { markAdminMessageAsRead } = useAdminMessagesStore();
+
+  useEffect(() => {
+    if (messageId) {
+      // Mark admin message as read
+      markAdminMessageAsRead(messageId as string);
+
+      // Update delivery status if from notification
+      markNotificationDelivered(messageId as string, "read");
+    }
+  }, [messageId]);
+
+  // Rest of component...
+}
+```
+
+- [ ] **Update announcement screens to handle deep linking**:
+
+  ```typescript
+  // In app/(gca)/gca-announcements/[announcementId].tsx or equivalent SEARCH CODEBASE TO MAKE SURE CORRECT PATH IS USED
+  // Need to update division and gca announcements
+  import { useLocalSearchParams } from "expo-router";
+
+  export default function GCAAnnouncementDetailScreen() {
+    const { announcementId } = useLocalSearchParams();
+    const { markAnnouncementAsRead } = useAnnouncementsStore();
+
+    useEffect(() => {
+      if (announcementId) {
+        // Mark announcement as read
+        markAnnouncementAsRead(announcementId as string);
+
+        // Update delivery status if from notification
+        markNotificationDelivered(announcementId as string, "read");
+      }
+    }, [announcementId]);
+
+    // Rest of component...
+  }
+  ```
