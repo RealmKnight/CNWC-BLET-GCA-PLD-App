@@ -39,6 +39,17 @@ interface PushNotificationResult {
     error?: string;
 }
 
+// Interface for updates object
+interface QueueItemUpdates {
+    status: string;
+    error: string | null;
+    last_attempted_at: string;
+    sent_at?: string;
+    first_attempted_at?: string;
+    retry_count?: number;
+    next_attempt_at?: string;
+}
+
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers":
@@ -61,6 +72,27 @@ serve(async (req) => {
             Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
         );
 
+        // Log connection info
+        console.log("Supabase URL:", Deno.env.get("SUPABASE_URL"));
+
+        try {
+            // Test database connection with a simple query
+            const { data: testData, error: testError } = await supabaseClient
+                .from("push_notification_queue")
+                .select("count(*)")
+                .limit(1);
+
+            if (testError) {
+                console.error("Database connection test failed:", testError);
+                throw new Error(`Database test failed: ${testError.message}`);
+            } else {
+                console.log("Database connection test successful:", testData);
+            }
+        } catch (dbTestError) {
+            console.error("Exception in database test:", dbTestError);
+            throw dbTestError;
+        }
+
         // Process pending notifications
         const result = await processNotificationQueue(supabaseClient);
 
@@ -75,9 +107,12 @@ serve(async (req) => {
                 status: 200,
             },
         );
-    } catch (error) {
+    } catch (error: unknown) {
+        const errorMessage = error instanceof Error
+            ? error.message
+            : "Unknown error occurred";
         console.error("Error processing queue:", error);
-        return new Response(JSON.stringify({ error: error.message }), {
+        return new Response(JSON.stringify({ error: errorMessage }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
             status: 500,
         });
@@ -95,7 +130,10 @@ async function processNotificationQueue(supabase: SupabaseClient) {
         .order("next_attempt_at", { ascending: true })
         .limit(50);
 
-    if (error) throw error;
+    if (error) {
+        console.error("Error querying notification queue:", error);
+        throw error;
+    }
 
     if (!pendingNotifications || pendingNotifications.length === 0) {
         console.log("No pending notifications to process");
@@ -240,6 +278,16 @@ async function sendPushNotification(
     params: PushNotificationParams,
 ): Promise<PushNotificationResult> {
     try {
+        console.log(`Sending push notification to: ${params.to}`);
+        console.log(`Notification payload: ${
+            JSON.stringify({
+                to: params.to,
+                title: params.title,
+                body: params.body,
+                data: params.data,
+            })
+        }`);
+
         const response = await fetch("https://exp.host/--/api/v2/push/send", {
             method: "POST",
             headers: {
@@ -262,19 +310,29 @@ async function sendPushNotification(
         });
 
         const result = await response.json();
+        console.log("Expo push service raw response:", JSON.stringify(result));
 
         if (result.data && result.data.status === "ok") {
             return { success: true };
         } else {
+            const errorMsg = result.errors && result.errors.length > 0
+                ? result.errors[0].message
+                : "Push service returned an error";
+            console.error(
+                `Push notification failed: ${errorMsg}`,
+                JSON.stringify(result),
+            );
             return {
                 success: false,
-                error: result.errors
-                    ? result.errors[0].message
-                    : "Push service returned an error",
+                error: errorMsg,
             };
         }
-    } catch (error) {
-        return { success: false, error: error.message };
+    } catch (error: unknown) {
+        const errorMessage = error instanceof Error
+            ? error.message
+            : "Unknown error occurred";
+        console.error("Exception sending push notification:", errorMessage);
+        return { success: false, error: errorMessage };
     }
 }
 
@@ -317,7 +375,7 @@ async function updateQueueItemStatus(
     errorMessage: string | null = null,
 ) {
     const now = new Date().toISOString();
-    const updates = {
+    const updates: QueueItemUpdates = {
         status: success ? "sent" : "failed",
         error: errorMessage,
         last_attempted_at: now,
@@ -347,7 +405,7 @@ async function updateQueueItemStatus(
 
         // Calculate delay with exponential backoff (2^retry_count * baseDelay)
         const retryDelay = Math.min(
-            Math.pow(2, updates.retry_count) * baseDelay,
+            Math.pow(2, updates.retry_count || 0) * baseDelay,
             maxBackoff,
         );
 
