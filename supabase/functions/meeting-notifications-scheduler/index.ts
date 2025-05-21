@@ -8,32 +8,6 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ||
 // Initialize Supabase client with the service role key
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-interface MeetingOccurrence {
-    id: string;
-    actual_scheduled_datetime_utc: string;
-    location_name: string;
-    location_address: string;
-    agenda: string;
-    meeting_pattern_id: string;
-    division_meetings: {
-        division_id: number;
-    };
-}
-
-interface DivisionMember {
-    id: string;
-}
-
-interface UserPreference {
-    user_id: string;
-}
-
-interface UserContactPreference {
-    user_id: string;
-    push_token: string | null;
-    contact_preference: string;
-}
-
 async function checkAndSendMeetingNotifications() {
     console.log("[Meeting Notifications] Starting notification check");
 
@@ -114,10 +88,15 @@ async function checkAndSendMeetingNotifications() {
             day_before_count: 0,
             hour_before_count: 0,
             notifications_sent: 0,
-            error_message: error.message || "Unknown error",
+            error_message: error instanceof Error
+                ? error.message
+                : "Unknown error",
         });
 
-        return { success: false, error: error.message };
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : "Unknown error",
+        };
     }
 }
 
@@ -420,7 +399,10 @@ serve(async (req: Request) => {
         console.error("[Meeting Notifications] Unhandled error:", error);
 
         return new Response(
-            JSON.stringify({ success: false, error: error.message }),
+            JSON.stringify({
+                success: false,
+                error: error instanceof Error ? error.message : "Unknown error",
+            }),
             {
                 headers: { "Content-Type": "application/json" },
                 status: 500,
