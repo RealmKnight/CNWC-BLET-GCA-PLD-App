@@ -49,6 +49,7 @@ google-services.json
 __tests__/
 *.test.ts
 *.test.tsx
+supabase/functions/send-email/*
 
 # typescript
 *.tsbuildinfo
