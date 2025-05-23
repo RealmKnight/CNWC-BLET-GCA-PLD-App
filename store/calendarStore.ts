@@ -762,6 +762,41 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
 
       if (error) throw error;
 
+      // If cancellation was successful, send email notification
+      if (data === true) {
+        try {
+          console.log(
+            "[CalendarStore] Sending cancellation email notification...",
+          );
+          const { error: emailError } = await supabase.functions.invoke(
+            "send-cancellation-email",
+            {
+              body: {
+                requestId: requestId,
+              },
+            },
+          );
+
+          if (emailError) {
+            console.error(
+              "[CalendarStore] Cancellation email notification failed:",
+              emailError,
+            );
+            // Don't fail the cancellation if email fails - the cancellation was successful
+          } else {
+            console.log(
+              "[CalendarStore] Cancellation email notification sent successfully",
+            );
+          }
+        } catch (emailError) {
+          console.error(
+            "[CalendarStore] Error sending cancellation email notification:",
+            emailError,
+          );
+          // Continue - cancellation was successful even if email failed
+        }
+      }
+
       // If immediate cancellation (data is true), update the UI again
       if (data && member.calendar_id) {
         await state.refreshRequestsForDate(requestDate, member.calendar_id);
@@ -814,6 +849,36 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
         .single();
 
       if (error) throw error;
+
+      // Send email notification for the new request
+      try {
+        console.log("[CalendarStore] Sending request email notification...");
+        const { error: emailError } = await supabase.functions.invoke(
+          "send-request-email",
+          {
+            body: {
+              requestId: data.id,
+            },
+          },
+        );
+
+        if (emailError) {
+          console.error(
+            "[CalendarStore] Email notification failed:",
+            emailError,
+          );
+          // Don't fail the entire request submission if email fails
+          // The request is already in the database successfully
+        } else {
+          console.log("[CalendarStore] Email notification sent successfully");
+        }
+      } catch (emailError) {
+        console.error(
+          "[CalendarStore] Error sending email notification:",
+          emailError,
+        );
+        // Continue - request was successful even if email failed
+      }
 
       // Update local state optimistically
       const newRequests = { ...state.requests };

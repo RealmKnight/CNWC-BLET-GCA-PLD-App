@@ -11,6 +11,7 @@ import { DivisionManagement } from "./DivisionManagement";
 import { MessageCenter } from "./MessageCenter";
 import { AdminMessages } from "./AdminMessages";
 import { CalendarManager } from "./CalendarManager";
+import { EmailAlertsBadge } from "@/components/ui/EmailAlertsBadge";
 import Animated, {
   FadeIn,
   FadeOut,
@@ -91,6 +92,7 @@ export const DivisionAdminPanel = forwardRef<View, DivisionAdminPanelProps>(({ d
           color={isActive ? (shouldUseMobileLayout ? tintColor : "#000000") : Colors[colorScheme].text}
         />
         {section.key === "adminMessages" && <AdminMessageBadge />}
+        {section.key === "division" && <EmailAlertsBadge divisionFilter={division} />}
         {!shouldUseMobileLayout && (
           <ThemedText style={[styles.sectionButtonText, isActive && styles.activeSectionButtonText]}>
             {section.title}
@@ -136,6 +138,7 @@ export const DivisionAdminPanel = forwardRef<View, DivisionAdminPanelProps>(({ d
       <AnimatedThemedView style={shouldUseMobileLayout ? styles.mobileNavigation : styles.webNavigation}>
         {sections.map(renderNavigationButton)}
       </AnimatedThemedView>
+
       {renderSection()}
     </ThemedView>
   );

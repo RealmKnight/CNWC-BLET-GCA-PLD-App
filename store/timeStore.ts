@@ -943,6 +943,41 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
                 console.log(
                     `[TimeStore] Cancellation successful/initiated for request ${requestId}`,
                 );
+
+                // Send email notification for the cancellation
+                try {
+                    console.log(
+                        "[TimeStore] Sending cancellation email notification...",
+                    );
+                    const { error: emailError } = await supabase.functions
+                        .invoke(
+                            "send-cancellation-email",
+                            {
+                                body: {
+                                    requestId: requestId,
+                                },
+                            },
+                        );
+
+                    if (emailError) {
+                        console.error(
+                            "[TimeStore] Cancellation email notification failed:",
+                            emailError,
+                        );
+                        // Don't fail the cancellation if email fails - the cancellation was successful
+                    } else {
+                        console.log(
+                            "[TimeStore] Cancellation email notification sent successfully",
+                        );
+                    }
+                } catch (emailError) {
+                    console.error(
+                        "[TimeStore] Error sending cancellation email notification:",
+                        emailError,
+                    );
+                    // Continue - cancellation was successful even if email failed
+                }
+
                 set({ isSubmittingAction: false });
                 // Refresh data after cancellation/status change
                 // The realtime listener should eventually catch this, but a manual refresh ensures quicker UI update
@@ -1132,6 +1167,41 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
             if (error) throw error;
 
             console.log("[TimeStore] Request submitted successfully:", data);
+
+            // Send email notification for the new request
+            try {
+                console.log(
+                    "[TimeStore] Sending request email notification...",
+                );
+                const { error: emailError } = await supabase.functions.invoke(
+                    "send-request-email",
+                    {
+                        body: {
+                            requestId: data.id,
+                        },
+                    },
+                );
+
+                if (emailError) {
+                    console.error(
+                        "[TimeStore] Email notification failed:",
+                        emailError,
+                    );
+                    // Don't fail the entire request submission if email fails
+                    // The request is already in the database successfully
+                } else {
+                    console.log(
+                        "[TimeStore] Email notification sent successfully",
+                    );
+                }
+            } catch (emailError) {
+                console.error(
+                    "[TimeStore] Error sending email notification:",
+                    emailError,
+                );
+                // Continue - request was successful even if email failed
+            }
+
             set({ isSubmittingAction: false });
             // Refresh data after submission
             await get().refreshAll(memberId);

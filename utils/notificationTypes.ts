@@ -30,6 +30,37 @@ export interface NotificationPayload {
     // Grouping
     groupKey?: string;
     groupSummary?: string;
+
+    // Email-related notification data
+    emailFailureDetails?: {
+        requestId: string;
+        emailType: "request" | "cancellation" | "notification";
+        recipientEmail: string;
+        errorMessage: string;
+        retryCount: number;
+    };
+    emailSettingsChange?: {
+        divisionName: string;
+        divisionId: string;
+        changeType: "add" | "update" | "remove" | "toggle";
+        adminName: string;
+        emailsAffected: string[];
+    };
+    emailStatusDetails?: {
+        requestId: string;
+        memberName: string;
+        emailType: "request" | "cancellation" | "notification";
+        status: "delivered" | "opened" | "clicked" | "bounced" | "complained";
+        timestamp: string;
+    };
+    requestFailureDetails?: {
+        requestId: string;
+        memberName: string;
+        requestDate: string;
+        leaveType: "PLD" | "SDV";
+        allEmailsFailedPermanently: boolean;
+        fallbackSent: boolean;
+    };
 }
 
 /**
@@ -240,4 +271,144 @@ async function sendPushNotificationToUser(
     console.log(`Sending push notification to ${userId} with title: ${title}`);
     // This would call your actual implementation
     return true;
+}
+
+/**
+ * Email delivery failure notifications
+ */
+export async function sendEmailDeliveryFailureNotification(
+    userId: string,
+    failureDetails: {
+        requestId: string;
+        emailType: "request" | "cancellation" | "notification";
+        recipientEmail: string;
+        errorMessage: string;
+        retryCount: number;
+    },
+) {
+    const title = "Email Delivery Failed";
+    const body =
+        `Failed to send ${failureDetails.emailType} email to ${failureDetails.recipientEmail}. Error: ${failureDetails.errorMessage}`;
+
+    return sendTypedPushNotification(
+        userId,
+        title,
+        body,
+        NotificationType.SYSTEM_ALERT,
+        `email-failure-${failureDetails.requestId}-${Date.now()}`,
+        {
+            requiresAcknowledgment: true,
+            shouldBadge: true,
+            emailFailureDetails: failureDetails,
+        },
+    );
+}
+
+/**
+ * Division email settings change notifications
+ */
+export async function sendDivisionEmailSettingsChangeNotification(
+    userId: string,
+    changeDetails: {
+        divisionName: string;
+        divisionId: string;
+        changeType: "add" | "update" | "remove" | "toggle";
+        adminName: string;
+        emailsAffected: string[];
+    },
+) {
+    const title = "Division Email Settings Changed";
+    let body =
+        `${changeDetails.adminName} ${changeDetails.changeType}d email settings for ${changeDetails.divisionName} division`;
+
+    if (changeDetails.emailsAffected.length > 0) {
+        body += `. Emails affected: ${changeDetails.emailsAffected.join(", ")}`;
+    }
+
+    return sendTypedPushNotification(
+        userId,
+        title,
+        body,
+        NotificationType.SYSTEM_ALERT,
+        `email-settings-${changeDetails.divisionId}-${Date.now()}`,
+        {
+            requiresAcknowledgment: false,
+            shouldBadge: true,
+            divisionName: changeDetails.divisionName,
+            divisionId: changeDetails.divisionId,
+            emailSettingsChange: changeDetails,
+        },
+    );
+}
+
+/**
+ * Email delivery status notifications (for admins)
+ */
+export async function sendEmailDeliveryStatusNotification(
+    userId: string,
+    statusDetails: {
+        requestId: string;
+        memberName: string;
+        emailType: "request" | "cancellation" | "notification";
+        status: "delivered" | "opened" | "clicked" | "bounced" | "complained";
+        timestamp: string;
+    },
+) {
+    const title = "Email Delivery Update";
+    const body =
+        `${statusDetails.emailType} email for ${statusDetails.memberName} was ${statusDetails.status}`;
+
+    return sendTypedPushNotification(
+        userId,
+        title,
+        body,
+        NotificationType.SYSTEM_ALERT,
+        `email-status-${statusDetails.requestId}-${Date.now()}`,
+        {
+            requiresAcknowledgment: false,
+            shouldBadge: false, // Don't badge for status updates
+            emailStatusDetails: statusDetails,
+        },
+    );
+}
+
+/**
+ * Request processing email failure with fallback
+ */
+export async function sendRequestProcessingFailureNotification(
+    userId: string,
+    requestDetails: {
+        requestId: string;
+        memberName: string;
+        requestDate: string;
+        leaveType: "PLD" | "SDV";
+        allEmailsFailedPermanently: boolean;
+        fallbackSent: boolean;
+    },
+) {
+    const title = "Request Processing Email Failed";
+    let body =
+        `Unable to send ${requestDetails.leaveType} request email for ${requestDetails.memberName} (${requestDetails.requestDate})`;
+
+    if (requestDetails.allEmailsFailedPermanently) {
+        body += ". All email delivery attempts have failed permanently.";
+        if (requestDetails.fallbackSent) {
+            body += " Fallback notification has been sent to division admins.";
+        }
+    } else {
+        body += ". Retry attempts are ongoing.";
+    }
+
+    return sendTypedPushNotification(
+        userId,
+        title,
+        body,
+        NotificationType.SYSTEM_ALERT,
+        `request-failure-${requestDetails.requestId}-${Date.now()}`,
+        {
+            requiresAcknowledgment: requestDetails.allEmailsFailedPermanently,
+            shouldBadge: true,
+            requestFailureDetails: requestDetails,
+        },
+    );
 }

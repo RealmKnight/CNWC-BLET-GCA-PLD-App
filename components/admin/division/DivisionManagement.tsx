@@ -10,6 +10,7 @@ import Animated, { FadeIn, FadeOut, SlideInRight, SlideOutLeft } from "react-nat
 import { DivisionMeetings } from "./DivisionMeetings";
 import { useDivisionManagementStore, DivisionView } from "@/store/divisionManagementStore";
 import { DivisionDocumentsAdmin } from "./DivisionDocumentsAdmin";
+import { DivisionEmailManagement } from "./DivisionEmailManagement";
 
 const AnimatedThemedView = Animated.createAnimatedComponent(ThemedView);
 
@@ -100,6 +101,16 @@ export function DivisionManagement({ division }: DivisionManagementProps) {
             <DivisionMeetings division={division} isAdmin={true} />
           </ScrollView>
         );
+      case "emails":
+        return (
+          <AnimatedThemedView
+            entering={isMobile ? SlideInRight : FadeIn}
+            exiting={isMobile ? SlideOutLeft : FadeOut}
+            style={styles.content}
+          >
+            <DivisionEmailManagement division={division} />
+          </AnimatedThemedView>
+        );
       default:
         return null;
     }
@@ -114,6 +125,7 @@ export function DivisionManagement({ division }: DivisionManagementProps) {
             {renderActionButton("meetings", "people-circle-outline", "Meetings")}
             {renderActionButton("documents", "document-text-outline", "Documents")}
             {renderActionButton("officers", "ribbon-outline", "Officers")}
+            {renderActionButton("emails", "mail-outline", "Emails")}
           </View>
         </View>
         <View style={styles.divisionContainer}>

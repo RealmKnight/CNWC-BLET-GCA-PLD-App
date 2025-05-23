@@ -238,6 +238,85 @@ export default function PrivacyPolicyScreen() {
           </ThemedText>
         </View>
 
+        <ThemedText style={styles.sectionTitle}>Email-Based Request Processing</ThemedText>
+        <ThemedText style={styles.paragraph}>
+          Our app includes an optional email-based workflow for processing personal leave day (PLD) and single day
+          vacation (SDV) requests. This system is designed to streamline request management while maintaining security
+          and transparency.
+        </ThemedText>
+
+        <ThemedText style={styles.subSectionTitle}>How Email Processing Works</ThemedText>
+        <View style={styles.bulletContainer}>
+          <ThemedText style={styles.bulletItem}>
+            • When you submit a request through the app, an email is automatically sent to designated company
+            administrators for processing.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • Company administrators can respond to these emails directly, and their responses are automatically
+            processed and reflected in the app.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • Once processed, status change notifications are sent to both the requesting member and relevant division
+            administrators.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • All email communications are tracked for delivery confirmation and administrative oversight.
+          </ThemedText>
+        </View>
+
+        <ThemedText style={styles.subSectionTitle}>Email Service Providers</ThemedText>
+        <View style={styles.bulletContainer}>
+          <ThemedText style={styles.bulletItem}>
+            • We use Mailgun as our primary email service provider for request processing emails. Mailgun's privacy
+            policy is available at{" "}
+            <ThemedText
+              style={{ color: "#b8860b" }}
+              onPress={() => Linking.openURL("https://www.mailgun.com/privacy-policy")}
+            >
+              mailgun.com/privacy-policy
+            </ThemedText>
+            .
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • We use Resend as our backup email service provider. Resend's privacy policy is available at{" "}
+            <ThemedText
+              style={{ color: "#b8860b" }}
+              onPress={() => Linking.openURL("https://resend.com/legal/privacy-policy")}
+            >
+              resend.com/legal/privacy-policy
+            </ThemedText>
+            .
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • Both services are used solely for delivering the email communications you have requested or that are
+            necessary for app functionality.
+          </ThemedText>
+        </View>
+
+        <ThemedText style={styles.subSectionTitle}>Email Tracking and Security</ThemedText>
+        <View style={styles.bulletContainer}>
+          <ThemedText style={styles.bulletItem}>
+            • We track email delivery status (sent, delivered, opened, failed) to ensure reliable communication and
+            system monitoring.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • Email tracking data is used solely for operational purposes, troubleshooting delivery issues, and system
+            reliability.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • Failed email deliveries trigger automatic retry mechanisms and administrative notifications to ensure no
+            requests are lost.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • Request emails contain only the information necessary for processing and include unique identifiers to
+            prevent processing errors.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • Division administrators can configure their preferred email addresses for receiving status change
+            notifications.
+          </ThemedText>
+        </View>
+
         <ThemedText style={styles.subSectionTitle}>SMS Opt-In Verification</ThemedText>
         <ThemedText style={styles.paragraph}>
           When users opt for SMS notifications, they are presented with a clear opt-in confirmation dialog that explains
@@ -278,6 +357,9 @@ export default function PrivacyPolicyScreen() {
             • We use Resend as our email service provider for sending email notifications.
           </ThemedText>
           <ThemedText style={styles.bulletItem}>
+            • We use Mailgun as our primary email service provider for request processing and delivery tracking.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
             • We DO NOT share your mobile phone number or other personal information with these third-party services for
             marketing or promotional purposes.
           </ThemedText>
@@ -298,6 +380,14 @@ export default function PrivacyPolicyScreen() {
             delivering the SMS notifications you have explicitly requested.
           </ThemedText>
           <ThemedText style={styles.bulletItem}>
+            • Email addresses configured for division notifications are only shared with Mailgun and Resend, our email
+            service providers, for the sole purpose of delivering request processing and status notification emails.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • Request processing emails are sent only to designated company administrators and relevant division
+            administrators as part of the official union request workflow.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
             • We may share anonymized, aggregated data that does not identify you personally for analytical purposes.
           </ThemedText>
           <ThemedText style={styles.bulletItem}>
@@ -316,6 +406,18 @@ export default function PrivacyPolicyScreen() {
           <ThemedText style={styles.bulletItem}>
             • You have the right to opt out of SMS notifications at any time by replying STOP to any message or changing
             your preferences in the app.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • You have the right to opt out of email notifications at any time by clicking unsubscribe links or changing
+            your preferences in the app.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • Division administrators have the right to configure, modify, or disable email settings for their division
+            at any time through the app's administrative interface.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • You can request information about email tracking records or processing history related to your requests by
+            contacting us.
           </ThemedText>
           <ThemedText style={styles.bulletItem}>
             • You have the right to access, correct, or delete your personal information by contacting us using the

@@ -31,23 +31,50 @@ export interface Officer {
     phone_number?: string;
 }
 
+// Division email settings interface
+export interface DivisionEmailSettings {
+    id: number;
+    division_id: number;
+    primary_email?: string;
+    additional_emails: string[];
+    enabled: boolean;
+    created_at: string;
+    updated_at: string;
+}
+
+// Division email audit log interface
+export interface DivisionEmailAuditLog {
+    id: number;
+    division_id: number;
+    admin_id: string;
+    change_type: "add" | "update" | "remove" | "toggle";
+    previous_value: any;
+    new_value: any;
+    created_at: string;
+}
+
 // Types
 export type DivisionView =
     | "meetings"
     | "announcements"
     | "documents"
-    | "officers";
+    | "officers"
+    | "emails";
 
 interface DivisionManagementState {
     // Data
     divisions: Division[];
     zones: Record<number, Zone[]>; // Zones grouped by division_id
     officers: Officer[];
+    divisionEmailSettings: Record<number, DivisionEmailSettings>; // Email settings grouped by division_id
+    divisionEmailAuditLog: DivisionEmailAuditLog[];
 
     // UI State
     isLoadingDivisions: boolean;
     isLoadingZones: boolean;
     isLoadingOfficers: boolean;
+    isLoadingEmailSettings: boolean;
+    isLoadingEmailAuditLog: boolean;
     selectedDivisionId: number | null;
     error: string | null;
 
@@ -87,6 +114,23 @@ interface DivisionManagementState {
     ) => Promise<void>;
     removeOfficer: (id: string) => Promise<void>;
 
+    // Division Email CRUD
+    fetchDivisionEmailSettings: (divisionId: number) => Promise<void>;
+    createOrUpdateDivisionEmailSettings: (
+        divisionId: number,
+        settings: {
+            primary_email?: string;
+            additional_emails?: string[];
+            enabled?: boolean;
+        },
+        adminId: string,
+    ) => Promise<void>;
+    deleteDivisionEmailSettings: (
+        divisionId: number,
+        adminId: string,
+    ) => Promise<void>;
+    fetchDivisionEmailAuditLog: (divisionId: number) => Promise<void>;
+
     // State management
     setSelectedDivisionId: (id: number | null) => void;
     clearError: () => void;
@@ -106,9 +150,13 @@ export const useDivisionManagementStore = create<DivisionManagementState>((
     divisions: [],
     zones: {},
     officers: [],
+    divisionEmailSettings: {},
+    divisionEmailAuditLog: [],
     isLoadingDivisions: false,
     isLoadingZones: false,
     isLoadingOfficers: false,
+    isLoadingEmailSettings: false,
+    isLoadingEmailAuditLog: false,
     selectedDivisionId: null,
     error: null,
     currentView: {},
@@ -566,5 +614,187 @@ export const useDivisionManagementStore = create<DivisionManagementState>((
                 [division]: view,
             },
         }));
+    },
+
+    // Division Email CRUD operations
+    fetchDivisionEmailSettings: async (divisionId: number) => {
+        set({ isLoadingEmailSettings: true, error: null });
+        try {
+            const { data, error } = await supabase
+                .from("division_email_settings")
+                .select("*")
+                .eq("division_id", divisionId);
+
+            if (error) throw error;
+
+            set((state) => ({
+                divisionEmailSettings: {
+                    ...state.divisionEmailSettings,
+                    [divisionId]: data[0] as DivisionEmailSettings,
+                },
+            }));
+        } catch (error) {
+            console.error(
+                `Error fetching division email settings for ${divisionId}:`,
+                error,
+            );
+            set({
+                error: error instanceof Error ? error.message : String(error),
+            });
+        } finally {
+            set({ isLoadingEmailSettings: false });
+        }
+    },
+
+    createOrUpdateDivisionEmailSettings: async (
+        divisionId: number,
+        settings: {
+            primary_email?: string;
+            additional_emails?: string[];
+            enabled?: boolean;
+        },
+        adminId: string,
+    ) => {
+        set({ error: null });
+        try {
+            // Get current settings for audit log
+            const { data: currentSettings } = await supabase
+                .from("division_email_settings")
+                .select("*")
+                .eq("division_id", divisionId)
+                .single();
+
+            const isUpdate = !!currentSettings;
+            const changeType = isUpdate ? "update" : "add";
+
+            // Create or update settings using upsert
+            const { data, error } = await supabase
+                .from("division_email_settings")
+                .upsert({
+                    division_id: divisionId,
+                    primary_email: settings.primary_email,
+                    additional_emails: settings.additional_emails,
+                    enabled: settings.enabled,
+                    updated_at: new Date().toISOString(),
+                }, {
+                    onConflict: "division_id",
+                })
+                .select();
+
+            if (error) throw error;
+
+            // Create audit log entry
+            await supabase
+                .from("division_email_audit_log")
+                .insert([{
+                    division_id: divisionId,
+                    admin_id: adminId,
+                    change_type: changeType,
+                    previous_value: currentSettings
+                        ? {
+                            primary_email: currentSettings.primary_email,
+                            additional_emails:
+                                currentSettings.additional_emails,
+                            enabled: currentSettings.enabled,
+                        }
+                        : null,
+                    new_value: {
+                        primary_email: settings.primary_email,
+                        additional_emails: settings.additional_emails,
+                        enabled: settings.enabled,
+                    },
+                }]);
+
+            // Refresh the email settings
+            get().fetchDivisionEmailSettings(divisionId);
+        } catch (error) {
+            console.error(
+                `Error creating or updating division email settings for ${divisionId}:`,
+                error,
+            );
+            set({
+                error: error instanceof Error ? error.message : String(error),
+            });
+            throw error;
+        }
+    },
+
+    deleteDivisionEmailSettings: async (
+        divisionId: number,
+        adminId: string,
+    ) => {
+        set({ error: null });
+        try {
+            // Get current settings for audit log
+            const { data: currentSettings } = await supabase
+                .from("division_email_settings")
+                .select("*")
+                .eq("division_id", divisionId)
+                .single();
+
+            // Delete settings
+            const { error } = await supabase
+                .from("division_email_settings")
+                .delete()
+                .eq("division_id", divisionId);
+
+            if (error) throw error;
+
+            // Create audit log entry
+            if (currentSettings) {
+                await supabase
+                    .from("division_email_audit_log")
+                    .insert([{
+                        division_id: divisionId,
+                        admin_id: adminId,
+                        change_type: "remove",
+                        previous_value: {
+                            primary_email: currentSettings.primary_email,
+                            additional_emails:
+                                currentSettings.additional_emails,
+                            enabled: currentSettings.enabled,
+                        },
+                        new_value: null,
+                    }]);
+            }
+
+            // Refresh the email settings
+            get().fetchDivisionEmailSettings(divisionId);
+        } catch (error) {
+            console.error(
+                `Error deleting division email settings for ${divisionId}:`,
+                error,
+            );
+            set({
+                error: error instanceof Error ? error.message : String(error),
+            });
+            throw error;
+        }
+    },
+
+    fetchDivisionEmailAuditLog: async (divisionId: number) => {
+        set({ isLoadingEmailAuditLog: true, error: null });
+        try {
+            const { data, error } = await supabase
+                .from("division_email_audit_log")
+                .select("*")
+                .eq("division_id", divisionId);
+
+            if (error) throw error;
+
+            set((state) => ({
+                divisionEmailAuditLog: data as DivisionEmailAuditLog[],
+            }));
+        } catch (error) {
+            console.error(
+                `Error fetching division email audit log for ${divisionId}:`,
+                error,
+            );
+            set({
+                error: error instanceof Error ? error.message : String(error),
+            });
+        } finally {
+            set({ isLoadingEmailAuditLog: false });
+        }
     },
 }));
