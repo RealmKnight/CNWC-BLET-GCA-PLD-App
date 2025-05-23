@@ -51,8 +51,8 @@ export function ImportPreviewComponent({ previewData, onClose, onImportComplete 
     return previewData.map((item, index) => ({
       item,
       originalIndex: index,
-      // Use date-only for consistent sorting regardless of timezone
-      requestDateTimestamp: new Date(item.requestDate.toISOString().split("T")[0]).getTime(),
+      // Use the date directly without additional timezone conversion
+      requestDateTimestamp: item.requestDate.getTime(),
     }));
   }, [previewData]);
 
@@ -265,8 +265,7 @@ export function ImportPreviewComponent({ previewData, onClose, onImportComplete 
           </ThemedTouchableOpacity>
 
           <ThemedText style={styles.previewItemTitle}>
-            {item.firstName} {item.lastName} - {item.leaveType} on{" "}
-            {format(new Date(item.requestDate.toISOString().split("T")[0]), "MMM d, yyyy")}
+            {item.firstName} {item.lastName} - {item.leaveType} on {format(item.requestDate, "MMM d, yyyy")}
           </ThemedText>
         </View>
 
@@ -283,9 +282,7 @@ export function ImportPreviewComponent({ previewData, onClose, onImportComplete 
           {item.status === "waitlisted" && (
             <ThemedText>
               <ThemedText style={styles.waitlistedLabel}>Original Request Date:</ThemedText>{" "}
-              <ThemedText style={styles.highlightText}>
-                {format(new Date(item.requestedAt.toISOString().split("T")[0]), "MMM d, yyyy")}
-              </ThemedText>{" "}
+              <ThemedText style={styles.highlightText}>{format(item.requestedAt, "MMM d, yyyy")}</ThemedText>{" "}
               <ThemedText style={styles.waitlistedNote}>(Parsed from "denied req" in calendar)</ThemedText>
             </ThemedText>
           )}
