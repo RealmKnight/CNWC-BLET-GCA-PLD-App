@@ -12,6 +12,8 @@ import { useVacationCalendarStore, setupVacationCalendarSubscriptions } from "@/
 import { useAdminNotificationStore } from "@/store/adminNotificationStore";
 import { format } from "date-fns";
 import { useTimeStore } from "@/store/timeStore";
+// Import the notification service integration function
+import { initializeNotificationServiceIntegration } from "@/utils/notificationService";
 
 declare global {
   interface Window {
@@ -78,6 +80,17 @@ export function AuthProvider({ children }: AuthProviderProps) {
   // Refs for state comparison in listeners
   const appStateRef = useRef(AppState.currentState);
   const sessionRef = useRef(session);
+
+  // Initialize notification service integration once when component mounts
+  useEffect(() => {
+    console.log("[Auth] Initializing notification service integration...");
+    try {
+      initializeNotificationServiceIntegration();
+      console.log("[Auth] Notification service integration initialized successfully");
+    } catch (error) {
+      console.error("[Auth] Error initializing notification service integration:", error);
+    }
+  }, []); // Empty dependency array - runs once on mount
 
   // Effect to keep sessionRef updated
   useEffect(() => {
@@ -171,9 +184,25 @@ export function AuthProvider({ children }: AuthProviderProps) {
     console.log("[Auth] Initializing user stores with userId:", userId, "calendarId:", calendarId);
 
     try {
-      // Initialize stores in a defined order
+      // UPDATED INITIALIZATION ORDER: Notification Store → Calendar → Vacation Calendar → Time Store → Admin Store
+      // This prioritizes urgent notifications while other stores initialize
+
+      // 1. Initialize notification store for the user (MOVED TO FIRST POSITION)
+      const notificationStore = useNotificationStore.getState();
+      if (!notificationStore.isInitialized) {
+        console.log("[Auth] Initializing notification store...");
+        // Set up notification subscription and store cleanup function
+        const notificationCleanup = notificationStore.subscribeToMessages(userId);
+        notificationCleanupRef.current = notificationCleanup;
+
+        // Fetch initial messages with just userId (function will query pin number from member data)
+        await notificationStore.fetchMessages(userId, userId);
+        console.log("[Auth] Notification store initialized");
+      }
+
+      // Initialize calendar-dependent stores only if calendarId is available
       if (calendarId) {
-        // 1. Initialize calendar store
+        // 2. Initialize calendar store
         const calendarStore = useCalendarStore.getState();
         if (!calendarStore.isInitialized) {
           console.log("[Auth] Initializing calendar store...");
@@ -192,7 +221,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
           calendarCleanupRef.current = calendarCleanup;
         }
 
-        // 2. Initialize vacation calendar store
+        // 3. Initialize vacation calendar store
         const vacationCalendarStore = useVacationCalendarStore.getState();
         if (!vacationCalendarStore.isInitialized) {
           console.log("[Auth] Initializing vacation calendar store...");
@@ -211,7 +240,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
           vacationCalendarCleanupRef.current = vacationCalendarCleanup;
         }
 
-        // 3. Initialize Time Store
+        // 4. Initialize Time Store
         console.log("[Auth] Initializing time store...");
         try {
           const timeStore = useTimeStore.getState();
@@ -229,19 +258,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
         }
       } else {
         console.log("[Auth] No calendar ID found for member, skipping calendar store initialization.");
-      }
-
-      // 4. Initialize notification store for the user
-      const notificationStore = useNotificationStore.getState();
-      if (!notificationStore.isInitialized) {
-        console.log("[Auth] Initializing notification store...");
-        // Set up notification subscription and store cleanup function
-        const notificationCleanup = notificationStore.subscribeToMessages(userId);
-        notificationCleanupRef.current = notificationCleanup;
-
-        // Fetch initial messages with just userId (function will query pin number from member data)
-        await notificationStore.fetchMessages(userId, userId);
-        console.log("[Auth] Notification store initialized");
       }
 
       // 5. Initialize MyTime hook

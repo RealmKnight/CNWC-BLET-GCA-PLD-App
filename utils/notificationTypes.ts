@@ -1,67 +1,10 @@
-import { NotificationType } from "./notificationConfig";
-
-/**
- * Standardized notification payload structure
- * Used for all push notifications to ensure consistent data format
- */
-export interface NotificationPayload {
-    // Core identifiers
-    messageId: string;
-    notificationType: NotificationType;
-
-    // Content
-    title: string;
-    body: string;
-
-    // Metadata
-    timestamp: number;
-    categoryCode: string;
-    importance: "high" | "medium" | "low";
-
-    // Behavior flags
-    requiresAcknowledgment?: boolean;
-    shouldBadge?: boolean;
-
-    // Navigation data
-    divisionName?: string; // For division-specific notifications - use name not ID
-    divisionId?: string;
-    meetingId?: string;
-
-    // Grouping
-    groupKey?: string;
-    groupSummary?: string;
-
-    // Email-related notification data
-    emailFailureDetails?: {
-        requestId: string;
-        emailType: "request" | "cancellation" | "notification";
-        recipientEmail: string;
-        errorMessage: string;
-        retryCount: number;
-    };
-    emailSettingsChange?: {
-        divisionName: string;
-        divisionId: string;
-        changeType: "add" | "update" | "remove" | "toggle";
-        adminName: string;
-        emailsAffected: string[];
-    };
-    emailStatusDetails?: {
-        requestId: string;
-        memberName: string;
-        emailType: "request" | "cancellation" | "notification";
-        status: "delivered" | "opened" | "clicked" | "bounced" | "complained";
-        timestamp: string;
-    };
-    requestFailureDetails?: {
-        requestId: string;
-        memberName: string;
-        requestDate: string;
-        leaveType: "PLD" | "SDV";
-        allEmailsFailedPermanently: boolean;
-        fallbackSent: boolean;
-    };
-}
+// Import from central notification types location to prevent circular dependencies
+import {
+    getCategoryCodeFromType,
+    getImportanceFromType,
+    NotificationPayload,
+    NotificationType,
+} from "@/types/notifications";
 
 /**
  * Send a typed push notification with the appropriate metadata
@@ -95,54 +38,6 @@ export async function sendTypedPushNotification(
     };
 
     return await sendPushNotificationToUser(userId, title, body, data);
-}
-
-/**
- * Map notification types to category codes
- */
-function getCategoryCodeFromType(type: NotificationType): string {
-    switch (type) {
-        case NotificationType.ADMIN_MESSAGE:
-            return "admin_message";
-        case NotificationType.GCA_ANNOUNCEMENT:
-            return "gca_announcement";
-        case NotificationType.DIVISION_ANNOUNCEMENT:
-            return "division_announcement";
-        case NotificationType.SYSTEM_ALERT:
-            return "system_alert";
-        case NotificationType.MUST_READ:
-            return "must_read";
-        case NotificationType.MEETING_REMINDER:
-            return "meeting_reminder";
-        case NotificationType.REGULAR_MESSAGE:
-        default:
-            return "general_message";
-    }
-}
-
-/**
- * Determine notification importance based on type and acknowledgment requirement
- */
-function getImportanceFromType(
-    type: NotificationType,
-    requiresAcknowledgment?: boolean,
-): "high" | "medium" | "low" {
-    // If requires acknowledgment, always high importance
-    if (requiresAcknowledgment) return "high";
-
-    switch (type) {
-        case NotificationType.SYSTEM_ALERT:
-        case NotificationType.MUST_READ:
-        case NotificationType.ADMIN_MESSAGE:
-            return "high";
-        case NotificationType.GCA_ANNOUNCEMENT:
-        case NotificationType.DIVISION_ANNOUNCEMENT:
-        case NotificationType.MEETING_REMINDER:
-            return "medium";
-        case NotificationType.REGULAR_MESSAGE:
-        default:
-            return "low";
-    }
 }
 
 /**
@@ -208,7 +103,7 @@ export async function sendDivisionAnnouncementNotification(
 ) {
     return sendTypedPushNotification(
         userId,
-        "Division Announcement",
+        `${divisionName} Announcement`,
         announcement.title || "New Division Announcement",
         NotificationType.DIVISION_ANNOUNCEMENT,
         announcement.id,
@@ -228,54 +123,54 @@ export async function sendMeetingReminderNotification(
     divisionId: string,
     timeframe: "week" | "day" | "hour",
 ) {
-    let title, body;
-
-    switch (timeframe) {
-        case "week":
-            title = "Meeting Next Week";
-            body = `${divisionName} meeting scheduled in one week`;
-            break;
-        case "day":
-            title = "Meeting Tomorrow";
-            body = `${divisionName} meeting scheduled for tomorrow`;
-            break;
-        case "hour":
-            title = "Meeting Soon";
-            body = `${divisionName} meeting starting in one hour`;
-            break;
-    }
+    const timeframeText = timeframe === "hour"
+        ? "in 1 hour"
+        : timeframe === "day"
+        ? "tomorrow"
+        : "next week";
 
     return sendTypedPushNotification(
         userId,
-        title,
-        body,
+        `Meeting Reminder - ${divisionName}`,
+        `Meeting ${timeframeText}: ${meeting.title || "Division Meeting"}`,
         NotificationType.MEETING_REMINDER,
         meeting.id,
         {
             divisionName,
             divisionId,
             meetingId: meeting.id,
-            importance: timeframe === "hour" ? "high" : "medium",
+            shouldBadge: true,
         },
     );
 }
 
-// This is a placeholder - you'll need to implement this function or use your existing one
+// Internal function for sending push notifications
 async function sendPushNotificationToUser(
     userId: string,
     title: string,
     body: string,
     data: any,
 ) {
-    // Implementation would use your existing push notification service
-    console.log(`Sending push notification to ${userId} with title: ${title}`);
-    // This would call your actual implementation
-    return true;
+    try {
+        // This function should be imported from notificationService
+        // but we need to avoid circular imports, so we'll keep it simple for now
+        // or use parameter injection pattern
+        console.log(`[NotificationTypes] Would send push to user ${userId}:`, {
+            title,
+            body,
+            data,
+        });
+        return true;
+    } catch (error) {
+        console.error(
+            "[NotificationTypes] Error sending push notification:",
+            error,
+        );
+        return false;
+    }
 }
 
-/**
- * Email delivery failure notifications
- */
+// Email-related notification functions
 export async function sendEmailDeliveryFailureNotification(
     userId: string,
     failureDetails: {
@@ -286,27 +181,20 @@ export async function sendEmailDeliveryFailureNotification(
         retryCount: number;
     },
 ) {
-    const title = "Email Delivery Failed";
-    const body =
-        `Failed to send ${failureDetails.emailType} email to ${failureDetails.recipientEmail}. Error: ${failureDetails.errorMessage}`;
-
     return sendTypedPushNotification(
         userId,
-        title,
-        body,
+        "Email Delivery Failed",
+        `Failed to send ${failureDetails.emailType} email to ${failureDetails.recipientEmail}`,
         NotificationType.SYSTEM_ALERT,
-        `email-failure-${failureDetails.requestId}-${Date.now()}`,
+        `email_failure_${failureDetails.requestId}`,
         {
+            emailFailureDetails: failureDetails,
             requiresAcknowledgment: true,
             shouldBadge: true,
-            emailFailureDetails: failureDetails,
         },
     );
 }
 
-/**
- * Division email settings change notifications
- */
 export async function sendDivisionEmailSettingsChangeNotification(
     userId: string,
     changeDetails: {
@@ -317,33 +205,28 @@ export async function sendDivisionEmailSettingsChangeNotification(
         emailsAffected: string[];
     },
 ) {
-    const title = "Division Email Settings Changed";
-    let body =
-        `${changeDetails.adminName} ${changeDetails.changeType}d email settings for ${changeDetails.divisionName} division`;
-
-    if (changeDetails.emailsAffected.length > 0) {
-        body += `. Emails affected: ${changeDetails.emailsAffected.join(", ")}`;
-    }
+    const actionText = {
+        add: "added",
+        update: "updated",
+        remove: "removed",
+        toggle: "toggled",
+    }[changeDetails.changeType];
 
     return sendTypedPushNotification(
         userId,
-        title,
-        body,
-        NotificationType.SYSTEM_ALERT,
-        `email-settings-${changeDetails.divisionId}-${Date.now()}`,
+        "Email Settings Changed",
+        `${changeDetails.adminName} ${actionText} email settings for ${changeDetails.divisionName}`,
+        NotificationType.ADMIN_MESSAGE,
+        `email_settings_${changeDetails.divisionId}_${Date.now()}`,
         {
-            requiresAcknowledgment: false,
-            shouldBadge: true,
+            emailSettingsChange: changeDetails,
             divisionName: changeDetails.divisionName,
             divisionId: changeDetails.divisionId,
-            emailSettingsChange: changeDetails,
+            shouldBadge: true,
         },
     );
 }
 
-/**
- * Email delivery status notifications (for admins)
- */
 export async function sendEmailDeliveryStatusNotification(
     userId: string,
     statusDetails: {
@@ -354,27 +237,19 @@ export async function sendEmailDeliveryStatusNotification(
         timestamp: string;
     },
 ) {
-    const title = "Email Delivery Update";
-    const body =
-        `${statusDetails.emailType} email for ${statusDetails.memberName} was ${statusDetails.status}`;
-
     return sendTypedPushNotification(
         userId,
-        title,
-        body,
-        NotificationType.SYSTEM_ALERT,
-        `email-status-${statusDetails.requestId}-${Date.now()}`,
+        "Email Status Update",
+        `Email ${statusDetails.emailType} for ${statusDetails.memberName} was ${statusDetails.status}`,
+        NotificationType.REGULAR_MESSAGE,
+        `email_status_${statusDetails.requestId}`,
         {
-            requiresAcknowledgment: false,
-            shouldBadge: false, // Don't badge for status updates
             emailStatusDetails: statusDetails,
+            shouldBadge: false, // Status updates don't need badges
         },
     );
 }
 
-/**
- * Request processing email failure with fallback
- */
 export async function sendRequestProcessingFailureNotification(
     userId: string,
     requestDetails: {
@@ -386,29 +261,20 @@ export async function sendRequestProcessingFailureNotification(
         fallbackSent: boolean;
     },
 ) {
-    const title = "Request Processing Email Failed";
-    let body =
-        `Unable to send ${requestDetails.leaveType} request email for ${requestDetails.memberName} (${requestDetails.requestDate})`;
-
-    if (requestDetails.allEmailsFailedPermanently) {
-        body += ". All email delivery attempts have failed permanently.";
-        if (requestDetails.fallbackSent) {
-            body += " Fallback notification has been sent to division admins.";
-        }
-    } else {
-        body += ". Retry attempts are ongoing.";
-    }
+    const message = requestDetails.allEmailsFailedPermanently
+        ? `All email attempts failed for ${requestDetails.memberName}'s ${requestDetails.leaveType} request on ${requestDetails.requestDate}`
+        : `Processing issues with ${requestDetails.memberName}'s ${requestDetails.leaveType} request`;
 
     return sendTypedPushNotification(
         userId,
-        title,
-        body,
+        "Request Processing Issue",
+        message,
         NotificationType.SYSTEM_ALERT,
-        `request-failure-${requestDetails.requestId}-${Date.now()}`,
+        `request_failure_${requestDetails.requestId}`,
         {
-            requiresAcknowledgment: requestDetails.allEmailsFailedPermanently,
-            shouldBadge: true,
             requestFailureDetails: requestDetails,
+            requiresAcknowledgment: true,
+            shouldBadge: true,
         },
     );
 }

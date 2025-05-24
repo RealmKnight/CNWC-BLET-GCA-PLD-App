@@ -3,13 +3,22 @@ import { supabase } from "@/utils/supabase";
 import { addDays, isAfter, isBefore, parseISO, startOfDay } from "date-fns";
 import { format } from "date-fns-tz";
 import { useUserStore } from "@/store/userStore";
-import { useTimeStore } from "@/store/timeStore";
+// Remove circular import - replaced with event-based communication
+// import { useTimeStore } from "@/store/timeStore";
 import {
   PldSdvAllotment,
   useAdminCalendarManagementStore,
 } from "@/store/adminCalendarManagementStore";
 import { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import { Database } from "@/types/supabase";
+// Import store event manager for inter-store communication
+import {
+  emitCalendarDataUpdate,
+  emitRequestCancelled,
+  emitRequestSubmitted,
+  storeEventManager,
+  StoreEventType,
+} from "@/utils/storeManager";
 
 type Member = Database["public"]["Tables"]["members"]["Row"];
 type BaseRequest = Database["public"]["Tables"]["pld_sdv_requests"]["Row"];
@@ -1196,15 +1205,30 @@ export function setupCalendarSubscriptions() {
           console.log(
             "[CalendarStore Realtime] Attempting to trigger TimeStore refresh for PLD/SDV change.",
           );
-          const { triggerPldSdvRefresh } = useTimeStore.getState();
-          if (triggerPldSdvRefresh) {
-            triggerPldSdvRefresh().catch((error) => {
-              console.error(
-                "[CalendarStore Realtime] Error calling triggerPldSdvRefresh from TimeStore:",
-                error,
-              );
-            });
-          }
+
+          // Replace direct timeStore call with event emission
+          storeEventManager.emitEvent(
+            StoreEventType.CALENDAR_REQUESTS_UPDATED,
+            {
+              source: "calendarStore",
+              payload: {
+                requestDate: date,
+                calendarId: member?.calendar_id || undefined,
+                updateType: "realtime_update",
+                shouldRefreshTimeStore: true,
+                triggerSource: "realtime",
+                realtimeEventType: payload.eventType as
+                  | "INSERT"
+                  | "UPDATE"
+                  | "DELETE",
+                realtimeTable: "pld_sdv_requests",
+              },
+            },
+          );
+
+          console.log(
+            "[CalendarStore Realtime] Emitted CALENDAR_REQUESTS_UPDATED event for TimeStore",
+          );
           // !!! END DIAGNOSTIC HACK !!!
         } catch (error) {
           console.error(
@@ -1293,16 +1317,34 @@ export function setupCalendarSubscriptions() {
 
               // Force a refresh of the timeStore data as well
               try {
-                const timeStore = useTimeStore.getState();
-                if (timeStore.memberId) {
-                  console.log(
-                    "[CalendarStore Realtime] Triggering timeStore refresh after six-month cancellation",
-                  );
-                  timeStore.triggerPldSdvRefresh();
-                }
-              } catch (refreshError) {
+                console.log(
+                  "[CalendarStore Realtime] Triggering timeStore refresh after six-month cancellation",
+                );
+
+                // Replace direct timeStore call with event emission
+                storeEventManager.emitEvent(
+                  StoreEventType.SIX_MONTH_REQUESTS_UPDATED,
+                  {
+                    source: "calendarStore",
+                    payload: {
+                      requestDate: payload.old.request_date,
+                      memberId: memberId,
+                      updateType: "realtime_update",
+                      shouldRefreshTimeStore: true,
+                      triggerSource: "realtime",
+                      realtimeEventType: "DELETE",
+                      realtimeTable: "six_month_requests",
+                      isSixMonthRequest: true,
+                    },
+                  },
+                );
+
+                console.log(
+                  "[CalendarStore Realtime] Emitted SIX_MONTH_REQUESTS_UPDATED event for TimeStore",
+                );
+              } catch (refreshError: any) {
                 console.error(
-                  "[CalendarStore Realtime] Error refreshing timeStore:",
+                  "[CalendarStore Realtime] Error emitting timeStore refresh event:",
                   refreshError,
                 );
               }

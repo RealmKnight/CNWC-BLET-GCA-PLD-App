@@ -6,7 +6,18 @@ import {
 } from "@supabase/supabase-js";
 import { Database } from "@/types/supabase";
 import { useUserStore } from "@/store/userStore"; // Import user store
-import { useCalendarStore } from "@/store/calendarStore"; // Import calendar store
+// Remove circular import - replaced with event-based communication
+// import { useCalendarStore } from "@/store/calendarStore";
+// Import store event manager for inter-store communication
+import {
+    createStoreEventCleanup,
+    emitRequestCancelled,
+    emitRequestSubmitted,
+    emitTimeDataUpdate,
+    type StoreEventData,
+    storeEventManager,
+    StoreEventType,
+} from "@/utils/storeManager";
 // Import specific table types
 type DbMembers = Database["public"]["Tables"]["members"]["Row"];
 type DbPldSdvRequests = Database["public"]["Tables"]["pld_sdv_requests"]["Row"];
@@ -84,6 +95,7 @@ interface TimeState {
     channel: RealtimeChannel | null;
     isInitialized: boolean;
     refreshTimeoutId: NodeJS.Timeout | null; // Add state for debounce timeout
+    storeEventCleanup: (() => void) | null; // Cleanup function for store event listeners
 }
 
 interface TimeActions {
@@ -140,6 +152,7 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
     channel: null,
     isInitialized: false,
     refreshTimeoutId: null, // Initialize timeout ID
+    storeEventCleanup: null, // Initialize store event cleanup
 
     // --- Actions ---
 
@@ -320,6 +333,71 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
         });
 
         set({ channel: realtimeChannel, isLoading: false });
+
+        // --- Setup Store Event Listeners ---
+        console.log(
+            "[TimeStore] Setting up store event listeners for calendar events",
+        );
+
+        const handleCalendarRequestsUpdated = (
+            event: CustomEvent<StoreEventData>,
+        ) => {
+            const { payload } = event.detail;
+            if (payload.shouldRefreshTimeStore && get().memberId) {
+                console.log(
+                    "[TimeStore] Received CALENDAR_REQUESTS_UPDATED event, triggering refresh",
+                );
+                get().triggerPldSdvRefresh().catch((error) => {
+                    console.error(
+                        "[TimeStore] Error handling calendar requests update:",
+                        error,
+                    );
+                });
+            }
+        };
+
+        const handleSixMonthRequestsUpdated = (
+            event: CustomEvent<StoreEventData>,
+        ) => {
+            const { payload } = event.detail;
+            if (payload.shouldRefreshTimeStore && get().memberId) {
+                console.log(
+                    "[TimeStore] Received SIX_MONTH_REQUESTS_UPDATED event, triggering refresh",
+                );
+                get().triggerPldSdvRefresh().catch((error) => {
+                    console.error(
+                        "[TimeStore] Error handling six-month requests update:",
+                        error,
+                    );
+                });
+            }
+        };
+
+        // Add event listeners
+        storeEventManager.addStoreEventListener(
+            StoreEventType.CALENDAR_REQUESTS_UPDATED,
+            handleCalendarRequestsUpdated,
+        );
+
+        storeEventManager.addStoreEventListener(
+            StoreEventType.SIX_MONTH_REQUESTS_UPDATED,
+            handleSixMonthRequestsUpdated,
+        );
+
+        // Create cleanup function
+        const eventCleanup = createStoreEventCleanup([
+            {
+                eventType: StoreEventType.CALENDAR_REQUESTS_UPDATED,
+                listener: handleCalendarRequestsUpdated,
+            },
+            {
+                eventType: StoreEventType.SIX_MONTH_REQUESTS_UPDATED,
+                listener: handleSixMonthRequestsUpdated,
+            },
+        ]);
+
+        set({ storeEventCleanup: eventCleanup });
+        console.log("[TimeStore] Store event listeners setup complete");
     },
 
     cleanup: () => {
@@ -329,6 +407,14 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
         if (existingTimeout) {
             clearTimeout(existingTimeout);
         }
+
+        // Clean up store event listeners
+        const storeEventCleanup = get().storeEventCleanup;
+        if (storeEventCleanup) {
+            console.log("[TimeStore] Cleaning up store event listeners");
+            storeEventCleanup();
+        }
+
         const channel = get().channel;
         if (channel) {
             console.log("[TimeStore] Removing channel subscription");
@@ -348,6 +434,7 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
             channel: null,
             refreshTimeoutId: null, // Reset timeout ID on cleanup
             isInitialized: false,
+            storeEventCleanup: null, // Reset store event cleanup
         });
     },
 
@@ -1068,23 +1155,35 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
 
             // Update the sixMonthRequestDays in calendarStore if available
             try {
-                const calendarStore = useCalendarStore.getState();
-                if (
-                    requestData?.request_date &&
-                    calendarStore.setSixMonthRequestDays
-                ) {
-                    const currentDays = {
-                        ...calendarStore.sixMonthRequestDays,
-                    };
-                    delete currentDays[requestData.request_date];
+                if (requestData?.request_date) {
                     console.log(
-                        `[TimeStore] Manually updating calendarStore.sixMonthRequestDays for date ${requestData.request_date}`,
+                        `[TimeStore] Emitting SIX_MONTH_REQUESTS_UPDATED event for date ${requestData.request_date}`,
                     );
-                    calendarStore.setSixMonthRequestDays(currentDays);
+
+                    // Replace direct calendarStore call with event emission
+                    storeEventManager.emitEvent(
+                        StoreEventType.SIX_MONTH_REQUESTS_UPDATED,
+                        {
+                            source: "timeStore",
+                            payload: {
+                                requestDate: requestData.request_date,
+                                memberId: memberId,
+                                updateType: "single_item",
+                                shouldRefreshCalendarStore: true,
+                                triggerSource: "user_action",
+                                isSixMonthRequest: true,
+                                realtimeEventType: "DELETE",
+                            },
+                        },
+                    );
+
+                    console.log(
+                        "[TimeStore] Emitted SIX_MONTH_REQUESTS_UPDATED event for CalendarStore",
+                    );
                 }
             } catch (calendarError) {
                 console.error(
-                    "[TimeStore] Error updating calendarStore:",
+                    "[TimeStore] Error emitting calendarStore update event:",
                     calendarError,
                 );
             }

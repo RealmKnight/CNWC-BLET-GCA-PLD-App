@@ -13,7 +13,8 @@ import {
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { Ionicons } from "@expo/vector-icons";
-import { showSuccessToast, showErrorToast } from "@/app/company-admin";
+import { sendMessageWithNotification } from "@/utils/notificationService";
+import { showSuccessToast, showErrorToast } from "@/utils/toastHelpers";
 
 /**
  * AdminMessageSection Component

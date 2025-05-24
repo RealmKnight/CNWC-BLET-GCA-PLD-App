@@ -40,7 +40,7 @@ import Constants from "expo-constants";
 import * as Device from "expo-device";
 import { createClient } from "@supabase/supabase-js";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { NotificationType } from "./notificationConfig";
+import { NotificationType } from "@/types/notifications";
 
 const EXPO_PUSH_ENDPOINT = "https://exp.host/--/api/v2/push/send";
 
@@ -112,6 +112,26 @@ interface MemberWithPreferences {
     phone: string;
     email: string;
   } | null;
+}
+
+// Set up function injection for notificationConfig to prevent circular imports
+export function initializeNotificationServiceIntegration() {
+  // Dynamically import to avoid circular dependencies
+  import("./notificationConfig").then(
+    ({ injectNotificationServiceFunctions }) => {
+      injectNotificationServiceFunctions({
+        getUnreadMessageCount,
+        markMessageRead,
+        markNotificationDelivered,
+        handleNotificationDeepLink,
+      });
+    },
+  ).catch((error) => {
+    console.error(
+      "[NotificationService] Failed to inject functions into config:",
+      error,
+    );
+  });
 }
 
 // Function to get unread message count for a user

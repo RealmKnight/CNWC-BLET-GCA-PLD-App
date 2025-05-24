@@ -1,11 +1,10 @@
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
+// Import from central notification types to prevent circular dependencies
 import {
-  getUnreadMessageCount,
-  handleNotificationDeepLink,
-  markMessageRead,
-  markNotificationDelivered,
-} from "./notificationService";
+  NOTIFICATION_PRIORITIES,
+  NotificationType,
+} from "@/types/notifications";
 import * as TaskManager from "expo-task-manager";
 import { router } from "expo-router";
 import Constants from "expo-constants";
@@ -17,29 +16,29 @@ type NotificationData = {
   notification: Notifications.Notification;
 };
 
-// Define notification types enum
-export enum NotificationType {
-  REGULAR_MESSAGE = "regular_message",
-  ADMIN_MESSAGE = "admin_message",
-  GCA_ANNOUNCEMENT = "gca_announcement",
-  DIVISION_ANNOUNCEMENT = "division_announcement",
-  SYSTEM_ALERT = "system_alert",
-  MUST_READ = "must_read",
-  MEETING_REMINDER = "meeting_reminder",
+// Function injection interfaces to prevent circular imports
+interface NotificationServiceFunctions {
+  getUnreadMessageCount: (userId: number) => Promise<number>;
+  markMessageRead: (messageId: string) => Promise<void>;
+  markNotificationDelivered: (messageId: string) => Promise<void>;
+  handleNotificationDeepLink: (
+    notificationData: any,
+    actionIdentifier?: string,
+  ) => Promise<void>;
 }
 
-// Define notification category priorities
-export const NOTIFICATION_PRIORITIES = {
-  system_alert: 100, // Highest priority
-  must_read: 90,
-  admin_message: 80,
-  gca_announcement: 70,
-  division_announcement: 60,
-  status_update: 50,
-  meeting_reminder: 45, // Add meeting reminders with medium-high priority
-  roster_change: 40,
-  general_message: 30, // Lowest priority
-};
+// Global storage for injected functions
+let notificationServiceFunctions: NotificationServiceFunctions | null = null;
+
+/**
+ * Inject notification service functions to prevent circular imports
+ * This should be called during app initialization
+ */
+export function injectNotificationServiceFunctions(
+  functions: NotificationServiceFunctions,
+) {
+  notificationServiceFunctions = functions;
+}
 
 // Register background task
 TaskManager.defineTask<NotificationData>(
@@ -53,6 +52,13 @@ TaskManager.defineTask<NotificationData>(
     if (!data?.notification) {
       console.warn(
         "[PushNotification] No notification data in background task",
+      );
+      return;
+    }
+
+    if (!notificationServiceFunctions) {
+      console.warn(
+        "[PushNotification] Notification service functions not injected",
       );
       return;
     }
@@ -75,7 +81,7 @@ TaskManager.defineTask<NotificationData>(
     try {
       // Process notification delivery
       if (messageId) {
-        await markNotificationDelivered(messageId);
+        await notificationServiceFunctions.markNotificationDelivered(messageId);
 
         // Process notification actions based on type
         const trigger = notification.request.trigger;
@@ -117,13 +123,13 @@ TaskManager.defineTask<NotificationData>(
               console.log(
                 "[PushNotification] Processing READ action in background",
               );
-              await markMessageRead(messageId);
+              await notificationServiceFunctions.markMessageRead(messageId);
               break;
             case "ACKNOWLEDGE_ACTION":
               console.log(
                 "[PushNotification] Processing ACKNOWLEDGE action in background",
               );
-              await markMessageRead(messageId);
+              await notificationServiceFunctions.markMessageRead(messageId);
               // Additional acknowledgment handling here
               break;
             default:
@@ -135,7 +141,8 @@ TaskManager.defineTask<NotificationData>(
         // Update badge count
         if (userId) {
           try {
-            const unreadCount = await getUnreadMessageCount(Number(userId));
+            const unreadCount = await notificationServiceFunctions
+              .getUnreadMessageCount(Number(userId));
             await Notifications.setBadgeCountAsync(unreadCount);
             console.log(
               `[PushNotification] Updated badge count to ${unreadCount} in background`,
@@ -456,7 +463,7 @@ export function setupNotificationListeners() {
     (notification) => {
       const messageId = notification.request.content.data?.messageId as string;
       if (messageId) {
-        markNotificationDelivered(messageId);
+        notificationServiceFunctions?.markNotificationDelivered(messageId);
       }
     },
   );
@@ -473,7 +480,10 @@ export function setupNotificationListeners() {
       });
 
       // Use the platform-specific deep linking handler
-      handleNotificationDeepLink(data, actionIdentifier)
+      notificationServiceFunctions?.handleNotificationDeepLink(
+        data,
+        actionIdentifier,
+      )
         .catch((error) => {
           console.error(
             "[PushNotification] Error in deep linking handler:",
@@ -509,7 +519,10 @@ export async function getInitialNotification() {
       // Short delay ensures app is fully initialized
       setTimeout(() => {
         // Use the platform-specific deep linking handler for initial notifications as well
-        handleNotificationDeepLink(data, actionIdentifier)
+        notificationServiceFunctions?.handleNotificationDeepLink(
+          data,
+          actionIdentifier,
+        )
           .catch((error) => {
             console.error(
               "[PushNotification] Error handling initial notification:",
@@ -529,9 +542,20 @@ export async function getInitialNotification() {
 // Initialize badge count for the app
 export async function initializeBadgeCount(userId: string | number) {
   try {
-    if (!userId) return;
+    console.log(
+      `[PushNotification] Initializing badge count for user: ${userId}`,
+    );
 
-    const unreadCount = await getUnreadMessageCount(Number(userId));
+    // Check if userId is provided and functions are injected
+    if (!userId || !notificationServiceFunctions) {
+      console.warn(
+        "[PushNotification] Cannot initialize badge count - missing userId or service functions",
+      );
+      return;
+    }
+
+    const unreadCount = await notificationServiceFunctions
+      .getUnreadMessageCount(Number(userId));
     await Notifications.setBadgeCountAsync(unreadCount);
     console.log(`[PushNotification] Badge count set to ${unreadCount}`);
   } catch (error) {

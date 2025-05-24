@@ -94,6 +94,9 @@ serve(async (req: Request) => {
           divisionAdminEmails || [],
         );
 
+        // NOTE: In-app message creation is now handled immediately by the database trigger
+        // when the status changes, so users get instant in-app notifications
+
         // Mark as processed
         await supabase.from("status_change_queue")
           .update({ processed: true })

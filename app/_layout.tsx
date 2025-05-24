@@ -21,6 +21,9 @@ import { usePushTokenStore } from "@/store/pushTokenStore";
 import { useBadgeStore } from "@/store/badgeStore";
 import { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "@/utils/supabase";
+import { StatusBar } from "expo-status-bar";
+import { useColorScheme } from "@/hooks/useColorScheme";
+import * as SplashScreen from "expo-splash-screen";
 
 // Separate loading screen component
 function LoadingScreen() {

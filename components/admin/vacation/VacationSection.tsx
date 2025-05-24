@@ -12,7 +12,7 @@ import { sendMessageWithNotification } from "@/utils/notificationService";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { ThemedView } from "@/components/ThemedView";
 import { Database } from "@/types/supabase";
-import { showSuccessToast, showErrorToast } from "@/app/company-admin";
+import { showSuccessToast, showErrorToast } from "@/utils/toastHelpers";
 
 type VacationRequest = Database["public"]["Tables"]["vacation_requests"]["Row"] & {
   member: {

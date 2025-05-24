@@ -17,7 +17,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { ThemedText } from "../../components/ThemedText";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import Toast from "react-native-toast-message";
+// Import toast functions from centralized helper (works with ThemedToast rendered in _layout.tsx)
+import { showSuccessToast, showErrorToast, showConfirmToast, showDeleteToast } from "../../utils/toastHelpers";
 
 // Import all section components
 import { PldSdvSection } from "../../components/admin/pld-sdv/PldSdvSection";
@@ -99,61 +100,6 @@ const getPlatformStyles = (): {
       },
     };
   }
-};
-
-// Toast notification helpers
-export const showSuccessToast = (title: string, message?: string) => {
-  Toast.show({
-    type: "success",
-    text1: title,
-    text2: message,
-    position: Platform.OS === "web" ? "bottom" : "top",
-    visibilityTime: 4000,
-  });
-};
-
-export const showErrorToast = (title: string, message?: string) => {
-  Toast.show({
-    type: "error",
-    text1: title,
-    text2: message,
-    position: Platform.OS === "web" ? "bottom" : "top",
-    visibilityTime: 4000,
-  });
-};
-
-export const showConfirmToast = (
-  title: string,
-  message: string,
-  onAction: (action: string) => void,
-  confirmText = "Update"
-) => {
-  Toast.show({
-    type: "info",
-    text1: title,
-    text2: message,
-    props: {
-      onAction,
-      actionType: "confirm",
-      confirmText,
-    },
-    position: Platform.OS === "web" ? "bottom" : "top",
-    visibilityTime: 6000,
-  });
-};
-
-export const showDeleteToast = (title: string, message: string, onAction: (action: string) => void) => {
-  Toast.show({
-    type: "info",
-    text1: title,
-    text2: message,
-    props: {
-      onAction,
-      actionType: "delete",
-    },
-    position: Platform.OS === "web" ? "bottom" : "top",
-    visibilityTime: 6000,
-  });
 };
 
 // Custom ScrollView component based on platform
@@ -370,9 +316,6 @@ export default function CompanyAdminScreen() {
           <Ionicons name="log-out-outline" size={28} color={colors.background} />
         </TouchableOpacity>
       </View>
-
-      {/* Add Toast component */}
-      <Toast />
     </Container>
   );
 }
