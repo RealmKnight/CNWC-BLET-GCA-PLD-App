@@ -2,8 +2,6 @@
 // supabase/functions/process-status-changes/index.js
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
-import formData from "https://esm.sh/form-data";
-import Mailgun from "https://esm.sh/mailgun.js";
 
 // This function would be scheduled to run every few minutes
 serve(async (req: Request) => {
@@ -34,12 +32,15 @@ serve(async (req: Request) => {
       return new Response(JSON.stringify({ message: "No items to process" }));
     }
 
-    // Initialize Mailgun
-    const mailgun = new Mailgun(formData);
-    const mg = mailgun.client({
-      username: "api",
-      key: Deno.env.get("MAILGUN_API_KEY"),
-    });
+    // Check Mailgun environment variables
+    const mailgunSendingKey = Deno.env.get("MAILGUN_SENDING_KEY");
+    const mailgunDomainRaw = Deno.env.get("MAILGUN_DOMAIN");
+
+    if (!mailgunSendingKey || !mailgunDomainRaw) {
+      throw new Error("Missing Mailgun configuration");
+    }
+
+    const mailgunDomain = String(mailgunDomainRaw);
 
     let processedCount = 0;
     let errorCount = 0;
@@ -47,29 +48,11 @@ serve(async (req: Request) => {
     // Process each item
     for (const item of queueItems) {
       try {
-        // Get request details with proper member relationship - fix database path and member retrieval
-        const { data: request, error: requestError } = await supabase
-          .from("pld_sdv_requests")
-          .select(`
-            id, 
-            request_date, 
-            leave_type, 
-            status,
-            denial_comment,
-            member_id,
-            members (
-              id, 
-              first_name,
-              last_name,
-              division_id,
-              user_id,
-              users (
-                email
-              )
-            )
-          `)
-          .eq("id", item.request_id)
-          .single();
+        // Get request details with explicit joins to handle member relationship properly
+        const { data: requestData, error: requestError } = await supabase
+          .rpc("get_request_with_member_email", {
+            request_id: item.request_id,
+          });
 
         if (requestError) {
           throw new Error(
@@ -77,14 +60,14 @@ serve(async (req: Request) => {
           );
         }
 
-        if (!request.members) {
+        if (!requestData || requestData.length === 0) {
           throw new Error(`No member found for request ${item.request_id}`);
         }
 
-        const member = request.members;
-        const memberName = `${member.first_name} ${member.last_name}`;
-        const memberEmail = member.users?.email;
-        const divisionId = member.division_id;
+        const request = requestData[0];
+        const memberName = `${request.first_name} ${request.last_name}`;
+        const memberEmail = request.email;
+        const divisionId = request.division_id;
 
         // Get division email settings
         const { data: divisionEmailSettings } = await supabase
@@ -95,26 +78,20 @@ serve(async (req: Request) => {
           .single();
 
         // Get division admin emails as fallback
-        const { data: divisionAdmins } = await supabase
-          .from("members")
-          .select(`
-            users (
-              email
-            )
-          `)
-          .eq("role", "division_admin")
-          .eq("division_id", divisionId);
+        const { data: divisionAdminEmails } = await supabase
+          .rpc("get_division_admin_emails", { division_id_param: divisionId });
 
         // Send notification emails based on status change
         await sendStatusChangeEmails(
-          mg,
+          mailgunSendingKey,
+          mailgunDomain,
           supabase,
           item.new_status,
           request,
           memberName,
           memberEmail,
           divisionEmailSettings,
-          divisionAdmins,
+          divisionAdminEmails || [],
         );
 
         // Mark as processed
@@ -127,6 +104,10 @@ serve(async (req: Request) => {
         console.error(`Error processing queue item ${item.id}:`, processError);
         errorCount++;
 
+        const errorMessage = processError instanceof Error
+          ? processError.message
+          : "Unknown error occurred";
+
         // Record email tracking failure
         await supabase
           .from("email_tracking")
@@ -137,7 +118,7 @@ serve(async (req: Request) => {
             subject: `Status Change Notification Error`,
             message_id: `error-${Date.now()}-${item.id}`,
             status: "failed",
-            error_message: processError.message,
+            error_message: errorMessage,
             retry_count: 0,
             created_at: new Date().toISOString(),
             last_updated_at: new Date().toISOString(),
@@ -167,7 +148,8 @@ serve(async (req: Request) => {
 
 // Helper function to send status change emails with HTML templates
 async function sendStatusChangeEmails(
-  mg: any,
+  mailgunSendingKey: string,
+  mailgunDomain: string,
   supabase: any,
   status: string,
   request: any,
@@ -210,8 +192,8 @@ async function sendStatusChangeEmails(
   // Fallback to division admin emails if no division emails configured
   if (divisionEmails.length === 0 && divisionAdmins) {
     divisionEmails = divisionAdmins
-      .filter((admin) => admin.users?.email)
-      .map((admin) => admin.users.email);
+      .filter((admin) => admin.email)
+      .map((admin) => admin.email);
   }
 
   // Configure email content based on status
@@ -424,16 +406,15 @@ async function sendStatusChangeEmails(
   try {
     // Send email to member if email available
     if (memberEmail) {
-      const userResult = await mg.messages.create(
-        Deno.env.get("MAILGUN_DOMAIN"),
+      const userResult = await sendEmailViaDirect(
+        mailgunSendingKey,
+        mailgunDomain,
         {
-          from: `CN/WC GCA BLET PLD App <notifications@${
-            Deno.env.get("MAILGUN_DOMAIN")
-          }>`,
-          to: memberEmail,
-          subject: userSubject,
-          html: userHtml,
-          text: userText,
+          from: "CN/WC GCA BLET PLD App <replies@pldapp.bletcnwcgca.org>",
+          to: String(memberEmail),
+          subject: String(userSubject),
+          html: String(userHtml),
+          text: String(userText),
         },
       );
 
@@ -456,16 +437,15 @@ async function sendStatusChangeEmails(
     // Send emails to division administrators
     for (const email of divisionEmails) {
       if (email) {
-        const adminResult = await mg.messages.create(
-          Deno.env.get("MAILGUN_DOMAIN"),
+        const adminResult = await sendEmailViaDirect(
+          mailgunSendingKey,
+          mailgunDomain,
           {
-            from: `CN/WC GCA BLET PLD App <notifications@${
-              Deno.env.get("MAILGUN_DOMAIN")
-            }>`,
-            to: email,
-            subject: adminSubject,
-            html: adminHtml,
-            text: adminText,
+            from: "CN/WC GCA BLET PLD App <replies@pldapp.bletcnwcgca.org>",
+            to: String(email),
+            subject: String(adminSubject),
+            html: String(adminHtml),
+            text: String(adminText),
           },
         );
 
@@ -523,4 +503,44 @@ async function sendStatusChangeEmails(
 
     throw emailError; // Re-throw to be caught by main error handler
   }
+}
+
+// Helper function to send email via direct Mailgun API
+async function sendEmailViaDirect(
+  mailgunSendingKey: string,
+  mailgunDomain: string,
+  emailData: {
+    from: string;
+    to: string;
+    subject: string;
+    html: string;
+    text: string;
+  },
+) {
+  // Create form data for Mailgun API
+  const formData = new FormData();
+  formData.append("from", emailData.from);
+  formData.append("to", emailData.to);
+  formData.append("subject", emailData.subject);
+  formData.append("html", emailData.html);
+  formData.append("text", emailData.text);
+
+  // Send via Mailgun REST API
+  const mailgunUrl = `https://api.mailgun.net/v3/${mailgunDomain}/messages`;
+  const response = await fetch(mailgunUrl, {
+    method: "POST",
+    headers: {
+      "Authorization": `Basic ${btoa(`api:${mailgunSendingKey}`)}`,
+    },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error("Mailgun API error:", response.status, errorText);
+    throw new Error(`Mailgun API error: ${response.status} - ${errorText}`);
+  }
+
+  const result = await response.json();
+  return result;
 }

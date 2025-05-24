@@ -1,7 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
-import formData from "https://esm.sh/form-data";
-import Mailgun from "https://esm.sh/mailgun.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -16,13 +14,12 @@ serve(async (req) => {
   }
 
   try {
-    const { name, pin, dateRequested, dayType, requestId, divisionId } =
-      await req.json();
+    const { requestId } = await req.json();
 
     // Validate required fields
-    if (!name || !pin || !dateRequested || !dayType || !requestId) {
+    if (!requestId) {
       return new Response(
-        JSON.stringify({ error: "Missing required fields" }),
+        JSON.stringify({ error: "Missing requestId" }),
         {
           status: 400,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -40,27 +37,75 @@ serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Initialize Mailgun
-    const mailgun = new Mailgun(formData);
-    const mg = mailgun.client({
-      username: "api",
-      key: Deno.env.get("MAILGUN_API_KEY"),
-    });
+    // Get request details from Supabase first
+    const { data: requestData, error: requestError } = await supabase
+      .from("pld_sdv_requests")
+      .select("id, request_date, leave_type, member_id")
+      .eq("id", requestId)
+      .single();
+
+    if (requestError) {
+      throw new Error(`Failed to get request details: ${requestError.message}`);
+    }
+
+    if (!requestData.member_id) {
+      throw new Error("Member ID not found for this request");
+    }
+
+    // Get member details separately
+    const { data: memberData, error: memberError } = await supabase
+      .from("members")
+      .select("first_name, last_name, pin_number, division_id")
+      .eq("id", requestData.member_id)
+      .single();
+
+    if (memberError) {
+      throw new Error(`Failed to get member details: ${memberError.message}`);
+    }
+
+    if (!memberData) {
+      throw new Error("Member information not found for this request");
+    }
+
+    const memberInfo = memberData;
+    const memberName = `${memberInfo.first_name} ${memberInfo.last_name}`;
+
+    // Check Mailgun environment variables
+    const mailgunSendingKey = Deno.env.get("MAILGUN_SENDING_KEY");
+    const mailgunDomainRaw = Deno.env.get("MAILGUN_DOMAIN");
+
+    if (!mailgunSendingKey || !mailgunDomainRaw) {
+      throw new Error("Missing Mailgun configuration");
+    }
+
+    const mailgunDomain = String(mailgunDomainRaw);
 
     // Get company admin email with fallback
-    const companyAdminEmail = Deno.env.get("COMPANY_ADMIN_EMAIL") ||
-      "sroc_cmc_vacationdesk@cn.ca";
+    const companyAdminEmail = String(
+      Deno.env.get("COMPANY_ADMIN_EMAIL") || "sroc_cmc_vacationdesk@cn.ca",
+    );
 
     // Format the date for display
-    const formattedDate = new Date(dateRequested).toLocaleDateString("en-US", {
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    });
+    const formattedDate = new Date(requestData.request_date).toLocaleDateString(
+      "en-US",
+      {
+        weekday: "long",
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      },
+    );
 
-    // Prepare email content with professional HTML formatting
-    const subject = `${dayType} Request - ${name}`;
+    // Ensure all variables are strings to prevent form-data conversion errors
+    const safeRequestId = String(requestId);
+    const safeLeaveType = String(requestData.leave_type);
+    const safePinNumber = String(memberInfo.pin_number);
+    const safeMemberName = String(memberName);
+    const safeFormattedDate = String(formattedDate);
+
+    // Prepare email content with professional HTML formatting - include Request ID in subject
+    const subject = safeLeaveType + " Request - " + safeMemberName +
+      " [Request ID: " + safeRequestId + "]";
     const htmlContent = `
     <!DOCTYPE html>
     <html>
@@ -83,14 +128,14 @@ serve(async (req) => {
         </div>
         
         <div class="content">
-            <h2>New ${dayType} Request</h2>
+            <h2>New ${safeLeaveType} Request</h2>
             
             <div class="details">
-                <p><strong>Employee Name:</strong> ${name}</p>
-                <p><strong>PIN Number:</strong> ${pin}</p>
-                <p><strong>Date Requested:</strong> ${formattedDate}</p>
-                <p><strong>Leave Type:</strong> ${dayType}</p>
-                <p><strong>Request ID:</strong> ${requestId}</p>
+                <p><strong>Employee Name:</strong> ${safeMemberName}</p>
+                <p><strong>PIN Number:</strong> ${safePinNumber}</p>
+                <p><strong>Date Requested:</strong> ${safeFormattedDate}</p>
+                <p><strong>Leave Type:</strong> ${safeLeaveType}</p>
+                <p><strong>Request ID:</strong> ${safeRequestId}</p>
             </div>
             
             <div class="instructions">
@@ -102,7 +147,7 @@ serve(async (req) => {
                 </ul>
                 <p><strong>Common denial reasons:</strong></p>
                 <ul>
-                    <li>"denied - out of ${dayType} days"</li>
+                    <li>"denied - out of ${safeLeaveType} days"</li>
                     <li>"denied - allotment is full"</li>
                     <li>"denied - other - [specific reason]"</li>
                 </ul>
@@ -111,27 +156,20 @@ serve(async (req) => {
         
         <div class="footer">
             <p>This is an automated message from the CN/WC GCA BLET PLD Application.</p>
-            <p>Request ID: ${requestId}</p>
+            <p>Request ID: ${safeRequestId}</p>
         </div>
     </body>
     </html>`;
 
-    // Prepare email data
-    const emailData = {
-      from: `CN/WC GCA BLET PLD App <requests@${
-        Deno.env.get("MAILGUN_DOMAIN")
-      }>`,
-      to: companyAdminEmail,
-      subject: subject,
-      html: htmlContent,
-      text: `
+    // Prepare text content with safe variables
+    const textContent = `
 CN/WC GCA BLET PLD Request
 
-Employee Name: ${name}
-PIN Number: ${pin}
-Date Requested: ${formattedDate}
-Leave Type: ${dayType}
-Request ID: ${requestId}
+Employee Name: ${safeMemberName}
+PIN Number: ${safePinNumber}
+Date Requested: ${safeFormattedDate}
+Leave Type: ${safeLeaveType}
+Request ID: ${safeRequestId}
 
 RESPONSE INSTRUCTIONS:
 To process this request, please reply to this email with one of the following:
@@ -139,21 +177,55 @@ To process this request, please reply to this email with one of the following:
 - To DENY: Reply with "denied - [reason]"
 
 Common denial reasons:
-- "denied - out of ${dayType} days"
+- "denied - out of ${safeLeaveType} days"
 - "denied - allotment is full"  
 - "denied - other - [specific reason]"
 
 This is an automated message from the CN/WC GCA BLET PLD Application.
-Request ID: ${requestId}
-      `,
-      "h:Reply-To": `replies@${Deno.env.get("MAILGUN_DOMAIN")}`,
+Request ID: ${safeRequestId}
+    `;
+
+    // Prepare email data with both HTML and text content
+    const emailData = {
+      from: "CN/WC GCA BLET PLD App <replies@pldapp.bletcnwcgca.org>",
+      to: String(companyAdminEmail),
+      subject: String(subject),
+      html: String(htmlContent),
+      text: String(textContent),
+      "h:Reply-To": "replies@pldapp.bletcnwcgca.org",
     };
 
-    // Send email using Mailgun
-    const result = await mg.messages.create(
-      Deno.env.get("MAILGUN_DOMAIN"),
-      emailData,
-    );
+    // Send email using direct Mailgun API
+    console.log("Sending email with Mailgun API...");
+    console.log("Email data subject:", emailData.subject);
+    console.log("Email recipient:", emailData.to);
+
+    // Create form data for Mailgun API
+    const formData = new FormData();
+    formData.append("from", emailData.from);
+    formData.append("to", emailData.to);
+    formData.append("subject", emailData.subject);
+    formData.append("html", emailData.html);
+    formData.append("text", emailData.text);
+    formData.append("h:Reply-To", emailData["h:Reply-To"]);
+
+    // Send via Mailgun REST API
+    const mailgunUrl = `https://api.mailgun.net/v3/${mailgunDomain}/messages`;
+    const response = await fetch(mailgunUrl, {
+      method: "POST",
+      headers: {
+        "Authorization": `Basic ${btoa(`api:${mailgunSendingKey}`)}`,
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("Mailgun API error:", response.status, errorText);
+      throw new Error(`Mailgun API error: ${response.status} - ${errorText}`);
+    }
+
+    const result = await response.json();
 
     // Record email tracking
     const { error: trackingError } = await supabase

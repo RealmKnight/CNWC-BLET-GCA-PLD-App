@@ -1,7 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
-import formData from "https://esm.sh/form-data";
-import Mailgun from "https://esm.sh/mailgun.js";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -46,23 +44,25 @@ serve(async (req) => {
 
         const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-        // Initialize Mailgun
-        const mailgunApiKey = Deno.env.get("MAILGUN_API_KEY");
-        const mailgunDomain = Deno.env.get("MAILGUN_DOMAIN");
+        // Check Mailgun environment variables
+        const mailgunSendingKey = Deno.env.get("MAILGUN_SENDING_KEY");
+        const mailgunDomainRaw = Deno.env.get("MAILGUN_DOMAIN");
 
-        if (!mailgunApiKey || !mailgunDomain) {
+        if (!mailgunSendingKey || !mailgunDomainRaw) {
             throw new Error("Missing Mailgun configuration");
         }
 
-        const mailgun = new Mailgun(formData);
-        const mg = mailgun.client({
-            username: "api",
-            key: mailgunApiKey,
-        });
+        const mailgunDomain = String(mailgunDomainRaw);
+
+        // Ensure all variables are strings to prevent form-data conversion errors
+        const safeDivisionName = String(divisionName);
+        const safeEmailAddress = String(emailAddress);
+        const safeAdminName = String(adminName || "Administrator");
+        const safeDivisionId = String(divisionId);
 
         // Prepare welcome email content
-        const subject =
-            `Welcome to CN/WC GCA BLET PLD Email Notifications - ${divisionName}`;
+        const subject = "Welcome to CN/WC GCA BLET PLD Email Notifications - " +
+            safeDivisionName;
         const htmlContent = `
     <!DOCTYPE html>
     <html>
@@ -95,7 +95,7 @@ serve(async (req) => {
         
         <div class="content">
             <h2>Hello!</h2>
-            <p>This email address (<strong>${emailAddress}</strong>) has been configured to receive Personal Leave Day (PLD) notifications for <strong>${divisionName}</strong>.</p>
+            <p>This email address (<strong>${safeEmailAddress}</strong>) has been configured to receive Personal Leave Day (PLD) notifications for <strong>${safeDivisionName}</strong>.</p>
             
             <div class="info-box">
                 <h3>📧 What You'll Receive</h3>
@@ -133,7 +133,7 @@ serve(async (req) => {
                 <ul>
                     <li>Contact your division administrator</li>
                     <li>Refer to the PLD application help section</li>
-                    <li>Check that this email address can receive emails from <strong>notifications@${mailgunDomain}</strong></li>
+                    <li>Check that this email address can receive emails from <strong>replies@pldapp.bletcnwcgca.org</strong></li>
                 </ul>
             </div>
         </div>
@@ -141,7 +141,7 @@ serve(async (req) => {
         <div class="footer">
             <p><strong>CN/WC GCA BLET Personal Leave Day Application</strong></p>
             <p>This is an automated welcome message. You're receiving this because your email was added to division notifications.</p>
-            <p>Division: ${divisionName} | Email: ${emailAddress}</p>
+            <p>Division: ${safeDivisionName} | Email: ${safeEmailAddress}</p>
         </div>
     </body>
     </html>`;
@@ -152,7 +152,7 @@ Welcome Message
 
 Hello!
 
-This email address (${emailAddress}) has been configured to receive Personal Leave Day (PLD) notifications for ${divisionName}.
+This email address (${safeEmailAddress}) has been configured to receive Personal Leave Day (PLD) notifications for ${safeDivisionName}.
 
 WHAT YOU'LL RECEIVE:
 - Status Updates: When PLD requests are approved, denied, or cancelled
@@ -176,24 +176,57 @@ NEED HELP?
 If you have questions about this notification system or need technical support:
 - Contact your division administrator
 - Refer to the PLD application help section
-- Check that this email address can receive emails from notifications@${mailgunDomain}
+- Check that this email address can receive emails from replies@pldapp.bletcnwcgca.org
 
 CN/WC GCA BLET Personal Leave Day Application
 This is an automated welcome message. You're receiving this because your email was added to division notifications.
-Division: ${divisionName} | Email: ${emailAddress}
+Division: ${safeDivisionName} | Email: ${safeEmailAddress}
     `;
 
-        // Prepare email data
+        // Prepare email data with safe string conversion
         const emailData = {
-            from: `CN/WC GCA BLET PLD App <notifications@${mailgunDomain}>`,
-            to: emailAddress,
-            subject: subject,
-            html: htmlContent,
-            text: textContent,
+            from: "CN/WC GCA BLET PLD App <replies@pldapp.bletcnwcgca.org>",
+            to: String(safeEmailAddress),
+            subject: String(subject),
+            html: String(htmlContent),
+            text: String(textContent),
+            "h:Reply-To": "replies@pldapp.bletcnwcgca.org",
         };
 
-        // Send welcome email using Mailgun
-        const result = await mg.messages.create(mailgunDomain, emailData);
+        // Send welcome email using direct Mailgun API
+        console.log("Sending welcome email with Mailgun API...");
+        console.log("Email recipient:", safeEmailAddress);
+        console.log("Division:", safeDivisionName);
+
+        // Create form data for Mailgun API
+        const formData = new FormData();
+        formData.append("from", String(emailData.from));
+        formData.append("to", String(emailData.to));
+        formData.append("subject", String(emailData.subject));
+        formData.append("html", String(emailData.html));
+        formData.append("text", String(emailData.text));
+        formData.append("h:Reply-To", emailData["h:Reply-To"]);
+
+        // Send via Mailgun REST API
+        const mailgunUrl =
+            `https://api.mailgun.net/v3/${mailgunDomain}/messages`;
+        const response = await fetch(mailgunUrl, {
+            method: "POST",
+            headers: {
+                "Authorization": `Basic ${btoa(`api:${mailgunSendingKey}`)}`,
+            },
+            body: formData,
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error("Mailgun API error:", response.status, errorText);
+            throw new Error(
+                `Mailgun API error: ${response.status} - ${errorText}`,
+            );
+        }
+
+        const result = await response.json();
 
         // Record email tracking
         const { error: trackingError } = await supabase
@@ -201,7 +234,7 @@ Division: ${divisionName} | Email: ${emailAddress}
             .insert({
                 request_id: null, // No specific request for welcome emails
                 email_type: "welcome",
-                recipient: emailAddress,
+                recipient: safeEmailAddress,
                 subject: subject,
                 message_id: result.id,
                 status: "sent",
@@ -217,9 +250,9 @@ Division: ${divisionName} | Email: ${emailAddress}
 
         // Verify email deliverability by checking if the domain accepts emails
         // This is a basic check - more sophisticated validation could be added
-        const emailDomain = emailAddress.split("@")[1];
+        const emailDomain = safeEmailAddress.split("@")[1];
         const deliverabilityInfo = {
-            email: emailAddress,
+            email: safeEmailAddress,
             domain: emailDomain,
             welcomeEmailSent: true,
             timestamp: new Date().toISOString(),
