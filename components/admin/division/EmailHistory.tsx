@@ -553,6 +553,7 @@ const styles = StyleSheet.create({
   },
   filterChipContainer: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 8,
   },
   filterChip: {

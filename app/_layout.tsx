@@ -25,6 +25,9 @@ import { StatusBar } from "expo-status-bar";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import * as SplashScreen from "expo-splash-screen";
 
+// Keep the splash screen visible while we fetch resources
+SplashScreen.preventAutoHideAsync();
+
 // Separate loading screen component
 function LoadingScreen() {
   return (
@@ -246,6 +249,22 @@ function AuthAwareRouteHandler() {
       clearTimeout(initTimer);
     };
   }, []);
+
+  // Hide splash screen when app is ready
+  useEffect(() => {
+    const hideSplashScreen = async () => {
+      if (isInitialized && hasSeenAuthResponse) {
+        try {
+          await SplashScreen.hideAsync();
+          console.log("[SplashScreen] Splash screen hidden successfully");
+        } catch (error) {
+          console.error("[SplashScreen] Error hiding splash screen:", error);
+        }
+      }
+    };
+
+    hideSplashScreen();
+  }, [isInitialized, hasSeenAuthResponse]);
 
   // Track when we receive a meaningful auth response
   useEffect(() => {
