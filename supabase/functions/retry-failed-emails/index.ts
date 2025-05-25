@@ -21,10 +21,12 @@ export async function handler() {
         // Process each failed email
         for (const email of failedEmails) {
             try {
-                // Determine which function to call based on email_type
-                const functionName = email.email_type === "request"
+                // UPDATED: Determine which function to call based on email_type including PIL types
+                const functionName = (email.email_type === "request" ||
+                        email.email_type === "payment_request")
                     ? "send-request-email"
-                    : email.email_type === "cancellation"
+                    : (email.email_type === "cancellation" ||
+                            email.email_type === "payment_cancellation")
                     ? "send-cancellation-email"
                     : "process-status-changes";
 
@@ -39,9 +41,12 @@ export async function handler() {
 
                 if (!requestData) continue;
 
-                // Prepare payload based on email type
+                // UPDATED: Prepare payload based on email type including PIL types
                 let payload = {};
-                if (email.email_type === "request") {
+                if (
+                    email.email_type === "request" ||
+                    email.email_type === "payment_request"
+                ) {
                     payload = {
                         name: requestData.members.name,
                         pin: requestData.members.pin_number,
@@ -50,7 +55,10 @@ export async function handler() {
                         requestId: requestData.id,
                         divisionId: requestData.members.division_id,
                     };
-                } else if (email.email_type === "cancellation") {
+                } else if (
+                    email.email_type === "cancellation" ||
+                    email.email_type === "payment_cancellation"
+                ) {
                     payload = {
                         requestId: requestData.id,
                         name: requestData.members.name,
@@ -112,9 +120,21 @@ export async function handler() {
                             await supabase.functions.invoke("send-email", {
                                 body: {
                                     to: recipients,
-                                    subject: email.email_type === "request"
-                                        ? `${requestData.leave_type} Request - ${requestData.members.name}`
-                                        : `CANCELLATION - Request - ${requestData.members.name}`,
+                                    subject: (email.email_type === "request" ||
+                                            email.email_type ===
+                                                "payment_request")
+                                        ? `${requestData.leave_type} ${
+                                            email.email_type ===
+                                                    "payment_request"
+                                                ? "Payment "
+                                                : ""
+                                        }Request - ${requestData.members.name}`
+                                        : `CANCELLATION - ${
+                                            email.email_type ===
+                                                    "payment_cancellation"
+                                                ? "Payment "
+                                                : ""
+                                        }Request - ${requestData.members.name}`,
                                     html:
                                         `<p>This is a backup delivery of a previously failed email.</p>
                       <p>Name: ${requestData.members.name}</p>
@@ -122,9 +142,24 @@ export async function handler() {
                       <p>Date: ${requestData.request_date}</p>
                       <p>Type: ${requestData.leave_type}</p>
                       <p>Request ID: ${requestData.id}</p>
+                      ${
+                                            email.email_type ===
+                                                    "payment_request" ||
+                                                email.email_type ===
+                                                    "payment_cancellation"
+                                                ? "<p><strong>Request Type:</strong> Payment in Lieu</p>"
+                                                : ""
+                                        }
                       <p>This is an automated message. Please reply "approved" or "denied - [reason]" to this email to 
                       approve or deny this request. Denial reasons include "out of ${requestData.leave_type} days", 
-                      "allotment is full", "other - [reason]".</p>`,
+                      ${
+                                            email.email_type ===
+                                                    "payment_request" ||
+                                                email.email_type ===
+                                                    "payment_cancellation"
+                                                ? '"payment processing unavailable"'
+                                                : '"allotment is full"'
+                                        }, "other - [reason]".</p>`,
                                 },
                             });
                             emailSent = true;

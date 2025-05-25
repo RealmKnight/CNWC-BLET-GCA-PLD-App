@@ -95,11 +95,16 @@ serve(async (req: Request) => {
       strippedText.substring(0, 200) + (strippedText.length > 200 ? "..." : ""),
     );
 
-    // Extract request ID from email subject or body - handle multiple formats
-    const requestIdMatch = subject.match(/\[Request ID: ([a-f0-9-]+)\]/i) || // New format: [Request ID: xxx]
-      subject.match(/Request ID: ([a-f0-9-]+)/i) || // Old format: Request ID: xxx
-      strippedText.match(/\[Request ID: ([a-f0-9-]+)\]/i) || // In body with brackets
-      strippedText.match(/Request ID: ([a-f0-9-]+)/i); // In body without brackets
+    // UPDATED: Extract request ID from email subject or body - handle both PIL and regular formats
+    const requestIdMatch =
+      subject.match(/\[Payment Request ID: ([a-f0-9-]+)\]/i) || // PIL format
+      subject.match(/\[Request ID: ([a-f0-9-]+)\]/i) || // Regular format
+      subject.match(/Payment Request ID: ([a-f0-9-]+)/i) || // PIL without brackets
+      subject.match(/Request ID: ([a-f0-9-]+)/i) || // Regular without brackets
+      strippedText.match(/\[Payment Request ID: ([a-f0-9-]+)\]/i) || // PIL in body
+      strippedText.match(/\[Request ID: ([a-f0-9-]+)\]/i) || // Regular in body
+      strippedText.match(/Payment Request ID: ([a-f0-9-]+)/i) || // PIL in body no brackets
+      strippedText.match(/Request ID: ([a-f0-9-]+)/i); // Regular in body no brackets
 
     if (!requestIdMatch) {
       console.log("Error: Request ID not found in email");
@@ -117,7 +122,15 @@ serve(async (req: Request) => {
     const requestId = requestIdMatch[1];
     const contentLower = strippedText.toLowerCase();
 
+    // ADDED: PIL detection logic
+    const isPilRequest = subject.toLowerCase().includes("payment request") ||
+      subject.includes("[Payment Request ID:");
+
     console.log("✓ Request ID found:", requestId);
+    console.log(
+      "✓ Request type detected:",
+      isPilRequest ? "Payment (PIL)" : "Regular",
+    );
     console.log("Processing email content...");
 
     // Initialize Supabase client
@@ -251,7 +264,18 @@ serve(async (req: Request) => {
         created_at: new Date().toISOString(),
       });
 
-    // Update email tracking if exists
+    // UPDATED: Email tracking query to handle PIL, regular, and cancellation request types
+    const isCancellation = subject.toLowerCase().includes("cancellation");
+    let emailType = "request"; // default
+
+    if (isCancellation && isPilRequest) {
+      emailType = "payment_cancellation";
+    } else if (isCancellation) {
+      emailType = "cancellation";
+    } else if (isPilRequest) {
+      emailType = "payment_request";
+    }
+
     await supabase
       .from("email_tracking")
       .update({
@@ -259,15 +283,11 @@ serve(async (req: Request) => {
         last_updated_at: new Date().toISOString(),
       })
       .eq("request_id", requestId)
-      .eq(
-        "email_type",
-        subject.toLowerCase().includes("cancellation")
-          ? "cancellation"
-          : "request",
-      );
+      .eq("email_type", emailType);
 
     console.log("✓ Email processed successfully");
     console.log("- Request ID:", requestId);
+    console.log("- Request Type:", isPilRequest ? "Payment (PIL)" : "Regular");
     console.log("- New Status:", newStatus);
     console.log("- Sender:", sender);
 

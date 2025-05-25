@@ -46,11 +46,11 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
     console.log("Supabase client created successfully");
 
-    // Get request details from Supabase first
+    // Get request details from Supabase first - UPDATED: Include paid_in_lieu field
     console.log("Fetching request details for ID:", requestId);
     const { data: requestData, error: requestError } = await supabase
       .from("pld_sdv_requests")
-      .select("id, request_date, leave_type, member_id")
+      .select("id, request_date, leave_type, member_id, paid_in_lieu")
       .eq("id", requestId)
       .single();
 
@@ -90,6 +90,14 @@ serve(async (req) => {
     const memberName = `${memberInfo.first_name} ${memberInfo.last_name}`;
     console.log("Member name constructed:", memberName);
 
+    // ADDED: PIL detection and email routing logic
+    const isPaidInLieu = requestData.paid_in_lieu === true;
+    console.log(
+      `[send-cancellation-email] Processing ${
+        isPaidInLieu ? "PIL" : "regular"
+      } cancellation for ${memberName}`,
+    );
+
     // Check Mailgun environment variables
     const mailgunSendingKey = Deno.env.get("MAILGUN_SENDING_KEY");
     const mailgunDomainRaw = Deno.env.get("MAILGUN_DOMAIN");
@@ -111,11 +119,18 @@ serve(async (req) => {
 
     console.log("Using direct Mailgun API calls instead of SDK");
 
-    // Get company admin email with fallback
-    const companyAdminEmail = String(
-      Deno.env.get("COMPANY_ADMIN_EMAIL") || "sroc_cmc_vacationdesk@cn.ca",
+    // UPDATED: Email recipient logic for PIL vs regular cancellations
+    const recipientEmail = isPaidInLieu
+      ? String(Deno.env.get("COMPANY_PAYMENT_EMAIL") || "us_cmc_payroll@cn.ca")
+      : String(
+        Deno.env.get("COMPANY_ADMIN_EMAIL") || "sroc_cmc_vacationdesk@cn.ca",
+      );
+
+    console.log(
+      `[send-cancellation-email] Routing ${
+        isPaidInLieu ? "PIL" : "regular"
+      } cancellation to: ${recipientEmail}`,
     );
-    console.log("Company admin email:", companyAdminEmail);
 
     // Format the date for display
     const formattedDate = new Date(requestData.request_date).toLocaleDateString(
@@ -135,10 +150,21 @@ serve(async (req) => {
     const safeMemberName = String(memberName);
     const safeFormattedDate = String(formattedDate);
 
-    // Prepare email content with professional HTML formatting - include Request ID in subject
-    const subject = "CANCELLATION - " + safeLeaveType + " Request - " +
-      safeMemberName + " [Request ID: " + safeRequestId + "]";
+    // UPDATED: Subject line logic for PIL vs regular cancellations
+    const subject = isPaidInLieu
+      ? `CANCELLATION - ${safeLeaveType} Payment Request - ${safeMemberName} [Payment Request ID: ${safeRequestId}]`
+      : `CANCELLATION - ${safeLeaveType} Request - ${safeMemberName} [Request ID: ${safeRequestId}]`;
 
+    // UPDATED: Email content variables for PIL vs regular cancellations
+    const requestTypeText = isPaidInLieu ? "Payment Request" : "Request";
+    const headerTitle = isPaidInLieu
+      ? "CN/WC GCA BLET PLD Payment Cancellation"
+      : "CN/WC GCA BLET PLD Cancellation";
+    const instructionText = isPaidInLieu
+      ? "This is a cancellation request for a payment in lieu request."
+      : "This is a cancellation request for a time off request.";
+
+    // UPDATED: HTML content with PIL-aware messaging
     const htmlContent = `
     <!DOCTYPE html>
     <html>
@@ -148,76 +174,87 @@ serve(async (req) => {
         <title>${subject}</title>
         <style>
             body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
-            .header { background-color: #d63031; color: white; padding: 20px; text-align: center; margin-bottom: 20px; }
+            .header { background-color: #dc3545; color: white; padding: 20px; text-align: center; margin-bottom: 20px; }
             .content { padding: 20px; border: 1px solid #ddd; }
-            .details { background-color: #f9f9f9; padding: 15px; margin: 15px 0; border-left: 4px solid #d63031; }
+            .details { background-color: #f9f9f9; padding: 15px; margin: 15px 0; border-left: 4px solid #dc3545; }
             .instructions { background-color: #fff3cd; padding: 15px; margin: 15px 0; border: 1px solid #ffeaa7; }
             .footer { text-align: center; margin-top: 20px; font-size: 0.9em; color: #666; }
-            .cancellation { background-color: #ff7675; color: white; padding: 10px; text-align: center; font-weight: bold; margin-bottom: 20px; }
+            .cancellation-notice { background-color: #f8d7da; padding: 15px; margin: 15px 0; border: 1px solid #f5c6cb; border-radius: 4px; }
         </style>
     </head>
     <body>
         <div class="header">
-            <h1>CN/WC GCA BLET PLD Request</h1>
-        </div>
-        
-        <div class="cancellation">
-            CANCELLATION REQUEST
+            <h1>${headerTitle}</h1>
         </div>
         
         <div class="content">
-            <h2>Request Cancellation</h2>
+            <h2>Cancellation Request for ${safeLeaveType} ${requestTypeText}</h2>
+            
+            <div class="cancellation-notice">
+                <strong>🚫 CANCELLATION REQUEST:</strong> ${instructionText}
+            </div>
             
             <div class="details">
                 <p><strong>Employee Name:</strong> ${safeMemberName}</p>
                 <p><strong>PIN Number:</strong> ${safePinNumber}</p>
-                <p><strong>Original Date Requested:</strong> ${safeFormattedDate}</p>
+                <p><strong>Date Requested:</strong> ${safeFormattedDate}</p>
                 <p><strong>Leave Type:</strong> ${safeLeaveType}</p>
-                <p><strong>Request ID:</strong> ${safeRequestId}</p>
+                <p><strong>${
+      isPaidInLieu ? "Payment Request ID" : "Request ID"
+    }:</strong> ${safeRequestId}</p>
+                ${
+      isPaidInLieu
+        ? "<p><strong>Request Type:</strong> Payment in Lieu</p>"
+        : ""
+    }
             </div>
             
             <div class="instructions">
-                <h3>Cancellation Instructions</h3>
-                <p>The employee wishes to <strong>CANCEL</strong> this previously approved time off request.</p>
-                <p>To confirm the cancellation, please reply to this email with:</p>
+                <h3>Response Instructions</h3>
+                <p>To confirm this cancellation, please reply to this email with one of the following:</p>
                 <ul>
-                    <li><strong>"completed"</strong> or <strong>"done"</strong></li>
+                    <li><strong>To CONFIRM CANCELLATION:</strong> Reply with "done", "confirmed", or "cancelled"</li>
                 </ul>
+                <p><em>Note: Once confirmed, this ${requestTypeText.toLowerCase()} will be permanently cancelled and cannot be restored.</em></p>
             </div>
         </div>
         
         <div class="footer">
             <p>This is an automated message from the CN/WC GCA BLET PLD Application.</p>
-            <p>Request ID: ${safeRequestId}</p>
+            <p>${
+      isPaidInLieu ? "Payment Request ID" : "Request ID"
+    }: ${safeRequestId}</p>
         </div>
     </body>
     </html>`;
 
+    // UPDATED: Text content with PIL-aware messaging
     const textContent = `
-CN/WC GCA BLET PLD Request - CANCELLATION
+CN/WC GCA BLET PLD ${requestTypeText} Cancellation
 
-*** CANCELLATION REQUEST ***
+🚫 CANCELLATION REQUEST: ${instructionText}
 
 Employee Name: ${safeMemberName}
 PIN Number: ${safePinNumber}
-Original Date Requested: ${safeFormattedDate}
+Date Requested: ${safeFormattedDate}
 Leave Type: ${safeLeaveType}
-Request ID: ${safeRequestId}
-
-The employee wishes to CANCEL this previously approved time off request.
+${isPaidInLieu ? "Payment Request ID" : "Request ID"}: ${safeRequestId}
+${isPaidInLieu ? "Request Type: Payment in Lieu\n" : ""}
 
 RESPONSE INSTRUCTIONS:
-To confirm the cancellation, please reply to this email with:
-- "completed" or "done"
+To confirm this cancellation, please reply to this email with one of the following:
+- To CONFIRM CANCELLATION: Reply with "done", "confirmed", or "cancelled"
+
+Note: Once confirmed, this ${requestTypeText.toLowerCase()} will be permanently cancelled and cannot be restored.
 
 This is an automated message from the CN/WC GCA BLET PLD Application.
-Request ID: ${safeRequestId}
+${isPaidInLieu ? "Payment Request ID" : "Request ID"}: ${safeRequestId}
     `;
 
     // Prepare email data with both HTML and text content
     const emailData = {
       from: "CN/WC GCA BLET PLD App <replies@pldapp.bletcnwcgca.org>",
-      to: String(companyAdminEmail),
+      to: String(recipientEmail),
       subject: String(subject),
       html: String(htmlContent),
       text: String(textContent),
@@ -258,13 +295,13 @@ Request ID: ${safeRequestId}
 
     console.log("Email sent successfully, result:", result);
 
-    // Record email tracking
+    // UPDATED: Email tracking with PIL-aware email_type
     const { error: trackingError } = await supabase
       .from("email_tracking")
       .insert({
         request_id: requestId,
-        email_type: "cancellation",
-        recipient: companyAdminEmail,
+        email_type: isPaidInLieu ? "payment_cancellation" : "cancellation",
+        recipient: recipientEmail,
         subject: subject,
         message_id: result.id,
         status: "sent",
@@ -283,7 +320,8 @@ Request ID: ${safeRequestId}
         success: true,
         result: result,
         messageId: result.id,
-        recipient: companyAdminEmail,
+        recipient: recipientEmail,
+        isPaidInLieu: isPaidInLieu,
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
