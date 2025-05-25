@@ -103,13 +103,13 @@ export function DivisionManagement({ division }: DivisionManagementProps) {
         );
       case "emails":
         return (
-          <AnimatedThemedView
-            entering={isMobile ? SlideInRight : FadeIn}
-            exiting={isMobile ? SlideOutLeft : FadeOut}
-            style={styles.content}
+          <ScrollView
+            style={[styles.contentScroll, Platform.OS === "android" && styles.androidContentScroll]}
+            contentContainerStyle={styles.contentContainer}
+            nestedScrollEnabled={true}
           >
             <DivisionEmailManagement division={division} />
-          </AnimatedThemedView>
+          </ScrollView>
         );
       default:
         return null;
@@ -167,6 +167,7 @@ const styles = StyleSheet.create({
   },
   actionButtons: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 8,
   },
   actionButton: {
@@ -176,7 +177,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     borderColor: Colors.light.border,
-    marginRight: 4,
+    flexShrink: 0,
   },
   activeButton: {
     backgroundColor: Colors.light.tint,
