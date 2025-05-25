@@ -1,4 +1,4 @@
-import { Redirect, useRootNavigation } from "expo-router";
+import { Redirect, useNavigationContainerRef } from "expo-router";
 import { useAuth } from "@/hooks/useAuth";
 import { View, StyleSheet } from "react-native";
 import { ThemedText } from "@/components/ThemedText";
@@ -9,11 +9,11 @@ import { ThemedText } from "@/components/ThemedText";
  */
 export default function Index() {
   const { authStatus } = useAuth();
-  // Add root navigation check
-  const rootNavigation = useRootNavigation();
+  // Add navigation container ref check
+  const navigationRef = useNavigationContainerRef();
 
   // CRITICAL: Don't redirect if navigation isn't ready
-  if (!rootNavigation?.isReady) {
+  if (!navigationRef.current?.isReady()) {
     console.log("[Index] Navigation not ready, deferring redirect");
     return (
       <View style={styles.container}>

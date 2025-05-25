@@ -1,5 +1,5 @@
 import React, { useEffect, useState, Suspense } from "react";
-import { Slot, usePathname, useSegments, useRootNavigation } from "expo-router";
+import { Slot, usePathname, useSegments, useNavigationContainerRef } from "expo-router";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { StyleSheet, Platform, AppState } from "react-native";
 import { Colors } from "@/constants/Colors";
@@ -25,8 +25,10 @@ import { StatusBar } from "expo-status-bar";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import * as SplashScreen from "expo-splash-screen";
 
-// Keep the splash screen visible while we fetch resources
-SplashScreen.preventAutoHideAsync();
+// Prevent the splash screen from auto-hiding before App component declaration/export
+SplashScreen.preventAutoHideAsync().catch((error) => {
+  console.warn("[SplashScreen] Error preventing auto-hide:", error);
+});
 
 // Separate loading screen component
 function LoadingScreen() {
@@ -67,8 +69,8 @@ function AuthAwareRouteHandler() {
     }
   }, [init]);
 
-  // Add root navigation hook to check if router is ready
-  const rootNavigation = useRootNavigation();
+  // Add navigation container ref to check if router is ready
+  const navigationRef = useNavigationContainerRef();
 
   // Handle password reset URL detection
   useEffect(() => {
@@ -250,22 +252,6 @@ function AuthAwareRouteHandler() {
     };
   }, []);
 
-  // Hide splash screen when app is ready
-  useEffect(() => {
-    const hideSplashScreen = async () => {
-      if (isInitialized && hasSeenAuthResponse) {
-        try {
-          await SplashScreen.hideAsync();
-          console.log("[SplashScreen] Splash screen hidden successfully");
-        } catch (error) {
-          console.error("[SplashScreen] Error hiding splash screen:", error);
-        }
-      }
-    };
-
-    hideSplashScreen();
-  }, [isInitialized, hasSeenAuthResponse]);
-
   // Track when we receive a meaningful auth response
   useEffect(() => {
     if (authStatus !== "loading" && !hasSeenAuthResponse) {
@@ -273,6 +259,36 @@ function AuthAwareRouteHandler() {
       console.log(`[Router] First auth response received: ${authStatus}`);
     }
   }, [authStatus, hasSeenAuthResponse]);
+
+  // Hide splash screen when app is ready
+  useEffect(() => {
+    const hideSplashScreen = async () => {
+      if (authStatus !== "loading" && isInitialized && hasSeenAuthResponse && navigationRef.current?.isReady()) {
+        try {
+          console.log("[SplashScreen] App is ready, hiding splash screen");
+          await SplashScreen.hideAsync();
+        } catch (error) {
+          console.warn("[SplashScreen] Error hiding splash screen:", error);
+        }
+      }
+    };
+
+    hideSplashScreen();
+  }, [authStatus, isInitialized, hasSeenAuthResponse, navigationRef]);
+
+  // Emergency splash screen hide after timeout
+  useEffect(() => {
+    const emergencyTimer = setTimeout(async () => {
+      try {
+        console.warn("[SplashScreen] Emergency timeout reached, forcing splash screen hide");
+        await SplashScreen.hideAsync();
+      } catch (error) {
+        console.warn("[SplashScreen] Error in emergency hide:", error);
+      }
+    }, 10000); // 10 second timeout
+
+    return () => clearTimeout(emergencyTimer);
+  }, []);
 
   // Effect to show modal when recovery flag is set
   useEffect(() => {
