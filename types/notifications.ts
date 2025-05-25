@@ -16,6 +16,11 @@ export enum NotificationType {
     SYSTEM_ALERT = "system_alert",
     MUST_READ = "must_read",
     MEETING_REMINDER = "meeting_reminder",
+    // PLD/SDV Request Status Notifications
+    REQUEST_APPROVED = "request_approved",
+    REQUEST_DENIED = "request_denied",
+    REQUEST_CANCELLED = "request_cancelled",
+    REQUEST_WAITLISTED = "request_waitlisted",
 }
 
 // Define notification category priorities (extracted from notificationConfig.ts)
@@ -25,6 +30,7 @@ export const NOTIFICATION_PRIORITIES = {
     admin_message: 80,
     gca_announcement: 70,
     division_announcement: 60,
+    request_status: 55, // PLD/SDV request status updates
     status_update: 50,
     meeting_reminder: 45, // Add meeting reminders with medium-high priority
     roster_change: 40,
@@ -136,6 +142,11 @@ export function getCategoryCodeFromType(type: NotificationType): string {
             return "must_read";
         case NotificationType.MEETING_REMINDER:
             return "meeting_reminder";
+        case NotificationType.REQUEST_APPROVED:
+        case NotificationType.REQUEST_DENIED:
+        case NotificationType.REQUEST_CANCELLED:
+        case NotificationType.REQUEST_WAITLISTED:
+            return "request_status";
         case NotificationType.REGULAR_MESSAGE:
         default:
             return "general_message";
@@ -158,6 +169,10 @@ export function getImportanceFromType(
         case NotificationType.GCA_ANNOUNCEMENT:
         case NotificationType.DIVISION_ANNOUNCEMENT:
         case NotificationType.MEETING_REMINDER:
+        case NotificationType.REQUEST_APPROVED:
+        case NotificationType.REQUEST_DENIED:
+        case NotificationType.REQUEST_CANCELLED:
+        case NotificationType.REQUEST_WAITLISTED:
             return "medium";
         case NotificationType.REGULAR_MESSAGE:
         default:

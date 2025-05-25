@@ -2014,6 +2014,19 @@ function navigateBasedOnNotificationType(data: any) {
         }
         break;
 
+      case "request_approved":
+      case "request_denied":
+      case "request_cancelled":
+      case "request_waitlisted":
+        // For PLD/SDV request status notifications, navigate to notifications tab
+        // The message should exist in the messages table for these notifications
+        if (messageId) {
+          router.push(`/(tabs)/notifications/${messageId}`);
+        } else {
+          router.push("/(tabs)/notifications");
+        }
+        break;
+
       case "regular_message":
       default:
         if (messageId) {
@@ -2047,6 +2060,12 @@ function navigateToFallbackScreen(notificationType: string) {
         break;
       case "meeting_reminder":
         router.push("/(tabs)/divisions");
+        break;
+      case "request_approved":
+      case "request_denied":
+      case "request_cancelled":
+      case "request_waitlisted":
+        router.push("/(tabs)/notifications");
         break;
       default:
         router.push("/(tabs)/notifications");
@@ -2215,6 +2234,19 @@ async function validateContentExists(
           .single();
         return !!meeting;
 
+      case "request_approved":
+      case "request_denied":
+      case "request_cancelled":
+      case "request_waitlisted":
+        // For PLD/SDV request status notifications, check messages table
+        const { data: requestMessage } = await supabase
+          .from("messages")
+          .select("id")
+          .eq("id", messageId)
+          .single();
+        return !!requestMessage;
+
+      case "regular_message":
       default:
         const { data: message } = await supabase
           .from("messages")
@@ -2290,6 +2322,35 @@ async function validateUserHasAccess(
           .single();
 
         return !!meetingUserDivision;
+
+      case "request_approved":
+      case "request_denied":
+      case "request_cancelled":
+      case "request_waitlisted":
+        // For PLD/SDV request status notifications, check if user is recipient of message
+        const { data: requestStatusMessage } = await supabase
+          .from("messages")
+          .select("recipient_id, recipient_pin_number")
+          .eq("id", messageId)
+          .single();
+
+        if (!requestStatusMessage) return false;
+
+        // Check if recipient_id matches userId directly
+        if (requestStatusMessage.recipient_id === userId) return true;
+
+        // If not, fetch member data to check pin number
+        const { data: requestMember } = await supabase
+          .from("members")
+          .select("pin_number")
+          .eq("id", userId)
+          .single();
+
+        if (!requestMember) return false;
+
+        // Check if pin number matches recipient_pin_number
+        return requestMember.pin_number ===
+          requestStatusMessage.recipient_pin_number;
 
       case "regular_message":
         // Check if user is recipient of message
