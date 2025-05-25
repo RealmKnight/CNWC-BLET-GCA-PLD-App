@@ -2,6 +2,7 @@ import { Redirect, useNavigationContainerRef } from "expo-router";
 import { useAuth } from "@/hooks/useAuth";
 import { View, StyleSheet } from "react-native";
 import { ThemedText } from "@/components/ThemedText";
+import { Colors } from "@/constants/Colors";
 
 /**
  * Root index page - redirects users based on auth status
@@ -54,5 +55,6 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
+    backgroundColor: Colors.dark.background,
   },
 });
