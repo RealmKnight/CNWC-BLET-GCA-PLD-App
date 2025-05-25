@@ -152,20 +152,35 @@ serve(async (req: Request) => {
       "Subject contains 'cancellation':",
       subject.toLowerCase().includes("cancellation"),
     );
+    console.log("Content to analyze:", contentLower);
 
     // Check if it's a cancellation response
     if (subject.toLowerCase().includes("cancellation")) {
-      if (
-        contentLower.includes("done") ||
-        contentLower.includes("complete") ||
-        contentLower.includes("completed") ||
-        contentLower.includes("all set") ||
-        contentLower.includes("confirmed") ||
-        contentLower.includes("approved") ||
-        contentLower.includes("these are done")
-      ) {
+      console.log("Processing cancellation email...");
+      const cancellationKeywords = [
+        "done",
+        "complete",
+        "completed",
+        "all set",
+        "confirmed",
+        "approved",
+        "these are done",
+        "cancelled",
+        "canceled",
+      ];
+
+      const foundKeyword = cancellationKeywords.find((keyword) =>
+        contentLower.includes(keyword)
+      );
+
+      if (foundKeyword) {
         newStatus = "cancelled";
-        console.log("✓ Detected cancellation confirmation");
+        console.log(
+          `✓ Detected cancellation confirmation with keyword: "${foundKeyword}"`,
+        );
+      } else {
+        console.log("No cancellation confirmation keywords found in content");
+        console.log("Available keywords:", cancellationKeywords);
       }
     } else {
       // Regular request response

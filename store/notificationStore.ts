@@ -160,11 +160,7 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
           )
         `)
         .or(
-          !isNaN(Number(userId))
-            // If userId is a pin number, only query by recipient_pin_number
-            ? `recipient_pin_number.eq.${pinNumber}`
-            // If userId is a UUID, query by both recipient_pin_number and recipient_id
-            : `recipient_pin_number.eq.${pinNumber},recipient_id.eq.${userId}`,
+          `recipient_pin_number.eq.${pinNumber},recipient_id.eq.${recipientId}`,
         )
         .eq("is_deleted", false)
         .order("created_at", { ascending: false });
@@ -736,13 +732,7 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
             error_message
           )
         `)
-        .or(
-          !isNaN(Number(userId))
-            // If userId is a pin number, only query by recipient_pin_number
-            ? `recipient_pin_number.eq.${pinNumber}`
-            // If userId is a UUID, query by both recipient_pin_number and recipient_id
-            : `recipient_pin_number.eq.${pinNumber},recipient_id.eq.${userId}`,
-        )
+        .or(`recipient_pin_number.eq.${pinNumber},recipient_id.eq.${userId}`)
         .eq("is_deleted", false)
         .order("created_at", { ascending: false });
 

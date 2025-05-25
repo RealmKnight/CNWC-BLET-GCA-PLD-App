@@ -154,7 +154,7 @@ This document outlines the plan to implement document management features for Di
 
   - Build a modal-based document viewer similar to MinutesReader.
   - Support PDF viewing (primarily):
-    - Native: Use `react-native-pdf` library with platform-specific implementation.
+    - Native: Use `react-native-pdf-renderer` library with platform-specific implementation.
     - Web: Use `<iframe>` for PDF viewing with platform-specific implementation.
     - Fallback: Appropriate fallback UI when PDFs can't be displayed.
   - Download button for non-viewable file types.

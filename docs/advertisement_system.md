@@ -1900,10 +1900,10 @@ Most of the required packages are already installed in the project. Here's a lis
    - `react-native-chart-kit` - For analytics charts
    - `expo-image-picker` - For selecting images from device
    - `expo-document-picker` - For picking PDF files
-   - `react-native-pdf` - For rendering PDF previews
+   - `react-native-pdf-renderer` - For rendering PDF previews
 
 ```bash
-npx expo install react-native-chart-kit expo-image-picker expo-document-picker react-native-pdf
+npx expo install react-native-chart-kit expo-image-picker expo-document-picker react-native-pdf-renderer
 ```
 
 ## Implementation Phases

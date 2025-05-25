@@ -1,8 +1,9 @@
 /**
- * Store Event Manager - EventTarget-based inter-store communication
+ * Store Event Manager - Observer pattern-based inter-store communication
  *
  * Provides a singleton event system for stores to communicate without direct imports.
  * Uses selective debouncing to prevent race conditions while maintaining responsiveness.
+ * Compatible with React Native Android (no EventTarget dependency).
  *
  * Usage:
  *   import { storeEventManager, StoreEventType } from '@/utils/storeManager';
@@ -14,10 +15,15 @@
  *   });
  *
  *   // Listen for events
- *   storeEventManager.addEventListener(StoreEventType.TIME_DATA_UPDATED, (event) => {
- *     const data = event.detail as StoreEventData;
- *     // Handle the event
- *   });
+ *   const cleanup = storeEventManager.addStoreEventListener(
+ *     StoreEventType.TIME_DATA_UPDATED,
+ *     (data) => {
+ *       // Handle the event
+ *     }
+ *   );
+ *
+ *   // Clean up when done
+ *   cleanup();
  */
 
 import { Platform } from "react-native";
@@ -101,14 +107,19 @@ export interface StoreEventData {
 }
 
 /**
- * Event manager class using native EventTarget
+ * Event listener function type
  */
-class StoreEventManager extends EventTarget {
+export type StoreEventListener = (data: StoreEventData) => void;
+
+/**
+ * Event manager class using observer pattern (React Native compatible)
+ */
+class StoreEventManager {
+    private listeners = new Map<StoreEventType, Set<StoreEventListener>>();
     private debounceTimers = new Map<string, NodeJS.Timeout>();
     private isDebugMode: boolean;
 
     constructor() {
-        super();
         this.isDebugMode = __DEV__ && Platform.OS !== "web"; // Enable debug logging in development
     }
 
@@ -154,13 +165,13 @@ class StoreEventManager extends EventTarget {
 
             const timer = setTimeout(() => {
                 this.debounceTimers.delete(debounceKey);
-                this.dispatchTypedEvent(eventType, eventData);
+                this.notifyListeners(eventType, eventData);
             }, delay);
 
             this.debounceTimers.set(debounceKey, timer);
         } else {
             // Immediate execution
-            this.dispatchTypedEvent(eventType, eventData);
+            this.notifyListeners(eventType, eventData);
         }
     }
 
@@ -180,69 +191,98 @@ class StoreEventManager extends EventTarget {
     }
 
     /**
-     * Dispatch the actual CustomEvent
+     * Notify all listeners for a specific event type
      */
-    private dispatchTypedEvent(
+    private notifyListeners(
         eventType: StoreEventType,
         eventData: StoreEventData,
     ) {
         if (this.isDebugMode) {
             console.log(
-                `[StoreEventManager] Dispatching ${eventType}:`,
+                `[StoreEventManager] Notifying listeners for ${eventType}:`,
                 eventData,
             );
         }
 
-        const customEvent = new CustomEvent(eventType, {
-            detail: eventData,
-        });
-
-        this.dispatchEvent(customEvent);
+        const eventListeners = this.listeners.get(eventType);
+        if (eventListeners) {
+            eventListeners.forEach((listener) => {
+                try {
+                    listener(eventData);
+                } catch (error) {
+                    console.error(
+                        `[StoreEventManager] Error in event listener for ${eventType}:`,
+                        error,
+                    );
+                }
+            });
+        }
     }
 
     /**
-     * Add a typed event listener
+     * Add an event listener for a specific event type
+     *
+     * @param eventType - The event type to listen for
+     * @param listener - The listener function
+     * @returns Cleanup function to remove the listener
      */
     addStoreEventListener(
         eventType: StoreEventType,
-        listener: (event: CustomEvent<StoreEventData>) => void,
-        options?: boolean | AddEventListenerOptions,
-    ) {
-        super.addEventListener(eventType, listener as EventListener, options);
-
-        if (this.isDebugMode) {
-            console.log(`[StoreEventManager] Added listener for ${eventType}`);
+        listener: StoreEventListener,
+    ): () => void {
+        if (!this.listeners.has(eventType)) {
+            this.listeners.set(eventType, new Set());
         }
-    }
 
-    /**
-     * Remove a typed event listener
-     */
-    removeStoreEventListener(
-        eventType: StoreEventType,
-        listener: (event: CustomEvent<StoreEventData>) => void,
-        options?: boolean | EventListenerOptions,
-    ) {
-        super.removeEventListener(
-            eventType,
-            listener as EventListener,
-            options,
-        );
+        const eventListeners = this.listeners.get(eventType)!;
+        eventListeners.add(listener);
 
         if (this.isDebugMode) {
             console.log(
-                `[StoreEventManager] Removed listener for ${eventType}`,
+                `[StoreEventManager] Added listener for ${eventType}. Total listeners: ${eventListeners.size}`,
             );
+        }
+
+        // Return cleanup function
+        return () => {
+            this.removeStoreEventListener(eventType, listener);
+        };
+    }
+
+    /**
+     * Remove an event listener for a specific event type
+     *
+     * @param eventType - The event type
+     * @param listener - The listener function to remove
+     */
+    removeStoreEventListener(
+        eventType: StoreEventType,
+        listener: StoreEventListener,
+    ) {
+        const eventListeners = this.listeners.get(eventType);
+        if (eventListeners) {
+            eventListeners.delete(listener);
+
+            if (this.isDebugMode) {
+                console.log(
+                    `[StoreEventManager] Removed listener for ${eventType}. Remaining listeners: ${eventListeners.size}`,
+                );
+            }
+
+            // Clean up empty sets
+            if (eventListeners.size === 0) {
+                this.listeners.delete(eventType);
+            }
         }
     }
 
     /**
-     * Clean up all debounce timers and event listeners
+     * Clean up all listeners and timers
      */
     cleanup() {
         if (this.isDebugMode) {
             console.log(
-                `[StoreEventManager] Cleaning up ${this.debounceTimers.size} debounce timers`,
+                "[StoreEventManager] Cleaning up all listeners and timers",
             );
         }
 
@@ -250,44 +290,49 @@ class StoreEventManager extends EventTarget {
         this.debounceTimers.forEach((timer) => clearTimeout(timer));
         this.debounceTimers.clear();
 
-        // Note: We don't remove all event listeners here as that would break store functionality
-        // Individual stores should clean up their own listeners when they unmount
+        // Clear all listeners
+        this.listeners.clear();
     }
 
     /**
-     * Get debug information about the event manager state
+     * Get debug information about current state
      */
     getDebugInfo() {
         return {
-            activeDebounceTimers: this.debounceTimers.size,
+            listenerCounts: Array.from(this.listeners.entries()).map((
+                [type, listeners],
+            ) => ({
+                eventType: type,
+                listenerCount: listeners.size,
+            })),
+            activeTimers: this.debounceTimers.size,
             isDebugMode: this.isDebugMode,
-            supportedEvents: Object.values(StoreEventType),
         };
     }
 }
 
-// Singleton instance for global use
-export const storeEventManager = new StoreEventManager();
+// Singleton instance
+const storeEventManager = new StoreEventManager();
 
 /**
- * Utility function to create a cleanup function for store event listeners
+ * Helper function to create cleanup for multiple event listeners
  */
 export function createStoreEventCleanup(
     listeners: Array<{
         eventType: StoreEventType;
-        listener: (event: CustomEvent<StoreEventData>) => void;
+        listener: StoreEventListener;
     }>,
 ) {
+    const cleanupFunctions = listeners.map(({ eventType, listener }) =>
+        storeEventManager.addStoreEventListener(eventType, listener)
+    );
+
     return () => {
-        listeners.forEach(({ eventType, listener }) => {
-            storeEventManager.removeStoreEventListener(eventType, listener);
-        });
+        cleanupFunctions.forEach((cleanup) => cleanup());
     };
 }
 
-/**
- * Helper to emit calendar data update events
- */
+// Helper functions for common event emissions
 export function emitCalendarDataUpdate(
     source: string,
     payload: {
@@ -304,9 +349,6 @@ export function emitCalendarDataUpdate(
     });
 }
 
-/**
- * Helper to emit time data update events
- */
 export function emitTimeDataUpdate(
     source: string,
     payload: {
@@ -322,9 +364,6 @@ export function emitTimeDataUpdate(
     });
 }
 
-/**
- * Helper to emit request submission events (immediate)
- */
 export function emitRequestSubmitted(
     source: string,
     payload: {
@@ -337,19 +376,12 @@ export function emitRequestSubmitted(
         isSixMonthRequest?: boolean;
     },
 ) {
-    const eventType = payload.isSixMonthRequest
-        ? StoreEventType.SIX_MONTH_REQUEST_SUBMITTED
-        : StoreEventType.REQUEST_SUBMITTED;
-
-    storeEventManager.emitEvent(eventType, {
+    storeEventManager.emitEvent(StoreEventType.REQUEST_SUBMITTED, {
         source,
         payload,
     });
 }
 
-/**
- * Helper to emit request cancellation events (immediate)
- */
 export function emitRequestCancelled(
     source: string,
     payload: {
@@ -361,12 +393,10 @@ export function emitRequestCancelled(
         isSixMonthRequest?: boolean;
     },
 ) {
-    const eventType = payload.isSixMonthRequest
-        ? StoreEventType.SIX_MONTH_REQUEST_CANCELLED
-        : StoreEventType.REQUEST_CANCELLED;
-
-    storeEventManager.emitEvent(eventType, {
+    storeEventManager.emitEvent(StoreEventType.REQUEST_CANCELLED, {
         source,
         payload,
     });
 }
+
+export { storeEventManager };

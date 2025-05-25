@@ -13,14 +13,15 @@ export default function Index() {
   // Add navigation container ref check
   const navigationRef = useNavigationContainerRef();
 
-  // CRITICAL: Don't redirect if navigation isn't ready
+  // TEMPORARY: Skip navigation readiness check to debug the issue
   if (!navigationRef.current?.isReady()) {
-    console.log("[Index] Navigation not ready, deferring redirect");
-    return (
-      <View style={styles.container}>
-        <ThemedText>Preparing navigation...</ThemedText>
-      </View>
-    );
+    console.log("[Index] Navigation not ready, but proceeding anyway for debugging");
+    // Temporarily comment out the return to see if this is causing the issue
+    // return (
+    //   <View style={styles.container}>
+    //     <ThemedText>Preparing navigation...</ThemedText>
+    //   </View>
+    // );
   }
 
   console.log(`[Index] Navigation ready, auth status: ${authStatus}`);

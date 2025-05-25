@@ -64,7 +64,17 @@ TaskManager.defineTask<NotificationData>(
     }
 
     const { notification } = data;
-    const content = notification.request.content;
+
+    // Safely access notification content - handle different notification structures
+    const content = notification?.request?.content;
+    if (!content) {
+      console.warn(
+        "[PushNotification] No content found in notification:",
+        notification,
+      );
+      return;
+    }
+
     const messageId = content.data?.messageId as string;
     const userId = content.data?.userId as string;
     const notificationType = content.data?.notificationType as NotificationType;
@@ -115,7 +125,7 @@ TaskManager.defineTask<NotificationData>(
         }
 
         // Check if the notification was actioned
-        const actionId = notification.request.content.data?.actionId as string;
+        const actionId = content.data?.actionId as string;
         if (actionId) {
           // Handle different action types
           switch (actionId) {
@@ -168,7 +178,21 @@ export function configureNotifications() {
   // Enhanced foreground notification handler with priority-based behavior
   Notifications.setNotificationHandler({
     handleNotification: async (notification) => {
-      const data = notification.request.content.data || {};
+      // Safely access notification content
+      const content = notification?.request?.content;
+      if (!content) {
+        console.warn(
+          "[PushNotification] No content found in foreground notification:",
+          notification,
+        );
+        return {
+          shouldShowAlert: false,
+          shouldPlaySound: false,
+          shouldSetBadge: false,
+        };
+      }
+
+      const data = content.data || {};
       const messageType = data.messageType as string;
       const notificationType = data.notificationType as NotificationType;
       const requiresAcknowledgment = data.requiresAcknowledgment as boolean;
@@ -461,7 +485,16 @@ export function setupNotificationListeners() {
   // Handle notifications that are received while the app is foregrounded
   const foregroundSubscription = Notifications.addNotificationReceivedListener(
     (notification) => {
-      const messageId = notification.request.content.data?.messageId as string;
+      const content = notification?.request?.content;
+      if (!content) {
+        console.warn(
+          "[PushNotification] No content in received notification:",
+          notification,
+        );
+        return;
+      }
+
+      const messageId = content.data?.messageId as string;
       if (messageId) {
         notificationServiceFunctions?.markNotificationDelivered(messageId);
       }
@@ -471,7 +504,16 @@ export function setupNotificationListeners() {
   // Handle notifications that are tapped by the user
   const responseSubscription = Notifications
     .addNotificationResponseReceivedListener((response) => {
-      const data = response.notification.request.content.data;
+      const content = response.notification?.request?.content;
+      if (!content) {
+        console.warn(
+          "[PushNotification] No content in notification response:",
+          response.notification,
+        );
+        return;
+      }
+
+      const data = content.data;
       const actionIdentifier = response.actionIdentifier;
 
       console.log("[PushNotification] Notification tapped:", {
@@ -508,7 +550,16 @@ export async function getInitialNotification() {
 
     if (initialNotification) {
       // App was launched by a notification
-      const data = initialNotification.notification.request.content.data;
+      const content = initialNotification.notification?.request?.content;
+      if (!content) {
+        console.warn(
+          "[PushNotification] No content in initial notification:",
+          initialNotification.notification,
+        );
+        return;
+      }
+
+      const data = content.data;
       const actionIdentifier = initialNotification.actionIdentifier;
 
       console.log("[PushNotification] App launched from notification:", {

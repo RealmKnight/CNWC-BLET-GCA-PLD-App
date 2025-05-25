@@ -340,9 +340,9 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
         );
 
         const handleCalendarRequestsUpdated = (
-            event: CustomEvent<StoreEventData>,
+            eventData: StoreEventData,
         ) => {
-            const { payload } = event.detail;
+            const { payload } = eventData;
             if (payload.shouldRefreshTimeStore && get().memberId) {
                 console.log(
                     "[TimeStore] Received CALENDAR_REQUESTS_UPDATED event, triggering refresh",
@@ -357,9 +357,9 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
         };
 
         const handleSixMonthRequestsUpdated = (
-            event: CustomEvent<StoreEventData>,
+            eventData: StoreEventData,
         ) => {
-            const { payload } = event.detail;
+            const { payload } = eventData;
             if (payload.shouldRefreshTimeStore && get().memberId) {
                 console.log(
                     "[TimeStore] Received SIX_MONTH_REQUESTS_UPDATED event, triggering refresh",
