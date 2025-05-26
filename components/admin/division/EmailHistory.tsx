@@ -33,11 +33,12 @@ interface EmailTrackingRecord {
     request_date: string;
     leave_type: "PLD" | "SDV";
     status: string;
+    pin_number: number | null; // Pin number from request table
     member?: {
       first_name: string | null;
       last_name: string | null;
       pin_number: number;
-      division_id: number; // Add division_id for filtering
+      division_id: number;
     };
   };
 }
@@ -61,9 +62,8 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
   const [selectedStatus, setSelectedStatus] = useState<string>("all");
   const [selectedEmailType, setSelectedEmailType] = useState<string>("all");
 
-  // Get division ID for filtering
+  // Get division info for context (but don't use for filtering)
   const currentDivision = divisions.find((div) => div.name === division);
-  const divisionId = currentDivision?.id;
 
   // Filter options
   const statusOptions = [
@@ -107,6 +107,7 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
             request_date,
             leave_type,
             status,
+            pin_number,
             member:members (
               first_name,
               last_name,
@@ -117,7 +118,7 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
         `
         )
         .order("created_at", { ascending: false })
-        .limit(200); // Increased limit for better division filtering
+        .limit(500); // Increased limit since we're not pre-filtering
 
       // Filter by specific request if provided
       if (requestId) {
@@ -128,12 +129,17 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
 
       if (fetchError) throw fetchError;
 
-      // Filter by division in memory if division is specified
+      // For division admin context, show ALL emails
+      // Division filtering will be handled in the UI if needed
       let filteredData = data as EmailTrackingRecord[];
-      if (divisionId && !requestId) {
-        filteredData = (data as EmailTrackingRecord[]).filter(
-          (record) => record.request?.member?.division_id === divisionId
-        );
+
+      // If we have a specific division context and no specific request,
+      // we could optionally filter by division-related patterns here
+      // For now, show all emails in division admin context
+      if (division && !requestId) {
+        // Show all emails - division context is for display purposes
+        // The admin can see all email activity for their oversight
+        console.log(`Showing all email records for division admin context: ${division}`);
       }
 
       setEmailRecords(filteredData);
@@ -221,7 +227,8 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
         record.subject.toLowerCase().includes(searchLower) ||
         (record.request?.member?.first_name || "").toLowerCase().includes(searchLower) ||
         (record.request?.member?.last_name || "").toLowerCase().includes(searchLower) ||
-        record.request?.member?.pin_number?.toString().includes(searchQuery);
+        record.request?.member?.pin_number?.toString().includes(searchQuery) ||
+        record.request?.pin_number?.toString().includes(searchQuery);
 
       if (!matchesSearch) return false;
     }
@@ -241,10 +248,8 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
 
   // Load data on mount and when division changes
   useEffect(() => {
-    if (!division || divisionId) {
-      fetchEmailRecords();
-    }
-  }, [requestId, divisionId]);
+    fetchEmailRecords();
+  }, [requestId, division]);
 
   // Get status color
   const getStatusColor = (status: string): string => {
@@ -390,7 +395,7 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
       <View style={styles.summaryContainer}>
         <ThemedText style={styles.summaryText}>
           Showing {filteredRecords.length} of {emailRecords.length} email records
-          {division && ` for ${division} division`}
+          {division && ` (Division ${division} Admin View)`}
         </ThemedText>
       </View>
 
@@ -411,12 +416,12 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
             <Ionicons name="mail-outline" size={48} color={Colors[colorScheme].text + "40"} />
             <ThemedText style={styles.emptyText}>
               {emailRecords.length === 0
-                ? `No email records found${division ? ` for ${division} division` : ""}`
+                ? `No email records found${division ? ` (Division ${division} Admin View)` : ""}`
                 : "No records match your filters"}
             </ThemedText>
             {division && emailRecords.length === 0 && (
               <ThemedText style={styles.emptySubtext}>
-                Email records will appear here when requests are submitted for this division
+                Email records will appear here when email notifications are sent from the system
               </ThemedText>
             )}
           </ThemedView>
@@ -460,9 +465,13 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
                 {record.request && (
                   <View style={styles.requestDetails}>
                     <ThemedText style={styles.requestText}>
-                      <ThemedText style={styles.requestLabel}>Request:</ThemedText> {record.request.member?.first_name}{" "}
-                      {record.request.member?.last_name} ({record.request.member?.pin_number}) -{" "}
-                      {record.request.leave_type} on {new Date(record.request.request_date).toLocaleDateString()}
+                      <ThemedText style={styles.requestLabel}>Request:</ThemedText>{" "}
+                      {record.request.member?.first_name && record.request.member?.last_name
+                        ? `${record.request.member.first_name} ${record.request.member.last_name} (${record.request.member.pin_number})`
+                        : record.request.pin_number
+                        ? `PIN ${record.request.pin_number}`
+                        : "Unknown Member"}{" "}
+                      - {record.request.leave_type} on {new Date(record.request.request_date).toLocaleDateString()}
                     </ThemedText>
                   </View>
                 )}
