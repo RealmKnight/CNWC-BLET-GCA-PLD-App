@@ -1199,13 +1199,7 @@ const styles = StyleSheet.create({
     height: 36,
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.18,
-    shadowRadius: 1.0,
+    boxShadow: "0 0 10px 0 rgba(0, 0, 0, 0.1)",
     elevation: 1,
   },
   rowSaveButtonDisabled: {

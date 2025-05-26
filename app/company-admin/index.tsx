@@ -352,13 +352,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     // Add shadow for elevation effect (optional)
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
+    boxShadow: "0 0 10px 0 rgba(0, 0, 0, 0.25)",
     elevation: 5,
   },
 });

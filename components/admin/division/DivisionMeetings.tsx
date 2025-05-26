@@ -13,6 +13,7 @@ import {
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedTextInput } from "@/components/ThemedTextInput";
+import { DivisionLoadingIndicator } from "@/components/ui/DivisionLoadingIndicator";
 import { Ionicons } from "@expo/vector-icons";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
@@ -114,6 +115,7 @@ export function DivisionMeetings({ division, isAdmin = false }: DivisionMeetings
   const occurrences = useDivisionMeetingStore((state) => state.occurrences);
   const meetingMinutes = useDivisionMeetingStore((state) => state.meetingMinutes);
   const storeIsLoading = useDivisionMeetingStore((state) => state.isLoading);
+  const loadingOperation = useDivisionMeetingStore((state) => state.loadingOperation);
   const error = useDivisionMeetingStore((state) => state.error);
   const selectedMeetingPatternId = useDivisionMeetingStore((state) => state.selectedMeetingPatternId);
   const selectedOccurrenceId = useDivisionMeetingStore((state) => state.selectedOccurrenceId);
@@ -135,6 +137,7 @@ export function DivisionMeetings({ division, isAdmin = false }: DivisionMeetings
   const unsubscribeFromRealtime = useDivisionMeetingStore((state) => state.unsubscribeFromRealtime);
   const setSelectedMeetingPatternId = useDivisionMeetingStore((state) => state.setSelectedMeetingPatternId);
   const setSelectedOccurrenceId = useDivisionMeetingStore((state) => state.setSelectedOccurrenceId);
+  const setDivisionContext = useDivisionMeetingStore((state) => state.setDivisionContext);
 
   // Load attendance data from minutes when pattern minutes change
   useEffect(() => {
@@ -190,7 +193,11 @@ export function DivisionMeetings({ division, isAdmin = false }: DivisionMeetings
     const loadData = async () => {
       try {
         if (division) {
+          // Set division context for proper filtering
+          setDivisionContext(division);
           await fetchDivisionMeetings(division);
+          // Subscribe to realtime updates for this division
+          await subscribeToRealtime(division);
         }
       } catch (error) {
         console.error("Error loading division meetings:", error);
@@ -198,7 +205,7 @@ export function DivisionMeetings({ division, isAdmin = false }: DivisionMeetings
     };
 
     loadData();
-  }, [division, fetchDivisionMeetings]);
+  }, [division, fetchDivisionMeetings, setDivisionContext, subscribeToRealtime]);
 
   // Update calendar when occurrences change
   useEffect(() => {
@@ -337,6 +344,36 @@ export function DivisionMeetings({ division, isAdmin = false }: DivisionMeetings
       updateFormState(division, { selectedOccurrence: value });
     },
     [division, updateFormState]
+  );
+
+  // Helper function to validate division context for admin operations
+  const validateDivisionContext = useCallback(
+    async (meetingId: string, operation: string) => {
+      try {
+        const { data } = await supabase
+          .from("division_meetings")
+          .select("division_id, divisions!inner(name)")
+          .eq("id", meetingId)
+          .single();
+
+        const divisionName = data?.divisions?.[0]?.name;
+        if (divisionName && divisionName !== division) {
+          console.warn(
+            `Admin operation '${operation}' attempted on meeting from division '${divisionName}' while in context of division '${division}'`
+          );
+          Alert.alert(
+            "Division Context Warning",
+            `This meeting belongs to division '${divisionName}' but you are currently managing division '${division}'. Please verify this is intentional.`
+          );
+          return false;
+        }
+        return true;
+      } catch (error) {
+        console.error("Error validating division context:", error);
+        return true; // Allow operation to continue if validation fails
+      }
+    },
+    [division]
   );
 
   // Handle pattern create/edit
@@ -511,6 +548,12 @@ export function DivisionMeetings({ division, isAdmin = false }: DivisionMeetings
         return;
       }
 
+      // Validate division context for this operation
+      const isValidContext = await validateDivisionContext(selectedMeetingPatternId, "save minutes");
+      if (!isValidContext) {
+        return; // User was warned, let them decide whether to continue
+      }
+
       // Get current user
       const {
         data: { user },
@@ -665,10 +708,11 @@ export function DivisionMeetings({ division, isAdmin = false }: DivisionMeetings
   const renderContent = () => {
     if (storeIsLoading) {
       return (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={Colors[colorScheme].tint} />
-          <ThemedText style={styles.loadingText}>Loading...</ThemedText>
-        </View>
+        <DivisionLoadingIndicator
+          divisionName={division}
+          operation={loadingOperation || "Loading division data"}
+          isVisible={true}
+        />
       );
     }
 
@@ -1793,9 +1837,18 @@ export function DivisionMeetings({ division, isAdmin = false }: DivisionMeetings
     );
   };
 
+  // Division context header component
+  const DivisionContextHeader = () => (
+    <View style={styles.divisionHeader}>
+      <ThemedText style={styles.divisionTitle}>Division {division} Meetings</ThemedText>
+      <ThemedText style={styles.divisionSubtitle}>All data shown is specific to this division</ThemedText>
+    </View>
+  );
+
   return (
     <ThemedView style={styles.container}>
       <ThemedView style={styles.header}>
+        <DivisionContextHeader />
         <View style={styles.tabsContainer}>
           {renderTabButton("schedule", "calendar-outline", "Schedule")}
           {renderTabButton("agenda", "list-outline", "Agenda")}
@@ -2316,5 +2369,24 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     padding: 10,
     fontSize: 14,
+  },
+  // Division context header styles
+  divisionHeader: {
+    marginBottom: 16,
+    padding: 12,
+    backgroundColor: Colors.dark.card,
+    borderRadius: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: Colors.light.tint,
+  },
+  divisionTitle: {
+    fontSize: 18,
+    fontWeight: "600",
+    marginBottom: 4,
+  },
+  divisionSubtitle: {
+    fontSize: 14,
+    opacity: 0.7,
+    fontStyle: "italic",
   },
 });

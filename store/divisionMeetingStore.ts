@@ -8,6 +8,158 @@ import {
 import { addMonths, format, parseISO } from "date-fns";
 import { RealtimeChannel } from "@supabase/supabase-js";
 
+// Division context validation helper
+const validateDivisionContext = async (
+    meetingId: string,
+    expectedDivisionName?: string,
+): Promise<boolean> => {
+    if (!expectedDivisionName) return true;
+
+    try {
+        const { data } = await supabase
+            .from("division_meetings")
+            .select("division_id, divisions(name)")
+            .eq("id", meetingId)
+            .single();
+
+        return (data?.divisions as any)?.name === expectedDivisionName;
+    } catch (error) {
+        console.error("Error validating division context:", error);
+        return false;
+    }
+};
+
+// Enhanced error handling with division context
+const handleDivisionError = (
+    error: Error,
+    divisionName?: string,
+    operation?: string,
+): string => {
+    const contextualMessage = divisionName
+        ? `Error in ${divisionName} ${operation}: ${error.message}`
+        : `Error in ${operation}: ${error.message}`;
+
+    console.error(contextualMessage, error);
+    return contextualMessage;
+};
+
+// Validate that occurrence belongs to the same division as the pattern
+const validateOccurrenceConsistency = async (
+    occurrenceId: string,
+    patternId: string,
+): Promise<boolean> => {
+    try {
+        const { data } = await supabase
+            .from("meeting_occurrences")
+            .select("meeting_pattern_id")
+            .eq("id", occurrenceId)
+            .single();
+
+        if (data?.meeting_pattern_id !== patternId) {
+            console.error(
+                `Occurrence consistency validation failed: occurrence ${occurrenceId} belongs to pattern ${data?.meeting_pattern_id}, expected ${patternId}`,
+            );
+            return false;
+        }
+        return true;
+    } catch (error) {
+        console.error("Error validating occurrence consistency:", error);
+        return false;
+    }
+};
+
+// Validate that minutes belong to the correct meeting pattern
+const validateMinutesConsistency = async (
+    minutesId: string,
+    expectedPatternId: string,
+): Promise<boolean> => {
+    try {
+        const { data } = await supabase
+            .from("meeting_minutes")
+            .select("meeting_id")
+            .eq("id", minutesId)
+            .single();
+
+        if (data?.meeting_id !== expectedPatternId) {
+            console.error(
+                `Minutes consistency validation failed: minutes ${minutesId} belongs to pattern ${data?.meeting_id}, expected ${expectedPatternId}`,
+            );
+            return false;
+        }
+        return true;
+    } catch (error) {
+        console.error("Error validating minutes consistency:", error);
+        return false;
+    }
+};
+
+// Validate division data integrity
+const validateDivisionDataIntegrity = async (
+    divisionName: string,
+): Promise<{
+    isValid: boolean;
+    issues: string[];
+}> => {
+    const issues: string[] = [];
+
+    try {
+        // Get division ID
+        const { data: divisionData } = await supabase
+            .from("divisions")
+            .select("id")
+            .eq("name", divisionName)
+            .single();
+
+        if (!divisionData) {
+            issues.push(`Division '${divisionName}' not found`);
+            return { isValid: false, issues };
+        }
+
+        const divisionId = divisionData.id;
+
+        // Check for orphaned meeting occurrences
+        const { data: orphanedOccurrences } = await supabase
+            .from("meeting_occurrences")
+            .select("id, meeting_pattern_id")
+            .not(
+                "meeting_pattern_id",
+                "in",
+                `(SELECT id FROM division_meetings WHERE division_id = ${divisionId})`,
+            );
+
+        if (orphanedOccurrences && orphanedOccurrences.length > 0) {
+            issues.push(
+                `Found ${orphanedOccurrences.length} orphaned meeting occurrences for division ${divisionName}`,
+            );
+        }
+
+        // Check for orphaned meeting minutes
+        const { data: orphanedMinutes } = await supabase
+            .from("meeting_minutes")
+            .select("id, meeting_id")
+            .not(
+                "meeting_id",
+                "in",
+                `(SELECT id FROM division_meetings WHERE division_id = ${divisionId})`,
+            );
+
+        if (orphanedMinutes && orphanedMinutes.length > 0) {
+            issues.push(
+                `Found ${orphanedMinutes.length} orphaned meeting minutes for division ${divisionName}`,
+            );
+        }
+
+        return {
+            isValid: issues.length === 0,
+            issues,
+        };
+    } catch (error) {
+        console.error("Error validating division data integrity:", error);
+        issues.push(`Error validating division data integrity: ${error}`);
+        return { isValid: false, issues };
+    }
+};
+
 // Type definitions
 export interface MeetingPattern {
     day_of_month?: number;
@@ -162,6 +314,8 @@ interface DivisionMeetingState {
     totalItems: number;
     isLoading: boolean;
     error: string | null;
+    currentDivisionContext: string | null; // NEW: Track current division context
+    loadingOperation: string | null; // Track what operation is currently loading
     // Realtime subscriptions
     realtimeSubscriptions: {
         meetings: RealtimeChannel | null;
@@ -191,6 +345,7 @@ interface DivisionMeetingState {
     fetchMeetingMinutes: (occurrenceId: string, page?: number) => Promise<void>;
     searchMeetingMinutes: (
         searchTerm: string,
+        divisionName?: string,
         dateRange?: { start: Date; end: Date },
         page?: number,
     ) => void;
@@ -213,16 +368,25 @@ interface DivisionMeetingState {
         range: { start: Date | null; end: Date | null },
     ) => void;
     clearFilters: () => void;
-    subscribeToRealtime: (divisionId?: number) => void;
+    subscribeToRealtime: (divisionName?: string) => Promise<void>;
     unsubscribeFromRealtime: () => void;
     setSelectedMeetingPatternId: (id: string | null) => void;
     setSelectedOccurrenceId: (id: string | null) => void;
+    // Division context actions
+    setDivisionContext: (divisionName: string | null) => void;
+    // Data integrity validation
+    validateDivisionDataIntegrity: (divisionName: string) => Promise<{
+        isValid: boolean;
+        issues: string[];
+    }>;
     // UI state actions
     setActiveTab: (division: string, tab: string) => void;
 
     // Form state actions
     updateFormState: (division: string, updates: Partial<FormState>) => void;
     clearFormState: (division: string) => void;
+    // Loading state management
+    setLoadingState: (isLoading: boolean, operation?: string) => void;
 }
 
 export const useDivisionMeetingStore = create<DivisionMeetingState>((
@@ -243,6 +407,8 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
     totalItems: 0,
     isLoading: false,
     error: null,
+    currentDivisionContext: null,
+    loadingOperation: null,
     realtimeSubscriptions: {
         meetings: null,
         occurrences: null,
@@ -261,16 +427,77 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
         set({ selectedOccurrenceId: id });
     },
 
-    // Realtime subscription setup
-    subscribeToRealtime: (divisionId?: number) => {
+    // Division context actions
+    setDivisionContext: (divisionName: string | null) => {
+        set({ currentDivisionContext: divisionName });
+    },
+
+    // Data integrity validation
+    validateDivisionDataIntegrity: async (divisionName: string) => {
+        return await validateDivisionDataIntegrity(divisionName);
+    },
+
+    // Enhanced realtime subscription setup with improved division filtering
+    subscribeToRealtime: async (divisionName?: string) => {
         const { unsubscribeFromRealtime } = get();
 
         // Clean up any existing subscriptions first
         unsubscribeFromRealtime();
 
-        // Subscribe to division_meetings changes
+        console.log(
+            `[Realtime] Setting up subscriptions for division: ${
+                divisionName || "ALL"
+            }`,
+        );
+
+        // Get division ID for filtering if division name is provided
+        let divisionId: number | undefined;
+        let divisionMeetingPatternIds: string[] = [];
+
+        if (divisionName) {
+            try {
+                // Fetch division ID from database to ensure accuracy
+                const { data: divisionData, error: divisionError } =
+                    await supabase
+                        .from("divisions")
+                        .select("id")
+                        .eq("name", divisionName)
+                        .single();
+
+                if (divisionError) {
+                    console.error(
+                        `[Realtime] Error fetching division ID for ${divisionName}:`,
+                        divisionError,
+                    );
+                } else if (divisionData) {
+                    divisionId = divisionData.id;
+
+                    // Get all meeting pattern IDs for this division for more precise filtering
+                    const divisionMeetings = get().meetings[divisionName] || [];
+                    divisionMeetingPatternIds = divisionMeetings.map(
+                        (meeting) => meeting.id,
+                    );
+
+                    console.log(
+                        `[Realtime] Division ${divisionName} (ID: ${divisionId}) has ${divisionMeetingPatternIds.length} meeting patterns`,
+                    );
+                }
+            } catch (error) {
+                console.error(
+                    `[Realtime] Exception getting division data for ${divisionName}:`,
+                    error,
+                );
+            }
+        }
+
+        // Create unique channel names to avoid conflicts
+        const channelSuffix = divisionName
+            ? `-${divisionName.toLowerCase().replace(/\s+/g, "-")}`
+            : "-global";
+
+        // Subscribe to division_meetings changes with enhanced filtering
         const meetingsChannel = supabase
-            .channel("division-meetings-changes")
+            .channel(`division-meetings-changes${channelSuffix}`)
             .on("postgres_changes", {
                 event: "*",
                 schema: "public",
@@ -279,63 +506,226 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
                     ? { filter: `division_id=eq.${divisionId}` }
                     : {}),
             }, (payload) => {
-                console.log("Division meetings change received:", payload);
-
-                // Refresh all meetings for the affected division
-                const state = get();
-                const divisionName = Object.keys(state.meetings).find(
-                    (division) =>
-                        state.meetings[division].some(
-                            (meeting) => meeting.division_id === divisionId,
-                        ),
+                console.log(
+                    `[Realtime] Division meetings change received for ${
+                        divisionName || "ALL"
+                    }:`,
+                    {
+                        event: payload.eventType,
+                        table: payload.table,
+                        recordId: (payload.new as any)?.id ||
+                            (payload.old as any)?.id,
+                        divisionId: (payload.new as any)?.division_id ||
+                            (payload.old as any)?.division_id,
+                    },
                 );
 
+                // Validate that this change is relevant to our division context
+                const changeDivisionId = (payload.new as any)?.division_id ||
+                    (payload.old as any)?.division_id;
+                if (
+                    divisionId && changeDivisionId &&
+                    changeDivisionId !== divisionId
+                ) {
+                    console.log(
+                        `[Realtime] Ignoring change for different division (expected: ${divisionId}, got: ${changeDivisionId})`,
+                    );
+                    return;
+                }
+
+                // Refresh the appropriate division's data
                 if (divisionName) {
+                    console.log(
+                        `[Realtime] Refreshing meetings for division: ${divisionName}`,
+                    );
                     get().fetchDivisionMeetings(divisionName);
+                } else {
+                    // Find the affected division and refresh it
+                    const state = get();
+                    const affectedDivisionName = Object.keys(state.meetings)
+                        .find((division) =>
+                            state.meetings[division].some((meeting) =>
+                                meeting.division_id === changeDivisionId
+                            )
+                        );
+
+                    if (affectedDivisionName) {
+                        console.log(
+                            `[Realtime] Refreshing meetings for affected division: ${affectedDivisionName}`,
+                        );
+                        get().fetchDivisionMeetings(affectedDivisionName);
+                    }
                 }
             })
             .subscribe();
 
-        // Subscribe to meeting_occurrences changes for the selected pattern
+        // Subscribe to meeting_occurrences changes with enhanced division filtering
         const occurrencesChannel = supabase
-            .channel("meeting-occurrences-changes")
+            .channel(`meeting-occurrences-changes${channelSuffix}`)
             .on("postgres_changes", {
                 event: "*",
                 schema: "public",
                 table: "meeting_occurrences",
-            }, (payload) => {
-                console.log("Meeting occurrences change received:", payload);
+                // Filter by meeting pattern IDs if we have them for more precise filtering
+                ...(divisionMeetingPatternIds.length > 0
+                    ? {
+                        filter: `meeting_pattern_id=in.(${
+                            divisionMeetingPatternIds.join(",")
+                        })`,
+                    }
+                    : {}),
+            }, async (payload) => {
+                console.log(
+                    `[Realtime] Meeting occurrences change received for ${
+                        divisionName || "ALL"
+                    }:`,
+                    {
+                        event: payload.eventType,
+                        table: payload.table,
+                        recordId: (payload.new as any)?.id ||
+                            (payload.old as any)?.id,
+                        patternId: (payload.new as any)?.meeting_pattern_id ||
+                            (payload.old as any)?.meeting_pattern_id,
+                    },
+                );
 
-                const { selectedMeetingPatternId } = get();
+                const { selectedMeetingPatternId, currentDivisionContext } =
+                    get();
+                const changePatternId =
+                    (payload.new as any)?.meeting_pattern_id ||
+                    (payload.old as any)?.meeting_pattern_id;
 
-                // If the change is for the currently selected pattern, refresh
+                // Validate that this change is relevant to our division context
+                if (
+                    divisionMeetingPatternIds.length > 0 && changePatternId &&
+                    !divisionMeetingPatternIds.includes(changePatternId)
+                ) {
+                    console.log(
+                        `[Realtime] Ignoring occurrence change for different division pattern`,
+                    );
+                    return;
+                }
+
+                // If the change is for the currently selected pattern, refresh occurrences
                 if (
                     selectedMeetingPatternId &&
-                    payload.new &&
-                    typeof payload.new === "object" &&
-                    "meeting_pattern_id" in payload.new &&
-                    payload.new.meeting_pattern_id === selectedMeetingPatternId
+                    changePatternId === selectedMeetingPatternId
                 ) {
+                    console.log(
+                        `[Realtime] Refreshing occurrences for selected pattern: ${selectedMeetingPatternId}`,
+                    );
                     get().fetchMeetingOccurrences(selectedMeetingPatternId);
+                }
+
+                // Refresh search results if we're in the relevant division context
+                const contextToRefresh = currentDivisionContext || divisionName;
+                if (contextToRefresh) {
+                    const { searchTerm, dateRangeFilter } = get();
+                    if (
+                        searchTerm ||
+                        (dateRangeFilter.start && dateRangeFilter.end)
+                    ) {
+                        console.log(
+                            `[Realtime] Refreshing search results for division: ${contextToRefresh}`,
+                        );
+                        const validDateRange =
+                            dateRangeFilter.start && dateRangeFilter.end
+                                ? {
+                                    start: dateRangeFilter.start as Date,
+                                    end: dateRangeFilter.end as Date,
+                                }
+                                : undefined;
+
+                        get().searchMeetingMinutes(
+                            searchTerm,
+                            contextToRefresh,
+                            validDateRange,
+                            get().currentPage,
+                        );
+                    }
                 }
             })
             .subscribe();
 
-        // Subscribe to meeting_minutes changes for the selected occurrence
+        // Subscribe to meeting_minutes changes with enhanced division filtering
         const minutesChannel = supabase
-            .channel("meeting-minutes-changes")
+            .channel(`meeting-minutes-changes${channelSuffix}`)
             .on("postgres_changes", {
                 event: "*",
                 schema: "public",
                 table: "meeting_minutes",
-            }, (payload) => {
-                console.log("Meeting minutes change received:", payload);
+                // Filter by meeting pattern IDs if we have them
+                ...(divisionMeetingPatternIds.length > 0
+                    ? {
+                        filter: `meeting_id=in.(${
+                            divisionMeetingPatternIds.join(",")
+                        })`,
+                    }
+                    : {}),
+            }, async (payload) => {
+                console.log(
+                    `[Realtime] Meeting minutes change received for ${
+                        divisionName || "ALL"
+                    }:`,
+                    {
+                        event: payload.eventType,
+                        table: payload.table,
+                        recordId: (payload.new as any)?.id ||
+                            (payload.old as any)?.id,
+                        meetingId: (payload.new as any)?.meeting_id ||
+                            (payload.old as any)?.meeting_id,
+                    },
+                );
 
-                const { selectedOccurrenceId } = get();
+                const { selectedOccurrenceId, currentDivisionContext } = get();
+                const changeMeetingId = (payload.new as any)?.meeting_id ||
+                    (payload.old as any)?.meeting_id;
+
+                // Validate that this change is relevant to our division context
+                if (
+                    divisionMeetingPatternIds.length > 0 && changeMeetingId &&
+                    !divisionMeetingPatternIds.includes(changeMeetingId)
+                ) {
+                    console.log(
+                        `[Realtime] Ignoring minutes change for different division meeting`,
+                    );
+                    return;
+                }
 
                 // Refresh minutes if we're looking at the affected occurrence
                 if (selectedOccurrenceId) {
+                    console.log(
+                        `[Realtime] Refreshing minutes for selected occurrence: ${selectedOccurrenceId}`,
+                    );
                     get().fetchMeetingMinutes(selectedOccurrenceId);
+                }
+
+                // Refresh search results if we're in the relevant division context
+                const contextToRefresh = currentDivisionContext || divisionName;
+                if (contextToRefresh) {
+                    const { searchTerm, dateRangeFilter } = get();
+                    if (
+                        searchTerm ||
+                        (dateRangeFilter.start && dateRangeFilter.end)
+                    ) {
+                        console.log(
+                            `[Realtime] Refreshing search results for division: ${contextToRefresh}`,
+                        );
+                        const validDateRange =
+                            dateRangeFilter.start && dateRangeFilter.end
+                                ? {
+                                    start: dateRangeFilter.start as Date,
+                                    end: dateRangeFilter.end as Date,
+                                }
+                                : undefined;
+
+                        get().searchMeetingMinutes(
+                            searchTerm,
+                            contextToRefresh,
+                            validDateRange,
+                            get().currentPage,
+                        );
+                    }
                 }
             })
             .subscribe();
@@ -348,6 +738,12 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
                 minutes: minutesChannel,
             },
         });
+
+        console.log(
+            `[Realtime] Successfully set up ${
+                divisionName ? "division-specific" : "global"
+            } subscriptions`,
+        );
     },
 
     // Unsubscribe from all realtime channels
@@ -377,7 +773,10 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
 
     // Actions with actual Supabase calls
     fetchDivisionMeetings: async (divisionName: string) => {
-        set({ isLoading: true, error: null });
+        get().setLoadingState(
+            true,
+            `Loading meetings for Division ${divisionName}`,
+        );
         try {
             console.log(`Fetching meetings for division: ${divisionName}`);
 
@@ -409,8 +808,8 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
                     ...state.meetings,
                     [divisionName]: data || [],
                 },
-                isLoading: false,
             }));
+            get().setLoadingState(false);
 
             // If there are meetings, select the first one and fetch its occurrences
             if (data && data.length > 0) {
@@ -425,13 +824,17 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
             }
 
             // Set up realtime subscriptions for this division
-            get().subscribeToRealtime(divisionId);
+            get().subscribeToRealtime(divisionName);
         } catch (error) {
-            console.error("Error fetching division meetings:", error);
+            const errorMessage = handleDivisionError(
+                error instanceof Error ? error : new Error(String(error)),
+                divisionName,
+                "fetching meetings",
+            );
             set({
-                error: error instanceof Error ? error.message : String(error),
-                isLoading: false,
+                error: errorMessage,
             });
+            get().setLoadingState(false);
         }
     },
 
@@ -440,7 +843,7 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
         dateRange?: { start: Date; end: Date },
         includePastMeetings: boolean = true,
     ) => {
-        set({ isLoading: true, error: null });
+        get().setLoadingState(true, "Loading meeting occurrences");
         try {
             // Default end date is always 12 months in the future
             const end = dateRange?.end || addMonths(new Date(), 12);
@@ -489,14 +892,14 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
                     ...state.occurrences,
                     [patternId]: data || [],
                 },
-                isLoading: false,
             }));
+            get().setLoadingState(false);
         } catch (error) {
             console.error("Error fetching meeting occurrences:", error);
             set({
                 error: error instanceof Error ? error.message : String(error),
-                isLoading: false,
             });
+            get().setLoadingState(false);
         }
     },
 
@@ -511,6 +914,23 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
                 throw new Error(
                     "You must be logged in to create meeting patterns",
                 );
+            }
+
+            // Validate division context if available
+            const { currentDivisionContext } = get();
+            if (currentDivisionContext && pattern.division_id) {
+                // Verify the division_id matches the current context
+                const { data: divisionData } = await supabase
+                    .from("divisions")
+                    .select("name")
+                    .eq("id", pattern.division_id)
+                    .single();
+
+                if (divisionData?.name !== currentDivisionContext) {
+                    throw new Error(
+                        `Cannot create meeting pattern: division mismatch. Expected ${currentDivisionContext}, got ${divisionData?.name}`,
+                    );
+                }
             }
 
             // Create a copy of the pattern with proper UUID values
@@ -610,9 +1030,14 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
             // Fetch the newly created occurrences
             await get().fetchMeetingOccurrences(data.id);
         } catch (error) {
-            console.error("Error creating meeting pattern:", error);
+            const { currentDivisionContext } = get();
+            const errorMessage = handleDivisionError(
+                error instanceof Error ? error : new Error(String(error)),
+                currentDivisionContext || undefined,
+                "creating meeting pattern",
+            );
             set({
-                error: error instanceof Error ? error.message : String(error),
+                error: errorMessage,
                 isLoading: false,
             });
         }
@@ -625,6 +1050,21 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
         set({ isLoading: true, error: null });
         try {
             console.log(`Updating meeting pattern ${id}:`, pattern);
+
+            // Validate division context before updating
+            const { currentDivisionContext } = get();
+            if (currentDivisionContext) {
+                const isValidContext = await validateDivisionContext(
+                    id,
+                    currentDivisionContext,
+                );
+
+                if (!isValidContext) {
+                    throw new Error(
+                        `Cannot update meeting pattern: pattern does not belong to division ${currentDivisionContext}`,
+                    );
+                }
+            }
 
             // Get current user for UUID fields
             const { data: { user } } = await supabase.auth.getUser();
@@ -817,6 +1257,30 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
                 occurrenceDetails,
             );
 
+            // Validate division context for the occurrence
+            const { currentDivisionContext } = get();
+            if (currentDivisionContext) {
+                // Get the meeting pattern ID for this occurrence
+                const { data: occurrenceData } = await supabase
+                    .from("meeting_occurrences")
+                    .select("meeting_pattern_id")
+                    .eq("id", id)
+                    .single();
+
+                if (occurrenceData?.meeting_pattern_id) {
+                    const isValidContext = await validateDivisionContext(
+                        occurrenceData.meeting_pattern_id,
+                        currentDivisionContext,
+                    );
+
+                    if (!isValidContext) {
+                        throw new Error(
+                            `Cannot override occurrence: meeting does not belong to division ${currentDivisionContext}`,
+                        );
+                    }
+                }
+            }
+
             // Update the occurrence
             const { data, error } = await supabase
                 .from("meeting_occurrences")
@@ -860,6 +1324,30 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
             console.log(
                 `Cancelling meeting occurrence ${id} with reason: ${reason}`,
             );
+
+            // Validate division context for the occurrence
+            const { currentDivisionContext } = get();
+            if (currentDivisionContext) {
+                // Get the meeting pattern ID for this occurrence
+                const { data: occurrenceData } = await supabase
+                    .from("meeting_occurrences")
+                    .select("meeting_pattern_id")
+                    .eq("id", id)
+                    .single();
+
+                if (occurrenceData?.meeting_pattern_id) {
+                    const isValidContext = await validateDivisionContext(
+                        occurrenceData.meeting_pattern_id,
+                        currentDivisionContext,
+                    );
+
+                    if (!isValidContext) {
+                        throw new Error(
+                            `Cannot cancel occurrence: meeting does not belong to division ${currentDivisionContext}`,
+                        );
+                    }
+                }
+            }
 
             // Update the occurrence to mark it as cancelled
             const { data, error } = await supabase
@@ -960,6 +1448,7 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
 
     searchMeetingMinutes: async (
         searchTerm: string,
+        divisionName?: string,
         dateRange?: { start: Date; end: Date },
         page = 1,
     ) => {
@@ -977,52 +1466,119 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
         });
 
         try {
-            console.log(`Searching minutes with term: ${searchTerm}`);
+            console.log(
+                `Searching minutes with term: ${searchTerm}${
+                    divisionName ? ` for division: ${divisionName}` : ""
+                }`,
+            );
 
-            // Calculate pagination
-            const from = (page - 1) * get().itemsPerPage;
-            const to = from + get().itemsPerPage - 1;
+            // Get division's meeting pattern IDs first if division is specified
+            if (divisionName) {
+                const divisionMeetings = get().meetings[divisionName] || [];
+                const patternIds = divisionMeetings.map((m) => m.id);
 
-            // Build the query
-            let query = supabase
-                .from("meeting_minutes")
-                .select("*", { count: "exact" });
+                if (patternIds.length === 0) {
+                    // No meetings for this division, return empty
+                    set({
+                        filteredMinutes: [],
+                        totalItems: 0,
+                        isLoading: false,
+                    });
+                    return;
+                }
 
-            // Add text search if provided
-            if (searchTerm) {
-                query = query.textSearch("content", searchTerm);
+                // Calculate pagination
+                const from = (page - 1) * get().itemsPerPage;
+                const to = from + get().itemsPerPage - 1;
+
+                // Build the query with division filtering
+                let query = supabase
+                    .from("meeting_minutes")
+                    .select("*", { count: "exact" })
+                    .in("meeting_id", patternIds);
+
+                // Add text search if provided
+                if (searchTerm) {
+                    query = query.textSearch("content", searchTerm);
+                }
+
+                // Add date range filter if provided
+                if (dateRange?.start) {
+                    query = query.gte(
+                        "meeting_date",
+                        format(dateRange.start, "yyyy-MM-dd"),
+                    );
+                }
+                if (dateRange?.end) {
+                    query = query.lte(
+                        "meeting_date",
+                        format(dateRange.end, "yyyy-MM-dd"),
+                    );
+                }
+
+                // Add pagination and order
+                query = query
+                    .order("meeting_date", { ascending: false })
+                    .range(from, to);
+
+                // Execute the query
+                const { data, error, count } = await query;
+
+                if (error) throw error;
+
+                // Store the filtered minutes in state
+                set({
+                    filteredMinutes: data || [],
+                    totalItems: count || 0,
+                    isLoading: false,
+                });
+            } else {
+                // Original behavior for global search (when no division specified)
+                // Calculate pagination
+                const from = (page - 1) * get().itemsPerPage;
+                const to = from + get().itemsPerPage - 1;
+
+                // Build the query
+                let query = supabase
+                    .from("meeting_minutes")
+                    .select("*", { count: "exact" });
+
+                // Add text search if provided
+                if (searchTerm) {
+                    query = query.textSearch("content", searchTerm);
+                }
+
+                // Add date range filter if provided
+                if (dateRange?.start) {
+                    query = query.gte(
+                        "meeting_date",
+                        format(dateRange.start, "yyyy-MM-dd"),
+                    );
+                }
+                if (dateRange?.end) {
+                    query = query.lte(
+                        "meeting_date",
+                        format(dateRange.end, "yyyy-MM-dd"),
+                    );
+                }
+
+                // Add pagination and order
+                query = query
+                    .order("meeting_date", { ascending: false })
+                    .range(from, to);
+
+                // Execute the query
+                const { data, error, count } = await query;
+
+                if (error) throw error;
+
+                // Store the filtered minutes in state
+                set({
+                    filteredMinutes: data || [],
+                    totalItems: count || 0,
+                    isLoading: false,
+                });
             }
-
-            // Add date range filter if provided
-            if (dateRange?.start) {
-                query = query.gte(
-                    "meeting_date",
-                    format(dateRange.start, "yyyy-MM-dd"),
-                );
-            }
-            if (dateRange?.end) {
-                query = query.lte(
-                    "meeting_date",
-                    format(dateRange.end, "yyyy-MM-dd"),
-                );
-            }
-
-            // Add pagination and order
-            query = query
-                .order("meeting_date", { ascending: false })
-                .range(from, to);
-
-            // Execute the query
-            const { data, error, count } = await query;
-
-            if (error) throw error;
-
-            // Store the filtered minutes in state
-            set({
-                filteredMinutes: data || [],
-                totalItems: count || 0,
-                isLoading: false,
-            });
         } catch (error) {
             console.error("Error searching meeting minutes:", error);
             set({
@@ -1036,6 +1592,21 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
         set({ isLoading: true, error: null });
         try {
             console.log("Creating meeting minutes:", minutes);
+
+            // Validate division context if available
+            const { currentDivisionContext } = get();
+            if (currentDivisionContext && minutes.meeting_id) {
+                const isValidContext = await validateDivisionContext(
+                    minutes.meeting_id,
+                    currentDivisionContext,
+                );
+
+                if (!isValidContext) {
+                    throw new Error(
+                        `Meeting minutes cannot be created: meeting does not belong to division ${currentDivisionContext}`,
+                    );
+                }
+            }
 
             // Insert the minutes
             const { data, error } = await supabase
@@ -1080,6 +1651,30 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
         try {
             console.log(`Updating meeting minutes ${id}:`, minutes);
 
+            // Validate division context for the minutes
+            const { currentDivisionContext } = get();
+            if (currentDivisionContext) {
+                // Get the meeting ID for these minutes
+                const { data: minutesData } = await supabase
+                    .from("meeting_minutes")
+                    .select("meeting_id")
+                    .eq("id", id)
+                    .single();
+
+                if (minutesData?.meeting_id) {
+                    const isValidContext = await validateDivisionContext(
+                        minutesData.meeting_id,
+                        currentDivisionContext,
+                    );
+
+                    if (!isValidContext) {
+                        throw new Error(
+                            `Cannot update minutes: meeting does not belong to division ${currentDivisionContext}`,
+                        );
+                    }
+                }
+            }
+
             // Update the minutes
             const { data, error } = await supabase
                 .from("meeting_minutes")
@@ -1123,6 +1718,30 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
         set({ isLoading: true, error: null });
         try {
             console.log(`Approving meeting minutes ${id}`);
+
+            // Validate division context for the minutes
+            const { currentDivisionContext } = get();
+            if (currentDivisionContext) {
+                // Get the meeting ID for these minutes
+                const { data: minutesData } = await supabase
+                    .from("meeting_minutes")
+                    .select("meeting_id")
+                    .eq("id", id)
+                    .single();
+
+                if (minutesData?.meeting_id) {
+                    const isValidContext = await validateDivisionContext(
+                        minutesData.meeting_id,
+                        currentDivisionContext,
+                    );
+
+                    if (!isValidContext) {
+                        throw new Error(
+                            `Cannot approve minutes: meeting does not belong to division ${currentDivisionContext}`,
+                        );
+                    }
+                }
+            }
 
             // Get current user ID (assuming it's available from auth)
             const { data: { user } } = await supabase.auth.getUser();
@@ -1175,6 +1794,30 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
         set({ isLoading: true, error: null });
         try {
             console.log(`Archiving meeting minutes ${id}`);
+
+            // Validate division context for the minutes
+            const { currentDivisionContext } = get();
+            if (currentDivisionContext) {
+                // Get the meeting ID for these minutes
+                const { data: minutesData } = await supabase
+                    .from("meeting_minutes")
+                    .select("meeting_id")
+                    .eq("id", id)
+                    .single();
+
+                if (minutesData?.meeting_id) {
+                    const isValidContext = await validateDivisionContext(
+                        minutesData.meeting_id,
+                        currentDivisionContext,
+                    );
+
+                    if (!isValidContext) {
+                        throw new Error(
+                            `Cannot archive minutes: meeting does not belong to division ${currentDivisionContext}`,
+                        );
+                    }
+                }
+            }
 
             // Update the minutes to mark as archived
             const { data, error } = await supabase
@@ -1374,6 +2017,7 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
 
             get().searchMeetingMinutes(
                 searchTerm,
+                get().currentDivisionContext || undefined,
                 validDateRange,
                 page,
             );
@@ -1397,6 +2041,7 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
 
         get().searchMeetingMinutes(
             term,
+            get().currentDivisionContext || undefined,
             validDateRange,
             1, // Reset to first page
         );
@@ -1409,6 +2054,7 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
         if (range.start && range.end) {
             get().searchMeetingMinutes(
                 get().searchTerm,
+                get().currentDivisionContext || undefined,
                 {
                     start: range.start as Date,
                     end: range.end as Date,
@@ -1473,6 +2119,14 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
             return {
                 formStates: restFormStates,
             };
+        });
+    },
+
+    // Loading state management
+    setLoadingState: (isLoading: boolean, operation?: string) => {
+        set({
+            isLoading,
+            loadingOperation: isLoading ? operation || null : null,
         });
     },
 }));

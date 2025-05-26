@@ -19,6 +19,7 @@ import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedScrollView } from "@/components/ThemedScrollView";
 import { Colors } from "@/constants/Colors";
+import { DivisionLoadingIndicator } from "@/components/ui/DivisionLoadingIndicator";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { useDivisionMeetingStore } from "@/store/divisionMeetingStore";
 import { useAuth } from "@/hooks/useAuth";
@@ -65,8 +66,10 @@ export default function MeetingsPage() {
     subscribeToRealtime,
     unsubscribeFromRealtime,
     setPage,
+    setDivisionContext,
     isLoading,
     error,
+    loadingOperation,
     totalItems,
     itemsPerPage,
   } = useDivisionMeetingStore();
@@ -76,12 +79,16 @@ export default function MeetingsPage() {
 
   // Fetch division meetings on component mount
   useEffect(() => {
-    if (divisionName) {
-      fetchDivisionMeetings(divisionName);
-    }
+    const loadData = async () => {
+      if (divisionName) {
+        await fetchDivisionMeetings(divisionName);
+      }
 
-    // Subscribe to realtime updates
-    subscribeToRealtime();
+      // Subscribe to realtime updates
+      await subscribeToRealtime(divisionName);
+    };
+
+    loadData();
 
     // Clean up on unmount
     return () => {
@@ -104,11 +111,14 @@ export default function MeetingsPage() {
     });
   }, [divisionName, meetings, fetchMeetingOccurrences]);
 
-  // Fetch meeting minutes
+  // Set division context and fetch meeting minutes
   useEffect(() => {
-    // This will get all minutes for the division
-    searchMeetingMinutes(minutesSearchTerm, undefined, minutesPage);
-  }, [searchMeetingMinutes, minutesSearchTerm, minutesPage]);
+    if (divisionName) {
+      setDivisionContext(divisionName);
+      // This will get all minutes for the division
+      searchMeetingMinutes(minutesSearchTerm, divisionName, undefined, minutesPage);
+    }
+  }, [searchMeetingMinutes, minutesSearchTerm, minutesPage, divisionName, setDivisionContext]);
 
   // Create marked dates for calendar
   useEffect(() => {
@@ -264,9 +274,11 @@ export default function MeetingsPage() {
 
   if (isLoading && !Object.keys(meetings).length) {
     return (
-      <ThemedView style={styles.loadingContainer}>
-        <ThemedText>Loading meetings...</ThemedText>
-      </ThemedView>
+      <DivisionLoadingIndicator
+        divisionName={divisionName}
+        operation={loadingOperation || "Loading meetings"}
+        isVisible={true}
+      />
     );
   }
 
@@ -612,13 +624,7 @@ const styles = StyleSheet.create({
     borderColor: "#B4975A",
     padding: 16,
     marginBottom: 24,
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
+    boxShadow: "0 0 10px 0 rgba(0, 0, 0, 0.1)",
     elevation: 4,
   },
   upcomingMeetingHeader: {

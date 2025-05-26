@@ -87,13 +87,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: "#B4975A",
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
+    boxShadow: "0 0 10px 0 rgba(0, 0, 0, 0.1)",
     elevation: 4,
     overflow: "hidden",
     width: "100%",
@@ -136,11 +130,6 @@ const styles = StyleSheet.create({
   },
   webHovered: {
     transform: [{ translateY: -2 }],
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
+    boxShadow: "0 0 10px 0 rgba(0, 0, 0, 0.1)",
   },
 });

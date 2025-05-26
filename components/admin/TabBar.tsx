@@ -134,10 +134,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     borderBottomWidth: 1,
     elevation: 4,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    boxShadow: "0 0 10px 0 rgba(0, 0, 0, 0.1)",
     zIndex: 1,
   },
   webTab: {

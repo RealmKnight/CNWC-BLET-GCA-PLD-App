@@ -256,10 +256,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     margin: "1%",
     backgroundColor: Colors.dark.card,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
+    boxShadow: "0 0 10px 0 rgba(0, 0, 0, 0.1)",
     elevation: 1,
   },
   memberCardMobile: {
