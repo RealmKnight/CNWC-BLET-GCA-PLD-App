@@ -219,6 +219,7 @@ export function MinutesBrowser({
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.minutesList}
           showsVerticalScrollIndicator={false}
+          nestedScrollEnabled={true}
         />
       ) : (
         <ThemedView style={styles.emptyStateContainer}>

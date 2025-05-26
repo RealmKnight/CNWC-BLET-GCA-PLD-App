@@ -294,6 +294,7 @@ export function DocumentBrowser({
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.documentsList}
           showsVerticalScrollIndicator={false}
+          nestedScrollEnabled={true}
         />
       ) : (
         <ThemedView style={styles.emptyStateContainer}>
