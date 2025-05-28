@@ -160,6 +160,42 @@ const validateDivisionDataIntegrity = async (
     }
 };
 
+// Add these new interfaces for change preview
+export interface MeetingChangePreview {
+    currentOccurrences: MeetingOccurrence[];
+    newOccurrences: MeetingOccurrence[];
+    changedOccurrences: Array<{
+        existing: MeetingOccurrence;
+        updated: MeetingOccurrence;
+        changes: string[];
+    }>;
+    removedOccurrences: MeetingOccurrence[];
+    addedOccurrences: MeetingOccurrence[];
+    duplicateWarnings: Array<{
+        date: string;
+        time: string;
+        conflictsWith: string[];
+    }>;
+    summary: {
+        totalChanges: number;
+        affectedDates: number;
+        hasConflicts: boolean;
+        hasRemovals: boolean;
+    };
+}
+
+export interface DuplicateCheckResult {
+    hasDuplicates: boolean;
+    duplicates: Array<{
+        date: string;
+        time: string;
+        existingPatternId: string;
+        existingPatternName: string;
+        conflictType: "exact_time" | "overlapping_time" | "same_day";
+    }>;
+    warnings: string[];
+}
+
 // Type definitions
 export interface MeetingPattern {
     day_of_month?: number;
@@ -387,6 +423,27 @@ interface DivisionMeetingState {
     clearFormState: (division: string) => void;
     // Loading state management
     setLoadingState: (isLoading: boolean, operation?: string) => void;
+
+    // NEW: Preview and duplicate checking functions
+    previewMeetingPatternChanges: (
+        patternId: string,
+        newPattern: Partial<DivisionMeeting>,
+    ) => Promise<MeetingChangePreview>;
+    checkForDuplicates: (
+        divisionId: number,
+        newPattern: Partial<DivisionMeeting>,
+        excludePatternId?: string,
+    ) => Promise<DuplicateCheckResult>;
+    validatePatternUpdate: (
+        patternId: string,
+        newPattern: Partial<DivisionMeeting>,
+    ) => Promise<{
+        isValid: boolean;
+        preview: MeetingChangePreview;
+        duplicateCheck: DuplicateCheckResult;
+        warnings: string[];
+        errors: string[];
+    }>;
 }
 
 export const useDivisionMeetingStore = create<DivisionMeetingState>((
@@ -2128,5 +2185,535 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
             isLoading,
             loadingOperation: isLoading ? operation || null : null,
         });
+    },
+
+    // NEW: Preview and duplicate checking functions
+    previewMeetingPatternChanges: async (
+        patternId: string,
+        newPattern: Partial<DivisionMeeting>,
+    ): Promise<MeetingChangePreview> => {
+        try {
+            // Get current pattern
+            const { data: currentPattern, error: fetchError } = await supabase
+                .from("division_meetings")
+                .select("*")
+                .eq("id", patternId)
+                .single();
+
+            if (fetchError) throw fetchError;
+            if (!currentPattern) throw new Error("Meeting pattern not found");
+
+            // Get current occurrences
+            const { data: currentOccurrences, error: occurrencesError } =
+                await supabase
+                    .from("meeting_occurrences")
+                    .select("*")
+                    .eq("meeting_pattern_id", patternId)
+                    .gte(
+                        "actual_scheduled_datetime_utc",
+                        format(new Date(), "yyyy-MM-dd"),
+                    );
+
+            if (occurrencesError) throw occurrencesError;
+
+            // Create merged pattern for calculation
+            const mergedPattern = {
+                ...currentPattern,
+                ...newPattern,
+            } as DivisionMeeting;
+
+            // Calculate new occurrences
+            const now = new Date();
+            const endDate = addMonths(now, 12);
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) throw new Error("User not authenticated");
+
+            const newOccurrences = calculateMeetingOccurrences(
+                mergedPattern,
+                now,
+                endDate,
+                user.id,
+            );
+
+            // Compare occurrences
+            const currentOccurrenceMap = new Map<string, MeetingOccurrence>();
+            (currentOccurrences || []).forEach((occ) => {
+                const dateKey = occ.actual_scheduled_datetime_utc.split("T")[0];
+                currentOccurrenceMap.set(dateKey, occ);
+            });
+
+            const newOccurrenceMap = new Map<string, MeetingOccurrence>();
+            newOccurrences.forEach((occ) => {
+                const dateKey = occ.actual_scheduled_datetime_utc.split("T")[0];
+                newOccurrenceMap.set(dateKey, occ);
+            });
+
+            const changedOccurrences: Array<{
+                existing: MeetingOccurrence;
+                updated: MeetingOccurrence;
+                changes: string[];
+            }> = [];
+
+            const addedOccurrences: MeetingOccurrence[] = [];
+            const removedOccurrences: MeetingOccurrence[] = [];
+
+            // Find changes and additions
+            newOccurrenceMap.forEach((newOcc, dateKey) => {
+                const existing = currentOccurrenceMap.get(dateKey);
+                if (existing) {
+                    const changes: string[] = [];
+                    if (
+                        existing.actual_scheduled_datetime_utc !==
+                            newOcc.actual_scheduled_datetime_utc
+                    ) {
+                        changes.push("Time changed");
+                    }
+                    if (existing.location_name !== newOcc.location_name) {
+                        changes.push("Location changed");
+                    }
+                    if (existing.time_zone !== newOcc.time_zone) {
+                        changes.push("Timezone changed");
+                    }
+                    if (changes.length > 0) {
+                        changedOccurrences.push({
+                            existing,
+                            updated: newOcc,
+                            changes,
+                        });
+                    }
+                } else {
+                    addedOccurrences.push(newOcc);
+                }
+            });
+
+            // Find removals
+            currentOccurrenceMap.forEach((existing, dateKey) => {
+                if (!newOccurrenceMap.has(dateKey)) {
+                    removedOccurrences.push(existing);
+                }
+            });
+
+            // Check for duplicates with other patterns
+            const duplicateWarnings: Array<{
+                date: string;
+                time: string;
+                conflictsWith: string[];
+            }> = [];
+
+            // Get all other patterns in the same division
+            const { data: otherPatterns, error: otherPatternsError } =
+                await supabase
+                    .from("division_meetings")
+                    .select("*")
+                    .eq("division_id", mergedPattern.division_id)
+                    .neq("id", patternId)
+                    .eq("is_active", true);
+
+            if (otherPatternsError) throw otherPatternsError;
+
+            if (otherPatterns) {
+                for (const otherPattern of otherPatterns) {
+                    const otherOccurrences = calculateMeetingOccurrences(
+                        otherPattern as DivisionMeeting,
+                        now,
+                        endDate,
+                        user.id,
+                    );
+
+                    newOccurrences.forEach((newOcc) => {
+                        const newDate =
+                            newOcc.actual_scheduled_datetime_utc.split("T")[0];
+                        const newTime =
+                            newOcc.actual_scheduled_datetime_utc.split("T")[1];
+
+                        otherOccurrences.forEach((otherOcc) => {
+                            const otherDate =
+                                otherOcc.actual_scheduled_datetime_utc.split(
+                                    "T",
+                                )[0];
+                            const otherTime =
+                                otherOcc.actual_scheduled_datetime_utc.split(
+                                    "T",
+                                )[1];
+
+                            if (
+                                newDate === otherDate && newTime === otherTime
+                            ) {
+                                const existing = duplicateWarnings.find((w) =>
+                                    w.date === newDate && w.time === newTime
+                                );
+                                if (existing) {
+                                    existing.conflictsWith.push(
+                                        otherPattern.meeting_type || "Unknown",
+                                    );
+                                } else {
+                                    duplicateWarnings.push({
+                                        date: newDate,
+                                        time: newTime,
+                                        conflictsWith: [
+                                            otherPattern.meeting_type ||
+                                            "Unknown",
+                                        ],
+                                    });
+                                }
+                            }
+                        });
+                    });
+                }
+            }
+
+            return {
+                currentOccurrences: currentOccurrences || [],
+                newOccurrences,
+                changedOccurrences,
+                removedOccurrences,
+                addedOccurrences,
+                duplicateWarnings,
+                summary: {
+                    totalChanges: changedOccurrences.length +
+                        addedOccurrences.length + removedOccurrences.length,
+                    affectedDates: new Set([
+                        ...changedOccurrences.map((c) =>
+                            c.existing.actual_scheduled_datetime_utc.split(
+                                "T",
+                            )[0]
+                        ),
+                        ...addedOccurrences.map((a) =>
+                            a.actual_scheduled_datetime_utc.split("T")[0]
+                        ),
+                        ...removedOccurrences.map((r) =>
+                            r.actual_scheduled_datetime_utc.split("T")[0]
+                        ),
+                    ]).size,
+                    hasConflicts: duplicateWarnings.length > 0,
+                    hasRemovals: removedOccurrences.length > 0,
+                },
+            };
+        } catch (error) {
+            console.error("Error previewing meeting pattern changes:", error);
+            throw error;
+        }
+    },
+
+    checkForDuplicates: async (
+        divisionId: number,
+        newPattern: Partial<DivisionMeeting>,
+        excludePatternId?: string,
+    ): Promise<DuplicateCheckResult> => {
+        try {
+            // Get all active patterns in the division
+            let query = supabase
+                .from("division_meetings")
+                .select("*")
+                .eq("division_id", divisionId)
+                .eq("is_active", true);
+
+            if (excludePatternId) {
+                query = query.neq("id", excludePatternId);
+            }
+
+            const { data: existingPatterns, error } = await query;
+            if (error) throw error;
+
+            if (!existingPatterns || existingPatterns.length === 0) {
+                return {
+                    hasDuplicates: false,
+                    duplicates: [],
+                    warnings: [],
+                };
+            }
+
+            // Calculate occurrences for the new pattern
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) throw new Error("User not authenticated");
+
+            const now = new Date();
+            const endDate = addMonths(now, 12);
+
+            // Create a temporary pattern object for calculation
+            const tempPattern = {
+                id: "temp",
+                division_id: divisionId,
+                meeting_type: newPattern.meeting_type || "regular",
+                location_name: newPattern.location_name || "",
+                location_address: newPattern.location_address || "",
+                meeting_time: newPattern.meeting_time || "19:00:00",
+                meeting_pattern_type: newPattern.meeting_pattern_type ||
+                    "nth_day_of_month",
+                adjust_for_dst: newPattern.adjust_for_dst || false,
+                meeting_pattern: newPattern.meeting_pattern || {},
+                time_zone: newPattern.time_zone || "America/Chicago",
+                is_active: true,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+                created_by: user.id,
+                updated_by: user.id,
+            } as DivisionMeeting;
+
+            const newOccurrences = calculateMeetingOccurrences(
+                tempPattern,
+                now,
+                endDate,
+                user.id,
+            );
+
+            const duplicates: Array<{
+                date: string;
+                time: string;
+                existingPatternId: string;
+                existingPatternName: string;
+                conflictType: "exact_time" | "overlapping_time" | "same_day";
+            }> = [];
+
+            const warnings: string[] = [];
+
+            // Check against each existing pattern
+            for (const existingPattern of existingPatterns) {
+                const existingOccurrences = calculateMeetingOccurrences(
+                    existingPattern as DivisionMeeting,
+                    now,
+                    endDate,
+                    user.id,
+                );
+
+                newOccurrences.forEach((newOcc) => {
+                    const newDateTime = new Date(
+                        newOcc.actual_scheduled_datetime_utc,
+                    );
+                    const newDate = format(newDateTime, "yyyy-MM-dd");
+                    const newTime = format(newDateTime, "HH:mm");
+
+                    existingOccurrences.forEach((existingOcc) => {
+                        const existingDateTime = new Date(
+                            existingOcc.actual_scheduled_datetime_utc,
+                        );
+                        const existingDate = format(
+                            existingDateTime,
+                            "yyyy-MM-dd",
+                        );
+                        const existingTime = format(existingDateTime, "HH:mm");
+
+                        if (newDate === existingDate) {
+                            if (newTime === existingTime) {
+                                duplicates.push({
+                                    date: newDate,
+                                    time: newTime,
+                                    existingPatternId: existingPattern.id,
+                                    existingPatternName:
+                                        existingPattern.meeting_type ||
+                                        "Unknown",
+                                    conflictType: "exact_time",
+                                });
+                            } else {
+                                // Check for overlapping times (within 1 hour)
+                                const timeDiff = Math.abs(
+                                    newDateTime.getTime() -
+                                        existingDateTime.getTime(),
+                                );
+                                const hourInMs = 60 * 60 * 1000;
+
+                                if (timeDiff < hourInMs) {
+                                    duplicates.push({
+                                        date: newDate,
+                                        time: newTime,
+                                        existingPatternId: existingPattern.id,
+                                        existingPatternName:
+                                            existingPattern.meeting_type ||
+                                            "Unknown",
+                                        conflictType: "overlapping_time",
+                                    });
+                                } else {
+                                    duplicates.push({
+                                        date: newDate,
+                                        time: newTime,
+                                        existingPatternId: existingPattern.id,
+                                        existingPatternName:
+                                            existingPattern.meeting_type ||
+                                            "Unknown",
+                                        conflictType: "same_day",
+                                    });
+                                }
+                            }
+                        }
+                    });
+                });
+            }
+
+            // Generate warnings
+            if (duplicates.length > 0) {
+                const exactTimeConflicts = duplicates.filter((d) =>
+                    d.conflictType === "exact_time"
+                ).length;
+                const overlappingTimeConflicts = duplicates.filter((d) =>
+                    d.conflictType === "overlapping_time"
+                ).length;
+                const sameDayConflicts = duplicates.filter((d) =>
+                    d.conflictType === "same_day"
+                ).length;
+
+                if (exactTimeConflicts > 0) {
+                    warnings.push(
+                        `${exactTimeConflicts} meeting(s) scheduled at exactly the same time as existing meetings`,
+                    );
+                }
+                if (overlappingTimeConflicts > 0) {
+                    warnings.push(
+                        `${overlappingTimeConflicts} meeting(s) scheduled within 1 hour of existing meetings`,
+                    );
+                }
+                if (sameDayConflicts > 0) {
+                    warnings.push(
+                        `${sameDayConflicts} meeting(s) scheduled on the same day as existing meetings`,
+                    );
+                }
+            }
+
+            return {
+                hasDuplicates: duplicates.length > 0,
+                duplicates,
+                warnings,
+            };
+        } catch (error) {
+            console.error("Error checking for duplicates:", error);
+            throw error;
+        }
+    },
+
+    validatePatternUpdate: async (
+        patternId: string,
+        newPattern: Partial<DivisionMeeting>,
+    ): Promise<{
+        isValid: boolean;
+        preview: MeetingChangePreview;
+        duplicateCheck: DuplicateCheckResult;
+        warnings: string[];
+        errors: string[];
+    }> => {
+        try {
+            const errors: string[] = [];
+            const warnings: string[] = [];
+
+            // Get current pattern to determine division
+            const { data: currentPattern, error: fetchError } = await supabase
+                .from("division_meetings")
+                .select("division_id")
+                .eq("id", patternId)
+                .single();
+
+            if (fetchError) {
+                errors.push("Could not fetch current meeting pattern");
+                throw fetchError;
+            }
+
+            // Run preview and duplicate check in parallel
+            const [preview, duplicateCheck] = await Promise.all([
+                get().previewMeetingPatternChanges(patternId, newPattern),
+                get().checkForDuplicates(
+                    currentPattern.division_id,
+                    newPattern,
+                    patternId,
+                ),
+            ]);
+
+            // Validate the changes
+            if (
+                preview.summary.hasRemovals &&
+                preview.removedOccurrences.length > 5
+            ) {
+                warnings.push(
+                    `This change will remove ${preview.removedOccurrences.length} scheduled meetings`,
+                );
+            }
+
+            if (preview.summary.totalChanges > 10) {
+                warnings.push(
+                    `This change will affect ${preview.summary.totalChanges} meetings`,
+                );
+            }
+
+            if (duplicateCheck.hasDuplicates) {
+                const exactConflicts = duplicateCheck.duplicates.filter((d) =>
+                    d.conflictType === "exact_time"
+                );
+                if (exactConflicts.length > 0) {
+                    errors.push(
+                        `${exactConflicts.length} meetings would conflict with existing meetings at the exact same time`,
+                    );
+                }
+                warnings.push(...duplicateCheck.warnings);
+            }
+
+            // Additional validation rules
+            if (newPattern.meeting_pattern_type === "specific_date") {
+                const specificDates = newPattern.meeting_pattern
+                    ?.specific_dates;
+                if (!specificDates || specificDates.length === 0) {
+                    errors.push(
+                        "Specific date pattern requires at least one date",
+                    );
+                }
+            }
+
+            if (newPattern.meeting_pattern_type === "day_of_month") {
+                const dayOfMonth = newPattern.meeting_pattern?.day_of_month;
+                if (!dayOfMonth || dayOfMonth < 1 || dayOfMonth > 31) {
+                    errors.push("Day of month must be between 1 and 31");
+                }
+            }
+
+            if (newPattern.meeting_pattern_type === "nth_day_of_month") {
+                const dayOfWeek = newPattern.meeting_pattern?.day_of_week;
+                const weekOfMonth = newPattern.meeting_pattern?.week_of_month;
+                if (dayOfWeek === undefined || dayOfWeek < 0 || dayOfWeek > 6) {
+                    errors.push(
+                        "Day of week must be between 0 (Sunday) and 6 (Saturday)",
+                    );
+                }
+                if (
+                    weekOfMonth === undefined || weekOfMonth < 1 ||
+                    weekOfMonth > 5
+                ) {
+                    errors.push("Week of month must be between 1 and 5");
+                }
+            }
+
+            return {
+                isValid: errors.length === 0,
+                preview,
+                duplicateCheck,
+                warnings,
+                errors,
+            };
+        } catch (error) {
+            console.error("Error validating pattern update:", error);
+            return {
+                isValid: false,
+                preview: {
+                    currentOccurrences: [],
+                    newOccurrences: [],
+                    changedOccurrences: [],
+                    removedOccurrences: [],
+                    addedOccurrences: [],
+                    duplicateWarnings: [],
+                    summary: {
+                        totalChanges: 0,
+                        affectedDates: 0,
+                        hasConflicts: false,
+                        hasRemovals: false,
+                    },
+                },
+                duplicateCheck: {
+                    hasDuplicates: false,
+                    duplicates: [],
+                    warnings: [],
+                },
+                warnings: [],
+                errors: [
+                    error instanceof Error
+                        ? error.message
+                        : "Unknown error occurred",
+                ],
+            };
+        }
     },
 }));

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
-import { StyleSheet, View, TouchableOpacity, ScrollView, Platform, Switch } from "react-native";
+import { StyleSheet, View, TouchableOpacity, ScrollView, Platform, Switch, Modal } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedTextInput } from "@/components/ThemedTextInput";
@@ -11,8 +11,15 @@ import { Picker } from "@react-native-picker/picker";
 import { Calendar } from "react-native-calendars";
 import { ClientOnlyDatePicker } from "@/components/ClientOnlyDatePicker";
 import { format, addMonths, parse, parseISO, isValid } from "date-fns";
-import { MeetingPattern, DivisionMeeting, useDivisionMeetingStore } from "@/store/divisionMeetingStore";
+import {
+  MeetingPattern,
+  DivisionMeeting,
+  useDivisionMeetingStore,
+  MeetingChangePreview,
+  DuplicateCheckResult,
+} from "@/store/divisionMeetingStore";
 import { timeZones } from "@/utils/timeZones";
+import { MeetingPatternChangePreview } from "@/components/admin/MeetingPatternChangePreview";
 
 interface MeetingPatternEditorProps {
   divisionName: string;
@@ -271,6 +278,21 @@ export function MeetingPatternEditor({ divisionName, initialPattern, onSave, onC
     isDstTransitionSoon: false,
   });
 
+  // Preview state
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewData, setPreviewData] = useState<{
+    preview: MeetingChangePreview;
+    duplicateCheck: DuplicateCheckResult;
+    warnings: string[];
+    errors: string[];
+    isValid: boolean;
+  } | null>(null);
+  const [isValidating, setIsValidating] = useState(false);
+  const [pendingPattern, setPendingPattern] = useState<DivisionMeeting | null>(null);
+
+  // Get store functions for validation
+  const validatePatternUpdate = useDivisionMeetingStore((state) => state.validatePatternUpdate);
+
   // Check for upcoming DST transitions (placeholder for actual implementation)
   useEffect(() => {
     // In a real implementation, this would check for DST transitions in the next 30 days
@@ -484,8 +506,8 @@ export function MeetingPatternEditor({ divisionName, initialPattern, onSave, onC
     [rotatingRules, setRotatingRules]
   );
 
-  // Handle form submission
-  const handleSave = () => {
+  // Handle form submission - now shows preview instead of directly saving
+  const handleSave = async () => {
     // Construct the meeting pattern based on the selected type
     let meetingPattern: MeetingPattern = {};
 
@@ -537,7 +559,44 @@ export function MeetingPatternEditor({ divisionName, initialPattern, onSave, onC
       updated_by: "", // This would be set by the API
     };
 
-    onSave(completePattern);
+    // If this is a new pattern, save directly without preview
+    if (!initialPattern?.id) {
+      onSave(completePattern);
+      return;
+    }
+
+    // For existing patterns, show preview
+    setIsValidating(true);
+    setPendingPattern(completePattern);
+
+    try {
+      const validation = await validatePatternUpdate(initialPattern.id, completePattern);
+      setPreviewData(validation);
+      setShowPreview(true);
+    } catch (error) {
+      console.error("Error validating pattern update:", error);
+      // If validation fails, fall back to direct save
+      onSave(completePattern);
+    } finally {
+      setIsValidating(false);
+    }
+  };
+
+  // Handle preview confirmation
+  const handlePreviewConfirm = () => {
+    if (pendingPattern) {
+      onSave(pendingPattern);
+    }
+    setShowPreview(false);
+    setPreviewData(null);
+    setPendingPattern(null);
+  };
+
+  // Handle preview cancellation
+  const handlePreviewCancel = () => {
+    setShowPreview(false);
+    setPreviewData(null);
+    setPendingPattern(null);
   };
 
   // Render day of month form
@@ -972,10 +1031,31 @@ export function MeetingPatternEditor({ divisionName, initialPattern, onSave, onC
         <Button variant="secondary" onPress={onCancel} style={{ flex: 1 }}>
           Cancel
         </Button>
-        <Button onPress={handleSave} style={{ minWidth: 120 }}>
-          Save Pattern
+        <Button onPress={handleSave} style={{ minWidth: 120 }} disabled={isValidating}>
+          {isValidating ? "Validating..." : initialPattern?.id ? "Preview Changes" : "Save Pattern"}
         </Button>
       </View>
+
+      {/* Preview Modal */}
+      <Modal
+        visible={showPreview}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={handlePreviewCancel}
+      >
+        {previewData && (
+          <MeetingPatternChangePreview
+            preview={previewData.preview}
+            duplicateCheck={previewData.duplicateCheck}
+            warnings={previewData.warnings}
+            errors={previewData.errors}
+            isValid={previewData.isValid}
+            onConfirm={handlePreviewConfirm}
+            onCancel={handlePreviewCancel}
+            isLoading={false}
+          />
+        )}
+      </Modal>
     </ScrollView>
   );
 }
