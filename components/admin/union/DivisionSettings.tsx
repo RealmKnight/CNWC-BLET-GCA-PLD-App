@@ -6,6 +6,7 @@ import { ThemedText } from "@/components/ThemedText";
 import { useDivisionManagementStore } from "@/store/divisionManagementStore";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
+import { supabase } from "@/utils/supabase";
 
 export const DivisionSettings = () => {
   const colorScheme = useColorScheme() ?? "light";
@@ -123,12 +124,63 @@ const SettingsPanel = () => {
   const { selectedDivisionId, divisions, zones } = useDivisionManagementStore();
   const colorScheme = useColorScheme() ?? "light";
   const themeColor = Colors[colorScheme as keyof typeof Colors];
+  const [sortOrder, setSortOrder] = useState<string>("wc_sen_roster");
+  const [isUpdatingSortOrder, setIsUpdatingSortOrder] = useState(false);
 
   const selectedDivision = divisions.find((d) => d.id === selectedDivisionId);
   const divisionZones = selectedDivisionId ? zones[selectedDivisionId] || [] : [];
 
   // Check if division has at least one zone
   const hasNoZones = divisionZones.length === 0;
+
+  // Sort order options
+  const sortOrderOptions = [
+    { label: "Wisconsin Central (WC)", value: "wc_sen_roster" },
+    { label: "Duluth, Winnipeg & Pacific (DWP)", value: "dwp_sen_roster" },
+    { label: "Duluth, Missabe & Iron Range (DMIR)", value: "dmir_sen_roster" },
+    { label: "Elgin, Joliet & Eastern (EJ&E)", value: "eje_sen_roster" },
+  ];
+
+  // Fetch current sort order when division changes
+  useEffect(() => {
+    if (selectedDivisionId) {
+      fetchCurrentSortOrder();
+    }
+  }, [selectedDivisionId]);
+
+  const fetchCurrentSortOrder = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("divisions")
+        .select("default_sort_order")
+        .eq("id", selectedDivisionId)
+        .single();
+
+      if (error) throw error;
+      setSortOrder(data.default_sort_order || "wc_sen_roster");
+    } catch (error) {
+      console.error("Error fetching sort order:", error);
+    }
+  };
+
+  const updateSortOrder = async (newSortOrder: string) => {
+    if (!selectedDivisionId) return;
+
+    setIsUpdatingSortOrder(true);
+    try {
+      const { error } = await supabase
+        .from("divisions")
+        .update({ default_sort_order: newSortOrder })
+        .eq("id", selectedDivisionId);
+
+      if (error) throw error;
+      setSortOrder(newSortOrder);
+    } catch (error) {
+      console.error("Error updating sort order:", error);
+    } finally {
+      setIsUpdatingSortOrder(false);
+    }
+  };
 
   return (
     <ThemedView style={styles.settingsContainer}>
@@ -187,8 +239,46 @@ const SettingsPanel = () => {
       </ThemedView>
 
       <ThemedView style={styles.settingSection}>
-        <ThemedText style={styles.settingSectionTitle}>Advanced Options</ThemedText>
-        <ThemedText style={styles.comingSoon}>Advanced settings coming soon...</ThemedText>
+        <ThemedText style={styles.settingSectionTitle}>Member Display Settings</ThemedText>
+        <ThemedText style={styles.settingDescription}>
+          Choose the default roster order for displaying members in this division. This affects how members are sorted
+          in the division member list.
+        </ThemedText>
+
+        <View style={styles.sortOrderContainer}>
+          <ThemedText style={styles.settingLabel}>Default Sort Order:</ThemedText>
+          <View style={styles.sortOrderOptions}>
+            {sortOrderOptions.map((option) => (
+              <TouchableOpacity
+                key={option.value}
+                style={[
+                  styles.sortOrderOption,
+                  sortOrder === option.value && styles.sortOrderOptionSelected,
+                  isUpdatingSortOrder && styles.sortOrderOptionDisabled,
+                ]}
+                onPress={() => !isUpdatingSortOrder && updateSortOrder(option.value)}
+                disabled={isUpdatingSortOrder}
+              >
+                <Ionicons
+                  name={sortOrder === option.value ? "radio-button-on" : "radio-button-off"}
+                  size={20}
+                  color={sortOrder === option.value ? themeColor.tint : themeColor.text}
+                />
+                <ThemedText
+                  style={[styles.sortOrderOptionText, sortOrder === option.value && styles.sortOrderOptionTextSelected]}
+                >
+                  {option.label}
+                </ThemedText>
+              </TouchableOpacity>
+            ))}
+          </View>
+          {isUpdatingSortOrder && (
+            <View style={styles.updatingIndicator}>
+              <ActivityIndicator size="small" color={themeColor.tint} />
+              <ThemedText style={styles.updatingText}>Updating...</ThemedText>
+            </View>
+          )}
+        </View>
       </ThemedView>
     </ThemedView>
   );
@@ -344,8 +434,51 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     width: 120,
   },
-  comingSoon: {
-    fontStyle: "italic",
+  settingDescription: {
+    fontSize: 14,
+    opacity: 0.7,
+    marginBottom: 16,
+  },
+  sortOrderContainer: {
+    marginTop: 8,
+  },
+  sortOrderOptions: {
+    marginTop: 12,
+  },
+  sortOrderOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: Colors.dark.card,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+  },
+  sortOrderOptionSelected: {
+    backgroundColor: Colors.dark.tint,
+    borderColor: Colors.dark.tint,
+  },
+  sortOrderOptionDisabled: {
+    opacity: 0.5,
+  },
+  sortOrderOptionText: {
+    fontSize: 14,
+    color: Colors.dark.text,
+    marginLeft: 12,
+  },
+  sortOrderOptionTextSelected: {
+    color: Colors.dark.buttonText,
+  },
+  updatingIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 8,
+  },
+  updatingText: {
+    marginLeft: 8,
+    fontSize: 14,
     opacity: 0.7,
   },
   zonesList: {

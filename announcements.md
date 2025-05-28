@@ -548,7 +548,7 @@ export interface AnnouncementAnalytics {
 }
 ```
 
-- [ ] #### Step 2: Create Announcements Store
+- [ ] #### Step 2: Create Announcements Store with Division Context
 
 ```typescript
 // store/announcementStore.ts
@@ -560,8 +560,53 @@ import type { RealtimeChannel, RealtimePostgresChangesPayload } from "@supabase/
 import { Platform } from "react-native";
 import * as Notifications from "expo-notifications";
 
+// Division context validation helper (following pattern from divisionMeetingStore)
+const validateAnnouncementDivisionContext = async (
+  announcementId: string,
+  expectedDivisionName?: string
+): Promise<boolean> => {
+  if (!expectedDivisionName) return true;
+
+  try {
+    const { data } = await supabase
+      .from("announcements")
+      .select("target_division_ids, target_type")
+      .eq("id", announcementId)
+      .single();
+
+    if (data?.target_type === "GCA") return true; // GCA announcements are visible to all divisions
+
+    if (data?.target_type === "division" && data?.target_division_ids) {
+      // Get division ID for the expected division name
+      const { data: divisionData } = await supabase
+        .from("divisions")
+        .select("id")
+        .eq("name", expectedDivisionName)
+        .single();
+
+      return divisionData?.id ? data.target_division_ids.includes(divisionData.id) : false;
+    }
+
+    return false;
+  } catch (error) {
+    console.error("Error validating announcement division context:", error);
+    return false;
+  }
+};
+
+// Enhanced error handling with division context (following pattern from divisionMeetingStore)
+const handleAnnouncementDivisionError = (error: Error, divisionName?: string, operation?: string): string => {
+  const contextualMessage = divisionName
+    ? `Error in ${divisionName} ${operation}: ${error.message}`
+    : `Error in ${operation}: ${error.message}`;
+
+  console.error(contextualMessage, error);
+  return contextualMessage;
+};
+
 interface AnnouncementStore {
-  announcements: Announcement[];
+  // Data organized by division context (following pattern from divisionMeetingStore)
+  announcements: Record<string, Announcement[]>; // Announcements by division name ("GCA" for union announcements)
   readStatusMap: Record<string, boolean>;
   acknowledgedMap: Record<string, boolean>; // Track acknowledgment status
   unreadCount: {
@@ -572,16 +617,25 @@ interface AnnouncementStore {
   isLoading: boolean;
   error: string | null;
   isInitialized: boolean;
-  viewingDivisionId: number | null;
+  currentDivisionContext: string | null; // Track current division context (following pattern from divisionMeetingStore)
   subscriptionStatus: "none" | "subscribing" | "subscribed" | "error";
+  loadingOperation: string | null; // Track what operation is currently loading
 
-  // Fetch helpers
-  _fetchAndSetAnnouncements: (userId: string, divisionId: number | null) => Promise<void>;
+  // Realtime subscriptions (following pattern from divisionMeetingStore)
+  realtimeSubscriptions: {
+    announcements: RealtimeChannel | null;
+    readStatus: RealtimeChannel | null;
+  };
+
+  // Fetch helpers with division context
+  _fetchAndSetAnnouncements: (divisionName: string) => Promise<void>;
   _calculateUnreadCounts: () => void;
 
-  // Public API
+  // Public API with division context support
   initializeAnnouncementStore: (userId: string, assignedDivisionId: number | null, roles: string[]) => () => void;
-  setViewDivision: (divisionId: number | null) => Promise<void>;
+  setDivisionContext: (divisionName: string | null) => void; // Following pattern from divisionMeetingStore
+  fetchDivisionAnnouncements: (divisionName: string) => Promise<void>; // Following pattern from divisionMeetingStore
+  fetchGCAnnouncements: () => Promise<void>;
   markAnnouncementAsRead: (announcementId: string) => Promise<void>;
   markAnnouncementAsUnread: (announcementId: string) => Promise<void>;
   acknowledgeAnnouncement: (announcementId: string) => Promise<void>;
@@ -603,13 +657,21 @@ interface AnnouncementStore {
   getAnnouncementAnalytics: (announcementId: string) => Promise<AnnouncementAnalytics | null>;
   cleanupAnnouncementStore: () => void;
   setIsInitialized: (initialized: boolean) => void;
-  refreshAnnouncements: (userId: string, divisionId: number | null, force?: boolean) => Promise<void>;
-  subscribeToAnnouncements: (userId: string) => () => void;
+  refreshAnnouncements: (divisionName: string, force?: boolean) => Promise<void>;
+  subscribeToAnnouncements: (divisionName?: string) => () => void; // Following pattern from divisionMeetingStore
+  unsubscribeFromAnnouncements: () => void; // Following pattern from divisionMeetingStore
+  // Data integrity validation (following pattern from divisionMeetingStore)
+  validateAnnouncementDataIntegrity: (divisionName: string) => Promise<{
+    isValid: boolean;
+    issues: string[];
+  }>;
+  // Loading state management (following pattern from divisionMeetingStore)
+  setLoadingState: (isLoading: boolean, operation?: string) => void;
 }
 
 export const useAnnouncementStore = create<AnnouncementStore>((set, get) => ({
-  // Implementation following pattern in notificationStore.ts
-  announcements: [],
+  // Implementation following pattern from divisionMeetingStore.ts
+  announcements: {},
   readStatusMap: {},
   acknowledgedMap: {},
   unreadCount: {
@@ -620,17 +682,249 @@ export const useAnnouncementStore = create<AnnouncementStore>((set, get) => ({
   isLoading: false,
   error: null,
   isInitialized: false,
-  viewingDivisionId: null,
+  currentDivisionContext: null,
   subscriptionStatus: "none",
+  loadingOperation: null,
+  realtimeSubscriptions: {
+    announcements: null,
+    readStatus: null,
+  },
 
   setIsInitialized: (initialized: boolean) => {
     console.log(`[AnnouncementStore] Setting isInitialized to ${initialized}`);
     set({ isInitialized: initialized });
   },
 
-  // Implementation details will follow patterns from notificationStore.ts
-  // with realtime subscriptions and proper badge update handling
+  // Division context actions (following pattern from divisionMeetingStore)
+  setDivisionContext: (divisionName: string | null) => {
+    set({ currentDivisionContext: divisionName });
+  },
+
+  // Loading state management (following pattern from divisionMeetingStore)
+  setLoadingState: (isLoading: boolean, operation?: string) => {
+    set({
+      isLoading,
+      loadingOperation: isLoading ? operation || null : null,
+    });
+  },
+
+  // Fetch division announcements with context validation (following pattern from divisionMeetingStore)
+  fetchDivisionAnnouncements: async (divisionName: string) => {
+    get().setLoadingState(true, `Loading ${divisionName} announcements`);
+
+    try {
+      console.log(`[AnnouncementStore] Fetching announcements for division: ${divisionName}`);
+
+      // Get division ID first
+      const { data: divisionData } = await supabase.from("divisions").select("id").eq("name", divisionName).single();
+
+      if (!divisionData?.id) {
+        throw new Error(`Division ${divisionName} not found`);
+      }
+
+      // Fetch announcements for this specific division
+      const { data, error } = await supabase
+        .from("announcements_with_author")
+        .select("*")
+        .or(`target_type.eq.GCA,and(target_type.eq.division,target_division_ids.cs.{${divisionData.id}})`)
+        .eq("is_active", true)
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+
+      // Store announcements by division context (following pattern from divisionMeetingStore)
+      set((state) => ({
+        announcements: {
+          ...state.announcements,
+          [divisionName]: data || [],
+        },
+      }));
+
+      get().setLoadingState(false);
+    } catch (error) {
+      const errorMessage = handleAnnouncementDivisionError(
+        error instanceof Error ? error : new Error(String(error)),
+        divisionName,
+        "fetching announcements"
+      );
+      set({
+        error: errorMessage,
+      });
+      get().setLoadingState(false);
+    }
+  },
+
+  // Subscription handling with division context (following pattern from divisionMeetingStore)
+  subscribeToAnnouncements: (divisionName?: string) => {
+    const { unsubscribeFromAnnouncements } = get();
+
+    // Clean up existing subscriptions
+    unsubscribeFromAnnouncements();
+
+    console.log(`[AnnouncementStore] Setting up realtime subscriptions for ${divisionName || "ALL"}`);
+
+    // Get division ID for filtering if division is specified
+    let divisionId: number | null = null;
+    if (divisionName) {
+      supabase
+        .from("divisions")
+        .select("id")
+        .eq("name", divisionName)
+        .single()
+        .then(({ data }) => {
+          divisionId = data?.id || null;
+        });
+    }
+
+    const channelSuffix = divisionName ? `-${divisionName}` : "";
+
+    // Subscribe to announcements changes with division filtering (following pattern from divisionMeetingStore)
+    const announcementsChannel = supabase
+      .channel(`announcements-changes${channelSuffix}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "announcements",
+        },
+        (payload) => {
+          console.log(`[Realtime] Announcements change received for ${divisionName || "ALL"}:`, {
+            event: payload.eventType,
+            table: payload.table,
+            recordId: (payload.new as any)?.id || (payload.old as any)?.id,
+            targetType: (payload.new as any)?.target_type || (payload.old as any)?.target_type,
+            targetDivisionIds: (payload.new as any)?.target_division_ids || (payload.old as any)?.target_division_ids,
+          });
+
+          // Validate that this change is relevant to our division context
+          const changeTargetType = (payload.new as any)?.target_type || (payload.old as any)?.target_type;
+          const changeTargetDivisionIds =
+            (payload.new as any)?.target_division_ids || (payload.old as any)?.target_division_ids;
+
+          if (
+            divisionId &&
+            changeTargetType === "division" &&
+            changeTargetDivisionIds &&
+            !changeTargetDivisionIds.includes(divisionId)
+          ) {
+            console.log(
+              `[Realtime] Ignoring change for different division (expected: ${divisionId}, got: ${changeTargetDivisionIds})`
+            );
+            return;
+          }
+
+          // Refresh the appropriate division's data
+          if (divisionName) {
+            console.log(`[Realtime] Refreshing announcements for division: ${divisionName}`);
+            get().fetchDivisionAnnouncements(divisionName);
+          } else if (changeTargetType === "GCA") {
+            console.log(`[Realtime] Refreshing GCA announcements`);
+            get().fetchGCAnnouncements();
+          }
+        }
+      )
+      .subscribe();
+
+    // Subscribe to read status changes (following pattern from divisionMeetingStore)
+    const readStatusChannel = supabase
+      .channel(`announcement-read-status-changes${channelSuffix}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "announcement_read_status",
+        },
+        (payload) => {
+          console.log(`[Realtime] Read status change received:`, payload);
+
+          // Update read status in local state
+          const announcementId = (payload.new as any)?.announcement_id || (payload.old as any)?.announcement_id;
+          const userId = (payload.new as any)?.user_id || (payload.old as any)?.user_id;
+
+          if (announcementId && userId) {
+            // Update local read status map
+            set((state) => ({
+              readStatusMap: {
+                ...state.readStatusMap,
+                [announcementId]: payload.eventType !== "DELETE",
+              },
+            }));
+
+            // Recalculate unread counts
+            get()._calculateUnreadCounts();
+          }
+        }
+      )
+      .subscribe();
+
+    // Store the subscription channels (following pattern from divisionMeetingStore)
+    set({
+      realtimeSubscriptions: {
+        announcements: announcementsChannel,
+        readStatus: readStatusChannel,
+      },
+      subscriptionStatus: "subscribed",
+    });
+
+    // Return cleanup function
+    return () => {
+      unsubscribeFromAnnouncements();
+    };
+  },
+
+  // Unsubscribe from realtime (following pattern from divisionMeetingStore)
+  unsubscribeFromAnnouncements: () => {
+    const { realtimeSubscriptions } = get();
+
+    if (realtimeSubscriptions.announcements) {
+      supabase.removeChannel(realtimeSubscriptions.announcements);
+    }
+
+    if (realtimeSubscriptions.readStatus) {
+      supabase.removeChannel(realtimeSubscriptions.readStatus);
+    }
+
+    set({
+      realtimeSubscriptions: {
+        announcements: null,
+        readStatus: null,
+      },
+      subscriptionStatus: "none",
+    });
+  },
+
+  // Implementation details will follow patterns from divisionMeetingStore.ts
+  // with realtime subscriptions and proper division context handling
   // ...
+
+  // Data integrity validation (following pattern from divisionMeetingStore)
+  validateAnnouncementDataIntegrity: async (divisionName: string) => {
+    const issues: string[] = [];
+    let isValid = true;
+
+    try {
+      // Validate that all announcements in the division context are properly filtered
+      const divisionAnnouncements = get().announcements[divisionName] || [];
+
+      for (const announcement of divisionAnnouncements) {
+        if (announcement.target_type === "division") {
+          const isValidContext = await validateAnnouncementDivisionContext(announcement.id, divisionName);
+
+          if (!isValidContext) {
+            issues.push(`Announcement ${announcement.id} does not belong to division ${divisionName}`);
+            isValid = false;
+          }
+        }
+      }
+    } catch (error) {
+      issues.push(`Error validating division data integrity: ${error}`);
+      isValid = false;
+    }
+
+    return { isValid, issues };
+  },
 
   // Helper function to update announcement badge counts
   _updateAnnouncementBadges: (unreadCounts) => {
@@ -640,14 +934,7 @@ export const useAnnouncementStore = create<AnnouncementStore>((set, get) => ({
     }
   },
 
-  // Subscription handling similar to notificationStore.ts
-  subscribeToAnnouncements: (userId: string) => {
-    // Will implement following pattern from notificationStore.ts
-    // Creates and manages multiple realtime channels for different announcement types
-    return () => {
-      // Cleanup function
-    };
-  },
+  // Other implementation details following the same patterns...
 }));
 ```
 
@@ -663,12 +950,59 @@ import { useAnnouncementStore } from "@/store/announcementStore";
 import { useUserStore } from "@/store/userStore";
 // ... other imports
 
-export function DivisionAnnouncements() {
+interface DivisionAnnouncementsProps {
+  division: string; // Division name passed as prop (following pattern from DivisionMeetings.tsx)
+  isAdmin?: boolean;
+}
+
+export function DivisionAnnouncements({ division, isAdmin = false }: DivisionAnnouncementsProps) {
+  // Following the exact pattern from DivisionMeetings.tsx for division context management
+
+  // Use the store with individual selectors (following pattern from DivisionMeetings.tsx)
+  const announcements = useAnnouncementStore((state) => state.announcements);
+  const isLoading = useAnnouncementStore((state) => state.isLoading);
+  const loadingOperation = useAnnouncementStore((state) => state.loadingOperation);
+  const error = useAnnouncementStore((state) => state.error);
+  const currentDivisionContext = useAnnouncementStore((state) => state.currentDivisionContext);
+
+  // Get store actions (following pattern from DivisionMeetings.tsx)
+  const fetchDivisionAnnouncements = useAnnouncementStore((state) => state.fetchDivisionAnnouncements);
+  const setDivisionContext = useAnnouncementStore((state) => state.setDivisionContext);
+  const subscribeToAnnouncements = useAnnouncementStore((state) => state.subscribeToAnnouncements);
+  const unsubscribeFromAnnouncements = useAnnouncementStore((state) => state.unsubscribeFromAnnouncements);
+  const createAnnouncement = useAnnouncementStore((state) => state.createAnnouncement);
+  const updateAnnouncement = useAnnouncementStore((state) => state.updateAnnouncement);
+  const deleteAnnouncement = useAnnouncementStore((state) => state.deleteAnnouncement);
+
+  // Set division context and fetch announcements (following pattern from DivisionMeetings.tsx)
+  useEffect(() => {
+    if (division) {
+      setDivisionContext(division);
+      fetchDivisionAnnouncements(division);
+    }
+  }, [division, setDivisionContext, fetchDivisionAnnouncements]);
+
+  // Subscribe to realtime updates (following pattern from DivisionMeetings.tsx)
+  useEffect(() => {
+    const cleanup = subscribeToAnnouncements(division);
+    return cleanup;
+  }, [division, subscribeToAnnouncements]);
+
+  // Get division-specific announcements (following pattern from DivisionMeetings.tsx)
+  const divisionAnnouncements = announcements[division] || [];
+
   // Implementation of the division admin announcement management UI
-  // - List view of division announcements
-  // - Create/edit/delete functionality
+  // - List view of division announcements (filtered by division context)
+  // - Create/edit/delete functionality (with division context validation)
   // - Toggle active status
-  // - View read analytics
+  // - View read analytics (scoped to division members only)
+
+  return (
+    <div>
+      {/* Division-specific announcement management UI */}
+      {/* Following existing UI patterns from DivisionMeetings.tsx */}
+    </div>
+  );
 }
 ```
 
@@ -683,15 +1017,54 @@ import { useUserStore } from "@/store/userStore";
 // ... other imports
 
 export function UnionAnnouncements() {
+  // Following pattern from DivisionMeetings.tsx but for union-level management
+
+  // Use the store with individual selectors
+  const announcements = useAnnouncementStore((state) => state.announcements);
+  const isLoading = useAnnouncementStore((state) => state.isLoading);
+  const error = useAnnouncementStore((state) => state.error);
+
+  // Get store actions
+  const fetchGCAnnouncements = useAnnouncementStore((state) => state.fetchGCAnnouncements);
+  const fetchDivisionAnnouncements = useAnnouncementStore((state) => state.fetchDivisionAnnouncements);
+  const subscribeToAnnouncements = useAnnouncementStore((state) => state.subscribeToAnnouncements);
+  const createAnnouncement = useAnnouncementStore((state) => state.createAnnouncement);
+  const updateAnnouncement = useAnnouncementStore((state) => state.updateAnnouncement);
+  const deleteAnnouncement = useAnnouncementStore((state) => state.deleteAnnouncement);
+
+  // Fetch all announcements for union admin view
+  useEffect(() => {
+    // Fetch GCA announcements
+    fetchGCAnnouncements();
+
+    // Fetch all division announcements (union admins can see all)
+    // This would need to be implemented to fetch all divisions
+    // Following the pattern but for multiple divisions
+  }, [fetchGCAnnouncements, fetchDivisionAnnouncements]);
+
+  // Subscribe to realtime updates for all announcement types
+  useEffect(() => {
+    const cleanup = subscribeToAnnouncements(); // No division specified = all announcements
+    return cleanup;
+  }, [subscribeToAnnouncements]);
+
   // Implementation of the union admin announcement management UI
-  // - List view of all announcements (union and division)
+  // - Tabbed interface for managing GCA and all division announcements
   // - Create/edit/delete functionality for union announcements
   // - View read analytics across all announcements
   // - Scheduling capabilities
+  // - Division context awareness for proper data segregation
+
+  return (
+    <div>
+      {/* Union-level announcement management UI */}
+      {/* Tabbed interface with proper division context handling */}
+    </div>
+  );
 }
 ```
 
-- [ ] #### Step 3: Create Announcement Card Component
+- [ ] #### Step 3: Create Announcement Card Component with Division Context Awareness
 
 ```typescript
 // components/ui/AnnouncementCard.tsx
@@ -703,11 +1076,32 @@ import { useAnnouncementStore } from "@/store/announcementStore";
 interface AnnouncementCardProps {
   announcement: Announcement;
   isAdmin?: boolean;
+  divisionContext?: string; // Add division context for validation
   onEdit?: () => void;
   onDelete?: () => void;
 }
 
-export function AnnouncementCard({ announcement, isAdmin, onEdit, onDelete }: AnnouncementCardProps) {
+export function AnnouncementCard({ announcement, isAdmin, divisionContext, onEdit, onDelete }: AnnouncementCardProps) {
+  // Validate that announcement belongs to current division context
+  const isValidForContext = React.useMemo(() => {
+    if (!divisionContext) return true; // No context restriction
+
+    if (announcement.target_type === "GCA") return true; // GCA announcements visible to all
+
+    if (announcement.target_type === "division") {
+      // Check if current division is in target divisions
+      // This would need division ID lookup logic
+      return true; // Simplified for now
+    }
+
+    return false;
+  }, [announcement, divisionContext]);
+
+  if (!isValidForContext) {
+    console.warn(`Announcement ${announcement.id} not valid for division context ${divisionContext}`);
+    return null; // Don't render announcements that don't belong to current context
+  }
+
   // Implement the card component that displays:
   // - Title
   // - Message with formatting
@@ -716,10 +1110,13 @@ export function AnnouncementCard({ announcement, isAdmin, onEdit, onDelete }: An
   // - Read/unread indicator
   // - Acknowledgment status and UI if required
   // - Admin controls if isAdmin is true
+  // - Division context validation
+
+  return <div>{/* Announcement card UI with division context awareness */}</div>;
 }
 ```
 
-- [ ] #### Step 4: Create Announcement Badge Component
+- [ ] #### Step 4: Create Announcement Badge Component with Division Context
 
 ```typescript
 // components/ui/AnnouncementBadge.tsx
@@ -731,11 +1128,29 @@ import { useAnnouncementStore } from "@/store/announcementStore";
 interface AnnouncementBadgeProps {
   style?: any;
   targetType?: "division" | "union" | "all";
+  divisionContext?: string; // Add division context for proper filtering
 }
 
-export function AnnouncementBadge({ style, targetType }: AnnouncementBadgeProps) {
+export function AnnouncementBadge({ style, targetType, divisionContext }: AnnouncementBadgeProps) {
+  // Get unread counts with division context awareness
+  const unreadCount = useAnnouncementStore((state) => {
+    if (!divisionContext) return state.unreadCount.total;
+
+    switch (targetType) {
+      case "division":
+        return state.unreadCount.division;
+      case "union":
+        return state.unreadCount.gca;
+      default:
+        return state.unreadCount.total;
+    }
+  });
+
   // Implementation of the badge component that shows unread count
-  // - Filter by targetType if provided
+  // - Filter by targetType and divisionContext if provided
+  // - Prevent cross-contamination by respecting division boundaries
+
+  return unreadCount > 0 ? <div style={style}>{unreadCount}</div> : null;
 }
 ```
 
@@ -745,56 +1160,261 @@ export function AnnouncementBadge({ style, targetType }: AnnouncementBadgeProps)
 
 - Announcements requiring acknowledgment must use a modal approach (similar to existing notification acknowledgement system), blocking access to other content until acknowledged
 - Unread announcements should retain unread status across user sessions (logout/login) using the same database persistence as existing notifications
-- Important announcements should have special visual styling to highlight their significance
+- Important announcements should have special visual styling to highlight their importance
 - Expired announcements should remain visible but be clearly marked as expired
+- **Division context must be strictly enforced to prevent cross-contamination of division information**
 
-- [ ] #### Step 1: Create Division Announcements Screen
+- [ ] #### Step 1: Create Division Announcements Screen with Division Context
 
 ```typescript
 // app/(division)/[divisionName]/announcements/page.tsx
 
-import React from "react";
+import React, { useEffect } from "react";
+import { useLocalSearchParams } from "expo-router";
 import { useAnnouncementStore } from "@/store/announcementStore";
 import { useUserStore } from "@/store/userStore";
 // ... other imports
 
 export default function DivisionAnnouncementsPage() {
+  // Get division name from route params (following pattern from meetings.tsx)
+  const params = useLocalSearchParams();
+  const divisionName = params.divisionName as string;
+
+  // Following the exact pattern from meetings.tsx for division context management
+  const { session, member } = useAuth();
+
+  // Use the store with individual selectors (following pattern from meetings.tsx)
+  const announcements = useAnnouncementStore((state) => state.announcements);
+  const isLoading = useAnnouncementStore((state) => state.isLoading);
+  const loadingOperation = useAnnouncementStore((state) => state.loadingOperation);
+  const error = useAnnouncementStore((state) => state.error);
+  const currentDivisionContext = useAnnouncementStore((state) => state.currentDivisionContext);
+
+  // Get store actions (following pattern from meetings.tsx)
+  const fetchDivisionAnnouncements = useAnnouncementStore((state) => state.fetchDivisionAnnouncements);
+  const setDivisionContext = useAnnouncementStore((state) => state.setDivisionContext);
+  const subscribeToAnnouncements = useAnnouncementStore((state) => state.subscribeToAnnouncements);
+  const unsubscribeFromAnnouncements = useAnnouncementStore((state) => state.unsubscribeFromAnnouncements);
+  const markAnnouncementAsRead = useAnnouncementStore((state) => state.markAnnouncementAsRead);
+  const acknowledgeAnnouncement = useAnnouncementStore((state) => state.acknowledgeAnnouncement);
+
+  // Set division context and fetch announcements (following pattern from meetings.tsx)
+  useEffect(() => {
+    if (divisionName) {
+      setDivisionContext(divisionName);
+      fetchDivisionAnnouncements(divisionName);
+    }
+  }, [divisionName, setDivisionContext, fetchDivisionAnnouncements]);
+
+  // Subscribe to realtime updates (following pattern from meetings.tsx)
+  useEffect(() => {
+    const cleanup = subscribeToAnnouncements(divisionName);
+    return cleanup;
+  }, [divisionName, subscribeToAnnouncements]);
+
+  // Get division-specific announcements (following pattern from meetings.tsx)
+  const divisionAnnouncements = announcements[divisionName] || [];
+
+  // Validate division context matches user's division (prevent unauthorized access)
+  useEffect(() => {
+    if (member && divisionName) {
+      // Validate that user belongs to this division
+      // This should match the division context validation from meetings.tsx
+      const userDivisionName = member.division?.name;
+      if (userDivisionName !== divisionName) {
+        console.warn(`User division ${userDivisionName} does not match route division ${divisionName}`);
+        // Handle unauthorized access - redirect or show error
+      }
+    }
+  }, [member, divisionName]);
+
+  // Loading state (following pattern from meetings.tsx)
+  if (isLoading && !divisionAnnouncements.length) {
+    return (
+      <DivisionLoadingIndicator
+        divisionName={divisionName}
+        operation={loadingOperation || "Loading announcements"}
+        isVisible={true}
+      />
+    );
+  }
+
+  if (error) {
+    return (
+      <ThemedView style={styles.errorContainer}>
+        <ThemedText style={styles.errorText}>{error}</ThemedText>
+      </ThemedView>
+    );
+  }
+
   // Implementation of the division announcements viewing page
-  // - Display division-specific announcements
-  // - Mark as read functionality
+  // - Display division-specific announcements (filtered by division context)
+  // - Mark as read functionality (with division context validation)
   // - Document viewing using existing document viewer components
   // - Implement acknowledgment modal for required announcements
+  // - Strict division boundary enforcement
+
+  return (
+    <ThemedScrollView style={styles.container}>
+      <ThemedView style={styles.content}>
+        {/* Division Announcements Header */}
+        <ThemedView style={styles.header}>
+          <ThemedText style={styles.title}>Division {divisionName} Announcements</ThemedText>
+        </ThemedView>
+
+        {/* Announcements List with Division Context Validation */}
+        {divisionAnnouncements.map((announcement) => (
+          <AnnouncementCard
+            key={announcement.id}
+            announcement={announcement}
+            divisionContext={divisionName} // Pass division context for validation
+            onRead={() => markAnnouncementAsRead(announcement.id)}
+            onAcknowledge={() => acknowledgeAnnouncement(announcement.id)}
+          />
+        ))}
+
+        {divisionAnnouncements.length === 0 && (
+          <ThemedText style={styles.noAnnouncementsText}>No announcements for Division {divisionName}</ThemedText>
+        )}
+      </ThemedView>
+    </ThemedScrollView>
+  );
 }
 ```
 
-- [ ] #### Step 2: Create Union/GCA Announcements Screen
+- [ ] #### Step 2: Create Union/GCA Announcements Screen with Context Validation
 
 ```typescript
 // app/(gca)/announcements/page.tsx
 
-import React from "react";
+import React, { useEffect } from "react";
 import { useAnnouncementStore } from "@/store/announcementStore";
 import { useUserStore } from "@/store/userStore";
 // ... other imports
 
 export default function UnionAnnouncementsPage() {
+  // Following pattern from meetings.tsx but for GCA context
+  const { session, member } = useAuth();
+
+  // Use the store with individual selectors
+  const announcements = useAnnouncementStore((state) => state.announcements);
+  const isLoading = useAnnouncementStore((state) => state.isLoading);
+  const error = useAnnouncementStore((state) => state.error);
+
+  // Get store actions
+  const fetchGCAnnouncements = useAnnouncementStore((state) => state.fetchGCAnnouncements);
+  const setDivisionContext = useAnnouncementStore((state) => state.setDivisionContext);
+  const subscribeToAnnouncements = useAnnouncementStore((state) => state.subscribeToAnnouncements);
+  const markAnnouncementAsRead = useAnnouncementStore((state) => state.markAnnouncementAsRead);
+  const acknowledgeAnnouncement = useAnnouncementStore((state) => state.acknowledgeAnnouncement);
+
+  // Set GCA context and fetch announcements
+  useEffect(() => {
+    setDivisionContext("GCA"); // Set context to GCA for union announcements
+    fetchGCAnnouncements();
+  }, [setDivisionContext, fetchGCAnnouncements]);
+
+  // Subscribe to realtime updates for GCA announcements
+  useEffect(() => {
+    const cleanup = subscribeToAnnouncements("GCA");
+    return cleanup;
+  }, [subscribeToAnnouncements]);
+
+  // Get GCA announcements (following pattern from meetings.tsx)
+  const gcaAnnouncements = announcements["GCA"] || [];
+
   // Implementation of the union announcements viewing page
-  // - Display union/GCA-level announcements
-  // - Mark as read functionality
+  // - Display union/GCA-level announcements (filtered by GCA context)
+  // - Mark as read functionality (with context validation)
   // - Document viewing using existing document viewer components
   // - Implement acknowledgment modal for required announcements
+  // - Proper context separation from division announcements
+
+  return (
+    <ThemedScrollView style={styles.container}>
+      <ThemedView style={styles.content}>
+        {/* GCA Announcements Header */}
+        <ThemedView style={styles.header}>
+          <ThemedText style={styles.title}>GCA Union Announcements</ThemedText>
+        </ThemedView>
+
+        {/* GCA Announcements List */}
+        {gcaAnnouncements.map((announcement) => (
+          <AnnouncementCard
+            key={announcement.id}
+            announcement={announcement}
+            divisionContext="GCA" // Pass GCA context for validation
+            onRead={() => markAnnouncementAsRead(announcement.id)}
+            onAcknowledge={() => acknowledgeAnnouncement(announcement.id)}
+          />
+        ))}
+
+        {gcaAnnouncements.length === 0 && (
+          <ThemedText style={styles.noAnnouncementsText}>No GCA announcements available</ThemedText>
+        )}
+      </ThemedView>
+    </ThemedScrollView>
+  );
 }
 ```
 
-- [ ] #### Step 3: Integrate Badges into Navigation
+- [ ] #### Step 3: Integrate Badges into Navigation with Division Context
 
 ```typescript
-// Modify app/(tabs)/index.tsx to add badges to navigation cards
-// Add badge components to GCA and Division cards based on unread announcement counts
-// Follow existing pattern in navigation components for badge placement
+// Modify app/(tabs)/index.tsx to add badges to navigation cards with proper division context
+// Following the pattern from meetings.tsx for division context awareness
+
+// In the navigation card components:
+
+// Division Card Badge (Blue badge for division announcements)
+<AnnouncementBadge
+  targetType="division"
+  divisionContext={member?.division?.name} // Pass user's division context
+  style={styles.divisionBadge}
+/>
+
+// GCA Card Badge (Green badge for GCA announcements)
+<AnnouncementBadge
+  targetType="union"
+  divisionContext="GCA" // GCA context for union announcements
+  style={styles.gcaBadge}
+/>
+
+// Sub-navigation badges with proper context filtering:
+// "Announcements" sub-navigation card under "My Division" (Blue badge)
+<AnnouncementBadge
+  targetType="division"
+  divisionContext={member?.division?.name}
+  style={styles.subNavBadge}
+/>
+
+// "GCA Announcements" sub-navigation card under "GCA" (Green badge)
+<AnnouncementBadge
+  targetType="union"
+  divisionContext="GCA"
+  style={styles.subNavBadge}
+/>
 ```
 
-- [ ] ### Phase 5: Notification and Analytics Enhancements
+**Key Division Context Enforcement Points:**
+
+1. **Route-level validation**: Verify user belongs to the division they're trying to access
+2. **Store-level filtering**: All announcement fetches are filtered by division context
+3. **Component-level validation**: AnnouncementCard validates announcements belong to current context
+4. **Badge-level filtering**: Badges only show counts for announcements relevant to current context
+5. **Realtime subscription filtering**: Only subscribe to changes relevant to current division context
+6. **Database query filtering**: All queries include division context filters to prevent data leakage
+
+**Following Patterns from meetings.tsx:**
+
+- Division name passed as route parameter and used for context setting
+- Store actions called with division context parameter
+- Realtime subscriptions scoped to division context
+- Loading states and error handling following same patterns
+- Data validation and integrity checks with division context
+- UI components receive division context as props for validation
+
+### Phase 5: Notification and Analytics Enhancements
 
 **Announcement Lifecycle Management:**
 
@@ -984,3 +1604,126 @@ export default function AdminMessageDetailScreen() {
     // Rest of component...
   }
   ```
+
+## Summary of Division Context Integration
+
+### Key Changes Made to Prevent Cross-Contamination
+
+Based on the division context implementation in the meetings system (`meetings.tsx` and `divisionMeetingStore.ts`), the following critical patterns have been incorporated into the announcements plan:
+
+#### 1. **Store Architecture Changes**
+
+- **Data Organization**: Announcements stored by division context (`Record<string, Announcement[]>`) instead of flat array
+- **Division Context Tracking**: Added `currentDivisionContext` state variable to track active division
+- **Context Validation**: Added `validateAnnouncementDivisionContext()` helper function
+- **Error Handling**: Added `handleAnnouncementDivisionError()` for contextual error messages
+
+#### 2. **Database Query Filtering**
+
+- **Division-Scoped Queries**: All announcement fetches include division context filters
+- **Pattern from meetings**: `fetchDivisionAnnouncements(divisionName)` follows `fetchDivisionMeetings(divisionName)` pattern
+- **RLS Policy Enhancement**: Database policies must validate division context for all operations
+- **Query Optimization**: Use division IDs in WHERE clauses to prevent data leakage
+
+#### 3. **Realtime Subscription Filtering**
+
+- **Context-Aware Subscriptions**: Realtime channels scoped to specific divisions
+- **Change Validation**: Incoming realtime changes validated against current division context
+- **Pattern from meetings**: Channel naming with division suffix (`announcements-changes-${divisionName}`)
+- **Subscription Cleanup**: Proper cleanup when division context changes
+
+#### 4. **Component-Level Validation**
+
+- **Props-Based Context**: All components receive `divisionContext` prop for validation
+- **Render Guards**: Components validate announcements belong to current context before rendering
+- **Route Parameter Validation**: Division screens validate user belongs to accessed division
+- **Pattern from meetings**: Division name from route params used for all context operations
+
+#### 5. **UI State Management**
+
+- **Context-Scoped Loading**: Loading states include division context information
+- **Badge Filtering**: Unread counts filtered by division context
+- **Navigation Guards**: Prevent access to unauthorized division content
+- **Error Boundaries**: Division-specific error handling and display
+
+#### 6. **Critical Implementation Points**
+
+**Following Exact Patterns from `meetings.tsx`:**
+
+```typescript
+// 1. Route parameter extraction and validation
+const params = useLocalSearchParams();
+const divisionName = params.divisionName as string;
+
+// 2. Division context setting in useEffect
+useEffect(() => {
+  if (divisionName) {
+    setDivisionContext(divisionName);
+    fetchDivisionAnnouncements(divisionName);
+  }
+}, [divisionName, setDivisionContext, fetchDivisionAnnouncements]);
+
+// 3. Realtime subscription with division context
+useEffect(() => {
+  const cleanup = subscribeToAnnouncements(divisionName);
+  return cleanup;
+}, [divisionName, subscribeToAnnouncements]);
+
+// 4. Data access with division key
+const divisionAnnouncements = announcements[divisionName] || [];
+```
+
+**Following Exact Patterns from `divisionMeetingStore.ts`:**
+
+```typescript
+// 1. Store state organization
+announcements: Record<string, Announcement[]>; // By division name
+currentDivisionContext: string | null;
+
+// 2. Division context validation
+const validateAnnouncementDivisionContext = async (
+  announcementId: string,
+  expectedDivisionName?: string
+): Promise<boolean> => {
+  // Validation logic following meetings pattern
+};
+
+// 3. Realtime filtering
+if (divisionId && changeTargetDivisionIds && !changeTargetDivisionIds.includes(divisionId)) {
+  console.log(`[Realtime] Ignoring change for different division`);
+  return;
+}
+```
+
+#### 7. **Database Schema Considerations**
+
+- **Target Division IDs**: Use `target_division_ids` array for precise division targeting
+- **Context Validation Functions**: Database functions must validate division context
+- **RLS Policy Updates**: Policies must prevent cross-division data access
+- **Query Optimization**: Indices on division-related columns for performance
+
+#### 8. **Testing Requirements**
+
+- **Division Isolation Tests**: Verify announcements don't leak between divisions
+- **Context Switching Tests**: Ensure proper cleanup when changing division context
+- **Unauthorized Access Tests**: Verify users can't access other divisions' announcements
+- **Realtime Filtering Tests**: Confirm realtime updates respect division boundaries
+
+### Migration from Existing Systems
+
+If implementing this on an existing system without division context:
+
+1. **Audit Existing Data**: Identify any cross-contamination in current data
+2. **Gradual Migration**: Implement division context validation incrementally
+3. **Backward Compatibility**: Ensure existing functionality continues during migration
+4. **Data Cleanup**: Remove any announcements that don't belong to their target divisions
+5. **User Communication**: Inform users about improved data isolation
+
+### Performance Considerations
+
+- **Query Optimization**: Division-scoped queries are more efficient than global queries
+- **Subscription Management**: Fewer realtime subscriptions per user (only their division)
+- **Cache Efficiency**: Division-scoped caching reduces memory usage
+- **Network Traffic**: Reduced data transfer due to precise filtering
+
+This division context integration ensures that the announcements system maintains the same level of data isolation and security as the meetings system, preventing any cross-contamination of division information.

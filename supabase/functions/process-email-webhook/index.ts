@@ -158,6 +158,7 @@ serve(async (req: Request) => {
     if (subject.toLowerCase().includes("cancellation")) {
       console.log("Processing cancellation email...");
       const cancellationKeywords = [
+        // Original keywords
         "done",
         "complete",
         "completed",
@@ -167,6 +168,28 @@ serve(async (req: Request) => {
         "these are done",
         "cancelled",
         "canceled",
+        // Affirmative responses
+        "yes",
+        "yep",
+        "yeah",
+        "ok",
+        "okay",
+        "sure",
+        "absolutely",
+        "will do",
+        "got it",
+        "understood",
+        // Task completion
+        "finished",
+        "handled",
+        "processed",
+        "taken care of",
+        "sorted",
+        "resolved",
+        "closed",
+        // Common typos
+        "comfirmed",
+        "cancled",
       ];
 
       const foundKeyword = cancellationKeywords.find((keyword) =>
@@ -184,25 +207,101 @@ serve(async (req: Request) => {
       }
     } else {
       // Regular request response
-      if (
-        contentLower.includes("done") ||
-        contentLower.includes("complete") ||
-        contentLower.includes("completed") ||
-        contentLower.includes("all set") ||
-        contentLower.includes("these are done") ||
-        contentLower.includes("approved") ||
-        contentLower.includes("confirmed")
-      ) {
+      const approvalKeywords = [
+        // Original keywords
+        "done",
+        "complete",
+        "completed",
+        "all set",
+        "these are done",
+        "approved",
+        "confirmed",
+        // Positive responses
+        "yes",
+        "accept",
+        "accepted",
+        "granted",
+        "authorized",
+        "cleared",
+        "go ahead",
+        "proceed",
+        // Informal approvals
+        "good to go",
+        "looks good",
+        "all good",
+        "👍",
+        "ok",
+        "okay",
+        "fine",
+        "sure",
+        // Process confirmations
+        "processed",
+        "scheduled",
+        "booked",
+        "arranged",
+        "set up",
+        "handled",
+        // Common typos
+        "aproved",
+        "comfirmed",
+      ];
+
+      const denialKeywords = [
+        // Original keywords
+        "allotment is full",
+        "out of days",
+        "denied",
+        "rejected",
+        // Direct rejections
+        "no",
+        "not available",
+        "unavailable",
+        // Capacity issues
+        "no coverage",
+        "short staffed",
+        "insufficient staff",
+        "no one available",
+        "fully booked",
+        "overbooked",
+        // Policy/rule based
+        "against policy",
+        "not allowed",
+        "violates",
+        "exceeds limit",
+        "too many requests",
+        "blackout period",
+        // Timing issues
+        "too late",
+        "insufficient notice",
+        "short notice",
+        "deadline passed",
+        "expired",
+        // Informal denials
+        "sorry",
+        "unfortunately",
+        "regret",
+        "decline",
+        "declining",
+      ];
+
+      // Check for approval first
+      const foundApprovalKeyword = approvalKeywords.find((keyword) =>
+        contentLower.includes(keyword)
+      );
+
+      // Check for denial
+      const foundDenialKeyword = denialKeywords.find((keyword) =>
+        contentLower.includes(keyword)
+      );
+
+      if (foundApprovalKeyword) {
         newStatus = "approved";
-        console.log("✓ Detected approval");
-      } else if (
-        contentLower.includes("allotment is full") ||
-        contentLower.includes("out of days") ||
-        contentLower.includes("denied") ||
-        contentLower.includes("rejected")
-      ) {
+        console.log(
+          `✓ Detected approval with keyword: "${foundApprovalKeyword}"`,
+        );
+      } else if (foundDenialKeyword) {
         newStatus = "denied";
-        console.log("✓ Detected denial");
+        console.log(`✓ Detected denial with keyword: "${foundDenialKeyword}"`);
 
         // Extract denial reason
         if (contentLower.includes("allotment is full")) {

@@ -574,7 +574,7 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
 
     // Render a single row of the requests table
     const renderRequestItem = (request: PldSdvRequest) => {
-      // Row content that will be wrapped differently based on platform
+      // Row content that will be wrapped in a touchable component
       const rowContent = (
         <>
           <View style={styles.dateCell}>
@@ -595,35 +595,22 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
           <View style={styles.calendarCell}>
             <ThemedText style={styles.tableCell}>{request.calendar_name}</ThemedText>
           </View>
-          {Platform.OS === "web" && (
-            <View style={styles.actionCell}>
-              <ThemedTouchableOpacity style={styles.editButton} onPress={() => handleEditRequest(request)}>
-                <Ionicons name="create-outline" size={18} color={Colors[colorScheme].tint} />
-              </ThemedTouchableOpacity>
-            </View>
-          )}
+          <View style={styles.actionCell}>
+            <Ionicons name="create-outline" size={18} color={Colors[colorScheme].tint} />
+          </View>
         </>
       );
 
-      // On mobile, make the entire row clickable
-      if (Platform.OS !== "web") {
-        return (
-          <ThemedTouchableOpacity
-            key={request.id}
-            style={[styles.tableRow, styles.clickableRow]}
-            onPress={() => handleEditRequest(request)}
-            activeOpacity={0.7}
-          >
-            {rowContent}
-          </ThemedTouchableOpacity>
-        );
-      }
-
-      // On web, only the edit button is clickable
+      // Make the entire row clickable on all platforms
       return (
-        <View key={request.id} style={styles.tableRow}>
+        <ThemedTouchableOpacity
+          key={request.id}
+          style={[styles.tableRow, styles.clickableRow]}
+          onPress={() => handleEditRequest(request)}
+          activeOpacity={0.7}
+        >
           {rowContent}
-        </View>
+        </ThemedTouchableOpacity>
       );
     };
 
@@ -646,7 +633,9 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
           <ThemedText style={[styles.tableCell, styles.headerCell]}>Calendar</ThemedText>
         </View>
         <View style={styles.actionCell}>
-          <ThemedText style={[styles.tableCell, styles.headerCell]}>Edit</ThemedText>
+          <ThemedText style={[styles.tableCell, styles.headerCell]}>
+            <Ionicons name="hand-left-outline" size={16} color={Colors[colorScheme].text} />
+          </ThemedText>
         </View>
       </View>
     );
@@ -1191,9 +1180,15 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     },
     clickableRow: {
       backgroundColor: Colors.dark.card,
-      // Add visual feedback for touchable rows on mobile
-      ...(Platform.OS !== "web" && {
-        paddingRight: 36, // Add space for a visual indicator on the right
+      // Add visual feedback for touchable rows on all platforms
+      ...(Platform.OS === "web" && {
+        cursor: "pointer",
+      }),
+      // Add hover effect for web
+      ...(Platform.OS === "web" && {
+        ":hover": {
+          backgroundColor: Colors.dark.border + "30",
+        },
       }),
     },
     tableHeader: {
@@ -1301,11 +1296,6 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       justifyContent: "center",
       paddingRight: 20,
     },
-    editButton: {
-      padding: 8,
-      borderRadius: 4,
-      backgroundColor: Colors.dark.card,
-    },
     modalOverlay: {
       flex: 1,
       backgroundColor: "rgba(0, 0, 0, 0.5)",
@@ -1313,7 +1303,7 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       alignItems: "center",
     },
     modalContent: {
-      width: Platform.OS === "web" ? "40%" : "90%",
+      width: Platform.OS === "web" ? "75%" : "90%",
       maxWidth: 500,
       borderRadius: 8,
       padding: 16,

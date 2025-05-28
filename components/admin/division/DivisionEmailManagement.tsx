@@ -162,6 +162,7 @@ const styles = StyleSheet.create({
   },
   tabButton: {
     flex: 1,
+    flexWrap: "wrap",
     borderWidth: 1,
     borderRadius: 12,
     padding: 4,
