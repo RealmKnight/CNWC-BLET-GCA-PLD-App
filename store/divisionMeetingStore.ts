@@ -971,21 +971,18 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
                 data as DivisionMeeting,
                 new Date(),
                 addMonths(new Date(), 12),
+                user.id,
             );
 
             // Insert the new occurrences
             if (occurrencesPartial.length > 0) {
-                // Complete the occurrences with proper user IDs and without database-generated fields
+                // Complete the occurrences with proper meeting_pattern_id and without database-generated fields
                 const occurrences = occurrencesPartial.map((occ) => {
                     // Create a new object without the id field
                     const { id: occId, ...newOcc } = occ;
 
                     // Override meeting_pattern_id with the newly created pattern ID
                     newOcc.meeting_pattern_id = data.id;
-
-                    // Set user IDs for created_by and updated_by
-                    newOcc.created_by = user.id;
-                    newOcc.updated_by = user.id;
 
                     return newOcc;
                 });
@@ -1104,6 +1101,7 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
                 data as DivisionMeeting,
                 now,
                 addMonths(now, 12),
+                user.id,
             );
 
             // Fetch existing occurrences for this pattern
@@ -1159,19 +1157,15 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
                             notes: existingOccurrence.notes, // Keep existing notes
                             is_cancelled: existingOccurrence.is_cancelled, // Keep cancelled status
                             override_reason: existingOccurrence.override_reason, // Keep override reason
+                            created_by: existingOccurrence.created_by, // Keep existing created_by
                             updated_by: user.id,
-                            updated_at: new Date().toISOString(),
                         });
                     }
                     // Remove this date from the map to track occurrences that need to be processed
                     existingOccurrenceMap.delete(dateKey);
                 } else {
                     // This is a new occurrence, prepare for insertion
-                    occurrencesToInsert.push({
-                        ...newOccurrence,
-                        created_by: user.id,
-                        updated_by: user.id,
-                    });
+                    occurrencesToInsert.push(newOccurrence);
                 }
             });
 
@@ -1184,11 +1178,17 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
                 // Update in batches of 50 to avoid potential issues with large updates
                 for (let i = 0; i < occurrencesToUpdate.length; i += 50) {
                     const batch = occurrencesToUpdate.slice(i, i + 50);
-                    const { error: updateError } = await supabase
-                        .from("meeting_occurrences")
-                        .upsert(batch, { onConflict: "id" });
 
-                    if (updateError) throw updateError;
+                    // Update each record individually to avoid created_by issues
+                    for (const occurrence of batch) {
+                        const { id: occurrenceId, ...updateData } = occurrence;
+                        const { error: updateError } = await supabase
+                            .from("meeting_occurrences")
+                            .update(updateData)
+                            .eq("id", occurrenceId);
+
+                        if (updateError) throw updateError;
+                    }
                 }
             }
 

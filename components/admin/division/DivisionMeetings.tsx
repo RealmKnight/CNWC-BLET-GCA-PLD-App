@@ -211,10 +211,24 @@ export function DivisionMeetings({ division, isAdmin = false }: DivisionMeetings
   useEffect(() => {
     if (selectedMeetingPatternId && occurrences[selectedMeetingPatternId]) {
       const markedDates: Record<string, any> = {};
+      const selectedPattern = meetings[division]?.find((m) => m.id === selectedMeetingPatternId);
 
       occurrences[selectedMeetingPatternId].forEach((occurrence) => {
         if (!occurrence.is_cancelled) {
-          const dateString = occurrence.actual_scheduled_datetime_utc.split("T")[0];
+          // Convert UTC datetime back to the meeting's timezone for proper calendar display
+          let dateString: string;
+
+          if (selectedPattern?.time_zone) {
+            // Use date-fns-tz to convert back to the meeting's timezone
+            const { toZonedTime } = require("date-fns-tz");
+            const utcDate = parseISO(occurrence.actual_scheduled_datetime_utc);
+            const localDate = toZonedTime(utcDate, selectedPattern.time_zone);
+            dateString = format(localDate, "yyyy-MM-dd");
+          } else {
+            // Fallback to UTC date if timezone is not available
+            dateString = occurrence.actual_scheduled_datetime_utc.split("T")[0];
+          }
+
           markedDates[dateString] = {
             selected: true,
             marked: true,
@@ -225,7 +239,7 @@ export function DivisionMeetings({ division, isAdmin = false }: DivisionMeetings
 
       setMeetingCalendar(markedDates);
     }
-  }, [occurrences, selectedMeetingPatternId, colorScheme]);
+  }, [occurrences, selectedMeetingPatternId, colorScheme, meetings, division]);
 
   // Initialize realtime subscriptions
   useEffect(() => {
@@ -359,7 +373,7 @@ export function DivisionMeetings({ division, isAdmin = false }: DivisionMeetings
         const divisionName = data?.divisions?.[0]?.name;
         if (divisionName && divisionName !== division) {
           console.warn(
-            `Admin operation '${operation}' attempted on meeting from division '${divisionName}' while in context of division '${division}'`
+            `Admin operation '${operation}' attempted on meeting from division '${divisionName}' while in context of division '${division}'. Please verify this is intentional.`
           );
           Alert.alert(
             "Division Context Warning",

@@ -131,8 +131,20 @@ export default function MeetingsPage() {
 
       meetingOccurrences.forEach((occurrence) => {
         if (!occurrence.is_cancelled) {
-          const date = parseISO(occurrence.actual_scheduled_datetime_utc);
-          const dateString = format(date, "yyyy-MM-dd");
+          // Convert UTC datetime back to the meeting's timezone for proper calendar display
+          let dateString: string;
+
+          if (meeting.time_zone) {
+            // Use date-fns-tz to convert back to the meeting's timezone
+            const { toZonedTime } = require("date-fns-tz");
+            const utcDate = parseISO(occurrence.actual_scheduled_datetime_utc);
+            const localDate = toZonedTime(utcDate, meeting.time_zone);
+            dateString = format(localDate, "yyyy-MM-dd");
+          } else {
+            // Fallback to UTC date if timezone is not available
+            const date = parseISO(occurrence.actual_scheduled_datetime_utc);
+            dateString = format(date, "yyyy-MM-dd");
+          }
 
           newMarkedDates[dateString] = {
             marked: true,
@@ -345,7 +357,10 @@ export default function MeetingsPage() {
                 indicatorColor: Colors.dark.tint,
               }}
               onDayPress={(day: DateData) => {
-                setSelectedDate(new Date(day.timestamp));
+                // Use the dateString to avoid timezone conversion issues
+                // day.dateString is in format "YYYY-MM-DD" which is what we want
+                const selectedDateFromCalendar = new Date(day.dateString + "T12:00:00");
+                setSelectedDate(selectedDateFromCalendar);
               }}
             />
 
@@ -358,8 +373,21 @@ export default function MeetingsPage() {
               {Object.entries(occurrences).flatMap(([patternId, patternOccurrences]) =>
                 patternOccurrences
                   .filter((occurrence) => {
-                    const occurrenceDate = parseISO(occurrence.actual_scheduled_datetime_utc);
-                    return format(occurrenceDate, "yyyy-MM-dd") === format(selectedDate, "yyyy-MM-dd");
+                    // Convert UTC datetime back to the meeting's timezone for proper date comparison
+                    const pattern = getMeetingPattern(occurrence);
+                    let occurrenceDateString: string;
+
+                    if (pattern?.time_zone) {
+                      const { toZonedTime } = require("date-fns-tz");
+                      const utcDate = parseISO(occurrence.actual_scheduled_datetime_utc);
+                      const localDate = toZonedTime(utcDate, pattern.time_zone);
+                      occurrenceDateString = format(localDate, "yyyy-MM-dd");
+                    } else {
+                      const occurrenceDate = parseISO(occurrence.actual_scheduled_datetime_utc);
+                      occurrenceDateString = format(occurrenceDate, "yyyy-MM-dd");
+                    }
+
+                    return occurrenceDateString === format(selectedDate, "yyyy-MM-dd");
                   })
                   .map((occurrence) => (
                     <MeetingListItem
@@ -377,8 +405,21 @@ export default function MeetingsPage() {
 
               {!Object.entries(occurrences).some(([patternId, patternOccurrences]) =>
                 patternOccurrences.some((occurrence) => {
-                  const occurrenceDate = parseISO(occurrence.actual_scheduled_datetime_utc);
-                  return format(occurrenceDate, "yyyy-MM-dd") === format(selectedDate, "yyyy-MM-dd");
+                  // Convert UTC datetime back to the meeting's timezone for proper date comparison
+                  const pattern = getMeetingPattern(occurrence);
+                  let occurrenceDateString: string;
+
+                  if (pattern?.time_zone) {
+                    const { toZonedTime } = require("date-fns-tz");
+                    const utcDate = parseISO(occurrence.actual_scheduled_datetime_utc);
+                    const localDate = toZonedTime(utcDate, pattern.time_zone);
+                    occurrenceDateString = format(localDate, "yyyy-MM-dd");
+                  } else {
+                    const occurrenceDate = parseISO(occurrence.actual_scheduled_datetime_utc);
+                    occurrenceDateString = format(occurrenceDate, "yyyy-MM-dd");
+                  }
+
+                  return occurrenceDateString === format(selectedDate, "yyyy-MM-dd");
                 })
               ) && <ThemedText style={styles.noMeetingsText}>No meetings scheduled for this date</ThemedText>}
             </ThemedView>

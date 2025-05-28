@@ -15,6 +15,7 @@ import { UnionMemberList } from "@/components/admin/union/UnionMemberList";
 import { MemberEditForm } from "@/components/admin/division/MemberEditForm";
 import { AddMemberForm } from "@/components/admin/union/AddMemberForm";
 import { MemberData } from "@/store/adminMemberManagementStore";
+import { MemberTransfer } from "@/components/admin/union/MemberTransfer";
 
 // Updated Members tab with real implementation
 const MembersTab = () => {
@@ -52,13 +53,7 @@ const MembersTab = () => {
   );
 };
 
-const MemberTransfersTab = () => (
-  <PlatformScrollView contentContainerStyle={styles.tabContentContainer}>
-    <ThemedView style={styles.tabContent}>
-      <ThemedText>Member Transfers Coming Soon</ThemedText>
-    </ThemedView>
-  </PlatformScrollView>
-);
+const MemberTransfersTab = () => <MemberTransfer />;
 
 const BulkActionsTab = () => (
   <PlatformScrollView contentContainerStyle={styles.tabContentContainer}>

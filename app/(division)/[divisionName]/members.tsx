@@ -361,7 +361,6 @@ const styles = StyleSheet.create({
   titleContainer: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 8,
     borderRadius: 8,
     padding: 8,
   },

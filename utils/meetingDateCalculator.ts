@@ -33,6 +33,7 @@ export function calculateMeetingOccurrences(
     pattern: DivisionMeeting,
     startDate: Date,
     endDate: Date,
+    userId?: string,
 ): MeetingOccurrence[] {
     // Limit to 12 months maximum
     const maxEndDate = addMonths(startDate, 12);
@@ -48,6 +49,7 @@ export function calculateMeetingOccurrences(
                 pattern,
                 startDate,
                 limitedEndDate,
+                userId,
             );
 
         case "nth_day_of_month":
@@ -55,6 +57,7 @@ export function calculateMeetingOccurrences(
                 pattern,
                 startDate,
                 limitedEndDate,
+                userId,
             );
 
         case "specific_date":
@@ -62,6 +65,7 @@ export function calculateMeetingOccurrences(
                 pattern,
                 startDate,
                 limitedEndDate,
+                userId,
             );
 
         case "rotating":
@@ -69,6 +73,7 @@ export function calculateMeetingOccurrences(
                 pattern,
                 startDate,
                 limitedEndDate,
+                userId,
             );
 
         default:
@@ -88,47 +93,9 @@ function convertToUtc(
 ): Date {
     if (adjustForDst) {
         // Use regular time zone conversion with automatic DST handling
-        console.log(
-            "convertToUtc - adjustForDst=true: Input localDateTime (toString):",
-            localDateTime.toString(),
-        );
-        console.log(
-            "convertToUtc - adjustForDst=true: Input localDateTime (toISOString):",
-            localDateTime.toISOString(),
-        );
-        console.log(
-            "convertToUtc - adjustForDst=true: Input timeZone:",
-            timeZone,
-        );
-        console.log(
-            "convertToUtc - adjustForDst=true: Input adjustForDst:",
-            adjustForDst,
-        );
-        const result = fromZonedTime(localDateTime, timeZone);
-        console.log(
-            "convertToUtc - adjustForDst=true: Output fromZonedTime (toISOString):",
-            result.toISOString(),
-        );
-        return result;
+        return fromZonedTime(localDateTime, timeZone);
     } else {
         // Calculate the standard time (non-DST) offset for this time zone
-        console.log(
-            "convertToUtc - adjustForDst=false: Input localDateTime (toString):",
-            localDateTime.toString(),
-        );
-        console.log(
-            "convertToUtc - adjustForDst=false: Input localDateTime (toISOString):",
-            localDateTime.toISOString(),
-        );
-        console.log(
-            "convertToUtc - adjustForDst=false: Input timeZone:",
-            timeZone,
-        );
-        console.log(
-            "convertToUtc - adjustForDst=false: Input adjustForDst:",
-            adjustForDst,
-        );
-
         const january = new Date(localDateTime.getFullYear(), 0, 1);
         const july = new Date(localDateTime.getFullYear(), 6, 1);
 
@@ -143,15 +110,6 @@ function convertToUtc(
         const currentOffset = new Date(toZonedTime(localDateTime, timeZone))
             .getTimezoneOffset();
 
-        console.log(
-            "convertToUtc - adjustForDst=false: standardTimeOffset:",
-            standardTimeOffset,
-        );
-        console.log(
-            "convertToUtc - adjustForDst=false: currentOffset:",
-            currentOffset,
-        );
-
         // If currently in DST but we want to ignore it, adjust the time
         if (currentOffset !== standardTimeOffset) {
             const adjustmentMs = (standardTimeOffset - currentOffset) * 60 *
@@ -159,33 +117,11 @@ function convertToUtc(
             const adjustedDate = new Date(
                 localDateTime.getTime() + adjustmentMs,
             );
-            console.log(
-                "convertToUtc - adjustForDst=false (in DST branch): adjustedDate (toString):",
-                adjustedDate.toString(),
-            );
-            console.log(
-                "convertToUtc - adjustForDst=false (in DST branch): adjustedDate (toISOString):",
-                adjustedDate.toISOString(),
-            );
-            const result = fromZonedTime(adjustedDate, timeZone);
-            console.log(
-                "convertToUtc - adjustForDst=false (in DST branch): Output fromZonedTime (toISOString):",
-                result.toISOString(),
-            );
-            return result;
+            return fromZonedTime(adjustedDate, timeZone);
         }
 
         // Already in standard time
-        console.log(
-            "convertToUtc - adjustForDst=false (in standard time branch): localDateTime (toString):",
-            localDateTime.toString(),
-        );
-        const result = fromZonedTime(localDateTime, timeZone);
-        console.log(
-            "convertToUtc - adjustForDst=false (in standard time branch): Output fromZonedTime (toISOString):",
-            result.toISOString(),
-        );
-        return result;
+        return fromZonedTime(localDateTime, timeZone);
     }
 }
 
@@ -196,6 +132,7 @@ function calculateDayOfMonthOccurrences(
     pattern: DivisionMeeting,
     startDate: Date,
     endDate: Date,
+    userId?: string,
 ): MeetingOccurrence[] {
     const occurrences: MeetingOccurrence[] = [];
     const dayOfMonth = pattern.meeting_pattern.day_of_month || 1;
@@ -241,6 +178,7 @@ function calculateDayOfMonthOccurrences(
                     pattern,
                     utcDateTime.toISOString(),
                     utcDateTime.toISOString(),
+                    userId,
                 ));
             }
         }
@@ -259,6 +197,7 @@ function calculateNthDayOfMonthOccurrences(
     pattern: DivisionMeeting,
     startDate: Date,
     endDate: Date,
+    userId?: string,
 ): MeetingOccurrence[] {
     const occurrences: MeetingOccurrence[] = [];
     const dayOfWeek = pattern.meeting_pattern.day_of_week || 1; // Default to Monday
@@ -305,6 +244,7 @@ function calculateNthDayOfMonthOccurrences(
                     pattern,
                     utcDateTime.toISOString(),
                     utcDateTime.toISOString(),
+                    userId,
                 ));
             }
         }
@@ -323,6 +263,7 @@ function calculateSpecificDateOccurrences(
     pattern: DivisionMeeting,
     startDate: Date,
     endDate: Date,
+    userId?: string,
 ): MeetingOccurrence[] {
     const occurrences: MeetingOccurrence[] = [];
     const specificDates = pattern.meeting_pattern.specific_dates || [];
@@ -351,6 +292,7 @@ function calculateSpecificDateOccurrences(
                 pattern,
                 utcDateTime.toISOString(),
                 utcDateTime.toISOString(),
+                userId,
             ));
         }
     });
@@ -365,6 +307,7 @@ function calculateRotatingOccurrences(
     pattern: DivisionMeeting,
     startDate: Date,
     endDate: Date,
+    userId?: string,
 ): MeetingOccurrence[] {
     const occurrences: MeetingOccurrence[] = [];
     const rules = pattern.meeting_pattern.rules || [];
@@ -432,6 +375,7 @@ function calculateRotatingOccurrences(
                     pattern,
                     utcDateTime.toISOString(),
                     utcDateTime.toISOString(),
+                    userId,
                 ));
             }
         }
@@ -497,9 +441,14 @@ function createOccurrenceFromPattern(
     pattern: DivisionMeeting,
     originalScheduledDatetimeUtc: string,
     actualScheduledDatetimeUtc: string,
+    userId?: string,
 ): MeetingOccurrence {
-    // Create the occurrence with essential data, omitting id and user fields
-    // that will be handled by the database or calling function
+    // Ensure userId is provided since created_by and updated_by are required fields
+    if (!userId) {
+        throw new Error("userId is required to create meeting occurrences");
+    }
+
+    // Create the occurrence with essential data, including required user fields
     return {
         meeting_pattern_id: pattern.id,
         original_scheduled_datetime_utc: originalScheduledDatetimeUtc,
@@ -512,6 +461,8 @@ function createOccurrenceFromPattern(
         is_cancelled: false,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
+        created_by: userId,
+        updated_by: userId,
     } as MeetingOccurrence;
 }
 
