@@ -24,6 +24,7 @@ import { supabase } from "@/utils/supabase";
 import { StatusBar } from "expo-status-bar";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import * as SplashScreen from "expo-splash-screen";
+import { createRealtimeCallback } from "@/utils/realtimeErrorHandler";
 
 // Prevent the splash screen from auto-hiding before App component declaration/export
 SplashScreen.preventAutoHideAsync().catch((error) => {
@@ -174,9 +175,19 @@ function AuthAwareRouteHandler() {
                   }
                 }
               )
-              .subscribe((status) => {
-                console.log("[BadgeStore] Realtime subscription status:", status);
-              });
+              .subscribe(
+                createRealtimeCallback(
+                  "BadgeStore",
+                  // onError callback
+                  (status) => {
+                    console.error("[BadgeStore] Realtime subscription error:", status);
+                  },
+                  // onSuccess callback
+                  (status) => {
+                    console.log("[BadgeStore] Realtime subscription status:", status);
+                  }
+                )
+              );
           } catch (error) {
             console.error("[BadgeStore] Error setting up realtime subscription:", error);
           }

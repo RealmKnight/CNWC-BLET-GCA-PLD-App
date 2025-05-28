@@ -19,6 +19,7 @@ import {
   storeEventManager,
   StoreEventType,
 } from "@/utils/storeManager";
+import { createRealtimeCallback } from "@/utils/realtimeErrorHandler";
 
 type Member = Database["public"]["Tables"]["members"]["Row"];
 type BaseRequest = Database["public"]["Tables"]["pld_sdv_requests"]["Row"];
@@ -1159,12 +1160,24 @@ export function setupCalendarSubscriptions() {
         }
       },
     )
-    .subscribe((status) => {
-      console.log(
-        "[CalendarStore Realtime] PLD/SDV allotments subscription status:",
-        status,
-      );
-    });
+    .subscribe(createRealtimeCallback(
+      "CalendarStore-Allotments",
+      // onError callback
+      (status, err) => {
+        console.error(
+          "[CalendarStore Realtime] PLD/SDV allotments subscription error:",
+          status,
+          err,
+        );
+      },
+      // onSuccess callback
+      (status) => {
+        console.log(
+          "[CalendarStore Realtime] PLD/SDV allotments subscription status:",
+          status,
+        );
+      },
+    ));
 
   // Subscribe to requests changes
   requestsChannel
@@ -1238,12 +1251,24 @@ export function setupCalendarSubscriptions() {
         }
       },
     )
-    .subscribe((status) => {
-      console.log(
-        "[CalendarStore Realtime] Requests subscription status:",
-        status,
-      );
-    });
+    .subscribe(createRealtimeCallback(
+      "CalendarStore-Requests",
+      // onError callback
+      (status, err) => {
+        console.error(
+          "[CalendarStore Realtime] Requests subscription error:",
+          status,
+          err,
+        );
+      },
+      // onSuccess callback
+      (status) => {
+        console.log(
+          "[CalendarStore Realtime] Requests subscription status:",
+          status,
+        );
+      },
+    ));
 
   // Subscribe to six-month requests changes for the current member
   sixMonthRequestsChannel
@@ -1383,33 +1408,37 @@ export function setupCalendarSubscriptions() {
         }
       },
     )
-    .subscribe((status) => {
-      console.log(
-        "[CalendarStore Realtime] Six-month subscription status:",
-        status,
-      );
-
-      // Log detailed subscription info
-      if (status === "SUBSCRIBED") {
-        console.log(
-          "[CalendarStore Realtime] Six-month subscription active. Channel details:",
-          {
-            channelName: "six-month-requests-changes",
-            topic: "six-month-requests",
-            isJoined: true,
-          },
-        );
-      } else if (
-        status === "CHANNEL_ERROR" || status === "CLOSED" ||
-        status === "TIMED_OUT"
-      ) {
+    .subscribe(createRealtimeCallback(
+      "CalendarStore-SixMonth",
+      // onError callback
+      (status, err) => {
         console.warn(
           "[CalendarStore Realtime] Six-month subscription issue detected:",
           status,
           "This may prevent six-month request updates from being received.",
+          err,
         );
-      }
-    });
+      },
+      // onSuccess callback
+      (status) => {
+        console.log(
+          "[CalendarStore Realtime] Six-month subscription status:",
+          status,
+        );
+
+        // Log detailed subscription info
+        if (status === "SUBSCRIBED") {
+          console.log(
+            "[CalendarStore Realtime] Six-month subscription active. Channel details:",
+            {
+              channelName: "six-month-requests-changes",
+              topic: "six-month-requests",
+              isJoined: true,
+            },
+          );
+        }
+      },
+    ));
 
   console.log("[CalendarStore] All subscriptions setup complete");
 

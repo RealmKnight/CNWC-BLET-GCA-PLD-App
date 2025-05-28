@@ -5,6 +5,7 @@ import { Platform } from "react-native";
 import { useUserStore } from "@/store/userStore";
 import * as Notifications from "expo-notifications";
 import { RealtimeChannel } from "@supabase/supabase-js";
+import { createRealtimeCallback } from "@/utils/realtimeErrorHandler";
 
 interface Message {
   id: string;
@@ -473,19 +474,10 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
             }
           },
         )
-        .subscribe((status) => {
-          console.log(
-            `[NotificationStore] User ID subscription status: ${status}`,
-          );
-
-          // Update subscription status based on first channel
-          if (status === "SUBSCRIBED") {
-            // Only update overall status if all channels are good
-            set((state) => ({
-              ...state,
-              subscriptionStatus: state.error ? "error" : "subscribed",
-            }));
-          } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+        .subscribe(createRealtimeCallback(
+          "NotificationStore-UserID",
+          // onError callback
+          (status) => {
             console.error(
               `[NotificationStore] Channel error on messages channel: ${status}`,
             );
@@ -501,8 +493,19 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
                 await get().refreshMessages(userData.pin_number, userId, true);
               }
             }, 2000);
-          }
-        });
+          },
+          // onSuccess callback
+          (status) => {
+            console.log(
+              `[NotificationStore] User ID subscription status: ${status}`,
+            );
+            // Only update overall status if all channels are good
+            set((state) => ({
+              ...state,
+              subscriptionStatus: state.error ? "error" : "subscribed",
+            }));
+          },
+        ));
 
       // Set up pin number subscription after getting the data
       getUserData().then((userData) => {
@@ -528,12 +531,10 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
                 await get().refreshMessages(pinNumber, userId, true);
               },
             )
-            .subscribe((status) => {
-              console.log(
-                `[NotificationStore] Pin subscription status: ${status}`,
-              );
-
-              if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+            .subscribe(createRealtimeCallback(
+              "NotificationStore-Pin",
+              // onError callback
+              (status) => {
                 console.error(
                   `[NotificationStore] Channel error on pin channel: ${status}`,
                 );
@@ -549,8 +550,14 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
                 setTimeout(() => {
                   get().refreshMessages(pinNumber, userId, true);
                 }, 2000);
-              }
-            });
+              },
+              // onSuccess callback
+              (status) => {
+                console.log(
+                  `[NotificationStore] Pin subscription status: ${status}`,
+                );
+              },
+            ));
 
           // Set up delivery notifications
           deliveriesChannel
@@ -571,18 +578,22 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
                 await get().refreshMessages(pinNumber, userId, true);
               },
             )
-            .subscribe((status) => {
-              console.log(
-                `[NotificationStore] Deliveries subscription status: ${status}`,
-              );
-
-              if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+            .subscribe(createRealtimeCallback(
+              "NotificationStore-Deliveries",
+              // onError callback
+              (status) => {
                 console.error(
                   `[NotificationStore] Channel error on deliveries channel: ${status}`,
                 );
                 // Only log the error, don't change state if already subscribed to other channels
-              }
-            });
+              },
+              // onSuccess callback
+              (status) => {
+                console.log(
+                  `[NotificationStore] Deliveries subscription status: ${status}`,
+                );
+              },
+            ));
 
           // Initial data fetch after subscription setup
           get().refreshMessages(pinNumber, userId, true);

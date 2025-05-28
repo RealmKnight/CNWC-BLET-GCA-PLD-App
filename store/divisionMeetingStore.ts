@@ -7,6 +7,7 @@ import {
 } from "@/utils/meetingDateCalculator";
 import { addMonths, format, parseISO } from "date-fns";
 import { RealtimeChannel } from "@supabase/supabase-js";
+import { createRealtimeCallback } from "@/utils/realtimeErrorHandler";
 
 // Division context validation helper
 const validateDivisionContext = async (
@@ -614,7 +615,22 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
                     }
                 }
             })
-            .subscribe();
+            .subscribe(createRealtimeCallback(
+                "DivisionMeetings",
+                // onError callback
+                (status, err) => {
+                    console.error(
+                        `[Realtime] Division meetings subscription error: ${status}`,
+                        err,
+                    );
+                },
+                // onSuccess callback
+                (status) => {
+                    console.log(
+                        `[Realtime] Division meetings subscription status: ${status}`,
+                    );
+                },
+            ));
 
         // Subscribe to meeting_occurrences changes with enhanced division filtering
         const occurrencesChannel = supabase
@@ -702,7 +718,22 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
                     }
                 }
             })
-            .subscribe();
+            .subscribe(createRealtimeCallback(
+                "MeetingOccurrences",
+                // onError callback
+                (status, err) => {
+                    console.error(
+                        `[Realtime] Meeting occurrences subscription error: ${status}`,
+                        err,
+                    );
+                },
+                // onSuccess callback
+                (status) => {
+                    console.log(
+                        `[Realtime] Meeting occurrences subscription status: ${status}`,
+                    );
+                },
+            ));
 
         // Subscribe to meeting_minutes changes with enhanced division filtering
         const minutesChannel = supabase
@@ -785,7 +816,22 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
                     }
                 }
             })
-            .subscribe();
+            .subscribe(createRealtimeCallback(
+                "MeetingMinutes",
+                // onError callback
+                (status, err) => {
+                    console.error(
+                        `[Realtime] Meeting minutes subscription error: ${status}`,
+                        err,
+                    );
+                },
+                // onSuccess callback
+                (status) => {
+                    console.log(
+                        `[Realtime] Meeting minutes subscription status: ${status}`,
+                    );
+                },
+            ));
 
         // Store the subscription channels
         set({

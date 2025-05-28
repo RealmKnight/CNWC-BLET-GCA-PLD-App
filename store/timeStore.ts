@@ -18,6 +18,7 @@ import {
     storeEventManager,
     StoreEventType,
 } from "@/utils/storeManager";
+import { createRealtimeCallback } from "@/utils/realtimeErrorHandler";
 // Import specific table types
 type DbMembers = Database["public"]["Tables"]["members"]["Row"];
 type DbPldSdvRequests = Database["public"]["Tables"]["pld_sdv_requests"]["Row"];
@@ -312,25 +313,29 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
                 (payload) => get().handleRealtimeUpdate(payload, "members"),
             );
 
-        realtimeChannel.subscribe((status, err) => {
-            console.log(
-                `[TimeStore] Realtime subscription status for ${memberId}:`,
-                status,
-                err ? `Error: ${JSON.stringify(err)}` : "", // More detailed error logging
-            );
-            set({ isSubscribing: status === "SUBSCRIBED" });
-            if (err) {
+        realtimeChannel.subscribe(createRealtimeCallback(
+            "TimeStore",
+            // onError callback
+            (status, err) => {
                 console.error("[TimeStore] Realtime subscription error:", err);
                 set({
                     error: `Realtime connection failed: ${
                         err?.message ?? "Unknown error"
                     }`,
                 });
-            }
-            if (status === "CLOSED") {
-                set({ isSubscribing: false });
-            }
-        });
+            },
+            // onSuccess callback
+            (status) => {
+                console.log(
+                    `[TimeStore] Realtime subscription status for ${memberId}:`,
+                    status,
+                );
+                set({ isSubscribing: status === "SUBSCRIBED" });
+                if (status === "CLOSED") {
+                    set({ isSubscribing: false });
+                }
+            },
+        ));
 
         set({ channel: realtimeChannel, isLoading: false });
 

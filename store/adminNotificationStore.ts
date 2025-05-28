@@ -6,6 +6,10 @@ import type {
     RealtimePostgresChangesPayload,
 } from "@supabase/supabase-js";
 import type { UserRole } from "@/types/auth"; // Import UserRole
+import {
+    createRealtimeCallback,
+    handleRealtimeError,
+} from "@/utils/realtimeErrorHandler";
 // TODO: Create this service if needed, or remove import
 // import { fetchDivisionIdByName, fetchDivisionNameById } from "@/utils/divisionService";
 // Import service functions we'll call
@@ -456,34 +460,10 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
                         },
                         handleRealtimeUpdate,
                     )
-                    .subscribe((status, err) => {
-                        // Log ALL statuses for debugging
-                        console.log(
-                            `[initializeAdminNotifications] Realtime channel status: ${status}`,
-                            err ? `Error: ${err.message}` : "",
-                        );
-
-                        if (status === "SUBSCRIBED") {
-                            console.log(
-                                "[initializeAdminNotifications] Realtime channel successfully subscribed.",
-                            );
-                            retryCount = 0; // Reset retry count on success
-
-                            // Set a flag to indicate successful subscription
-                            set({
-                                realtimeChannel: channel,
-                                subscriptionStatus: "subscribed",
-                            });
-
-                            // Trigger a final fetch to catch anything missed during setup
-                            get()._fetchAndSetMessages(
-                                userId,
-                                get().viewingDivisionId,
-                            );
-                        } else if (
-                            status === "CHANNEL_ERROR" ||
-                            status === "TIMED_OUT" || err
-                        ) {
+                    .subscribe(createRealtimeCallback(
+                        "AdminNotifications",
+                        // onError callback
+                        (status, err) => {
                             console.error(
                                 "[initializeAdminNotifications] Realtime subscription error:",
                                 err ?? status,
@@ -551,13 +531,27 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
                                     subscriptionStatus: "none",
                                 });
                             }
-                        } else if (status === "CLOSED") {
-                            console.warn(
-                                "[initializeAdminNotifications] Realtime channel closed.",
+                        },
+                        // onSuccess callback
+                        (status) => {
+                            console.log(
+                                "[initializeAdminNotifications] Realtime channel successfully subscribed.",
                             );
-                            // Channel closed normally, no action needed
-                        }
-                    });
+                            retryCount = 0; // Reset retry count on success
+
+                            // Set a flag to indicate successful subscription
+                            set({
+                                realtimeChannel: channel,
+                                subscriptionStatus: "subscribed",
+                            });
+
+                            // Trigger a final fetch to catch anything missed during setup
+                            get()._fetchAndSetMessages(
+                                userId,
+                                get().viewingDivisionId,
+                            );
+                        },
+                    ));
 
                 return channel;
             } catch (error) {
