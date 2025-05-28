@@ -305,6 +305,29 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
 
   return (
     <ThemedView style={styles.container}>
+      {/* Information Section */}
+      {division && (
+        <View
+          style={[
+            styles.infoContainer,
+            { backgroundColor: Colors[colorScheme].tint + "10", borderColor: Colors[colorScheme].tint + "30" },
+          ]}
+        >
+          <View style={styles.infoHeader}>
+            <Ionicons name="information-circle" size={20} color={Colors[colorScheme].tint} />
+            <ThemedText style={[styles.infoTitle, { color: Colors[colorScheme].tint }]}>
+              Notification System Info
+            </ThemedText>
+          </View>
+          <ThemedText style={styles.infoText}>
+            This system only sends notifications to members who have:
+            {"\n"}• Registered in the app with their PIN number
+            {"\n"}• Set up their notification preferences
+            {"\n\n"}Members who haven't registered yet will not receive email notifications to prevent spam.
+          </ThemedText>
+        </View>
+      )}
+
       {/* Search and Filters */}
       <View style={styles.filtersContainer}>
         <TextInput
@@ -421,7 +444,9 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
             </ThemedText>
             {division && emailRecords.length === 0 && (
               <ThemedText style={styles.emptySubtext}>
-                Email records will appear here when email notifications are sent from the system
+                Email records will appear here when email notifications are sent from the system.
+                {"\n\n"}Note: Notifications are only sent to members who have registered in the app and set up their
+                notification preferences.
               </ThemedText>
             )}
           </ThemedView>
@@ -534,7 +559,7 @@ const styles = StyleSheet.create({
   filtersContainer: {
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.light.border,
+    borderBottomColor: Colors.dark.border,
   },
   searchInput: {
     height: 44,
@@ -579,7 +604,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     padding: 16,
-    backgroundColor: Colors.light.background + "80",
+    backgroundColor: Colors.dark.background + "80",
   },
   summaryText: {
     fontSize: 14,
@@ -587,15 +612,15 @@ const styles = StyleSheet.create({
   },
   errorContainer: {
     padding: 16,
-    backgroundColor: Colors.light.error + "20",
-    borderColor: Colors.light.error,
+    backgroundColor: Colors.dark.error + "20",
+    borderColor: Colors.dark.error,
     borderWidth: 1,
     borderRadius: 8,
     margin: 16,
     alignItems: "center",
   },
   errorText: {
-    color: Colors.light.error,
+    color: Colors.dark.error,
     fontSize: 14,
     textAlign: "center",
     marginBottom: 8,
@@ -639,7 +664,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
-    backgroundColor: Colors.light.background,
+    backgroundColor: Colors.dark.background,
   },
   recordHeader: {
     flexDirection: "row",
@@ -682,7 +707,7 @@ const styles = StyleSheet.create({
   requestDetails: {
     marginBottom: 12,
     padding: 12,
-    backgroundColor: Colors.light.border + "40",
+    backgroundColor: Colors.dark.border + "40",
     borderRadius: 8,
   },
   requestText: {
@@ -713,7 +738,28 @@ const styles = StyleSheet.create({
   },
   fallbackText: {
     fontSize: 12,
-    color: Colors.light.warning,
+    color: Colors.dark.warning,
     fontWeight: "500",
+  },
+  infoContainer: {
+    padding: 16,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  infoHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 8,
+  },
+  infoTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  infoText: {
+    fontSize: 14,
+    opacity: 0.7,
   },
 });
