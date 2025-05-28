@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { StyleSheet, TextInput, View, Platform, ActivityIndicator, Alert } from "react-native";
+import { Picker } from "@react-native-picker/picker";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { TouchableOpacityComponent } from "@/components/TouchableOpacityComponent";
@@ -97,69 +98,84 @@ const Dropdown: React.FC<DropdownProps> = ({
   required = false,
 }) => {
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
-  const [isOpen, setIsOpen] = useState(false);
 
-  const selectedOption = options.find((opt) => opt.id === value);
-
-  return (
-    <View style={styles.formGroup}>
-      <ThemedText style={styles.label}>
-        {label}
-        {required && <ThemedText style={styles.required}> *</ThemedText>}
-      </ThemedText>
-
-      <TouchableOpacityComponent
-        style={[styles.pickerContainer, disabled && styles.pickerDisabled, { borderColor: Colors[colorScheme].border }]}
-        onPress={() => !disabled && setIsOpen(!isOpen)}
-        activeOpacity={0.7}
-      >
-        <ThemedText style={[styles.pickerText, !selectedOption && styles.pickerPlaceholder]}>
-          {selectedOption ? selectedOption.name : placeholder}
+  if (Platform.OS === "web") {
+    return (
+      <View style={styles.formGroup}>
+        <ThemedText style={styles.label}>
+          {label}
+          {required && <ThemedText style={styles.required}> *</ThemedText>}
         </ThemedText>
-        <Ionicons name={isOpen ? "chevron-up" : "chevron-down"} size={20} color={Colors[colorScheme].text} />
-      </TouchableOpacityComponent>
-
-      {isOpen && !disabled && (
-        <View style={[styles.dropdownList, { borderColor: Colors[colorScheme].border }]}>
-          <PlatformScrollView style={styles.dropdownScroll} nestedScrollEnabled>
-            {options.length === 0 ? (
-              <View style={styles.dropdownItem}>
-                <ThemedText style={styles.dropdownItemTextDisabled}>No options available</ThemedText>
-              </View>
-            ) : (
-              options.map((option) => (
-                <TouchableOpacityComponent
-                  key={option.id}
-                  style={[
-                    styles.dropdownItem,
-                    option.disabled && styles.dropdownItemDisabled,
-                    option.id === value && styles.dropdownItemSelected,
-                  ]}
-                  onPress={() => {
-                    if (!option.disabled) {
-                      onSelect(option.id);
-                      setIsOpen(false);
-                    }
-                  }}
-                  activeOpacity={0.7}
-                >
-                  <ThemedText
-                    style={[
-                      styles.dropdownItemText,
-                      option.disabled && styles.dropdownItemTextDisabled,
-                      option.id === value && styles.dropdownItemTextSelected,
-                    ]}
-                  >
-                    {option.name}
-                  </ThemedText>
-                </TouchableOpacityComponent>
-              ))
-            )}
-          </PlatformScrollView>
+        <select
+          value={value || ""}
+          onChange={(e) => {
+            const selectedValue = e.target.value;
+            if (selectedValue) {
+              // Convert to number if it's a numeric string, otherwise keep as string
+              const convertedValue = isNaN(Number(selectedValue)) ? selectedValue : Number(selectedValue);
+              onSelect(convertedValue);
+            }
+          }}
+          disabled={disabled}
+          style={{
+            height: 40,
+            padding: 8,
+            backgroundColor: Colors[colorScheme].background,
+            color: Colors[colorScheme].text,
+            borderColor: Colors[colorScheme].border,
+            borderWidth: 1,
+            borderRadius: 8,
+            width: "100%",
+            fontSize: 14,
+            opacity: disabled ? 0.5 : 1,
+          }}
+        >
+          <option value="">{placeholder}</option>
+          {options.map((option) => (
+            <option key={option.id} value={option.id} disabled={option.disabled}>
+              {option.name}
+            </option>
+          ))}
+        </select>
+      </View>
+    );
+  } else {
+    // For mobile platforms, use the Picker component
+    return (
+      <View style={styles.formGroup}>
+        <ThemedText style={styles.label}>
+          {label}
+          {required && <ThemedText style={styles.required}> *</ThemedText>}
+        </ThemedText>
+        <View
+          style={[
+            styles.pickerContainer,
+            disabled && styles.pickerDisabled,
+            { borderColor: Colors[colorScheme].border },
+          ]}
+        >
+          <Picker
+            selectedValue={value || ""}
+            onValueChange={(itemValue) => {
+              if (itemValue) {
+                // Convert to number if it's a numeric string, otherwise keep as string
+                const convertedValue = isNaN(Number(itemValue)) ? itemValue : Number(itemValue);
+                onSelect(convertedValue);
+              }
+            }}
+            style={styles.picker}
+            enabled={!disabled}
+            dropdownIconColor={Colors[colorScheme].text}
+          >
+            <Picker.Item label={placeholder} value="" />
+            {options.map((option) => (
+              <Picker.Item key={option.id} label={option.name} value={option.id} enabled={!option.disabled} />
+            ))}
+          </Picker>
         </View>
-      )}
-    </View>
-  );
+      </View>
+    );
+  }
 };
 
 export function MemberTransfer() {
@@ -975,52 +991,10 @@ const styles = StyleSheet.create({
     opacity: 0.5,
     backgroundColor: Colors.dark.card,
   },
-  pickerText: {
-    fontSize: 14,
-    flex: 1,
-  },
-  pickerPlaceholder: {
-    opacity: 0.7,
-  },
-  dropdownList: {
-    position: "absolute",
-    top: 72, // label + picker height + margin
-    left: 0,
-    right: 0,
-    backgroundColor: Colors.dark.background,
-    borderWidth: 1,
-    borderRadius: 8,
-    maxHeight: 200,
-    zIndex: 1000,
-    elevation: 5,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-  },
-  dropdownScroll: {
-    maxHeight: 200,
-  },
-  dropdownItem: {
-    padding: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.dark.border,
-  },
-  dropdownItemDisabled: {
-    opacity: 0.5,
-  },
-  dropdownItemSelected: {
-    backgroundColor: Colors.dark.tint,
-  },
-  dropdownItemText: {
-    fontSize: 14,
-  },
-  dropdownItemTextDisabled: {
-    opacity: 0.5,
-  },
-  dropdownItemTextSelected: {
-    color: Colors.dark.background,
-    fontWeight: "600",
+  picker: {
+    height: 40,
+    width: "100%",
+    color: Colors.dark.text,
   },
   notesInput: {
     borderWidth: 1,
