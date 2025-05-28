@@ -118,7 +118,7 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
         `
         )
         .order("created_at", { ascending: false })
-        .limit(500); // Increased limit since we're not pre-filtering
+        .limit(500);
 
       // Filter by specific request if provided
       if (requestId) {
@@ -129,17 +129,49 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
 
       if (fetchError) throw fetchError;
 
-      // For division admin context, show ALL emails
-      // Division filtering will be handled in the UI if needed
       let filteredData = data as EmailTrackingRecord[];
 
-      // If we have a specific division context and no specific request,
-      // we could optionally filter by division-related patterns here
-      // For now, show all emails in division admin context
+      // Filter by division if division context is provided and no specific request
       if (division && !requestId) {
-        // Show all emails - division context is for display purposes
-        // The admin can see all email activity for their oversight
-        console.log(`Showing all email records for division admin context: ${division}`);
+        // Find the current division (recalculate in case divisions weren't loaded yet)
+        const divisionInfo = divisions.find((div) => div.name === division);
+
+        if (divisionInfo) {
+          filteredData = filteredData.filter((record) => {
+            // Include emails where the request is associated with a member from this division
+            if (record.request?.member?.division_id === divisionInfo.id) {
+              return true;
+            }
+
+            // Include system-wide notifications ONLY if they're related to this division's requests
+            // (like errors for requests from members in this division)
+            if (record.email_type === "notification" && record.recipient === "system") {
+              // Only include if the underlying request is from a member in this division
+              if (record.request?.member?.division_id === divisionInfo.id) {
+                return true;
+              }
+              // Skip system notifications for other divisions
+              return false;
+            }
+
+            // Include emails sent to division-specific addresses
+            // Check if the recipient matches any division email patterns
+            const divisionEmailPatterns = [
+              division.toLowerCase(),
+              `div${divisionInfo.id}`,
+              `division${divisionInfo.id}`,
+            ];
+
+            const recipientLower = record.recipient.toLowerCase();
+            const includesDivisionPattern = divisionEmailPatterns.some((pattern) => recipientLower.includes(pattern));
+
+            if (includesDivisionPattern) {
+              return true;
+            }
+
+            return false;
+          });
+        }
       }
 
       setEmailRecords(filteredData);
@@ -249,7 +281,7 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
   // Load data on mount and when division changes
   useEffect(() => {
     fetchEmailRecords();
-  }, [requestId, division]);
+  }, [requestId, division, divisions.length]);
 
   // Get status color
   const getStatusColor = (status: string): string => {
@@ -306,7 +338,7 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
   return (
     <ThemedView style={styles.container}>
       {/* Information Section */}
-      {division && (
+      {division && currentDivision && (
         <View
           style={[
             styles.infoContainer,
@@ -316,11 +348,12 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
           <View style={styles.infoHeader}>
             <Ionicons name="information-circle" size={20} color={Colors[colorScheme].tint} />
             <ThemedText style={[styles.infoTitle, { color: Colors[colorScheme].tint }]}>
-              Notification System Info
+              {division} Division Email History
             </ThemedText>
           </View>
           <ThemedText style={styles.infoText}>
-            This system only sends notifications to members who have:
+            Showing email notifications for {division} division members and division-specific communications only.
+            {"\n"}Notifications are only sent to members who have:
             {"\n"}• Registered in the app with their PIN number
             {"\n"}• Set up their notification preferences
             {"\n\n"}Members who haven't registered yet will not receive email notifications to prevent spam.
@@ -418,7 +451,7 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
       <View style={styles.summaryContainer}>
         <ThemedText style={styles.summaryText}>
           Showing {filteredRecords.length} of {emailRecords.length} email records
-          {division && ` (Division ${division} Admin View)`}
+          {division && currentDivision && ` for ${division} division`}
         </ThemedText>
       </View>
 
@@ -439,12 +472,12 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
             <Ionicons name="mail-outline" size={48} color={Colors[colorScheme].text + "40"} />
             <ThemedText style={styles.emptyText}>
               {emailRecords.length === 0
-                ? `No email records found${division ? ` (Division ${division} Admin View)` : ""}`
+                ? `No email records found${division && currentDivision ? ` for ${division} division` : ""}`
                 : "No records match your filters"}
             </ThemedText>
-            {division && emailRecords.length === 0 && (
+            {division && currentDivision && emailRecords.length === 0 && (
               <ThemedText style={styles.emptySubtext}>
-                Email records will appear here when email notifications are sent from the system.
+                Email records will appear here when email notifications are sent for members in the {division} division.
                 {"\n\n"}Note: Notifications are only sent to members who have registered in the app and set up their
                 notification preferences.
               </ThemedText>
