@@ -400,7 +400,9 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
                       styles.filterChipText,
                       {
                         color:
-                          selectedStatus === option.value ? Colors[colorScheme].background : Colors[colorScheme].text,
+                          selectedStatus === option.value
+                            ? Colors[colorScheme].background
+                            : Colors[colorScheme].textDim,
                       },
                     ]}
                   >
@@ -434,7 +436,7 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
                         color:
                           selectedEmailType === option.value
                             ? Colors[colorScheme].background
-                            : Colors[colorScheme].text,
+                            : Colors[colorScheme].textDim,
                       },
                     ]}
                   >

@@ -9,7 +9,7 @@ import { useColorScheme } from "@/hooks/useColorScheme";
 import { DivisionEmailSettings } from "./DivisionEmailSettings";
 import { EmailHistory } from "./EmailHistory";
 import { EmailNotificationAlerts } from "../EmailNotificationAlerts";
-import Animated, { FadeIn, FadeOut, Layout } from "react-native-reanimated";
+import Animated, { FadeIn, FadeOut, Layout, LinearTransition } from "react-native-reanimated";
 
 const AnimatedThemedView = Animated.createAnimatedComponent(ThemedView);
 
@@ -73,11 +73,16 @@ export function DivisionEmailManagement({ division }: DivisionEmailManagementPro
                 fontWeight: isActive ? "600" : "normal",
               },
             ]}
+            numberOfLines={2}
           >
             {tab.label}
           </ThemedText>
         </View>
-        {!isActive && <ThemedText style={styles.tabDescription}>{tab.description}</ThemedText>}
+        {!isActive && (
+          <ThemedText style={styles.tabDescription} numberOfLines={3}>
+            {tab.description}
+          </ThemedText>
+        )}
       </TouchableOpacityComponent>
     );
   };
@@ -85,7 +90,9 @@ export function DivisionEmailManagement({ division }: DivisionEmailManagementPro
   const renderTabContent = () => {
     switch (activeTab) {
       case "alerts":
-        return <EmailNotificationAlerts divisionFilter={division} showOnlyUnacknowledged={false} maxAlerts={50} />;
+        return (
+          <EmailNotificationAlerts divisionFilter={division} initialShowOnlyUnacknowledged={true} maxAlerts={50} />
+        );
       case "settings":
         return <DivisionEmailSettings division={division} />;
       case "history":
@@ -122,7 +129,7 @@ export function DivisionEmailManagement({ division }: DivisionEmailManagementPro
           style={styles.tabContentContainer}
           entering={FadeIn.duration(200)}
           exiting={FadeOut.duration(200)}
-          layout={Layout.springify()}
+          layout={LinearTransition.springify()}
         >
           {renderTabContent()}
         </AnimatedThemedView>
@@ -165,8 +172,10 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     borderWidth: 1,
     borderRadius: 12,
-    padding: 4,
+    padding: 8,
+    minHeight: 80,
     justifyContent: "center",
+    alignItems: "center",
   },
   tabContent: {
     flexDirection: "row",
@@ -174,10 +183,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 8,
     marginBottom: 4,
+    flexShrink: 1,
   },
   tabLabel: {
     fontSize: 16,
     textAlign: "center",
+    flexShrink: 1,
   },
   tabDescription: {
     fontSize: 12,

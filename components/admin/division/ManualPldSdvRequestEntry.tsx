@@ -30,6 +30,7 @@ import { supabase } from "@/utils/supabase";
 import Toast from "react-native-toast-message";
 import { ClientOnlyDatePicker } from "@/components/ClientOnlyDatePicker";
 import { Picker } from "@react-native-picker/picker";
+import { calculatePLDs } from "@/store/adminCalendarManagementStore";
 
 interface ManualPldSdvRequestEntryProps {
   selectedDivision: string;
@@ -46,6 +47,23 @@ interface PldSdvRequest {
   paid_in_lieu: boolean;
   calendar_id: string;
   calendar_name?: string;
+}
+
+// Add interface for available days
+interface AvailableDays {
+  totalPld: number;
+  totalSdv: number;
+  availablePld: number;
+  availableSdv: number;
+  approvedPld: number;
+  approvedSdv: number;
+  requestedPld: number;
+  requestedSdv: number;
+  waitlistedPld: number;
+  waitlistedSdv: number;
+  paidInLieuPld: number;
+  paidInLieuSdv: number;
+  rolledOverPld: number;
 }
 
 // Function to check if a request date should be auto-approved
@@ -136,6 +154,10 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
   const [isLoadingRequests, setIsLoadingRequests] = useState(false);
   const [memberCalendarName, setMemberCalendarName] = useState<string | null>(null);
 
+  // Add state for available days
+  const [availableDays, setAvailableDays] = useState<AvailableDays | null>(null);
+  const [isLoadingAvailableDays, setIsLoadingAvailableDays] = useState(false);
+
   // Add state for request editing
   const [editingRequest, setEditingRequest] = useState<PldSdvRequest | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -150,6 +172,17 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
   // Add state for search input layout
   const [searchInputLayout, setSearchInputLayout] = useState({ x: 0, y: 0, width: 0, height: 0 });
   const [showMobileSearchModal, setShowMobileSearchModal] = useState(false);
+
+  // Add state for year filtering
+  const [selectedYear, setSelectedYear] = useState<number>(() => {
+    return new Date().getFullYear();
+  });
+  const [showFutureRequests, setShowFutureRequests] = useState<boolean>(() => {
+    const currentDate = new Date();
+    const currentMonth = currentDate.getMonth(); // 0-based, so July = 6
+    // After July 1st, default to showing future requests
+    return currentMonth >= 6;
+  });
 
   // Fetch calendar names when the component loads
   useEffect(() => {
@@ -193,7 +226,21 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       try {
         setIsLoadingRequests(true);
 
-        // Build query based on available identifiers - WITHOUT trying to join with calendars
+        // Determine date range based on selected year and future requests setting
+        let startDate: string;
+        let endDate: string;
+
+        if (showFutureRequests) {
+          // Show selected year + future requests
+          startDate = `${selectedYear}-01-01`;
+          endDate = `${selectedYear + 1}-12-31`;
+        } else {
+          // Show only selected year
+          startDate = `${selectedYear}-01-01`;
+          endDate = `${selectedYear}-12-31`;
+        }
+
+        // Build query to get requests for the specified date range
         let query = supabase
           .from("pld_sdv_requests")
           .select(
@@ -203,9 +250,13 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
           leave_type,
           status,
           paid_in_lieu,
-          calendar_id
+          calendar_id,
+          member_id,
+          pin_number
         `
           )
+          .gte("request_date", startDate)
+          .lte("request_date", endDate)
           .order("request_date", { ascending: false });
 
         // We need to check both member_id and pin_number to catch all requests
@@ -224,14 +275,89 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
           return;
         }
 
-        if (!requestsData || requestsData.length === 0) {
+        // Variable to hold the final requests data after potential deduplication
+        let finalRequestsData: any[] = requestsData || [];
+
+        // If we have both member_id and pin_number but got fewer results than expected,
+        // let's also try separate queries to make sure we're not missing anything
+        let additionalRequests: any[] = [];
+        if (memberId && requestsData && requestsData.length < 10) {
+          // Arbitrary threshold
+
+          // Query by member_id only
+          const { data: memberIdRequests, error: memberIdError } = await supabase
+            .from("pld_sdv_requests")
+            .select(
+              `
+              id,
+              request_date,
+              leave_type,
+              status,
+              paid_in_lieu,
+              calendar_id,
+              member_id,
+              pin_number
+            `
+            )
+            .eq("member_id", memberId)
+            .gte("request_date", startDate)
+            .lte("request_date", endDate)
+            .order("request_date", { ascending: false });
+
+          // Query by pin_number only
+          const { data: pinNumberRequests, error: pinNumberError } = await supabase
+            .from("pld_sdv_requests")
+            .select(
+              `
+              id,
+              request_date,
+              leave_type,
+              status,
+              paid_in_lieu,
+              calendar_id,
+              member_id,
+              pin_number
+            `
+            )
+            .eq("pin_number", pinNumber)
+            .gte("request_date", startDate)
+            .lte("request_date", endDate)
+            .order("request_date", { ascending: false });
+
+          if (!memberIdError && memberIdRequests) {
+            additionalRequests = [...additionalRequests, ...memberIdRequests];
+          }
+
+          if (!pinNumberError && pinNumberRequests) {
+            additionalRequests = [...additionalRequests, ...pinNumberRequests];
+          }
+
+          // Combine and deduplicate all requests
+          const allRequests = [...(requestsData || []), ...additionalRequests];
+          const uniqueRequests = allRequests.filter(
+            (request, index, self) => index === self.findIndex((r) => r.id === request.id)
+          );
+
+          // Use the deduplicated list if we found more requests
+          if (uniqueRequests.length > (requestsData?.length || 0)) {
+            finalRequestsData = uniqueRequests.sort(
+              (a, b) => new Date(b.request_date).getTime() - new Date(a.request_date).getTime()
+            );
+          } else {
+            finalRequestsData = requestsData;
+          }
+        } else {
+          finalRequestsData = requestsData;
+        }
+
+        if (!finalRequestsData || finalRequestsData.length === 0) {
           setMemberRequests([]);
           setIsLoadingRequests(false);
           return;
         }
 
         // Combine the requests with calendar names
-        const formattedRequests = requestsData.map((req) => ({
+        const formattedRequests = finalRequestsData.map((req: any) => ({
           ...req,
           calendar_name: calendarNames[req.calendar_id] || "Calendar " + req.calendar_id.substring(0, 6) + "...",
         }));
@@ -239,9 +365,8 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
         setMemberRequests(formattedRequests);
 
         // If member doesn't have a calendar_id but has requests, extract calendar from requests
-        if (selectedMember && !selectedMember.calendar_id && requestsData.length > 0) {
-          console.log("Member has no calendar_id but has requests. Extracting from first request.");
-          const firstRequestCalendarId = requestsData[0].calendar_id;
+        if (selectedMember && !selectedMember.calendar_id && finalRequestsData.length > 0) {
+          const firstRequestCalendarId = finalRequestsData[0].calendar_id;
 
           if (firstRequestCalendarId) {
             // Update selected member with calendar information
@@ -254,10 +379,8 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
             // Update calendar name display
             if (calendarNames[firstRequestCalendarId]) {
               setMemberCalendarName(calendarNames[firstRequestCalendarId]);
-              console.log(`Extracted calendar: ${calendarNames[firstRequestCalendarId]} (${firstRequestCalendarId})`);
             } else {
               setMemberCalendarName(`Calendar ID: ${firstRequestCalendarId}`);
-              console.log(`Extracted calendar ID: ${firstRequestCalendarId} (name not found)`);
             }
           }
         }
@@ -267,8 +390,168 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
         setIsLoadingRequests(false);
       }
     },
-    [calendarNames, selectedMember]
+    [calendarNames, selectedMember, selectedYear, showFutureRequests]
   );
+
+  // Function to fetch member's available days
+  const fetchMemberAvailableDays = useCallback(async (memberId: string | null, pinNumber: number, memberData: any) => {
+    try {
+      setIsLoadingAvailableDays(true);
+      const currentYear = new Date().getFullYear();
+
+      // Fetch complete member data from database to get accurate entitlements
+      let memberQuery = supabase
+        .from("members")
+        .select("max_plds, sdv_entitlement, pld_rolled_over, company_hire_date");
+
+      if (memberId) {
+        memberQuery = memberQuery.eq("id", memberId);
+      } else {
+        memberQuery = memberQuery.eq("pin_number", pinNumber);
+      }
+
+      const { data: fullMemberData, error: memberError } = await memberQuery.single();
+
+      if (memberError) {
+        console.error("Error fetching member data for available days:", memberError);
+        return;
+      }
+
+      if (!fullMemberData) {
+        console.error("Member data not found");
+        return;
+      }
+
+      // Use RPC function to get accurate max PLDs if we have a member_id
+      let totalPld = fullMemberData.max_plds || 0;
+      if (memberId) {
+        try {
+          const { data: rpcPldResult, error: rpcError } = await supabase.rpc("update_member_max_plds", {
+            p_member_id: memberId,
+          });
+
+          if (!rpcError && rpcPldResult !== null) {
+            totalPld = rpcPldResult;
+            console.log("Used RPC for accurate PLD calculation:", totalPld);
+          } else {
+            console.warn("RPC failed, falling back to calculated PLDs:", rpcError);
+            totalPld = fullMemberData.max_plds || calculatePLDs(fullMemberData.company_hire_date);
+          }
+        } catch (rpcException) {
+          console.warn("RPC exception, falling back to calculated PLDs:", rpcException);
+          totalPld = fullMemberData.max_plds || calculatePLDs(fullMemberData.company_hire_date);
+        }
+      } else {
+        // No member_id, use calculated value
+        totalPld = fullMemberData.max_plds || calculatePLDs(fullMemberData.company_hire_date);
+      }
+
+      const totalSdv = fullMemberData.sdv_entitlement || 0;
+      const rolledOverPld = fullMemberData.pld_rolled_over || 0;
+
+      console.log("Member entitlements:", {
+        totalPld,
+        totalSdv,
+        rolledOverPld,
+        max_plds_from_db: fullMemberData.max_plds,
+        sdv_entitlement_from_db: fullMemberData.sdv_entitlement,
+        pld_rolled_over_from_db: fullMemberData.pld_rolled_over,
+      });
+
+      // Fetch current year requests for this member
+      let query = supabase
+        .from("pld_sdv_requests")
+        .select("leave_type, status, paid_in_lieu")
+        .gte("request_date", `${currentYear}-01-01`)
+        .lte("request_date", `${currentYear}-12-31`);
+
+      // Query by member_id or pin_number
+      if (memberId) {
+        query = query.or(`member_id.eq.${memberId},pin_number.eq.${pinNumber}`);
+      } else {
+        query = query.eq("pin_number", pinNumber);
+      }
+
+      const { data: requests, error } = await query;
+
+      if (error) {
+        console.error("Error fetching member requests for available days:", error);
+        return;
+      }
+
+      // Calculate counts by status and type
+      let approvedPld = 0,
+        approvedSdv = 0;
+      let requestedPld = 0,
+        requestedSdv = 0;
+      let waitlistedPld = 0,
+        waitlistedSdv = 0;
+      let paidInLieuPld = 0,
+        paidInLieuSdv = 0;
+
+      requests?.forEach((req) => {
+        const isPld = req.leave_type === "PLD";
+        const isSdv = req.leave_type === "SDV";
+
+        if (req.status === "approved") {
+          if (req.paid_in_lieu) {
+            if (isPld) paidInLieuPld++;
+            if (isSdv) paidInLieuSdv++;
+          } else {
+            if (isPld) approvedPld++;
+            if (isSdv) approvedSdv++;
+          }
+        } else if (req.status === "pending") {
+          if (isPld) requestedPld++;
+          if (isSdv) requestedSdv++;
+        } else if (req.status === "waitlisted") {
+          if (isPld) waitlistedPld++;
+          if (isSdv) waitlistedSdv++;
+        }
+      });
+
+      console.log("Request counts:", {
+        approvedPld,
+        approvedSdv,
+        requestedPld,
+        requestedSdv,
+        waitlistedPld,
+        waitlistedSdv,
+        paidInLieuPld,
+        paidInLieuSdv,
+      });
+
+      // Calculate available days
+      const availablePld = Math.max(
+        0,
+        totalPld + rolledOverPld - (approvedPld + requestedPld + waitlistedPld + paidInLieuPld)
+      );
+      const availableSdv = Math.max(0, totalSdv - (approvedSdv + requestedSdv + waitlistedSdv + paidInLieuSdv));
+
+      const availableDaysData: AvailableDays = {
+        totalPld,
+        totalSdv,
+        availablePld,
+        availableSdv,
+        approvedPld,
+        approvedSdv,
+        requestedPld,
+        requestedSdv,
+        waitlistedPld,
+        waitlistedSdv,
+        paidInLieuPld,
+        paidInLieuSdv,
+        rolledOverPld,
+      };
+
+      console.log("Final available days calculation:", availableDaysData);
+      setAvailableDays(availableDaysData);
+    } catch (error) {
+      console.error("Exception fetching member available days:", error);
+    } finally {
+      setIsLoadingAvailableDays(false);
+    }
+  }, []);
 
   // Handle member search - now searches across all division calendars
   const handleSearch = useCallback(
@@ -321,8 +604,11 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
 
       // Fetch the member's existing requests
       fetchMemberRequests(member.id, member.pin_number);
+
+      // Fetch the member's available days
+      fetchMemberAvailableDays(member.id, member.pin_number, member);
     },
-    [fetchMemberRequests, calendarNames]
+    [fetchMemberRequests, fetchMemberAvailableDays, calendarNames]
   );
 
   // Update search input layout when it renders
@@ -461,6 +747,9 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       // Refresh the member's requests list
       fetchMemberRequests(selectedMember.id, selectedMember.pin_number);
 
+      // Refresh the member's available days
+      fetchMemberAvailableDays(selectedMember.id, selectedMember.pin_number, selectedMember);
+
       // Reset form for next entry
       setIsPaidInLieu(false);
       // Don't reset member or date to make multiple entries easier
@@ -478,6 +767,7 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     adminUser,
     checkForDuplicateRequest,
     fetchMemberRequests,
+    fetchMemberAvailableDays,
   ]);
 
   // Get status color
@@ -524,6 +814,7 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
         // Refresh member requests
         if (selectedMember) {
           fetchMemberRequests(selectedMember.id, selectedMember.pin_number);
+          fetchMemberAvailableDays(selectedMember.id, selectedMember.pin_number, selectedMember);
         }
       } else {
         // Show error toast
@@ -543,7 +834,15 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     } finally {
       setIsUpdating(false);
     }
-  }, [editingRequest, selectedStatus, selectedLeaveType, adminUser, selectedMember, fetchMemberRequests]);
+  }, [
+    editingRequest,
+    selectedStatus,
+    selectedLeaveType,
+    adminUser,
+    selectedMember,
+    fetchMemberRequests,
+    fetchMemberAvailableDays,
+  ]);
 
   // Function to open the edit modal
   const handleEditRequest = useCallback((request: PldSdvRequest) => {
@@ -567,6 +866,17 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       setRequestDate(format(date, "yyyy-MM-dd"));
     }
   }, []);
+
+  // Function to get available years for the dropdown
+  const getAvailableYears = () => {
+    const currentYear = new Date().getFullYear();
+    const years = [];
+    // Show previous 2 years, current year, and next 2 years
+    for (let i = currentYear - 2; i <= currentYear + 2; i++) {
+      years.push(i);
+    }
+    return years;
+  };
 
   // Render the member's existing requests
   const renderMemberRequests = () => {
@@ -649,6 +959,50 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
           )}
         </View>
 
+        {/* Year Filter Controls */}
+        <View style={styles.filterContainer}>
+          <View style={styles.filterRow}>
+            <ThemedText style={styles.filterLabel}>Year:</ThemedText>
+            <View style={styles.yearPickerContainer}>
+              <Picker
+                selectedValue={selectedYear}
+                onValueChange={(itemValue) => {
+                  setSelectedYear(itemValue);
+                  if (selectedMember) {
+                    fetchMemberRequests(selectedMember.id, selectedMember.pin_number);
+                  }
+                }}
+                style={styles.yearPicker}
+                dropdownIconColor={Colors[colorScheme].text}
+              >
+                {getAvailableYears().map((year) => (
+                  <Picker.Item key={year} label={year.toString()} value={year} />
+                ))}
+              </Picker>
+            </View>
+          </View>
+
+          <View style={styles.filterRow}>
+            <ThemedText style={styles.filterLabel}>Include Future:</ThemedText>
+            <Switch
+              value={showFutureRequests}
+              onValueChange={(value) => {
+                setShowFutureRequests(value);
+                if (selectedMember) {
+                  fetchMemberRequests(selectedMember.id, selectedMember.pin_number);
+                }
+              }}
+              trackColor={{ false: Colors[colorScheme].border, true: Colors[colorScheme].tint }}
+              thumbColor={Colors[colorScheme].buttonBackground}
+            />
+            <ThemedText style={styles.filterHelpText}>
+              {showFutureRequests
+                ? `(Showing ${selectedYear} + ${selectedYear + 1})`
+                : `(Showing ${selectedYear} only)`}
+            </ThemedText>
+          </View>
+        </View>
+
         {memberRequests.length > 0 ? (
           <View style={styles.requestsContainer}>
             <TableHeader />
@@ -716,6 +1070,7 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
             setMemberRequests([]);
             setMemberCalendarName(null);
             setSuccessMessage(null);
+            setAvailableDays(null);
           }}
           variant="secondary"
           style={styles.clearMemberButton}
@@ -1044,6 +1399,143 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     );
   };
 
+  // Render the member's available days
+  const renderAvailableDays = () => {
+    if (!selectedMember) return null;
+
+    return (
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <ThemedText style={styles.sectionTitle}>Available Days</ThemedText>
+          {isLoadingAvailableDays && (
+            <ActivityIndicator size="small" color={Colors[colorScheme].tint} style={styles.loadingIndicator} />
+          )}
+        </View>
+
+        {availableDays ? (
+          <View style={styles.availableDaysContainer}>
+            {/* Summary Cards */}
+            <View style={styles.summaryCards}>
+              <View style={[styles.summaryCard, styles.pldCard]}>
+                <ThemedText style={styles.summaryCardTitle}>PLD Days</ThemedText>
+                <ThemedText style={styles.availableNumber}>{availableDays.availablePld}</ThemedText>
+                <ThemedText style={styles.summaryCardSubtitle}>Available</ThemedText>
+              </View>
+
+              <View style={[styles.summaryCard, styles.sdvCard]}>
+                <ThemedText style={styles.summaryCardTitle}>SDV Days</ThemedText>
+                <ThemedText style={styles.availableNumber}>{availableDays.availableSdv}</ThemedText>
+                <ThemedText style={styles.summaryCardSubtitle}>Available</ThemedText>
+              </View>
+            </View>
+
+            {/* Detailed Breakdown */}
+            <View style={styles.breakdownContainer}>
+              <ThemedText style={styles.breakdownTitle}>Breakdown for {new Date().getFullYear()}</ThemedText>
+
+              {/* Responsive Breakdown Layout */}
+              <View style={styles.breakdownColumns}>
+                {/* PLD Breakdown */}
+                <View style={[styles.breakdownColumn, styles.pldBreakdownColumn]}>
+                  <View style={styles.breakdownSection}>
+                    <ThemedText style={styles.breakdownSectionTitle}>
+                      <Ionicons name="calendar" size={16} color={Colors[colorScheme].tint} /> PLD Details
+                    </ThemedText>
+                    <View style={styles.breakdownGrid}>
+                      <View style={styles.breakdownItem}>
+                        <ThemedText style={styles.breakdownLabel}>Total Entitlement:</ThemedText>
+                        <ThemedText style={styles.breakdownValue}>{availableDays.totalPld}</ThemedText>
+                      </View>
+                      {availableDays.rolledOverPld > 0 && (
+                        <View style={styles.breakdownItem}>
+                          <ThemedText style={styles.breakdownLabel}>Rolled Over:</ThemedText>
+                          <ThemedText style={[styles.breakdownValue, { color: Colors[colorScheme].success }]}>
+                            +{availableDays.rolledOverPld}
+                          </ThemedText>
+                        </View>
+                      )}
+                      <View style={styles.breakdownItem}>
+                        <ThemedText style={styles.breakdownLabel}>Approved:</ThemedText>
+                        <ThemedText style={[styles.breakdownValue, { color: Colors[colorScheme].error }]}>
+                          -{availableDays.approvedPld}
+                        </ThemedText>
+                      </View>
+                      <View style={styles.breakdownItem}>
+                        <ThemedText style={styles.breakdownLabel}>Pending:</ThemedText>
+                        <ThemedText style={[styles.breakdownValue, { color: Colors[colorScheme].warning }]}>
+                          -{availableDays.requestedPld}
+                        </ThemedText>
+                      </View>
+                      <View style={styles.breakdownItem}>
+                        <ThemedText style={styles.breakdownLabel}>Waitlisted:</ThemedText>
+                        <ThemedText style={[styles.breakdownValue, { color: Colors[colorScheme].warning }]}>
+                          -{availableDays.waitlistedPld}
+                        </ThemedText>
+                      </View>
+                      {availableDays.paidInLieuPld > 0 && (
+                        <View style={styles.breakdownItem}>
+                          <ThemedText style={styles.breakdownLabel}>Paid in Lieu:</ThemedText>
+                          <ThemedText style={[styles.breakdownValue, { color: Colors[colorScheme].tint }]}>
+                            -{availableDays.paidInLieuPld}
+                          </ThemedText>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                </View>
+
+                {/* SDV Breakdown */}
+                <View style={[styles.breakdownColumn, styles.sdvBreakdownColumn]}>
+                  <View style={styles.breakdownSection}>
+                    <ThemedText style={styles.breakdownSectionTitle}>
+                      <Ionicons name="time" size={16} color={Colors[colorScheme].tint} /> SDV Details
+                    </ThemedText>
+                    <View style={styles.breakdownGrid}>
+                      <View style={styles.breakdownItem}>
+                        <ThemedText style={styles.breakdownLabel}>Total Entitlement:</ThemedText>
+                        <ThemedText style={styles.breakdownValue}>{availableDays.totalSdv}</ThemedText>
+                      </View>
+                      <View style={styles.breakdownItem}>
+                        <ThemedText style={styles.breakdownLabel}>Approved:</ThemedText>
+                        <ThemedText style={[styles.breakdownValue, { color: Colors[colorScheme].error }]}>
+                          -{availableDays.approvedSdv}
+                        </ThemedText>
+                      </View>
+                      <View style={styles.breakdownItem}>
+                        <ThemedText style={styles.breakdownLabel}>Pending:</ThemedText>
+                        <ThemedText style={[styles.breakdownValue, { color: Colors[colorScheme].warning }]}>
+                          -{availableDays.requestedSdv}
+                        </ThemedText>
+                      </View>
+                      <View style={styles.breakdownItem}>
+                        <ThemedText style={styles.breakdownLabel}>Waitlisted:</ThemedText>
+                        <ThemedText style={[styles.breakdownValue, { color: Colors[colorScheme].warning }]}>
+                          -{availableDays.waitlistedSdv}
+                        </ThemedText>
+                      </View>
+                      {availableDays.paidInLieuSdv > 0 && (
+                        <View style={styles.breakdownItem}>
+                          <ThemedText style={styles.breakdownLabel}>Paid in Lieu:</ThemedText>
+                          <ThemedText style={[styles.breakdownValue, { color: Colors[colorScheme].tint }]}>
+                            -{availableDays.paidInLieuSdv}
+                          </ThemedText>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                </View>
+              </View>
+            </View>
+          </View>
+        ) : (
+          <ThemedText style={styles.noDataText}>
+            {isLoadingAvailableDays ? "Loading available days..." : "No data available"}
+          </ThemedText>
+        )}
+      </View>
+    );
+  };
+
   // Fix for the requestsList style error
   const styles = StyleSheet.create({
     container: {
@@ -1183,12 +1675,6 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       // Add visual feedback for touchable rows on all platforms
       ...(Platform.OS === "web" && {
         cursor: "pointer",
-      }),
-      // Add hover effect for web
-      ...(Platform.OS === "web" && {
-        ":hover": {
-          backgroundColor: Colors.dark.border + "30",
-        },
       }),
     },
     tableHeader: {
@@ -1415,12 +1901,13 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     },
     requestsContainer: {
       minHeight: Platform.OS === "web" ? 250 : 340,
-      maxHeight: Platform.OS === "web" ? 250 : undefined,
+      maxHeight: Platform.OS === "web" ? undefined : undefined,
       flexGrow: 1,
       borderWidth: 1,
       borderColor: Colors.dark.border,
       borderRadius: 8,
       overflow: "hidden",
+      marginBottom: 5,
     },
     requestsList: {
       flex: 1,
@@ -1506,6 +1993,177 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       borderBottomColor: Colors.dark.border,
       backgroundColor: Colors.dark.card,
     },
+    availableDaysContainer: {
+      padding: 16,
+    },
+    summaryCards: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      marginBottom: 16,
+    },
+    summaryCard: {
+      flex: 1,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: Colors.dark.border,
+      borderRadius: 4,
+      backgroundColor: Colors.dark.card,
+    },
+    pldCard: {
+      marginRight: 8,
+    },
+    sdvCard: {
+      marginLeft: 8,
+    },
+    summaryCardTitle: {
+      fontSize: 16,
+      fontWeight: "bold",
+      marginBottom: 8,
+    },
+    availableNumber: {
+      fontSize: 24,
+      fontWeight: "bold",
+    },
+    summaryCardSubtitle: {
+      fontSize: 14,
+      color: Colors.dark.text,
+    },
+    breakdownContainer: {
+      marginTop: 16,
+    },
+    breakdownTitle: {
+      fontSize: 18,
+      fontWeight: "bold",
+      marginBottom: 12,
+    },
+    breakdownColumns: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      ...(Platform.OS !== "web" && {
+        flexDirection: "column",
+      }),
+    },
+    breakdownColumn: {
+      flex: 1,
+      ...(Platform.OS !== "web" && {
+        flex: 0,
+        width: "100%",
+      }),
+    },
+    breakdownSection: {
+      marginBottom: 16,
+    },
+    breakdownSectionTitle: {
+      fontSize: 16,
+      fontWeight: "bold",
+      marginBottom: 8,
+    },
+    breakdownGrid: {
+      flexDirection: "column",
+      justifyContent: "space-between",
+    },
+    breakdownItem: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      paddingVertical: 4,
+      borderBottomWidth: 1,
+      borderBottomColor: Colors.dark.border + "30",
+    },
+    breakdownLabel: {
+      fontSize: 14,
+      color: Colors.dark.text,
+      flex: 1,
+    },
+    breakdownValue: {
+      fontSize: 16,
+      fontWeight: "bold",
+      textAlign: "right",
+    },
+    pldBreakdownColumn: {
+      ...(Platform.OS === "web" && {
+        marginRight: 8,
+      }),
+      ...(Platform.OS !== "web" && {
+        marginBottom: 16,
+      }),
+    },
+    sdvBreakdownColumn: {
+      ...(Platform.OS === "web" && {
+        marginLeft: 8,
+      }),
+    },
+    noDataText: {
+      textAlign: "center",
+      marginTop: 20,
+      fontStyle: "italic",
+      padding: 20,
+    },
+    filterContainer: {
+      flexDirection: Platform.OS === "web" ? "row" : "column",
+      alignItems: Platform.OS === "web" ? "center" : "stretch",
+      marginBottom: 16,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: Colors.dark.border,
+      borderRadius: 8,
+      backgroundColor: Colors.dark.card,
+    },
+    filterRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      marginRight: Platform.OS === "web" ? 16 : 0,
+      marginBottom: Platform.OS === "web" ? 0 : 8,
+    },
+    filterLabel: {
+      fontSize: 16,
+      fontWeight: "bold",
+      marginRight: 8,
+      minWidth: 80,
+    },
+    yearPickerContainer: {
+      flexDirection: "row",
+      overflow: "hidden",
+      backgroundColor: Colors.dark.card,
+      borderWidth: 1,
+      borderColor: Colors.dark.border,
+      borderRadius: 4,
+      minWidth: 100,
+      ...Platform.select({
+        ios: {
+          height: 40,
+        },
+        android: {
+          height: 40,
+        },
+        web: {
+          height: 40,
+        },
+      }),
+    },
+    yearPicker: {
+      color: Colors.dark.text,
+      backgroundColor: Colors.dark.card,
+      borderColor: Colors.dark.border,
+      flex: 1,
+      ...Platform.select({
+        android: {
+          height: 40,
+        },
+        ios: {
+          height: 40,
+        },
+        web: {
+          height: 40,
+        },
+      }),
+    },
+    filterHelpText: {
+      marginLeft: 8,
+      fontSize: 14,
+      color: Colors.dark.secondary,
+      fontStyle: "italic",
+    },
   });
 
   // Fix the outer container and remove platform-specific conditions
@@ -1533,6 +2191,7 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       <ScrollView style={styles.content} key={`scroll-${selectedMember?.id || "none"}`}>
         {renderMemberSearch()}
         {selectedMember && renderMemberRequests()}
+        {selectedMember && renderAvailableDays()}
         {renderRequestForm()}
         {renderEditModal()}
       </ScrollView>
