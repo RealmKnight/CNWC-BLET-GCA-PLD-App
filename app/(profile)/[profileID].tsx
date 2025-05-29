@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { StyleSheet, ScrollView, Alert, Modal, Platform, TextInput, View, Linking } from "react-native";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { useAuth } from "@/hooks/useAuth";
@@ -19,7 +19,7 @@ import { ChangePasswordModal } from "@/components/ui/ChangePasswordModal";
 import { MemberMessageModal } from "@/components/MemberMessageModal";
 import { MeetingNotificationPreferences } from "@/components/ui/MeetingNotificationPreferences";
 import { ClientOnlyDatePicker } from "@/components/ClientOnlyDatePicker";
-import { useRouter } from "expo-router";
+import { SmsOptInModal } from "@/components/ui/SmsOptInModal";
 
 type Member = Database["public"]["Tables"]["members"]["Row"];
 type ContactPreference = "in_app" | "phone" | "text" | "email" | "push";
@@ -649,7 +649,7 @@ export default function ProfileScreen() {
   const [isPasswordModalVisible, setIsPasswordModalVisible] = useState(false);
 
   // Notification confirmation modals
-  const [isSMSConfirmationVisible, setIsSMSConfirmationVisible] = useState(false);
+  const [isSMSOptInVisible, setIsSMSOptInVisible] = useState(false);
   const [isEmailConfirmationVisible, setIsEmailConfirmationVisible] = useState(false);
   const [isPushConfirmationVisible, setIsPushConfirmationVisible] = useState(false);
 
@@ -821,7 +821,7 @@ export default function ProfileScreen() {
       }
 
       // Show SMS confirmation modal
-      setIsSMSConfirmationVisible(true);
+      setIsSMSOptInVisible(true);
       return;
     }
 
@@ -922,11 +922,6 @@ export default function ProfileScreen() {
   };
 
   // Handle confirmation for each notification type
-  const handleSMSConfirmation = async () => {
-    setIsSMSConfirmationVisible(false);
-    await applyPreferenceChange("text");
-  };
-
   const handleEmailConfirmation = async () => {
     setIsEmailConfirmationVisible(false);
     await applyPreferenceChange("email");
@@ -938,8 +933,8 @@ export default function ProfileScreen() {
   };
 
   // Cancel handlers for each confirmation
-  const handleCancelSMSConfirmation = () => {
-    setIsSMSConfirmationVisible(false);
+  const handleCancelSMSOptIn = () => {
+    setIsSMSOptInVisible(false);
     setPendingPreference(null);
   };
 
@@ -1019,16 +1014,22 @@ export default function ProfileScreen() {
         />
       )}
 
-      {/* Notification Confirmation Modals */}
-      <NotificationConfirmationModal
-        visible={isSMSConfirmationVisible}
-        onClose={handleCancelSMSConfirmation}
-        onConfirm={handleSMSConfirmation}
-        title="SMS Notifications Opt-In"
-      >
-        <SMSConfirmationContent />
-      </NotificationConfirmationModal>
+      {/* SMS Opt-In Modal */}
+      <SmsOptInModal
+        visible={isSMSOptInVisible}
+        onClose={handleCancelSMSOptIn}
+        onOptIn={async (phoneNumber: string) => {
+          // Update phone number in state
+          const cleanedPhone = phoneNumber.replace(/\D/g, "");
+          setPhoneNumber(cleanedPhone);
 
+          // Apply the SMS preference change
+          await applyPreferenceChange("text");
+        }}
+        currentPhoneNumber={phoneNumber}
+      />
+
+      {/* Email and Push Notification Confirmation Modals */}
       <NotificationConfirmationModal
         visible={isEmailConfirmationVisible}
         onClose={handleCancelEmailConfirmation}

@@ -32,7 +32,7 @@ export default function PrivacyPolicyScreen() {
 
         <ThemedText style={styles.title}>Privacy Policy for BLET PLD App</ThemedText>
 
-        <ThemedText style={styles.lastUpdated}>Last Updated: May 24, 2024</ThemedText>
+        <ThemedText style={styles.lastUpdated}>Last Updated: May 29, 2024</ThemedText>
         <ThemedText style={styles.lastUpdated} onPress={() => Linking.openURL("https://www.bletcnwcgca.org/privacy")}>
           https://www.bletcnwcgca.org/privacy
         </ThemedText>
@@ -148,6 +148,42 @@ export default function PrivacyPolicyScreen() {
         <ThemedText style={styles.paragraph}>
           If you opt in to receive SMS notifications, the following applies:
         </ThemedText>
+
+        <ThemedText style={styles.subSectionTitle}>SMS Opt-In Process</ThemedText>
+        <ThemedText style={styles.paragraph}>
+          Our SMS opt-in process is designed to meet all regulatory requirements and ensure you have full control over
+          your notifications:
+        </ThemedText>
+        <View style={styles.bulletContainer}>
+          <ThemedText style={styles.bulletItem}>
+            • When you select "Text Message" as your notification preference, a dedicated SMS opt-in modal appears with
+            all required compliance information.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • You must provide your US mobile phone number in a clearly labeled input field with real-time validation.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • Explicit opt-in language is prominently displayed on the form page (not hidden in separate terms): "I
+            agree to receive transactional/informational SMS messages at the phone number provided above from
+            Brotherhood of Locomotive Engineers and Trainmen (BLET) CN/WC GCA. Message and data rates may apply. Reply
+            STOP to opt-out."
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • Clear disclosure that "Consent is not a condition of purchase" and "Message frequency will vary. Message &
+            data rates may apply. Reply HELP for help or STOP to cancel."
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • Detailed list of notification types you will receive is shown on the opt-in form before you consent.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • Separate acceptance of Terms of Service and Privacy Policy is required.
+          </ThemedText>
+          <ThemedText style={styles.bulletItem}>
+            • All required fields must be completed and consents given before the opt-in can be submitted.
+          </ThemedText>
+        </View>
+
+        <ThemedText style={styles.subSectionTitle}>SMS Service Details</ThemedText>
         <View style={styles.bulletContainer}>
           <ThemedText style={styles.bulletItem}>
             • We will send SMS notifications for important app updates, alerts, request approvals/denials, waitlist

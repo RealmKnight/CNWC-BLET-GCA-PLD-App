@@ -52,42 +52,60 @@ Your division administrator has updated meeting schedules. Please check the app 
 
 ## How End-Users Consent to Receive Messages
 
-End-users provide explicit opt-in consent through a multi-step process within the BLET CN/WC GCA PLD mobile application:
+End-users provide explicit opt-in consent through BLET CN/WC GCA PLD mobile application:
 
-**Initial Opt-In Process:**
+Opt-In Process:
 
-1. Users access their profile settings within the authenticated mobile application
-2. Users select "Text Message" as their preferred notification method from available options (In-App, Push, Email, Text Message)
-3. A confirmation modal appears with detailed information about SMS notifications including:
-   - Types of messages they will receive (alerts, request approvals/denials, waitlist changes, meeting notices, union communications)
-   - Message frequency (typically 5-10 messages per month, potentially more during busy periods)
-   - Data rates may apply based on wireless carrier plan
-   - Clear opt-out instructions (reply STOP or change preferences in app)
-4. Users must tap "I Agree" to confirm their consent after reviewing all terms
-5. A confirmation message is displayed: "You've successfully opted-in to SMS notifications. Reply STOP to any message to opt-out at any time."
+1. Access: Users select "Text Message" notification preference in profile settings
+2. Compliant Modal: SMS opt-in modal with required elements:
+   Phone Number Collection:
+   - Input field with real-time validation for 10-digit US numbers
+   - Required field indicator
+     Explicit Opt-In Language:
+   - Checkbox: "I agree to receive transactional/informational SMS messages at the phone number provided from Brotherhood of Locomotive Engineers and Trainmen (BLET) CN/WC GCA. Message and data rates may apply. Reply STOP to opt-out."
+   - Business name highlighted in app brand color
+     See Sample of Modal in Opt-In Section of Privacy policy
+     <https://cnwc-gca-pld-app--test.expo.app/privacy>
+     Compliance Information:
+   - "Consent is not a condition of purchase"
+   - "Message frequency varies. Message & data rates may apply. Reply HELP for help or STOP to cancel"
+   - Notification types: PLD/SDV status updates, meeting reminders, union communications, admin alerts
+3. Terms Acceptance: Required checkbox for Terms of Service and Privacy Policy
+4. Validation: All required fields must be completed before submission
+5. Confirmation: Success message with opt-out instructions
 
-**Ongoing Consent Management:**
+Ongoing Management:
 
-- Users can change their notification preferences at any time through the app settings
-- Every SMS message includes implicit opt-out instructions (users can reply STOP)
-- The app's privacy policy (accessible at all times) clearly explains SMS notification practices
-- Users maintain full control over their notification preferences through their authenticated profile
+- Users can change preferences anytime through app settings
+- Every SMS includes opt-out instructions (reply STOP)
+- Privacy policy explains SMS practices
+- Full user control over notification preferences
 
-**Privacy Policy Integration:**
-Our privacy policy explicitly states: "When you opt in to receive SMS notifications through the app, we collect your phone number and store it securely. We use Twilio as our SMS service provider. Your mobile phone number will NEVER be sold, rented, or shared with third parties for marketing or promotional purposes. We only use your mobile phone number to send you the specific notifications you have requested."
+Compliance Features:
 
-**Compliance Features:**
+- Phone number collection on opt-in form
+- Explicit opt-in language prominently displayed
+- Full business name in opt-in language
+- "Message and data rates may apply" disclosure
+- "Reply STOP to opt-out" instructions
+- No hidden terms - all language visible on form
+- Transactional/informational messages only
+- No marketing content
+- Multiple opt-out methods
+- Transparent Twilio disclosure
 
-- All SMS notifications are transactional/informational in nature related to union business
-- No marketing or promotional content is sent via SMS
-- Users can opt-out via STOP keyword or app settings
-- Phone numbers are collected only after explicit consent
-- Clear disclosure of third-party SMS provider (Twilio)
-- Transparent data usage and privacy practices
+Technical Implementation:
 
-This opt-in process ensures full compliance with TCPA requirements and provides users with clear understanding and control over their SMS notification preferences.
+- Form validation prevents submission without consents
+- Real-time phone number formatting and validation
+
+This process ensures full TCPA and A2P 10DLC compliance, providing clear user control while meeting all carrier and regulatory requirements.
 
 ## Additional Information
+
+**Business Website**: <https://bletcnwcgca.org>  
+**Privacy Policy URL**: <https://bletcnwcgca.org/privacy>  
+**Direct Opt-In URL**: Available within authenticated mobile application (not publicly accessible due to member authentication requirements)
 
 **Message Frequency:** Varies based on union activity, typically 5-10 messages per month, but may be more frequent during busy periods or important events.
 
@@ -96,3 +114,7 @@ This opt-in process ensures full compliance with TCPA requirements and provides 
 **Content Type:** All messages are transactional/informational notifications related to union business activities, request status updates, meeting reminders, and administrative communications.
 
 **Target Audience:** Active union members of the Brotherhood of Locomotive Engineers and Trainmen (BLET) CN/WC GCA who have authenticated accounts in the mobile application.
+
+**SMS Service Provider:** Twilio
+
+**Opt-In Flow Screenshots:** [Screenshots of the complete opt-in flow will be provided via secure document sharing link]
