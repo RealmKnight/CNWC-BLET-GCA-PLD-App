@@ -791,18 +791,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
   // Check CAPTCHA status from Supabase
   const checkCaptchaStatus = useCallback(async () => {
     try {
-      // For now, we'll assume CAPTCHA is disabled in development
-      // In production, you could make an API call to check the actual status
-      const isDevelopment = __DEV__ || process.env.NODE_ENV === "development";
-      if (isDevelopment) {
-        setIsCaptchaEnabled(false);
-        console.log("[Auth] CAPTCHA disabled for development");
-      } else {
-        // In production, you might want to check the actual Supabase config
-        // For now, we'll default to enabled
-        setIsCaptchaEnabled(true);
-        console.log("[Auth] CAPTCHA enabled for production");
-      }
+      // CAPTCHA is now enabled for all environments (localhost, development, and production)
+      // since we have properly configured the site key and domains in Cloudflare Turnstile
+      setIsCaptchaEnabled(true);
+      console.log("[Auth] CAPTCHA enabled for all environments");
     } catch (error) {
       console.error("[Auth] Error checking CAPTCHA status:", error);
       // Default to enabled for security
