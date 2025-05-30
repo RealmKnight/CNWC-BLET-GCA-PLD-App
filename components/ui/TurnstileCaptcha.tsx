@@ -153,60 +153,60 @@ const TurnstileCaptcha = forwardRef<TurnstileCaptchaRef, TurnstileCaptchaProps>(
     }, [enabled, onVerify]);
 
     // Log domain information for debugging
-    useEffect(() => {
-      if (enabled && Platform.OS === "web") {
-        // console.log("[CAPTCHA] Domain info:", {
-        //   currentDomain,
-        //   fullURL: window.location.href,
-        //   origin: window.location.origin,
-        //   hostname: window.location.hostname,
-        //   isDevelopment,
-        //   isLocalhost,
-        //   isExpoDev,
-        //   usingTestKey: false, // No longer using test keys
-        //   siteKeyConfigured: !!siteKey,
-        //   siteKeyPrefix: siteKey?.substring(0, 10),
-        //   userAgent: navigator.userAgent,
-        //   referrer: document.referrer,
-        // });
+    // useEffect(() => {
+    // if (enabled && Platform.OS === "web") {
+    // console.log("[CAPTCHA] Domain info:", {
+    //   currentDomain,
+    //   fullURL: window.location.href,
+    //   origin: window.location.origin,
+    //   hostname: window.location.hostname,
+    //   isDevelopment,
+    //   isLocalhost,
+    //   isExpoDev,
+    //   usingTestKey: false, // No longer using test keys
+    //   siteKeyConfigured: !!siteKey,
+    //   siteKeyPrefix: siteKey?.substring(0, 10),
+    //   userAgent: navigator.userAgent,
+    //   referrer: document.referrer,
+    // });
 
-        // Check for potential CSP issues
-        if (typeof window !== "undefined") {
-          // console.log("[CAPTCHA] CSP and iframe info:", {
-          //   hasCSP: !!document.querySelector('meta[http-equiv="Content-Security-Policy"]'),
-          //   frameAncestors: document
-          //     .querySelector('meta[http-equiv="Content-Security-Policy"]')
-          //     ?.getAttribute("content")
-          //     ?.includes("frame-ancestors"),
-          //   isInIframe: window !== window.top,
-          //   protocol: window.location.protocol,
-          // });
-        }
+    // Check for potential CSP issues
+    // if (typeof window !== "undefined") {
+    // console.log("[CAPTCHA] CSP and iframe info:", {
+    //   hasCSP: !!document.querySelector('meta[http-equiv="Content-Security-Policy"]'),
+    //   frameAncestors: document
+    //     .querySelector('meta[http-equiv="Content-Security-Policy"]')
+    //     ?.getAttribute("content")
+    //     ?.includes("frame-ancestors"),
+    //   isInIframe: window !== window.top,
+    //   protocol: window.location.protocol,
+    // });
+    // }
 
-        // Check for script loading issues
-        // console.log("[CAPTCHA] Script and network info:", {
-        //   onlineStatus: navigator.onLine,
-        //   cookiesEnabled: navigator.cookieEnabled,
-        //   javaScriptEnabled: true, // If this logs, JS is enabled
-        //   turnstileScriptLoaded: !!window.turnstile,
-        //   windowTurnstile: typeof window.turnstile,
-        // });
+    // Check for script loading issues
+    // console.log("[CAPTCHA] Script and network info:", {
+    //   onlineStatus: navigator.onLine,
+    //   cookiesEnabled: navigator.cookieEnabled,
+    //   javaScriptEnabled: true, // If this logs, JS is enabled
+    //   turnstileScriptLoaded: !!window.turnstile,
+    //   windowTurnstile: typeof window.turnstile,
+    // });
 
-        // Provide specific domain configuration guidance
-        if (!isDevelopment && !isLocalhost) {
-          // console.log("[CAPTCHA] DOMAIN CONFIGURATION REQUIRED:");
-          // console.log(`[CAPTCHA] Add this EXACT domain to your Cloudflare Turnstile dashboard: ${currentDomain}`);
-          // console.log("[CAPTCHA] Steps:");
-          // console.log("[CAPTCHA] 1. Go to https://dash.cloudflare.com/");
-          // console.log("[CAPTCHA] 2. Navigate to Turnstile");
-          // console.log(`[CAPTCHA] 3. Find site with key: ${siteKey?.substring(0, 10)}...`);
-          // console.log("[CAPTCHA] 4. Edit site configuration");
-          // console.log(`[CAPTCHA] 5. Add domain: ${currentDomain}`);
-          // console.log("[CAPTCHA] 6. Save configuration");
-          // console.log("[CAPTCHA] 7. Wait 2-3 minutes for propagation");
-        }
-      }
-    }, [currentDomain, isDevelopment, isLocalhost, isExpoDev, effectiveSiteKey, siteKey, enabled]);
+    // Provide specific domain configuration guidance
+    // if (!isDevelopment && !isLocalhost) {
+    // console.log("[CAPTCHA] DOMAIN CONFIGURATION REQUIRED:");
+    // console.log(`[CAPTCHA] Add this EXACT domain to your Cloudflare Turnstile dashboard: ${currentDomain}`);
+    // console.log("[CAPTCHA] Steps:");
+    // console.log("[CAPTCHA] 1. Go to https://dash.cloudflare.com/");
+    // console.log("[CAPTCHA] 2. Navigate to Turnstile");
+    // console.log(`[CAPTCHA] 3. Find site with key: ${siteKey?.substring(0, 10)}...`);
+    // console.log("[CAPTCHA] 4. Edit site configuration");
+    // console.log(`[CAPTCHA] 5. Add domain: ${currentDomain}`);
+    // console.log("[CAPTCHA] 6. Save configuration");
+    // console.log("[CAPTCHA] 7. Wait 2-3 minutes for propagation");
+    // }
+    // }
+    // }, [currentDomain, isDevelopment, isLocalhost, isExpoDev, effectiveSiteKey, siteKey, enabled]);
 
     // Enhanced retry logic with rate limiting
     const retryTurnstile = () => {
@@ -214,23 +214,23 @@ const TurnstileCaptcha = forwardRef<TurnstileCaptchaRef, TurnstileCaptchaProps>(
       const timeSinceLastError = now - lastErrorTimeRef.current;
 
       // Rate limiting: don't retry more than once every 5 seconds
-      if (timeSinceLastError < 5000) {
-        // console.log("[CAPTCHA] Rate limited: Too many retries, waiting...");
-        return;
-      }
+      // if (timeSinceLastError < 5000) {
+      // console.log("[CAPTCHA] Rate limited: Too many retries, waiting...");
+      //   return;
+      // }
 
       // Circuit breaker: If we get too many 110200 errors, it's likely a persistent domain issue
-      if (consecutiveErrorsRef.current >= 3) {
-        console.log("[CAPTCHA] Circuit breaker activated: Too many consecutive errors, stopping retries");
-        console.log("[CAPTCHA] This usually indicates a persistent domain configuration issue");
-        console.log("[CAPTCHA] Please verify your domain is correctly configured in Cloudflare Turnstile");
-        console.log("[CAPTCHA] DISABLING CAPTCHA WIDGET TO PREVENT FURTHER ATTEMPTS");
-        setIsCircuitBreakerActive(true);
-        onError?.(
-          "CAPTCHA is experiencing repeated domain validation failures. Please refresh the page and contact support if the issue persists."
-        );
-        return;
-      }
+      // if (consecutiveErrorsRef.current >= 3) {
+      //   console.log("[CAPTCHA] Circuit breaker activated: Too many consecutive errors, stopping retries");
+      //   console.log("[CAPTCHA] This usually indicates a persistent domain configuration issue");
+      //   console.log("[CAPTCHA] Please verify your domain is correctly configured in Cloudflare Turnstile");
+      //   console.log("[CAPTCHA] DISABLING CAPTCHA WIDGET TO PREVENT FURTHER ATTEMPTS");
+      //   setIsCircuitBreakerActive(true);
+      //   onError?.(
+      //     "CAPTCHA is experiencing repeated domain validation failures. Please refresh the page and contact support if the issue persists."
+      //   );
+      //   return;
+      // }
 
       if (retryCountRef.current < 2 && !isRetryingRef.current) {
         setIsRetrying(true);
@@ -354,11 +354,11 @@ const TurnstileCaptcha = forwardRef<TurnstileCaptchaRef, TurnstileCaptchaProps>(
     // Handle CAPTCHA errors with better development messaging
     const handleError = (error: any) => {
       console.error("[CAPTCHA] Verification error:", error);
-      // console.error("[CAPTCHA] Current domain:", currentDomain);
-      // console.error("[CAPTCHA] Site key being used:", effectiveSiteKey?.substring(0, 10) + "...");
-      // console.error("[CAPTCHA] Retry count:", retryCountRef.current);
-      // console.error("[CAPTCHA] Consecutive errors:", consecutiveErrorsRef.current);
-      // console.error("[CAPTCHA] Time since last error:", Date.now() - lastErrorTimeRef.current, "ms");
+      console.error("[CAPTCHA] Current domain:", currentDomain);
+      console.error("[CAPTCHA] Site key being used:", effectiveSiteKey?.substring(0, 10) + "...");
+      console.error("[CAPTCHA] Retry count:", retryCountRef.current);
+      console.error("[CAPTCHA] Consecutive errors:", consecutiveErrorsRef.current);
+      console.error("[CAPTCHA] Time since last error:", Date.now() - lastErrorTimeRef.current, "ms");
 
       let errorMessage = "CAPTCHA verification failed";
       let shouldRetry = false;
@@ -366,7 +366,7 @@ const TurnstileCaptcha = forwardRef<TurnstileCaptchaRef, TurnstileCaptchaProps>(
       // Handle specific error codes
       if (typeof error === "string" || typeof error === "number") {
         const errorCode = error.toString();
-        // console.error("[CAPTCHA] Error code:", errorCode);
+        console.error("[CAPTCHA] Error code:", errorCode);
 
         switch (errorCode) {
           case "110200":
