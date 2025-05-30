@@ -139,36 +139,7 @@ const TurnstileCaptcha = forwardRef<TurnstileCaptchaRef, TurnstileCaptchaProps>(
     // Show development notice if using test keys
     const showDevelopmentNotice = (isDevelopment || isLocalhost) && effectiveSiteKey === TURNSTILE_TEST_SITE_KEY;
 
-    // For web platform, render the Turnstile component directly
-    if (Platform.OS === "web") {
-      return (
-        <View style={[styles.container, { minHeight: size === "compact" ? 65 : 80 }]}>
-          {showDevelopmentNotice && (
-            <ThemedText style={styles.developmentNotice}>Development Mode: Using test CAPTCHA</ThemedText>
-          )}
-          <Turnstile
-            ref={turnstileRef}
-            siteKey={effectiveSiteKey}
-            onSuccess={handleVerify}
-            onError={handleError}
-            onExpire={handleExpire}
-            options={{
-              theme: theme === "auto" ? (colorScheme === "dark" ? "dark" : "light") : theme,
-              size,
-              action: "submit",
-              cData: "auth_form",
-            }}
-            style={{
-              opacity: disabled ? 0.5 : 1,
-              pointerEvents: disabled ? "none" : "auto",
-            }}
-          />
-        </View>
-      );
-    }
-
-    // For mobile platforms, we'll use a WebView-based approach
-    // Note: @marsidev/react-turnstile handles this internally for React Native
+    // Render the Turnstile component with platform-specific optimizations
     return (
       <View style={[styles.container, { minHeight: size === "compact" ? 65 : 80 }]}>
         {showDevelopmentNotice && (
@@ -188,6 +159,18 @@ const TurnstileCaptcha = forwardRef<TurnstileCaptchaRef, TurnstileCaptchaProps>(
           }}
           style={{
             opacity: disabled ? 0.5 : 1,
+            // Web-specific pointer events
+            ...(Platform.OS === "web" && {
+              pointerEvents: disabled ? "none" : "auto",
+            }),
+            // Mobile-optimized styling for better touch interaction
+            ...(Platform.OS === "ios" || Platform.OS === "android"
+              ? {
+                  width: "100%",
+                  maxWidth: 300,
+                  alignSelf: "center",
+                }
+              : {}),
           }}
         />
       </View>
