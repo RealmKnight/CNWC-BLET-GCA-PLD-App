@@ -1,22 +1,48 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { StyleSheet, TextInput, TouchableOpacity, Image } from "react-native";
 import { Link } from "expo-router";
 import { ThemedView } from "@/components/ThemedView";
+import { ThemedScrollView } from "@/components/ThemedScrollView";
 import { ThemedText } from "@/components/ThemedText";
 import { Colors } from "@/constants/Colors";
 import { supabase } from "@/utils/supabase";
 import { sendPasswordResetEmail } from "@/utils/notificationService";
+import TurnstileCaptcha, { TurnstileCaptchaRef } from "@/components/ui/TurnstileCaptcha";
+import { useAuth } from "@/hooks/useAuth";
 
 export default function ForgotPasswordScreen() {
   const [email, setEmail] = useState("");
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaError, setCaptchaError] = useState<string | null>(null);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { resetPassword, isCaptchaEnabled } = useAuth();
+  const captchaRef = useRef<TurnstileCaptchaRef>(null);
+
+  const handleCaptchaVerify = (token: string) => {
+    console.log("[ForgotPassword] CAPTCHA verified successfully");
+    setCaptchaToken(token);
+    setCaptchaError(null);
+  };
+
+  const handleCaptchaError = (error: string) => {
+    console.error("[ForgotPassword] CAPTCHA error:", error);
+    setCaptchaToken(null);
+    setCaptchaError(error);
+  };
+
+  const handleCaptchaExpire = () => {
+    console.log("[ForgotPassword] CAPTCHA token expired");
+    setCaptchaToken(null);
+    setCaptchaError("CAPTCHA expired. Please verify again.");
+  };
 
   const handleForgotPassword = async () => {
     try {
       setIsLoading(true);
       setError(null);
+      setCaptchaError(null);
 
       // Basic validation
       if (!email) {
@@ -31,31 +57,51 @@ export default function ForgotPasswordScreen() {
         return;
       }
 
-      console.log("[Auth] Sending password reset email to:", email);
-
-      // Use the simplified email service
-      const success = await sendPasswordResetEmail(email);
-
-      if (!success) {
-        console.error("[Auth] Error sending reset email");
-        setError(
-          "We're having trouble sending emails right now. Please try again later or contact support if the issue persists."
-        );
+      // Validate CAPTCHA token only if CAPTCHA is enabled
+      if (isCaptchaEnabled && !captchaToken) {
+        setCaptchaError("Please complete the CAPTCHA verification");
         return;
       }
 
-      console.log("[Auth] Password reset email sent successfully");
+      console.log(
+        "[ForgotPassword] Sending password reset email" + (isCaptchaEnabled ? " with CAPTCHA protection" : "")
+      );
+
+      // Use the updated resetPassword function with CAPTCHA token
+      await resetPassword(email, captchaToken || undefined);
+
+      console.log("[ForgotPassword] Password reset email sent successfully");
       setIsSubmitted(true);
+
+      // Reset CAPTCHA after successful submission
+      if (isCaptchaEnabled) {
+        captchaRef.current?.reset();
+        setCaptchaToken(null);
+      }
     } catch (error: any) {
-      console.error("[Auth] Error in password reset:", error);
+      console.error("[ForgotPassword] Error in password reset:", error);
       setError(error.message || "Failed to send reset password email");
+
+      // Reset CAPTCHA on error to allow retry
+      if (isCaptchaEnabled) {
+        captchaRef.current?.reset();
+        setCaptchaToken(null);
+      }
     } finally {
       setIsLoading(false);
     }
   };
 
+  // Determine if form is ready to submit
+  const isFormReady = isCaptchaEnabled ? !!captchaToken : true;
+
   return (
-    <ThemedView style={styles.container}>
+    <ThemedScrollView
+      style={styles.container}
+      contentContainerStyle={styles.contentContainer}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+    >
       <Image source={require("@/assets/images/BLETblackgold.png")} style={styles.logo} />
       <ThemedView style={styles.header}>
         <ThemedText type="title">Forgot Password</ThemedText>
@@ -81,12 +127,28 @@ export default function ForgotPasswordScreen() {
               accessibilityLabel="Email input field"
             />
 
+            {/* CAPTCHA Component */}
+            <TurnstileCaptcha
+              ref={captchaRef}
+              onVerify={handleCaptchaVerify}
+              onError={handleCaptchaError}
+              onExpire={handleCaptchaExpire}
+              disabled={isLoading}
+              enabled={isCaptchaEnabled}
+              size="normal"
+              theme="auto"
+            />
+
+            {/* Display CAPTCHA error */}
+            {captchaError && <ThemedText style={styles.captchaError}>{captchaError}</ThemedText>}
+
+            {/* Display general error */}
             {error && <ThemedText style={styles.error}>{error}</ThemedText>}
 
             <TouchableOpacity
-              style={[styles.button, isLoading && styles.buttonDisabled]}
+              style={[styles.button, (isLoading || !isFormReady) && styles.buttonDisabled]}
               onPress={handleForgotPassword}
-              disabled={isLoading}
+              disabled={isLoading || !isFormReady}
               accessibilityLabel="Send reset link button"
               accessibilityHint="Sends a password reset link to your email"
             >
@@ -112,15 +174,19 @@ export default function ForgotPasswordScreen() {
           </Link>
         </ThemedView>
       </ThemedView>
-    </ThemedView>
+    </ThemedScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  contentContainer: {
+    flexGrow: 1,
     padding: 20,
     justifyContent: "center",
+    minHeight: "100%",
   },
   header: {
     marginBottom: 40,
@@ -169,6 +235,12 @@ const styles = StyleSheet.create({
     color: Colors.dark.error,
     textAlign: "center",
     marginBottom: 20,
+  },
+  captchaError: {
+    color: Colors.dark.error,
+    textAlign: "center",
+    marginBottom: 10,
+    fontSize: 14,
   },
   logo: {
     width: 130,

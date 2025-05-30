@@ -571,6 +571,6 @@ const styles = StyleSheet.create({
   },
   screenshotImage: {
     width: 300,
-    height: 400,
+    height: 533,
   },
 });

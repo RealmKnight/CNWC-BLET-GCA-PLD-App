@@ -1,33 +1,91 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { StyleSheet, TextInput, TouchableOpacity, Image } from "react-native";
 import { Link } from "expo-router";
 import { useAuth } from "@/hooks/useAuth";
 import { ThemedView } from "@/components/ThemedView";
+import { ThemedScrollView } from "@/components/ThemedScrollView";
 import { ThemedText } from "@/components/ThemedText";
 import { Colors } from "@/constants/Colors";
+import TurnstileCaptcha, { TurnstileCaptchaRef } from "@/components/ui/TurnstileCaptcha";
+
+// TODO: Add admin controls to enable/disable CAPTCHA protection
+// Future enhancement: Allow application_admin to enable/disable CAPTCHA protection
+// on the sign-in page based on security needs and attack patterns.
+// This would use the same TurnstileCaptcha component and follow the same pattern
+// as the sign-up and forgot-password forms.
 
 export default function SignInScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaError, setCaptchaError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const { signIn } = useAuth();
+  const { signIn, isCaptchaEnabled } = useAuth();
+  const captchaRef = useRef<TurnstileCaptchaRef>(null);
+
+  const handleCaptchaVerify = (token: string) => {
+    console.log("[SignIn] CAPTCHA verified successfully");
+    setCaptchaToken(token);
+    setCaptchaError(null);
+  };
+
+  const handleCaptchaError = (error: string) => {
+    console.error("[SignIn] CAPTCHA error:", error);
+    setCaptchaToken(null);
+    setCaptchaError(error);
+  };
+
+  const handleCaptchaExpire = () => {
+    console.log("[SignIn] CAPTCHA token expired");
+    setCaptchaToken(null);
+    setCaptchaError("CAPTCHA expired. Please verify again.");
+  };
 
   const handleSignIn = async () => {
     try {
       setError(null);
+      setCaptchaError(null);
       setIsLoading(true);
-      await signIn(email, password);
+
+      // Validate CAPTCHA token only if CAPTCHA is enabled
+      if (isCaptchaEnabled && !captchaToken) {
+        setCaptchaError("Please complete the CAPTCHA verification");
+        return;
+      }
+
+      console.log("[SignIn] Attempting sign in" + (isCaptchaEnabled ? " with CAPTCHA protection" : ""));
+      await signIn(email, password, captchaToken || undefined);
+
+      // Reset CAPTCHA after successful submission
+      if (isCaptchaEnabled) {
+        captchaRef.current?.reset();
+        setCaptchaToken(null);
+      }
     } catch (error) {
+      console.error("[SignIn] Sign in error:", error);
       setError(error instanceof Error ? error.message : "An error occurred during sign in");
-      console.error(error);
+
+      // Reset CAPTCHA on error to allow retry
+      if (isCaptchaEnabled) {
+        captchaRef.current?.reset();
+        setCaptchaToken(null);
+      }
     } finally {
       setIsLoading(false);
     }
   };
 
+  // Determine if form is ready to submit
+  const isFormReady = isCaptchaEnabled ? !!captchaToken : true;
+
   return (
-    <ThemedView style={styles.container}>
+    <ThemedScrollView
+      style={styles.container}
+      contentContainerStyle={styles.contentContainer}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+    >
       <Image source={require("@/assets/images/BLETblackgold.png")} style={styles.logo} />
       <ThemedView style={styles.header}>
         <ThemedText type="title">Welcome Back</ThemedText>
@@ -55,12 +113,28 @@ export default function SignInScreen() {
           editable={!isLoading}
         />
 
+        {/* CAPTCHA Component */}
+        <TurnstileCaptcha
+          ref={captchaRef}
+          onVerify={handleCaptchaVerify}
+          onError={handleCaptchaError}
+          onExpire={handleCaptchaExpire}
+          disabled={isLoading}
+          enabled={isCaptchaEnabled}
+          size="normal"
+          theme="auto"
+        />
+
+        {/* Display CAPTCHA error */}
+        {captchaError && <ThemedText style={styles.captchaError}>{captchaError}</ThemedText>}
+
+        {/* Display general error */}
         {error && <ThemedText style={styles.error}>{error}</ThemedText>}
 
         <TouchableOpacity
-          style={[styles.button, isLoading && styles.buttonDisabled]}
+          style={[styles.button, (isLoading || !isFormReady) && styles.buttonDisabled]}
           onPress={handleSignIn}
-          disabled={isLoading}
+          disabled={isLoading || !isFormReady}
         >
           <ThemedText style={styles.buttonText}>{isLoading ? "Signing in..." : "Sign In"}</ThemedText>
         </TouchableOpacity>
@@ -83,15 +157,19 @@ export default function SignInScreen() {
           </Link>
         </ThemedView>
       </ThemedView>
-    </ThemedView>
+    </ThemedScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  contentContainer: {
+    flexGrow: 1,
     padding: 20,
     justifyContent: "center",
+    minHeight: "100%",
   },
   header: {
     marginBottom: 40,
@@ -146,6 +224,12 @@ const styles = StyleSheet.create({
     color: Colors.dark.error,
     textAlign: "center",
     marginBottom: 10,
+  },
+  captchaError: {
+    color: Colors.dark.error,
+    textAlign: "center",
+    marginBottom: 10,
+    fontSize: 14,
   },
   logo: {
     width: 130,

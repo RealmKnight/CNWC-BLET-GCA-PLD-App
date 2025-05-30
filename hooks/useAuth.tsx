@@ -39,14 +39,16 @@ interface AuthContextType {
   userRole: UserRole | null;
   authStatus: AuthStatus; // <-- Replace isLoading and isMemberCheckComplete
   isPasswordRecoveryFlow: boolean; // <-- ADDED FLAG
+  isCaptchaEnabled: boolean; // <-- ADDED CAPTCHA STATUS
   signOut: () => Promise<void>;
-  signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string) => Promise<void>;
-  resetPassword: (email: string) => Promise<void>;
+  signIn: (email: string, password: string, captchaToken?: string) => Promise<void>;
+  signUp: (email: string, password: string, captchaToken?: string) => Promise<void>;
+  resetPassword: (email: string, captchaToken?: string) => Promise<void>;
   updateProfile: (updates: Partial<UserProfile>) => Promise<void>;
   associateMemberWithPin: (pin: string) => Promise<void>;
   signalPasswordRecoveryStart: () => void; // <-- ADDED FUNCTION
   clearPasswordRecoveryFlag: () => void; // <-- ADDED FUNCTION
+  checkCaptchaStatus: () => Promise<void>; // <-- ADDED FUNCTION
 }
 
 interface AuthProviderProps {
@@ -64,6 +66,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [appState, setAppState] = useState(AppState.currentState);
   const [isCompanyAdmin, setIsCompanyAdmin] = useState(false); // Keep derived state
   const [isPasswordRecoveryFlow, setIsPasswordRecoveryFlow] = useState(false); // <-- ADDED STATE
+  const [isCaptchaEnabled, setIsCaptchaEnabled] = useState(false); // <-- ADDED CAPTCHA STATUS
 
   // Refs
   const isUpdatingAuth = useRef(false);
@@ -640,10 +643,20 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }, [updateAuthState]); // updateAuthState dependency
 
   // --- Authentication Functions ---
-  const signIn = async (email: string, password: string) => {
+  const signIn = async (email: string, password: string, captchaToken?: string) => {
     setAuthStatus("loading"); // Show loading during sign-in attempt
     try {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      const signInOptions: any = {
+        email,
+        password,
+      };
+
+      // Add captchaToken only if provided
+      if (captchaToken) {
+        signInOptions.options = { captchaToken };
+      }
+
+      const { error } = await supabase.auth.signInWithPassword(signInOptions);
       if (error) throw error;
       // onAuthStateChange will handle the session update and trigger updateAuthState
     } catch (error: any) {
@@ -653,13 +666,22 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   };
 
-  const signUp = async (email: string, password: string) => {
+  const signUp = async (email: string, password: string, captchaToken?: string) => {
     setAuthStatus("loading");
     try {
+      const signUpOptions: any = {
+        emailRedirectTo: Linking.createURL("/(auth)/sign-in"),
+      };
+
+      // Add captchaToken only if provided
+      if (captchaToken) {
+        signUpOptions.captchaToken = captchaToken;
+      }
+
       const { error } = await supabase.auth.signUp({
         email,
         password,
-        options: { emailRedirectTo: Linking.createURL("/(auth)/sign-in") },
+        options: signUpOptions,
       });
       if (error) throw error;
       // User needs to confirm email, state remains loading/signedOut until confirmed
@@ -694,11 +716,18 @@ export function AuthProvider({ children }: AuthProviderProps) {
   };
 
   // resetPassword function update
-  const resetPassword = async (email: string) => {
+  const resetPassword = async (email: string, captchaToken?: string) => {
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      const options: any = {
         redirectTo: Linking.createURL("/change-password"), // Use root path for password reset
-      });
+      };
+
+      // Add captchaToken only if provided
+      if (captchaToken) {
+        options.captchaToken = captchaToken;
+      }
+
+      const { error } = await supabase.auth.resetPasswordForEmail(email, options);
       if (error) throw error;
       alert("Password reset email sent! Please check your inbox.");
     } catch (error) {
@@ -759,6 +788,33 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }, [isPasswordRecoveryFlow]); // Depend on the flag itself
 
+  // Check CAPTCHA status from Supabase
+  const checkCaptchaStatus = useCallback(async () => {
+    try {
+      // For now, we'll assume CAPTCHA is disabled in development
+      // In production, you could make an API call to check the actual status
+      const isDevelopment = __DEV__ || process.env.NODE_ENV === "development";
+      if (isDevelopment) {
+        setIsCaptchaEnabled(false);
+        console.log("[Auth] CAPTCHA disabled for development");
+      } else {
+        // In production, you might want to check the actual Supabase config
+        // For now, we'll default to enabled
+        setIsCaptchaEnabled(true);
+        console.log("[Auth] CAPTCHA enabled for production");
+      }
+    } catch (error) {
+      console.error("[Auth] Error checking CAPTCHA status:", error);
+      // Default to enabled for security
+      setIsCaptchaEnabled(true);
+    }
+  }, []);
+
+  // Check CAPTCHA status on mount
+  useEffect(() => {
+    checkCaptchaStatus();
+  }, [checkCaptchaStatus]);
+
   // Memoize the context value
   const value = useMemo(
     () => ({
@@ -769,6 +825,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       userRole,
       authStatus,
       isPasswordRecoveryFlow, // <-- ADDED
+      isCaptchaEnabled, // <-- ADDED CAPTCHA STATUS
       signOut,
       signIn,
       signUp,
@@ -777,6 +834,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       associateMemberWithPin,
       signalPasswordRecoveryStart, // <-- ADDED
       clearPasswordRecoveryFlag, // <-- ADDED
+      checkCaptchaStatus, // <-- ADDED
     }),
     [
       user,
@@ -786,9 +844,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
       userRole,
       authStatus,
       isPasswordRecoveryFlow, // <-- ADDED DEPENDENCY
+      isCaptchaEnabled, // <-- ADDED CAPTCHA STATUS
       signOut, // Keep minimal deps for functions
       signalPasswordRecoveryStart,
       clearPasswordRecoveryFlag,
+      checkCaptchaStatus,
     ]
   );
 
