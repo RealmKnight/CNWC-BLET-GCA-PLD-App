@@ -45,6 +45,14 @@ This section lists foreign keys that currently lack a covering index. Adding the
 | public | vacation_requests                | `vacation_requests_responded_by_fkey`            | `responded_by`          | `CREATE INDEX CONCURRENTLY idx_vacation_requests_responded_by ON public.vacation_requests (responded_by);`                       | Inferred as `responded_by`. Verify with schema.                                                           | ✅ Done |
 | public | year_end_transactions            | `year_end_transactions_member_pin_fkey`          | `member_pin`            | `CREATE INDEX CONCURRENTLY idx_year_end_transactions_member_pin ON public.year_end_transactions (member_pin);`                   | Inferred as `member_pin`. Verify with schema.                                                             | ✅ Done |
 | public | zones                            | `zones_division_id_fkey`                         | `division_id`           | `CREATE INDEX CONCURRENTLY idx_zones_division_id ON public.zones (division_id);`                                                 | Inferred as `division_id`. Verify with schema.                                                            | ✅ Done |
+| public | member_transfer_log              | `member_transfer_log_old_division_id_fkey`       | `old_division_id`       | `CREATE INDEX idx_member_transfer_log_old_division_id ON public.member_transfer_log (old_division_id);`                          | Confirmed from schema inspection: references `divisions.id`                                               | ✅ Done |
+| public | member_transfer_log              | `member_transfer_log_old_zone_id_fkey`           | `old_zone_id`           | `CREATE INDEX idx_member_transfer_log_old_zone_id ON public.member_transfer_log (old_zone_id);`                                  | Confirmed from schema inspection: references `zones.id`                                                   | ✅ Done |
+| public | member_transfer_log              | `member_transfer_log_old_calendar_id_fkey`       | `old_calendar_id`       | `CREATE INDEX idx_member_transfer_log_old_calendar_id ON public.member_transfer_log (old_calendar_id);`                          | Confirmed from schema inspection: references `calendars.id`                                               | ✅ Done |
+| public | member_transfer_log              | `member_transfer_log_old_home_zone_id_fkey`      | `old_home_zone_id`      | `CREATE INDEX idx_member_transfer_log_old_home_zone_id ON public.member_transfer_log (old_home_zone_id);`                        | Confirmed from schema inspection: references `zones.id`                                                   | ✅ Done |
+| public | member_transfer_log              | `member_transfer_log_new_division_id_fkey`       | `new_division_id`       | `CREATE INDEX idx_member_transfer_log_new_division_id ON public.member_transfer_log (new_division_id);`                          | Confirmed from schema inspection: references `divisions.id`                                               | ✅ Done |
+| public | member_transfer_log              | `member_transfer_log_new_zone_id_fkey`           | `new_zone_id`           | `CREATE INDEX idx_member_transfer_log_new_zone_id ON public.member_transfer_log (new_zone_id);`                                  | Confirmed from schema inspection: references `zones.id`                                                   | ✅ Done |
+| public | member_transfer_log              | `member_transfer_log_new_calendar_id_fkey`       | `new_calendar_id`       | `CREATE INDEX idx_member_transfer_log_new_calendar_id ON public.member_transfer_log (new_calendar_id);`                          | Confirmed from schema inspection: references `calendars.id`                                               | ✅ Done |
+| public | member_transfer_log              | `member_transfer_log_new_home_zone_id_fkey`      | `new_home_zone_id`      | `CREATE INDEX idx_member_transfer_log_new_home_zone_id ON public.member_transfer_log (new_home_zone_id);`                        | Confirmed from schema inspection: references `zones.id`                                                   | ✅ Done |
 
 **Note:** The latest linter report shows many of these indexes we created as "unused". This is expected as they're new indexes that haven't been used in queries yet. We'll keep them in place since they cover foreign keys and will likely improve query performance in the future.
 
@@ -99,8 +107,9 @@ Many RLS policies are using direct calls to `auth.<function>()` which are being 
 - `calendars` (all policies using `auth.uid()` or `auth.jwt()`)
 - `advertisements` (all policies using `auth.uid()`)
 - `advertisement_analytics` (all policies using `auth.uid()`)
+- `member_transfer_log` (all policies using `auth.uid()`) ✅ Done
 
-**Phase III A is now 100% complete.**
+**Phase III A is now 100% complete - All RLS policies have been optimized to use the efficient auth pattern.**
 
 #### Specific Examples of Required Changes
 
@@ -268,23 +277,4 @@ The following tables have multiple permissive policies that should be consolidat
 
 1. **Important Considerations:**
 
-   - We've verified most column names from schema inspection. For `admin_messages`, we found that `parent_message_id` is a self-reference to the same table and needs an index.
-   - For `pld_sdv_requests` table, we confirmed that `member_id` has two foreign keys referencing both `members.id` and `users.id`. One index on this column will cover both foreign keys.
-   - Some tables have complex RLS policies that will require careful refactoring to maintain the same security rules while improving performance.
-
-2. **Implementation Strategy:**
-
-   - First, validate the list of unused indexes against our application's query patterns to ensure they're truly unused.
-   - Then, create the identified missing indexes one at a time, starting with the most frequently used tables.
-   - Monitor query performance before and after changes to measure impact.
-   - If a particular index doesn't show performance improvement after a reasonable observation period, consider dropping it.
-   - For RLS policy updates, implement them in batches by table, testing each batch before proceeding to the next.
-   - When consolidating multiple permissive policies, carefully review the logic to ensure the combined policy maintains the same access control rules.
-
-3. **Next Steps:**
-   - Review the SQL query logs to better understand how these tables are being accessed.
-   - Prioritize indexes on tables with the highest read activity.
-   - Consider additional optimization techniques such as table partitioning for very large tables if applicable.
-   - Set up a regular database maintenance schedule to periodically review index usage and performance.
-   - Create a test environment to validate RLS policy changes before applying them to production.
-   - Document all RLS policy changes for future reference.
+   - We've verified most column names from schema inspection. For `admin_messages`, we found that `

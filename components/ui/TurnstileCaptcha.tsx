@@ -83,6 +83,9 @@ const TurnstileCaptcha = forwardRef<TurnstileCaptchaRef, TurnstileCaptchaProps>(
     // Determine effective theme
     const effectiveTheme = theme === "auto" ? (colorScheme === "dark" ? "dark" : "light") : theme;
 
+    // Use compact size on mobile for better layout
+    const effectiveSize = Platform.OS !== "web" ? "compact" : size;
+
     // Load Turnstile script on web platform
     useEffect(() => {
       if (enabled && Platform.OS === "web") {
@@ -190,6 +193,13 @@ const TurnstileCaptcha = forwardRef<TurnstileCaptchaRef, TurnstileCaptchaProps>(
     // If CAPTCHA is disabled, don't render anything
     if (!enabled) {
       return null;
+    }
+
+    // Debug info for mobile layout issues
+    if (__DEV__ && Platform.OS !== "web") {
+      console.log(
+        `[CAPTCHA] Mobile rendering - Size: ${effectiveSize}, Height: ${effectiveSize === "compact" ? 100 : 120}px`
+      );
     }
 
     // If circuit breaker is active, show error message instead of widget
@@ -322,211 +332,17 @@ const TurnstileCaptcha = forwardRef<TurnstileCaptchaRef, TurnstileCaptchaProps>(
       onExpire?.();
     };
 
-    // Create HTML content for mobile WebView
-    const createWebViewHTML = () => {
-      const { width } = Dimensions.get("window");
-      const captchaWidth = Math.min(width - 40, 300); // 20px margin on each side, max 300px
-
-      return `
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Turnstile CAPTCHA</title>
-    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
-    <style>
-        body {
-            margin: 0;
-            padding: 20px;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background-color: ${effectiveTheme === "dark" ? "#1a1a1a" : "#ffffff"};
-            color: ${effectiveTheme === "dark" ? "#ffffff" : "#000000"};
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            box-sizing: border-box;
-        }
-        
-        .captcha-container {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            width: 100%;
-            max-width: ${captchaWidth}px;
-        }
-        
-        .loading {
-            text-align: center;
-            padding: 20px;
-            font-size: 16px;
-            opacity: 0.7;
-        }
-        
-        .error {
-            text-align: center;
-            padding: 20px;
-            color: #ff4444;
-            font-size: 14px;
-            border: 1px solid #ff4444;
-            border-radius: 8px;
-            background-color: ${effectiveTheme === "dark" ? "#2a1a1a" : "#fff5f5"};
-        }
-        
-        /* Ensure the Turnstile widget is properly sized */
-        .cf-turnstile {
-            margin: 0 auto;
-            max-width: 100%;
-        }
-        
-        /* Handle different widget sizes */
-        .cf-turnstile iframe {
-            max-width: 100% !important;
-            width: ${size === "compact" ? "164px" : "300px"} !important;
-            height: ${size === "compact" ? "100px" : "65px"} !important;
-        }
-    </style>
-</head>
-<body>
-    <div class="captcha-container">
-        <div id="loading" class="loading">Loading CAPTCHA...</div>
-        <div id="captcha-widget"></div>
-        <div id="error" class="error" style="display: none;"></div>
-    </div>
-
-    <script>
-        let widgetId = null;
-        let retryCount = 0;
-        const maxRetries = 3;
-        
-        function showError(message) {
-            document.getElementById('loading').style.display = 'none';
-            document.getElementById('captcha-widget').style.display = 'none';
-            document.getElementById('error').style.display = 'block';
-            document.getElementById('error').textContent = message;
-            
-            // Send error to React Native
-            if (window.ReactNativeWebView) {
-                window.ReactNativeWebView.postMessage(JSON.stringify({
-                    type: 'error',
-                    message: message
-                }));
-            }
-        }
-        
-        function initializeTurnstile() {
-            if (typeof turnstile === 'undefined') {
-                if (retryCount < maxRetries) {
-                    retryCount++;
-                    setTimeout(initializeTurnstile, 1000);
-                } else {
-                    showError('Failed to load CAPTCHA service. Please check your internet connection.');
-                }
-                return;
-            }
-            
-            try {
-                document.getElementById('loading').style.display = 'none';
-                document.getElementById('captcha-widget').style.display = 'block';
-                
-                widgetId = turnstile.render('#captcha-widget', {
-                    sitekey: '${siteKey}',
-                    theme: '${effectiveTheme}',
-                    size: '${size}',
-                    action: 'submit',
-                    cData: 'auth_form',
-                    retry: 'never',
-                    callback: function(token) {
-                        // Send success to React Native
-                        if (window.ReactNativeWebView) {
-                            window.ReactNativeWebView.postMessage(JSON.stringify({
-                                type: 'success',
-                                token: token
-                            }));
-                        }
-                    },
-                    'error-callback': function(error) {
-                        console.error('Turnstile error:', error);
-                        showError('CAPTCHA verification failed. Please try again.');
-                        
-                        // Send error to React Native
-                        if (window.ReactNativeWebView) {
-                            window.ReactNativeWebView.postMessage(JSON.stringify({
-                                type: 'error',
-                                error: error
-                            }));
-                        }
-                    },
-                    'expired-callback': function() {
-                        // Send expiration to React Native
-                        if (window.ReactNativeWebView) {
-                            window.ReactNativeWebView.postMessage(JSON.stringify({
-                                type: 'expired'
-                            }));
-                        }
-                    },
-                    'timeout-callback': function() {
-                        showError('CAPTCHA timed out. Please try again.');
-                        
-                        // Send timeout to React Native
-                        if (window.ReactNativeWebView) {
-                            window.ReactNativeWebView.postMessage(JSON.stringify({
-                                type: 'timeout'
-                            }));
-                        }
-                    }
-                });
-            } catch (error) {
-                console.error('Error initializing Turnstile:', error);
-                showError('Failed to initialize CAPTCHA. Please refresh and try again.');
-            }
-        }
-        
-        // Reset function for React Native to call
-        window.resetCaptcha = function() {
-            if (widgetId !== null && typeof turnstile !== 'undefined') {
-                try {
-                    turnstile.reset(widgetId);
-                } catch (error) {
-                    console.error('Error resetting Turnstile:', error);
-                    // Reload the page if reset fails
-                    window.location.reload();
-                }
-            }
-        };
-        
-        // Initialize when DOM is ready
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initializeTurnstile);
-        } else {
-            initializeTurnstile();
-        }
-        
-        // Fallback initialization after a delay
-        setTimeout(initializeTurnstile, 2000);
-    </script>
-</body>
-</html>`;
-    };
-
-    // Get the base URL for mobile WebView
-    const getMobileWebViewUrl = () => {
-      // In development, use localhost
-      if (__DEV__) {
-        return "http://localhost:8081"; // Expo dev server
-      }
-
-      // In production, use your deployed domain
-      return "https://cnwc-gca-pld-app.expo.app";
-    };
-
-    // Create a data URI for the HTML content (this works with existing domains)
-    const createDataUri = () => {
-      const html = createWebViewHTML();
-      const encodedHtml = encodeURIComponent(html);
-      return `data:text/html;charset=utf-8,${encodedHtml}`;
+    // Get the mobile CAPTCHA URL - this will load from a valid domain
+    const getMobileCaptchaUrl = () => {
+      // Always use production URL for mobile to avoid network issues
+      const baseUrl = "https://cnwc-gca-pld-app.expo.app";
+      const params = new URLSearchParams({
+        siteKey: siteKey || "",
+        theme: effectiveTheme,
+        size: effectiveSize,
+        mobile: "true",
+      });
+      return `${baseUrl}/captcha?${params.toString()}`;
     };
 
     // Handle WebView messages (mobile only)
@@ -560,7 +376,7 @@ const TurnstileCaptcha = forwardRef<TurnstileCaptchaRef, TurnstileCaptchaProps>(
     if (Platform.OS === "web") {
       // Web implementation using @marsidev/react-turnstile
       return (
-        <View style={[styles.container, { minHeight: size === "compact" ? 65 : 80 }]}>
+        <View style={[styles.container, { minHeight: effectiveSize === "compact" ? 65 : 80 }]}>
           {isRetrying && (
             <ThemedText style={styles.retryNotice}>
               Retrying CAPTCHA... (attempt {retryCountRef.current + 1}/3)
@@ -575,7 +391,7 @@ const TurnstileCaptcha = forwardRef<TurnstileCaptchaRef, TurnstileCaptchaProps>(
             onExpire={handleExpire}
             options={{
               theme: effectiveTheme,
-              size,
+              size: effectiveSize,
               action: "submit",
               cData: "auth_form",
               retry: "never",
@@ -589,7 +405,7 @@ const TurnstileCaptcha = forwardRef<TurnstileCaptchaRef, TurnstileCaptchaProps>(
       );
     } else {
       // Mobile implementation using WebView
-      const webViewHeight = size === "compact" ? 120 : 150; // Extra height for mobile touch targets
+      const webViewHeight = effectiveSize === "compact" ? 100 : 120; // Reduced height for better layout
 
       return (
         <View style={[styles.container, { minHeight: webViewHeight }]}>
@@ -600,7 +416,7 @@ const TurnstileCaptcha = forwardRef<TurnstileCaptchaRef, TurnstileCaptchaProps>(
           )}
           <WebView
             ref={webViewRef}
-            source={{ html: createWebViewHTML() }}
+            source={{ uri: getMobileCaptchaUrl() }}
             style={[
               styles.webView,
               {
@@ -646,13 +462,15 @@ TurnstileCaptcha.displayName = "TurnstileCaptcha";
 const styles = StyleSheet.create({
   container: {
     alignItems: "center",
-    marginVertical: 10,
+    marginVertical: 8,
     minHeight: 80,
+    backgroundColor: Colors.dark.background,
   },
   webView: {
     width: "100%",
-    maxWidth: 320, // Slightly wider than the widget for touch targets
+    maxWidth: 300,
     backgroundColor: "transparent",
+    borderRadius: 8,
   },
   webViewLoading: {
     position: "absolute",
@@ -662,15 +480,15 @@ const styles = StyleSheet.create({
     bottom: 0,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: Colors.dark.background,
+    backgroundColor: "transparent",
   },
   errorContainer: {
-    padding: 15,
+    padding: 12,
     backgroundColor: Colors.dark.background,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: Colors.dark.error,
-    marginVertical: 10,
+    marginVertical: 8,
   },
   errorText: {
     color: Colors.dark.error,
@@ -681,7 +499,7 @@ const styles = StyleSheet.create({
     color: Colors.dark.icon,
     textAlign: "center",
     fontSize: 12,
-    marginBottom: 5,
+    marginBottom: 4,
     fontStyle: "italic",
     opacity: 0.8,
   },
@@ -689,7 +507,7 @@ const styles = StyleSheet.create({
     color: Colors.dark.icon,
     textAlign: "center",
     fontSize: 10,
-    marginTop: 5,
+    marginTop: 4,
     fontStyle: "italic",
     opacity: 0.6,
   },
@@ -697,7 +515,7 @@ const styles = StyleSheet.create({
     color: Colors.dark.icon,
     textAlign: "center",
     fontSize: 14,
-    marginBottom: 5,
+    marginBottom: 0,
     fontStyle: "italic",
     opacity: 0.8,
   },
