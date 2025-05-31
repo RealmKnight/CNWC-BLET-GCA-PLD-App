@@ -3,6 +3,7 @@ import { StyleSheet } from "react-native";
 import { router } from "expo-router";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
+import { Colors } from "@/constants/Colors";
 
 export default function ResetPasswordScreen() {
   useEffect(() => {
@@ -28,5 +29,6 @@ const styles = StyleSheet.create({
     padding: 20,
     justifyContent: "center",
     alignItems: "center",
+    backgroundColor: Colors.dark.background,
   },
 });

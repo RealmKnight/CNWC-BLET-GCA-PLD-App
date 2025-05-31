@@ -1,10 +1,39 @@
 import React, { useRef, useImperativeHandle, forwardRef, useEffect, useState } from "react";
-import { Platform, View, StyleSheet, Dimensions } from "react-native";
-import { WebView } from "react-native-webview";
-import { Turnstile } from "@marsidev/react-turnstile";
+import { Platform, View, StyleSheet } from "react-native";
 import { ThemedText } from "@/components/ThemedText";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
+
+// Extend Window interface for Turnstile
+declare global {
+  interface Window {
+    turnstile?: any;
+  }
+}
+
+// Platform-specific imports
+let WebTurnstile: any = null;
+let ReactNativeTurnstile: any = null;
+let resetTurnstile: any = null;
+
+if (Platform.OS === "web") {
+  // Web platform - use @marsidev/react-turnstile
+  try {
+    const webModule = require("@marsidev/react-turnstile");
+    WebTurnstile = webModule.Turnstile;
+  } catch (error) {
+    console.error("[CAPTCHA] Failed to load web Turnstile module:", error);
+  }
+} else {
+  // Mobile platforms - use react-native-turnstile
+  try {
+    const mobileModule = require("react-native-turnstile");
+    ReactNativeTurnstile = mobileModule.default;
+    resetTurnstile = mobileModule.resetTurnstile;
+  } catch (error) {
+    console.error("[CAPTCHA] Failed to load mobile Turnstile module:", error);
+  }
+}
 
 export interface TurnstileCaptchaProps {
   onVerify: (token: string) => void;
@@ -21,14 +50,21 @@ export interface TurnstileCaptchaRef {
   getResponse: () => string | null;
 }
 
-// Function to load Turnstile script manually (web only)
+// Function to load Turnstile script manually for web
 const loadTurnstileScript = (): Promise<void> => {
   return new Promise((resolve, reject) => {
+    if (Platform.OS !== "web") {
+      resolve();
+      return;
+    }
+
+    // Check if script is already loaded
     if (typeof window !== "undefined" && window.turnstile) {
       resolve();
       return;
     }
 
+    // Check if script tag already exists
     const existingScript = document.querySelector('script[src*="turnstile"]');
     if (existingScript) {
       existingScript.addEventListener("load", () => resolve());
@@ -61,15 +97,13 @@ const loadTurnstileScript = (): Promise<void> => {
 
 const TurnstileCaptcha = forwardRef<TurnstileCaptchaRef, TurnstileCaptchaProps>(
   ({ onVerify, onError, onExpire, disabled = false, size = "normal", theme = "auto", enabled = true }, ref) => {
-    const turnstileRef = useRef<any>(null);
-    const webViewRef = useRef<WebView>(null);
+    const webTurnstileRef = useRef<any>(null);
+    const mobileTurnstileResetRef = useRef<any>(null);
     const colorScheme = useColorScheme();
     const [isRetrying, setIsRetrying] = useState(false);
-    const [widgetKey, setWidgetKey] = useState(0);
-    const [isCircuitBreakerActive, setIsCircuitBreakerActive] = useState(false);
-    const [isScriptLoaded, setIsScriptLoaded] = useState(false);
+    const [lastToken, setLastToken] = useState<string | null>(null);
+    const [isScriptLoaded, setIsScriptLoaded] = useState(Platform.OS !== "web");
     const [scriptLoadError, setScriptLoadError] = useState<string | null>(null);
-    const [currentToken, setCurrentToken] = useState<string | null>(null);
 
     // Use refs to persist counters across widget resets
     const retryCountRef = useRef(0);
@@ -79,12 +113,6 @@ const TurnstileCaptcha = forwardRef<TurnstileCaptchaRef, TurnstileCaptchaProps>(
 
     // Get the site key from environment variables
     const siteKey = process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY;
-
-    // Determine effective theme
-    const effectiveTheme = theme === "auto" ? (colorScheme === "dark" ? "dark" : "light") : theme;
-
-    // Use compact size on mobile for better layout
-    const effectiveSize = Platform.OS !== "web" ? "compact" : size;
 
     // Load Turnstile script on web platform
     useEffect(() => {
@@ -106,8 +134,19 @@ const TurnstileCaptcha = forwardRef<TurnstileCaptchaRef, TurnstileCaptchaProps>(
     useEffect(() => {
       if (!enabled) {
         onVerify("captcha-disabled");
+      } else if (__DEV__ && siteKey) {
+        // Platform-specific reminders for developers
+        if (Platform.OS === "web") {
+          console.log("[CAPTCHA] Web platform: Using @marsidev/react-turnstile");
+        } else {
+          console.log("[CAPTCHA] Mobile platform: Using react-native-turnstile");
+          console.log(
+            "[CAPTCHA] IMPORTANT: Ensure 'turnstile.1337707.xyz' is added to your Cloudflare Turnstile domains list"
+          );
+          console.log("[CAPTCHA] This is required for react-native-turnstile to work on mobile platforms");
+        }
       }
-    }, [enabled, onVerify]);
+    }, [enabled, onVerify, siteKey]);
 
     // Enhanced retry logic with rate limiting
     const retryTurnstile = () => {
@@ -116,12 +155,13 @@ const TurnstileCaptcha = forwardRef<TurnstileCaptchaRef, TurnstileCaptchaProps>(
 
       // Rate limiting: don't retry more than once every 5 seconds
       if (timeSinceLastError < 5000) {
+        console.log("[CAPTCHA] Rate limited: Too many retries, waiting...");
         return;
       }
 
-      // Circuit breaker: If we get too many consecutive errors, stop retries
+      // Circuit breaker: If we get too many consecutive errors, stop retrying
       if (consecutiveErrorsRef.current >= 3) {
-        setIsCircuitBreakerActive(true);
+        console.log("[CAPTCHA] Circuit breaker activated: Too many consecutive errors, stopping retries");
         onError?.(
           "CAPTCHA is experiencing repeated failures. Please refresh the page and contact support if the issue persists."
         );
@@ -135,23 +175,30 @@ const TurnstileCaptcha = forwardRef<TurnstileCaptchaRef, TurnstileCaptchaProps>(
         lastErrorTimeRef.current = now;
         consecutiveErrorsRef.current++;
 
+        console.log(
+          `[CAPTCHA] Retrying Turnstile (attempt ${retryCountRef.current}/3) - Consecutive errors: ${consecutiveErrorsRef.current}`
+        );
+
         // Reset the widget after a short delay
         setTimeout(() => {
-          if (Platform.OS === "web" && turnstileRef.current) {
+          if (Platform.OS === "web" && webTurnstileRef.current) {
             try {
-              turnstileRef.current.reset();
+              webTurnstileRef.current.reset();
             } catch (error) {
-              console.error("[CAPTCHA] Error resetting widget:", error);
-              setWidgetKey((prev) => prev + 1);
+              console.error("[CAPTCHA] Error resetting web widget:", error);
             }
-          } else if (Platform.OS !== "web" && webViewRef.current) {
-            // Reset mobile WebView
-            webViewRef.current.reload();
+          } else if (Platform.OS !== "web" && mobileTurnstileResetRef.current) {
+            try {
+              resetTurnstile(mobileTurnstileResetRef);
+            } catch (error) {
+              console.error("[CAPTCHA] Error resetting mobile widget:", error);
+            }
           }
           setIsRetrying(false);
           isRetryingRef.current = false;
         }, 2000);
       } else {
+        console.log("[CAPTCHA] Max retries reached or already retrying");
         onError?.("CAPTCHA verification failed after multiple attempts. Please refresh the page and try again.");
       }
     };
@@ -159,34 +206,34 @@ const TurnstileCaptcha = forwardRef<TurnstileCaptchaRef, TurnstileCaptchaProps>(
     useImperativeHandle(ref, () => ({
       reset: () => {
         if (!enabled) return;
+        console.log("[CAPTCHA] Manual reset called");
         retryCountRef.current = 0;
         setIsRetrying(false);
         isRetryingRef.current = false;
         lastErrorTimeRef.current = 0;
         consecutiveErrorsRef.current = 0;
-        setIsCircuitBreakerActive(false);
-        setCurrentToken(null);
+        setLastToken(null);
 
-        if (Platform.OS === "web" && turnstileRef.current) {
+        if (Platform.OS === "web" && webTurnstileRef.current) {
           try {
-            turnstileRef.current.reset();
+            webTurnstileRef.current.reset();
           } catch (error) {
-            console.error("[CAPTCHA] Error resetting widget:", error);
-            setWidgetKey((prev) => prev + 1);
+            console.error("[CAPTCHA] Error resetting web widget:", error);
           }
-        } else if (Platform.OS !== "web" && webViewRef.current) {
-          webViewRef.current.reload();
+        } else if (Platform.OS !== "web" && mobileTurnstileResetRef.current) {
+          try {
+            resetTurnstile(mobileTurnstileResetRef);
+          } catch (error) {
+            console.error("[CAPTCHA] Error resetting mobile widget:", error);
+          }
         }
       },
       getResponse: () => {
         if (!enabled) return "captcha-disabled";
-        if (isCircuitBreakerActive) return null;
-
-        if (Platform.OS === "web" && turnstileRef.current) {
-          return turnstileRef.current.getResponse();
-        } else {
-          return currentToken;
+        if (Platform.OS === "web" && webTurnstileRef.current) {
+          return webTurnstileRef.current.getResponse();
         }
+        return lastToken;
       },
     }));
 
@@ -195,24 +242,124 @@ const TurnstileCaptcha = forwardRef<TurnstileCaptchaRef, TurnstileCaptchaProps>(
       return null;
     }
 
-    // Debug info for mobile layout issues
-    if (__DEV__ && Platform.OS !== "web") {
-      console.log(
-        `[CAPTCHA] Mobile rendering - Size: ${effectiveSize}, Height: ${effectiveSize === "compact" ? 100 : 120}px`
-      );
-    }
+    // Handle CAPTCHA verification
+    const handleVerify = (token: string) => {
+      console.log("[CAPTCHA] Verification successful, token received");
+      // Reset all error counters on success
+      retryCountRef.current = 0;
+      consecutiveErrorsRef.current = 0;
+      lastErrorTimeRef.current = 0;
+      setIsRetrying(false);
+      isRetryingRef.current = false;
+      setLastToken(token);
 
-    // If circuit breaker is active, show error message instead of widget
-    if (isCircuitBreakerActive) {
+      onVerify(token);
+    };
+
+    // Handle CAPTCHA errors
+    const handleError = (error: any) => {
+      console.error("[CAPTCHA] Verification error:", error);
+      console.error("[CAPTCHA] Platform:", Platform.OS);
+      console.error("[CAPTCHA] Retry count:", retryCountRef.current);
+      console.error("[CAPTCHA] Consecutive errors:", consecutiveErrorsRef.current);
+
+      let errorMessage = "CAPTCHA verification failed";
+      let shouldRetry = false;
+
+      // Handle specific error codes
+      if (typeof error === "string" || typeof error === "number") {
+        const errorCode = error.toString();
+        console.error("[CAPTCHA] Error code:", errorCode);
+
+        switch (errorCode) {
+          case "110200":
+            // Domain validation error
+            if (retryCountRef.current === 0) {
+              console.log("[CAPTCHA] 110200 error - domain might still be propagating, attempting one retry...");
+              shouldRetry = true;
+            } else {
+              console.error("[CAPTCHA] Persistent 110200 errors detected - domain configuration issue");
+              errorMessage =
+                "Domain validation failed. Please verify your domain is configured in Cloudflare Turnstile.";
+            }
+            break;
+          case "110100":
+            errorMessage = "CAPTCHA configuration error. Invalid site key.";
+            console.error("[CAPTCHA] Site key issue - check your EXPO_PUBLIC_TURNSTILE_SITE_KEY");
+            break;
+          case "110110":
+            errorMessage = "CAPTCHA widget error. Please try again.";
+            shouldRetry = true;
+            break;
+          case "110500":
+            errorMessage = "Network error. Please check your connection and try again.";
+            shouldRetry = true;
+            break;
+          case "110600":
+          case "110620":
+            errorMessage = "CAPTCHA challenge timed out. Please try again.";
+            shouldRetry = true;
+            break;
+          case "300000":
+          case "600000":
+            // Bot detection errors - don't retry aggressively
+            errorMessage = "Challenge failed. Please try again or refresh the page.";
+            if (retryCountRef.current === 0) {
+              shouldRetry = true;
+            }
+            break;
+          default:
+            console.error(`[CAPTCHA] Unknown error code: ${errorCode}`);
+            errorMessage = `CAPTCHA error (${errorCode}). Please try again.`;
+            if (retryCountRef.current < 1) {
+              shouldRetry = true;
+            }
+        }
+      }
+
+      // Only retry if we should and haven't exceeded limits
+      if (shouldRetry && consecutiveErrorsRef.current < 3) {
+        console.log("[CAPTCHA] Error is retryable, attempting retry...");
+        retryTurnstile();
+      } else {
+        console.log("[CAPTCHA] Error is not retryable or retry limit reached, showing error to user");
+        onError?.(errorMessage);
+      }
+    };
+
+    // Handle CAPTCHA expiration
+    const handleExpire = () => {
+      console.log("[CAPTCHA] Token expired");
+      retryCountRef.current = 0; // Reset retry count on expiration
+      setLastToken(null);
+      onExpire?.();
+    };
+
+    // Handle CAPTCHA timeout (mobile only)
+    const handleTimeout = () => {
+      console.log("[CAPTCHA] Widget timeout");
+      handleError("110620"); // Treat timeout as error code 110620
+    };
+
+    // Handle widget load
+    const handleLoad = (widgetId: string) => {
+      console.log(`[CAPTCHA] Widget loaded with ID: ${widgetId}`);
+    };
+
+    // If no site key is configured, show error message
+    if (!siteKey) {
       return (
         <View style={styles.errorContainer}>
-          <ThemedText style={styles.errorText}>
-            CAPTCHA temporarily disabled due to repeated failures. Please refresh the page to try again.
-          </ThemedText>
+          <ThemedText style={styles.errorText}>CAPTCHA configuration error. Please contact support.</ThemedText>
           {__DEV__ && (
-            <ThemedText style={styles.debugText}>
-              Debug: Circuit breaker active after {consecutiveErrorsRef.current} consecutive errors
-            </ThemedText>
+            <>
+              <ThemedText style={styles.debugText}>Debug: EXPO_PUBLIC_TURNSTILE_SITE_KEY not configured</ThemedText>
+              {Platform.OS !== "web" && (
+                <ThemedText style={styles.debugText}>
+                  Important: Add 'turnstile.1337707.xyz' to your Cloudflare Turnstile domains list
+                </ThemedText>
+              )}
+            </>
           )}
         </View>
       );
@@ -240,220 +387,85 @@ const TurnstileCaptcha = forwardRef<TurnstileCaptchaRef, TurnstileCaptchaProps>(
       );
     }
 
-    // If no site key is configured, show error message
-    if (!siteKey) {
+    // Check if the required module is available
+    if (Platform.OS === "web" && !WebTurnstile) {
       return (
         <View style={styles.errorContainer}>
-          <ThemedText style={styles.errorText}>CAPTCHA configuration error. Please contact support.</ThemedText>
+          <ThemedText style={styles.errorText}>CAPTCHA module not available for web platform.</ThemedText>
           {__DEV__ && (
-            <ThemedText style={styles.debugText}>Debug: EXPO_PUBLIC_TURNSTILE_SITE_KEY not configured</ThemedText>
+            <ThemedText style={styles.debugText}>Debug: @marsidev/react-turnstile not loaded properly</ThemedText>
           )}
         </View>
       );
     }
 
-    // Handle CAPTCHA verification
-    const handleVerify = (token: string) => {
-      // Reset all error counters on success
-      retryCountRef.current = 0;
-      consecutiveErrorsRef.current = 0;
-      lastErrorTimeRef.current = 0;
-      setIsRetrying(false);
-      isRetryingRef.current = false;
-      setIsCircuitBreakerActive(false);
-      setCurrentToken(token);
+    if (Platform.OS !== "web" && !ReactNativeTurnstile) {
+      return (
+        <View style={styles.errorContainer}>
+          <ThemedText style={styles.errorText}>CAPTCHA module not available for mobile platform.</ThemedText>
+          {__DEV__ && (
+            <ThemedText style={styles.debugText}>Debug: react-native-turnstile not loaded properly</ThemedText>
+          )}
+        </View>
+      );
+    }
 
-      onVerify(token);
-    };
-
-    // Handle CAPTCHA errors
-    const handleError = (error: any) => {
-      console.error("[CAPTCHA] Verification error:", error);
-
-      let errorMessage = "CAPTCHA verification failed";
-      let shouldRetry = false;
-
-      // Handle specific error codes
-      if (typeof error === "string" || typeof error === "number") {
-        const errorCode = error.toString();
-
-        switch (errorCode) {
-          case "110200":
-            if (retryCountRef.current === 0) {
-              shouldRetry = true;
-            } else {
-              errorMessage = "Domain validation failed. Please contact support.";
-            }
-            break;
-          case "400020":
-            if (retryCountRef.current === 0) {
-              shouldRetry = true;
-              errorMessage = "CAPTCHA widget failed to load. Retrying...";
-            } else {
-              errorMessage = "CAPTCHA widget failed to load after retry. Please refresh the page.";
-            }
-            break;
-          case "110100":
-            errorMessage = "CAPTCHA configuration error. Invalid site key.";
-            break;
-          case "110110":
-            errorMessage = "CAPTCHA widget error. Please try again.";
-            shouldRetry = true;
-            break;
-          case "110500":
-            errorMessage = "Network error. Please check your connection and try again.";
-            shouldRetry = true;
-            break;
-          case "110600":
-          case "110620":
-            errorMessage = "CAPTCHA challenge timed out. Please try again.";
-            shouldRetry = true;
-            break;
-          default:
-            errorMessage = `CAPTCHA error (${errorCode}). Please try again.`;
-            if (retryCountRef.current < 1) {
-              shouldRetry = true;
-            }
-        }
-      }
-
-      // Only retry if we should and haven't exceeded limits
-      if (shouldRetry && consecutiveErrorsRef.current < 3) {
-        retryTurnstile();
-      } else {
-        onError?.(errorMessage);
-      }
-    };
-
-    // Handle CAPTCHA expiration
-    const handleExpire = () => {
-      retryCountRef.current = 0; // Reset retry count on expiration
-      setCurrentToken(null);
-      onExpire?.();
-    };
-
-    // Get the mobile CAPTCHA URL - this will load from a valid domain
-    const getMobileCaptchaUrl = () => {
-      // Always use production URL for mobile to avoid network issues
-      const baseUrl = "https://cnwc-gca-pld-app.expo.app";
-      const params = new URLSearchParams({
-        siteKey: siteKey || "",
-        theme: effectiveTheme,
-        size: effectiveSize,
-        mobile: "true",
-      });
-      return `${baseUrl}/captcha?${params.toString()}`;
-    };
-
-    // Handle WebView messages (mobile only)
-    const handleWebViewMessage = (event: any) => {
-      try {
-        const data = JSON.parse(event.nativeEvent.data);
-
-        switch (data.type) {
-          case "success":
-            handleVerify(data.token);
-            break;
-          case "error":
-            handleError(data.error || data.message);
-            break;
-          case "expired":
-            handleExpire();
-            break;
-          case "timeout":
-            handleError("CAPTCHA timed out");
-            break;
-          default:
-            console.warn("[CAPTCHA] Unknown WebView message type:", data.type);
-        }
-      } catch (error) {
-        console.error("[CAPTCHA] Error parsing WebView message:", error);
-        handleError("Communication error with CAPTCHA widget");
-      }
-    };
+    // Determine theme
+    const effectiveTheme = theme === "auto" ? (colorScheme === "dark" ? "dark" : "light") : theme;
 
     // Render platform-specific component
-    if (Platform.OS === "web") {
-      // Web implementation using @marsidev/react-turnstile
-      return (
-        <View style={[styles.container, { minHeight: effectiveSize === "compact" ? 65 : 80 }]}>
-          {isRetrying && (
-            <ThemedText style={styles.retryNotice}>
-              Retrying CAPTCHA... (attempt {retryCountRef.current + 1}/3)
-            </ThemedText>
-          )}
-          <Turnstile
-            key={widgetKey}
-            ref={turnstileRef}
+    return (
+      <View style={[styles.container, { minHeight: size === "compact" ? 65 : 80 }]}>
+        {isRetrying && (
+          <ThemedText style={styles.retryNotice}>
+            Retrying CAPTCHA... (attempt {retryCountRef.current + 1}/3)
+          </ThemedText>
+        )}
+
+        {Platform.OS === "web" ? (
+          // Web platform - use @marsidev/react-turnstile
+          <WebTurnstile
+            ref={webTurnstileRef}
             siteKey={siteKey}
             onSuccess={handleVerify}
             onError={handleError}
             onExpire={handleExpire}
+            onLoad={handleLoad}
             options={{
               theme: effectiveTheme,
-              size: effectiveSize,
+              size,
               action: "submit",
               cData: "auth_form",
-              retry: "never",
+              retry: "never", // Disable automatic retries to prevent internal widget retries
             }}
             style={{
               opacity: disabled || isRetrying ? 0.5 : 1,
               pointerEvents: disabled || isRetrying ? "none" : "auto",
             }}
           />
-        </View>
-      );
-    } else {
-      // Mobile implementation using WebView
-      const webViewHeight = effectiveSize === "compact" ? 100 : 120; // Reduced height for better layout
-
-      return (
-        <View style={[styles.container, { minHeight: webViewHeight }]}>
-          {isRetrying && (
-            <ThemedText style={styles.retryNotice}>
-              Retrying CAPTCHA... (attempt {retryCountRef.current + 1}/3)
-            </ThemedText>
-          )}
-          <WebView
-            ref={webViewRef}
-            source={{ uri: getMobileCaptchaUrl() }}
+        ) : (
+          // Mobile platforms - use react-native-turnstile
+          <ReactNativeTurnstile
+            sitekey={siteKey}
+            onVerify={handleVerify}
+            onError={handleError}
+            onExpire={handleExpire}
+            onTimeout={handleTimeout}
+            onLoad={handleLoad}
+            resetRef={mobileTurnstileResetRef}
+            theme={effectiveTheme}
+            size={size}
+            retry="never" // Disable automatic retries to prevent internal widget retries
             style={[
-              styles.webView,
+              styles.turnstileWidget,
               {
-                height: webViewHeight,
                 opacity: disabled || isRetrying ? 0.5 : 1,
               },
             ]}
-            onMessage={handleWebViewMessage}
-            javaScriptEnabled={true}
-            domStorageEnabled={true}
-            startInLoadingState={true}
-            scalesPageToFit={true}
-            scrollEnabled={false}
-            bounces={false}
-            allowsInlineMediaPlayback={true}
-            mediaPlaybackRequiresUserAction={false}
-            originWhitelist={["*"]}
-            mixedContentMode="compatibility"
-            onError={(syntheticEvent) => {
-              const { nativeEvent } = syntheticEvent;
-              console.error("[CAPTCHA] WebView error:", nativeEvent);
-              handleError("Failed to load CAPTCHA widget");
-            }}
-            onHttpError={(syntheticEvent) => {
-              const { nativeEvent } = syntheticEvent;
-              console.error("[CAPTCHA] WebView HTTP error:", nativeEvent);
-              handleError("Network error loading CAPTCHA");
-            }}
-            renderLoading={() => (
-              <View style={styles.webViewLoading}>
-                <ThemedText style={styles.loadingText}>Loading CAPTCHA...</ThemedText>
-              </View>
-            )}
           />
-        </View>
-      );
-    }
+        )}
+      </View>
+    );
   }
 );
 
@@ -462,33 +474,16 @@ TurnstileCaptcha.displayName = "TurnstileCaptcha";
 const styles = StyleSheet.create({
   container: {
     alignItems: "center",
-    marginVertical: 8,
+    marginVertical: 10,
     minHeight: 80,
-    backgroundColor: Colors.dark.background,
-  },
-  webView: {
-    width: "100%",
-    maxWidth: 300,
-    backgroundColor: "transparent",
-    borderRadius: 8,
-  },
-  webViewLoading: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "transparent",
   },
   errorContainer: {
-    padding: 12,
+    padding: 15,
     backgroundColor: Colors.dark.background,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: Colors.dark.error,
-    marginVertical: 8,
+    marginVertical: 10,
   },
   errorText: {
     color: Colors.dark.error,
@@ -499,7 +494,7 @@ const styles = StyleSheet.create({
     color: Colors.dark.icon,
     textAlign: "center",
     fontSize: 12,
-    marginBottom: 4,
+    marginBottom: 5,
     fontStyle: "italic",
     opacity: 0.8,
   },
@@ -507,7 +502,7 @@ const styles = StyleSheet.create({
     color: Colors.dark.icon,
     textAlign: "center",
     fontSize: 10,
-    marginTop: 4,
+    marginTop: 5,
     fontStyle: "italic",
     opacity: 0.6,
   },
@@ -515,9 +510,14 @@ const styles = StyleSheet.create({
     color: Colors.dark.icon,
     textAlign: "center",
     fontSize: 14,
-    marginBottom: 0,
+    marginBottom: 5,
     fontStyle: "italic",
     opacity: 0.8,
+  },
+  turnstileWidget: {
+    width: "100%",
+    maxWidth: 300,
+    alignSelf: "center",
   },
 });
 
