@@ -78,8 +78,17 @@ serve(async (req: Request) => {
           .single();
 
         // Get division admin emails as fallback
+        console.log(
+          `About to call get_division_admin_emails with divisionId: ${divisionId} (type: ${typeof divisionId})`,
+        );
         const { data: divisionAdminEmails } = await supabase
           .rpc("get_division_admin_emails", { division_id_param: divisionId });
+
+        console.log(
+          `Processing request ${item.request_id} for member ${memberName} in division ${divisionId}`,
+        );
+        console.log(`Division email settings:`, divisionEmailSettings);
+        console.log(`Division admin emails:`, divisionAdminEmails);
 
         // Send notification emails based on status change
         await sendStatusChangeEmails(
@@ -190,14 +199,27 @@ async function sendStatusChangeEmails(
         ...divisionEmailSettings.additional_emails,
       ];
     }
+
+    // FIXED: Remove requesting member's email from division emails to prevent duplicates
+    divisionEmails = divisionEmails.filter((email) => email !== memberEmail);
+    console.log(
+      `Filtered out requesting member email from division settings to prevent duplicates`,
+    );
   }
 
   // Fallback to division admin emails if no division emails configured
   if (divisionEmails.length === 0 && divisionAdmins) {
     divisionEmails = divisionAdmins
       .filter((admin) => admin.email)
+      .filter((admin) => admin.email !== memberEmail)
       .map((admin) => admin.email);
   }
+
+  console.log(`Final division emails for notifications:`, divisionEmails);
+  console.log(`Member email:`, memberEmail);
+  console.log(
+    `Excluded member email from division admin list to prevent duplicates`,
+  );
 
   // Configure email content based on status
   let userSubject: string, userHtml: string, userText: string;
@@ -440,6 +462,9 @@ async function sendStatusChangeEmails(
     // Send emails to division administrators
     for (const email of divisionEmails) {
       if (email) {
+        console.log(
+          `Sending admin notification to: ${email} for request ${request.id}`,
+        );
         const adminResult = await sendEmailViaDirect(
           mailgunSendingKey,
           mailgunDomain,
@@ -481,7 +506,7 @@ async function sendStatusChangeEmails(
         .from("members")
         .select("user_id")
         .eq("role", "division_admin")
-        .eq("division_id", request.members.division_id);
+        .eq("division_id", request.division_id);
 
       for (const admin of adminUsers || []) {
         if (admin.user_id) {

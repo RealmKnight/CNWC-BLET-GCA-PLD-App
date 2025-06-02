@@ -295,9 +295,9 @@ export async function findMembersByName(
                         // First name is a recognized nickname variant (Mike/Michael, etc.)
                         (isNameVariant(matchFirstName, memberFirstName))))
             ) {
-                console.log(
-                    `[memberLookup] STRONG MATCH (potentially exact) for ${member.first_name} ${member.last_name}`,
-                );
+                // console.log(
+                //     `[memberLookup] STRONG MATCH (potentially exact) for ${member.first_name} ${member.last_name}`,
+                // );
                 return { member, matchConfidence: 100 };
             }
 
@@ -318,9 +318,9 @@ export async function findMembersByName(
                     firstNameSimilarity > 0.5 ||
                     isNameVariant(matchFirstName, memberFirstName)
                 ) {
-                    console.log(
-                        `[memberLookup] EXACT LAST NAME MATCH with similar first name for ${member.first_name} ${member.last_name}`,
-                    );
+                    // console.log(
+                    //     `[memberLookup] EXACT LAST NAME MATCH with similar first name for ${member.first_name} ${member.last_name}`,
+                    // );
                     // Not 100% confidence, but high enough to usually be chosen
                     return { member, matchConfidence: 95 };
                 }
@@ -362,9 +362,9 @@ export async function findMembersByName(
                         hasDoubledLetterMisspelling &&
                         isNameVariant(matchFirstName, memberFirstName)
                     ) {
-                        console.log(
-                            `[memberLookup] SPECIAL CASE MATCH for ${member.first_name} ${member.last_name} (doubled letter misspelling and name variant)`,
-                        );
+                        // console.log(
+                        //     `[memberLookup] SPECIAL CASE MATCH for ${member.first_name} ${member.last_name} (doubled letter misspelling and name variant)`,
+                        // );
                         return { member, matchConfidence: 98 };
                     }
 
@@ -373,17 +373,17 @@ export async function findMembersByName(
                         (lastNamePhoneticSimilarity > 0.9 || isMisspelling) &&
                         isFirstNameMatch
                     ) {
-                        console.log(
-                            `[memberLookup] PHONETIC/SPELLING MATCH for ${member.first_name} ${member.last_name} (phonetic: ${lastNamePhoneticSimilarity}, misspelling: ${isMisspelling})`,
-                        );
+                        // console.log(
+                        //     `[memberLookup] PHONETIC/SPELLING MATCH for ${member.first_name} ${member.last_name} (phonetic: ${lastNamePhoneticSimilarity}, misspelling: ${isMisspelling})`,
+                        // );
                         return { member, matchConfidence: 92 };
                     } // Good phonetic match with good first name match
                     else if (
                         lastNamePhoneticSimilarity > 0.8 && isFirstNameMatch
                     ) {
-                        console.log(
-                            `[memberLookup] GOOD PHONETIC MATCH for ${member.first_name} ${member.last_name} (phonetic: ${lastNamePhoneticSimilarity})`,
-                        );
+                        // console.log(
+                        //     `[memberLookup] GOOD PHONETIC MATCH for ${member.first_name} ${member.last_name} (phonetic: ${lastNamePhoneticSimilarity})`,
+                        // );
                         return { member, matchConfidence: 85 };
                     }
                 }
@@ -412,9 +412,9 @@ export async function findMembersByName(
                     memberLastName,
                 );
                 if (phoneticScore > lastNameConfidence) {
-                    console.log(
-                        `[memberLookup] Boosting last name confidence with phonetic match: ${lastNameConfidence} → ${phoneticScore}`,
-                    );
+                    // console.log(
+                    //     `[memberLookup] Boosting last name confidence with phonetic match: ${lastNameConfidence} → ${phoneticScore}`,
+                    // );
                     lastNameConfidence = Math.max(
                         lastNameConfidence,
                         phoneticScore * 0.9,
@@ -423,9 +423,9 @@ export async function findMembersByName(
 
                 // Check for common misspellings and boost confidence
                 if (checkCommonMisspellings(matchLastName, memberLastName)) {
-                    console.log(
-                        `[memberLookup] Boosting last name confidence due to common misspelling pattern`,
-                    );
+                    // console.log(
+                    //     `[memberLookup] Boosting last name confidence due to common misspelling pattern`,
+                    // );
                     lastNameConfidence = Math.max(lastNameConfidence, 0.85);
                 }
 
@@ -434,9 +434,9 @@ export async function findMembersByName(
                     (matchLastName.replace("ll", "l") === memberLastName) ||
                     (memberLastName.replace("ll", "l") === matchLastName)
                 ) {
-                    console.log(
-                        `[memberLookup] Significantly boosting last name confidence due to doubled letter pattern (Wilbur/Willbur case)`,
-                    );
+                    // console.log(
+                    //     `[memberLookup] Significantly boosting last name confidence due to doubled letter pattern (Wilbur/Willbur case)`,
+                    // );
                     lastNameConfidence = Math.max(lastNameConfidence, 0.95);
                 }
             }
@@ -466,9 +466,9 @@ export async function findMembersByName(
                             firstNameConfidence,
                             0.95,
                         );
-                        console.log(
-                            `[memberLookup] Extra boost for Nate/Nathan specific match`,
-                        );
+                        // console.log(
+                        //     `[memberLookup] Extra boost for Nate/Nathan specific match`,
+                        // );
                     }
                 }
 
@@ -507,22 +507,22 @@ export async function findMembersByName(
                     finalConfidence = combinedConfidence *
                         (lastNameConfidence / lastNameMinimumThreshold);
 
-                    console.log(
-                        `[memberLookup] Reduced confidence for ${member.first_name} ${member.last_name} due to poor last name match: ${
-                            Math.round(finalConfidence * 100)
-                        }% (was ${Math.round(combinedConfidence * 100)}%)`,
-                    );
+                    // console.log(
+                    //     `[memberLookup] Reduced confidence for ${member.first_name} ${member.last_name} due to poor last name match: ${
+                    //         Math.round(finalConfidence * 100)
+                    //     }% (was ${Math.round(combinedConfidence * 100)}%)`,
+                    // );
                 }
             }
 
             // Log high confidence matches for debugging
-            if (finalConfidence > 0.7) {
-                console.log(
-                    `[memberLookup] High confidence match (${
-                        Math.round(finalConfidence * 100)
-                    }%): ${member.first_name} ${member.last_name}`,
-                );
-            }
+            // if (finalConfidence > 0.7) {
+            //     console.log(
+            //         `[memberLookup] High confidence match (${
+            //             Math.round(finalConfidence * 100)
+            //         }%): ${member.first_name} ${member.last_name}`,
+            //     );
+            // }
 
             return {
                 member,
@@ -539,9 +539,9 @@ export async function findMembersByName(
             return match.matchConfidence > threshold;
         });
 
-    console.log(
-        `[memberLookup] Returning ${result.length} matches above threshold`,
-    );
+    // console.log(
+    //     `[memberLookup] Returning ${result.length} matches above threshold`,
+    // );
 
     return result;
 }

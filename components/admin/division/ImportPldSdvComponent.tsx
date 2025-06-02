@@ -9,9 +9,16 @@ import { Ionicons } from "@expo/vector-icons";
 import { CalendarSelector } from "./CalendarSelector";
 import { useAdminCalendarManagementStore } from "@/store/adminCalendarManagementStore";
 import { parseICalForPldSdvRequests, normalizeICalContent } from "@/utils/iCalParser";
-import { ImportPreviewItem, generateImportPreview } from "@/utils/importPreviewService";
+import {
+  ImportPreviewItem,
+  createStagedImportPreview,
+  StagedImportPreview,
+  generateImportPreview,
+} from "@/utils/importPreviewService";
+import { StagedImportPreview as StagedImportPreviewComponent } from "./StagedImportPreview";
 import { ImportPreviewComponent } from "./ImportPreviewComponent";
 import Toast from "react-native-toast-message";
+import { ThemedTouchableOpacity } from "@/components/ThemedTouchableOpacity";
 
 interface ImportPldSdvComponentProps {
   selectedDivision: string;
@@ -25,51 +32,50 @@ export function ImportPldSdvComponent({
   onCalendarChange,
 }: ImportPldSdvComponentProps) {
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+
+  // State for file handling
   const [file, setFile] = useState<File | null>(null);
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [year, setYear] = useState<number>(new Date().getFullYear());
-  const [previewData, setPreviewData] = useState<ImportPreviewItem[] | null>(null);
+
+  // State for preview and import
+  const [stagedPreviewData, setStagedPreviewData] = useState<StagedImportPreview | null>(null);
+  const [legacyPreviewData, setLegacyPreviewData] = useState<ImportPreviewItem[] | null>(null);
   const [showPreview, setShowPreview] = useState(false);
+  const [useStagedImport, setUseStagedImport] = useState(true); // Default to new staged import
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [parsingStatus, setParsingStatus] = useState<string>("");
 
-  // Add internal state for selected calendar
-  const [selectedCalendarId, setSelectedCalendarId] = useState<string | null>(propSelectedCalendarId || null);
-
-  // Get calendars from store
+  // Calendar management
   const { calendars } = useAdminCalendarManagementStore();
   const currentDivisionCalendars = calendars[selectedDivision] || [];
+  const [selectedCalendarId, setSelectedCalendarId] = useState<string | null>(propSelectedCalendarId || null);
 
-  // Calendar selection handler
+  // Update selectedCalendarId when prop changes
+  useEffect(() => {
+    setSelectedCalendarId(propSelectedCalendarId || null);
+  }, [propSelectedCalendarId]);
+
+  // Handle calendar selection
   const handleCalendarChange = useCallback(
     (calendarId: string | null) => {
-      console.log("[ImportPldSdvComponent] Calendar changed to:", calendarId);
       setSelectedCalendarId(calendarId);
-      // Notify parent component if callback provided
-      if (onCalendarChange) {
-        onCalendarChange(calendarId);
-      }
-      // Reset any related state
-      setPreviewData(null);
-      setShowPreview(false);
+      onCalendarChange?.(calendarId);
     },
     [onCalendarChange]
   );
 
-  // Sync with prop value
-  useEffect(() => {
-    if (propSelectedCalendarId !== selectedCalendarId) {
-      setSelectedCalendarId(propSelectedCalendarId || null);
-    }
-  }, [propSelectedCalendarId]);
-
   // This handles file selection using the FileReader API for browser
   const handleFileSelect = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = event.target.files?.[0] || null;
+    const selectedFile = event.target.files?.[0];
+
+    if (!selectedFile) return;
+
     setFile(selectedFile);
     setFileContent(null);
-    setPreviewData(null);
+    setStagedPreviewData(null);
+    setLegacyPreviewData(null);
     setShowPreview(false);
     setError(null);
 
@@ -109,7 +115,6 @@ export function ImportPldSdvComponent({
 
     // Setup console interception
     const originalConsoleLog = console.log;
-    let matchedCount = 0;
 
     // Replace console.log to show matching progress
     console.log = function (...args) {
@@ -119,23 +124,61 @@ export function ImportPldSdvComponent({
       if (typeof args[0] === "string") {
         const message = args[0];
 
-        if (message.includes("[importPreviewService] Finding matching member for")) {
-          // Extract the name being matched
-          const nameMatch = message.match(/\"([^\"]+)\"/);
+        // Updated patterns to match actual log messages from importPreviewService.ts
+        if (message.includes("[ImportPreview] Processing request")) {
+          // Extract the progress and name from messages like "[ImportPreview] Processing request 5/1358: John Smith"
+          const progressMatch = message.match(/\[ImportPreview\] Processing request (\d+)\/(\d+): (.+)/);
+          if (progressMatch) {
+            const [, current, total, name] = progressMatch;
+            setParsingStatus(`Processing member ${current} of ${total}: ${name}`);
+          }
+        } else if (message.includes("[MemberMatch] Searching for")) {
+          // Extract the name being searched from messages like "[MemberMatch] Searching for "John Smith""
+          const nameMatch = message.match(/\[MemberMatch\] Searching for "([^"]+)"/);
           if (nameMatch && nameMatch[1]) {
-            matchedCount++;
-            setParsingStatus(`Matching member ${matchedCount}: ${nameMatch[1]}`);
+            setParsingStatus(`Looking up member: ${nameMatch[1]}`);
           }
-        } else if (message.includes("[memberLookup] High confidence match")) {
-          // Extract the match result
-          const parts = message.split(":");
-          if (parts.length > 1) {
-            setParsingStatus(`Found match: ${parts[1].trim()}`);
+        } else if (message.includes("[MemberMatch] Single") && message.includes("confidence match:")) {
+          // Extract match results from messages like "[MemberMatch] Single high confidence match: John Smith (95%)"
+          const matchResult = message.match(/\[MemberMatch\] Single .+ confidence match: (.+) \(/);
+          if (matchResult && matchResult[1]) {
+            setParsingStatus(`Found match: ${matchResult[1]}`);
           }
-        } else if (message.includes("[importPreviewService] Single match found:")) {
-          const parts = message.split(":");
-          if (parts.length > 1) {
-            setParsingStatus(`Confirmed match: ${parts[1].trim()}`);
+        } else if (message.includes("[MemberMatch] Using") && message.includes("match")) {
+          // Extract match results from messages like "[MemberMatch] Using top match with significantly higher confidence: John Smith (87%)"
+          const matchResult = message.match(/\[MemberMatch\] Using .+: (.+) \(/);
+          if (matchResult && matchResult[1]) {
+            setParsingStatus(`Matched: ${matchResult[1]}`);
+          }
+        } else if (message.includes("[MemberMatch] Multiple matches found")) {
+          // Handle multiple matches scenario
+          const nameMatch = message.match(/for "([^"]+)"/);
+          if (nameMatch && nameMatch[1]) {
+            setParsingStatus(`Multiple matches for: ${nameMatch[1]} (requires review)`);
+          }
+        } else if (message.includes("[MemberMatch] No matches found")) {
+          // Handle no matches scenario
+          const nameMatch = message.match(/for "([^"]+)"/);
+          if (nameMatch && nameMatch[1]) {
+            setParsingStatus(`No match found for: ${nameMatch[1]} (requires review)`);
+          }
+        } else if (message.includes("[ImportPreview] Complete -")) {
+          // Handle final summary message
+          const summaryMatch = message.match(/\[ImportPreview\] Complete - (\d+) items processed:/);
+          if (summaryMatch && summaryMatch[1]) {
+            setParsingStatus(`Completed processing ${summaryMatch[1]} requests - analyzing results...`);
+          }
+        } else if (message.includes("[StagedImport] Creating staged preview")) {
+          // Handle staged import initialization
+          const countMatch = message.match(/for (\d+) requests/);
+          if (countMatch && countMatch[1]) {
+            setParsingStatus(`Initializing staged import for ${countMatch[1]} requests...`);
+          }
+        } else if (message.includes("[StagedImport] Initialized with")) {
+          // Handle staged import analysis results
+          const unmatchedMatch = message.match(/with (\d+) unmatched items/);
+          if (unmatchedMatch && unmatchedMatch[1]) {
+            setParsingStatus(`Analysis complete - ${unmatchedMatch[1]} items need member assignment`);
           }
         }
       }
@@ -171,7 +214,7 @@ export function ImportPldSdvComponent({
 
       // Prioritize getting division_id from the selected calendar's details first
       if (selectedCalendarId) {
-        const divisionCalendar = currentDivisionCalendars.find((cal) => cal.id === selectedCalendarId);
+        const divisionCalendar = currentDivisionCalendars.find((cal: any) => cal.id === selectedCalendarId);
         if (divisionCalendar && typeof divisionCalendar.division_id === "number") {
           divisionId = divisionCalendar.division_id;
           console.log(`[ImportPldSdvComponent] Obtained divisionId ${divisionId} from selected calendar's details.`);
@@ -203,18 +246,37 @@ export function ImportPldSdvComponent({
       );
 
       // This will generate logs that our interceptor will catch to show matching progress
-      const previewItems = await generateImportPreview(parsedRequests, selectedCalendarId, divisionId);
+      if (useStagedImport) {
+        const stagedPreview = await createStagedImportPreview(parsedRequests, selectedCalendarId, divisionId, year);
 
-      // Restore console.log
-      console.log = originalConsoleLog;
+        // Restore console.log
+        console.log = originalConsoleLog;
 
-      console.log(`[ImportPldSdvComponent] Generated preview with ${previewItems.length} items`);
-      setParsingStatus(`Preview ready with ${previewItems.length} items`);
+        console.log(
+          `[ImportPldSdvComponent] Generated staged preview with ${stagedPreview.originalItems.length} items`
+        );
+        setParsingStatus(`Preview ready with ${stagedPreview.originalItems.length} items`);
 
-      // Small delay to ensure the user sees the final status message before showing the preview
-      await new Promise((resolve) => setTimeout(resolve, 500));
+        // Small delay to ensure the user sees the final status message before showing the preview
+        await new Promise((resolve) => setTimeout(resolve, 500));
 
-      setPreviewData(previewItems);
+        setStagedPreviewData(stagedPreview);
+        setLegacyPreviewData(null);
+      } else {
+        const previewItems = await generateImportPreview(parsedRequests, selectedCalendarId, divisionId);
+
+        // Restore console.log
+        console.log = originalConsoleLog;
+
+        console.log(`[ImportPldSdvComponent] Generated legacy preview with ${previewItems.length} items`);
+        setParsingStatus(`Preview ready with ${previewItems.length} items`);
+
+        // Small delay to ensure the user sees the final status message before showing the preview
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        setLegacyPreviewData(previewItems);
+        setStagedPreviewData(null);
+      }
       setShowPreview(true);
     } catch (err: any) {
       // Restore console.log in case of error
@@ -242,7 +304,7 @@ export function ImportPldSdvComponent({
       console.log = originalConsoleLog;
       setIsLoading(false);
     }
-  }, [file, fileContent, selectedCalendarId, year, selectedDivision, currentDivisionCalendars]);
+  }, [file, fileContent, selectedCalendarId, year, selectedDivision, currentDivisionCalendars, useStagedImport]);
 
   // Handle import completion
   const handleImportComplete = useCallback((result: { success: boolean; count: number }) => {
@@ -258,7 +320,8 @@ export function ImportPldSdvComponent({
     // Reset the state for a new import
     setFile(null);
     setFileContent(null);
-    setPreviewData(null);
+    setStagedPreviewData(null);
+    setLegacyPreviewData(null);
     setShowPreview(false);
 
     // Clear the file input by re-rendering it with a new key
@@ -360,15 +423,91 @@ export function ImportPldSdvComponent({
     </View>
   );
 
-  // If showing preview, display the preview component
-  if (showPreview && previewData) {
-    return (
-      <ImportPreviewComponent
-        previewData={previewData}
-        onClose={() => setShowPreview(false)}
-        onImportComplete={handleImportComplete}
-      />
-    );
+  // Render import mode toggle
+  const renderImportModeToggle = () => (
+    <View style={styles.section}>
+      <ThemedText style={styles.sectionTitle}>Import Mode</ThemedText>
+      <View style={styles.toggleContainer}>
+        <ThemedTouchableOpacity
+          style={[
+            styles.toggleOption,
+            { borderColor: Colors[colorScheme].border },
+            useStagedImport && {
+              backgroundColor: Colors[colorScheme].tint,
+              borderColor: Colors[colorScheme].tint,
+            },
+          ]}
+          onPress={() => setUseStagedImport(true)}
+        >
+          <Ionicons
+            name="layers-outline"
+            size={20}
+            color={useStagedImport ? Colors[colorScheme].background : Colors[colorScheme].text}
+          />
+          <ThemedText style={[styles.toggleText, useStagedImport && { color: Colors[colorScheme].background }]}>
+            Staged Import
+          </ThemedText>
+          <ThemedText
+            style={[
+              styles.toggleDescription,
+              { color: useStagedImport ? Colors[colorScheme].background : Colors[colorScheme].textDim },
+            ]}
+          >
+            Advanced workflow with over-allotment detection
+          </ThemedText>
+        </ThemedTouchableOpacity>
+
+        <ThemedTouchableOpacity
+          style={[
+            styles.toggleOption,
+            { borderColor: Colors[colorScheme].border },
+            !useStagedImport && {
+              backgroundColor: Colors[colorScheme].tint,
+              borderColor: Colors[colorScheme].tint,
+            },
+          ]}
+          onPress={() => setUseStagedImport(false)}
+        >
+          <Ionicons
+            name="flash-outline"
+            size={20}
+            color={!useStagedImport ? Colors[colorScheme].background : Colors[colorScheme].text}
+          />
+          <ThemedText style={[styles.toggleText, !useStagedImport && { color: Colors[colorScheme].background }]}>
+            Quick Import
+          </ThemedText>
+          <ThemedText
+            style={[
+              styles.toggleDescription,
+              { color: !useStagedImport ? Colors[colorScheme].background : Colors[colorScheme].textDim },
+            ]}
+          >
+            Simple review and import workflow
+          </ThemedText>
+        </ThemedTouchableOpacity>
+      </View>
+    </View>
+  );
+
+  // If showing preview, display the appropriate preview component
+  if (showPreview && (stagedPreviewData || legacyPreviewData)) {
+    if (useStagedImport && stagedPreviewData) {
+      return (
+        <StagedImportPreviewComponent
+          stagedPreview={stagedPreviewData}
+          onClose={() => setShowPreview(false)}
+          onImportComplete={handleImportComplete}
+        />
+      );
+    } else if (!useStagedImport && legacyPreviewData) {
+      return (
+        <ImportPreviewComponent
+          previewData={legacyPreviewData}
+          onClose={() => setShowPreview(false)}
+          onImportComplete={handleImportComplete}
+        />
+      );
+    }
   }
 
   // Main UI for file selection and setup
@@ -393,6 +532,7 @@ export function ImportPldSdvComponent({
         style={{ marginBottom: 16 }}
       />
 
+      {renderImportModeToggle()}
       {renderFileUpload()}
       {renderYearSelection()}
       {renderPreviewButton()}
@@ -427,15 +567,15 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   description: {
-    fontSize: 16,
+    fontSize: 14,
     marginBottom: 24,
-    lineHeight: 22,
+    lineHeight: 20,
   },
   section: {
     marginBottom: 24,
   },
   sectionTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "600",
     marginBottom: 12,
   },
@@ -443,62 +583,85 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   selectedFile: {
-    marginTop: 8,
     fontSize: 14,
+    marginTop: 8,
+    fontStyle: "italic",
   },
   mobileNotice: {
-    fontSize: 16,
+    fontSize: 14,
     fontStyle: "italic",
-    color: Colors.light.error,
+    textAlign: "center",
+    padding: 16,
   },
   yearSelectorContainer: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
   },
   label: {
     fontSize: 16,
-    marginRight: 12,
+    fontWeight: "500",
   },
   mobileYearDisplay: {
     padding: 8,
-    borderWidth: 1,
-    borderColor: Colors.light.border,
     borderRadius: 4,
+    borderWidth: 1,
+    minWidth: 80,
+    alignItems: "center",
   },
   button: {
-    minWidth: 200,
-    alignSelf: "flex-start",
+    marginTop: 8,
   },
   warning: {
-    marginTop: 8,
-    color: Colors.light.warning,
     fontSize: 14,
-  },
-  loading: {
-    marginVertical: 20,
+    marginTop: 8,
+    textAlign: "center",
   },
   loadingContainer: {
-    marginVertical: 20,
+    alignItems: "center",
+    marginTop: 20,
+  },
+  statusBox: {
+    marginTop: 16,
+    padding: 12,
+    borderRadius: 8,
+    minWidth: 200,
     alignItems: "center",
   },
   parsingStatus: {
-    fontSize: 16,
+    fontSize: 14,
     textAlign: "center",
-    fontWeight: "500",
-    color: Colors.dark.text,
   },
   error: {
-    color: Colors.light.error,
-    marginVertical: 16,
+    fontSize: 14,
+    textAlign: "center",
+    marginTop: 16,
   },
-  statusBox: {
-    marginTop: 15,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: Colors.dark.border,
-    borderRadius: 8,
-    backgroundColor: Colors.dark.card,
-    width: "100%",
+  previewContainer: {
+    flex: 1,
     maxWidth: 500,
+  },
+  toggleContainer: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  toggleOption: {
+    flex: 1,
+    padding: 16,
+    borderWidth: 1,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  toggleText: {
+    fontSize: 16,
+    fontWeight: "600",
+    marginTop: 8,
+    marginBottom: 4,
+    textAlign: "center",
+  },
+  toggleDescription: {
+    fontSize: 12,
+    textAlign: "center",
+    lineHeight: 16,
   },
 });

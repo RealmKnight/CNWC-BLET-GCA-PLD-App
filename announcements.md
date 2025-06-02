@@ -2,15 +2,17 @@
 
 ## Overview
 
-This document outlines the implementation strategy for adding Announcements functionality to the application. The entire system will be developed progressively. Announcements will be managed by division, union, and application admins and displayed to members based on their respective divisions or union-wide.
+This document outlines the implementation strategy for adding Announcements functionality to the application. The entire system will be developed progressively in phases with review pauses after each phase completion. Announcements will be managed by division, union, and application admins and displayed to members based on their respective divisions or union-wide.
 
 **Note on UI Development**: Utilize existing UI components and styling consistent with the current application theme and usage. **Always search the codebase for suitable existing components before creating new ones.**
+
+**Implementation Approach**: We will implement phases sequentially and pause after each phase for review before proceeding to the next phase.
 
 ### Key Features
 
 1. **Multiple levels of announcements**:
 
-   - Division level (managed by `division_admin` for their specific division(s))
+   - Division level (managed by `division_admin` for their specific division(s), union_admin and application_admin can access via the divisionSelector for divisions they are not a part of)
    - GCA/Union level (managed by `union_admin` or `application_admin`)
 
 2. **Admin management interfaces**:
@@ -24,22 +26,37 @@ This document outlines the implementation strategy for adding Announcements func
    - Title
    - Description/message
    - Optional links
-   - Optional document attachments (integrated into the creation flow)
+   - Optional document attachments (integrated into the creation flow using existing document upload/viewer components)
 
 4. **Read tracking and notification**:
-   - Track which users have read announcements (implicitly upon viewing/scrolling).
-   - Badge notifications for unread announcements.
+
+   - Track which users have read announcements (implicitly upon viewing/scrolling) using same pin number pattern as existing message system
+   - Badge notifications for unread announcements using existing badgeStore with different categories
    - Badge notifications on navigation elements:
      - "My Division" navigation card (Blue badge)
      - "GCA" navigation card (Green badge)
      - "Announcements" sub-navigation card under "My Division" (Blue badge)
      - "GCA Announcements" sub-navigation card under "GCA" (Green badge)
 
+5. **Integration with existing systems**:
+   - Similar to member messages, NOT admin messages
+   - Use existing document storage through Supabase Storage with existing upload/viewer components
+   - Follow existing division context validation patterns from divisionMeetingStore
+   - Initialize after notification store but before admin stores in useAuth sequence
+   - Use existing deep linking patterns for navigation
+   - Use existing badge system with different categories for announcement badges
+
 ## Implementation Phases
 
 - [ ] ### Phase 1: Database Schema Design
 
-**Step 1: Create Announcements Table**
+**Database Migration Strategy**: Implement schema changes as **2-3 separate migrations** for easier rollback:
+
+- **Migration 1**: Core tables (`announcements`, `announcement_read_status`) and basic functions
+- **Migration 2**: RLS policies and security functions
+- **Migration 3**: Helper views and analytics functions (can be combined with Migration 1 if preferred)
+
+**Step 1: Create Announcements Table (Migration 1)**
 
 ```sql
 CREATE TABLE public.announcements (
@@ -57,9 +74,9 @@ CREATE TABLE public.announcements (
   require_acknowledgment BOOLEAN DEFAULT false NOT NULL,
   target_type TEXT NOT NULL, -- 'division' (for specific divisions), 'GCA' (for all GCA/union members)
   target_division_ids INTEGER[] DEFAULT '{}'::integer[], -- Required if target_type is 'division'. Stores division_id(s).
-  document_ids UUID[] DEFAULT '{}'::uuid[], -- References to documents in storage bucket
-  read_by TEXT[] DEFAULT '{}'::text[], -- Array of pin numbers who have read this announcement
-  acknowledged_by TEXT[] DEFAULT '{}'::text[] -- Array of pin numbers who have acknowledged this announcement
+  document_ids UUID[] DEFAULT '{}'::uuid[], -- References to documents in storage bucket (max 3, 25MB limit)
+  read_by TEXT[] DEFAULT '{}'::text[], -- Array of pin numbers (as strings) who have read this announcement - CONSISTENT WITH EXISTING MESSAGE SYSTEM
+  acknowledged_by TEXT[] DEFAULT '{}'::text[] -- Array of pin numbers (as strings) who have acknowledged this announcement - CONSISTENT WITH EXISTING MESSAGE SYSTEM
 );
 
 -- Add trigger for updated_at
@@ -80,9 +97,9 @@ CREATE TABLE public.announcement_read_status (
 );
 ```
 
-**Note:** This table is optional as we're already tracking read status in the announcements table using the read_by array. This table provides additional detail about when each announcement was read, which can be useful for analytics.
+**Note:** This table provides additional detail about when each announcement was read, which can be useful for analytics while maintaining consistency with the existing message system's pin number tracking in the main table.
 
-**Step 3: Create View for Announcements with Author Names**
+**Step 3: Create View for Announcements with Author Names (Migration 1)**
 
 ```sql
 CREATE VIEW public.announcements_with_author AS
@@ -95,200 +112,7 @@ LEFT JOIN
   public.members m ON a.created_by = m.id; -- Confirmed: public.members.id is the same as auth.users.id
 ```
 
-**Step 4: Create a Helpful View for Announcement Analytics**
-
-```sql
-CREATE VIEW public.announcement_read_counts AS
-SELECT
-  a.id AS announcement_id,
-  a.title,
-  a.created_at,
-  a.target_type,
-  a.target_division_ids,
-  a.require_acknowledgment,
-  COUNT(DISTINCT ars.user_id) AS read_count,
-  -- For division announcements, count eligible members
-  CASE
-    WHEN a.target_type = 'division' THEN (
-      SELECT COUNT(DISTINCT m.id)
-      FROM members m
-      WHERE m.division_id = ANY(a.target_division_ids)
-        AND m.deleted = false
-    )
-    ELSE (
-      SELECT COUNT(DISTINCT m.id)
-      FROM members m
-      WHERE m.deleted = false
-    )
-  END AS eligible_member_count
-FROM
-  public.announcements a
-LEFT JOIN
-  public.announcement_read_status ars ON a.id = ars.announcement_id
-GROUP BY
-  a.id, a.title, a.created_at, a.target_type, a.target_division_ids, a.require_acknowledgment;
-```
-
-**Step 5: Create Helper View for Union Admin Announcements**
-
-This view will help optimize the RLS policies by pre-filtering announcements that are relevant to union admins:
-
-```sql
-CREATE VIEW public.union_admin_announcement_roots AS
-SELECT DISTINCT a.id AS announcement_id
-FROM public.announcements a
-WHERE a.creator_role = 'union_admin'
-   OR a.target_type = 'GCA';
-```
-
-**Step 6: Add RLS Policies**
-
-Row Level Security policies will enforce access control based on user roles. The defined hierarchy is:
-`application_admin` (fullest access) > `union_admin` (GCA and all division functions) > `division_admin` (own division functions only).
-
-**RLS for `public.announcements` table:**
-
-```sql
-ALTER TABLE public.announcements ENABLE ROW LEVEL SECURITY;
-
--- Policy for Application Admins (Full Access)
-CREATE POLICY "APP_ADMIN_full_access_announcements" ON public.announcements
-  FOR ALL TO authenticated
-  USING (EXISTS (
-    SELECT 1 FROM user_roles ur
-    WHERE ur.user_id = auth.uid() AND ur.role = 'application_admin'
-  ));
-
--- Policy for Union Admins (Manage GCA and All Division Announcements)
-CREATE POLICY "UNION_ADMIN_manage_all_announcements" ON public.announcements
-  FOR ALL TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM user_roles ur
-      WHERE ur.user_id = auth.uid() AND ur.role = 'union_admin'
-    )
-  )
-  WITH CHECK (
-    -- For inserts and updates, restrict what union admins can create
-    EXISTS (
-      SELECT 1 FROM user_roles ur
-      WHERE ur.user_id = auth.uid() AND ur.role = 'union_admin'
-    )
-    AND created_by = auth.uid()
-    AND creator_role = 'union_admin'
-  );
-
--- Policy for Division Admins (Manage Own Division's Announcements)
-CREATE POLICY "DIV_ADMIN_manage_own_division_announcements" ON public.announcements
-  FOR ALL TO authenticated
-  USING (
-    -- Leverage existing function for optimized division admin access check
-    EXISTS (
-      SELECT 1 FROM user_roles ur
-      WHERE ur.user_id = auth.uid() AND ur.role = 'division_admin'
-    )
-    AND (
-      -- Division admins can see all GCA announcements
-      target_type = 'GCA'
-      OR
-      -- And they can see division announcements for their divisions
-      (
-        target_type = 'division'
-        AND EXISTS (
-          SELECT 1 FROM members m
-          WHERE m.id = auth.uid()
-          AND m.division_id = ANY(target_division_ids)
-        )
-      )
-    )
-  )
-  WITH CHECK (
-    -- For inserts and updates, division admins can only create/modify their own division's announcements
-    EXISTS (
-      SELECT 1 FROM user_roles ur
-      WHERE ur.user_id = auth.uid() AND ur.role = 'division_admin'
-    )
-    AND created_by = auth.uid()
-    AND creator_role = 'division_admin'
-    AND target_type = 'division'
-    AND EXISTS (
-      -- Use existing helper function for optimal performance
-      SELECT 1 FROM members m
-      WHERE m.id = auth.uid()
-      AND target_division_ids @> ARRAY[m.division_id]
-    )
-  );
-
--- Policy for Viewing Announcements (All authenticated users)
-CREATE POLICY "Authenticated_view_relevant_announcements" ON public.announcements
-  FOR SELECT TO authenticated
-  USING (
-    is_active = true
-    AND start_date <= timezone('utc'::text, now())
-    AND (end_date IS NULL OR end_date >= timezone('utc'::text, now()))
-    AND (
-      -- Everyone can see GCA announcements
-      target_type = 'GCA'
-      OR
-      -- Division-specific announcements are visible to members of those divisions
-      (
-        target_type = 'division'
-        AND EXISTS (
-          SELECT 1 FROM members m
-          WHERE m.id = auth.uid()
-          AND m.division_id = ANY(target_division_ids)
-        )
-      )
-    )
-  );
-```
-
-**RLS for `public.announcement_read_status` table:**
-
-```sql
-ALTER TABLE public.announcement_read_status ENABLE ROW LEVEL SECURITY;
-
--- Users can manage their own read status
-CREATE POLICY "Manage_own_read_status" ON public.announcement_read_status
-  FOR ALL TO authenticated
-  USING (user_id = auth.uid())
-  WITH CHECK (user_id = auth.uid());
-
--- Admin policy for viewing read status leveraging existing helper functions
-CREATE POLICY "Admin_view_read_status" ON public.announcement_read_status
-  FOR SELECT TO authenticated
-  USING (
-    -- Application Admins can see all
-    (EXISTS (
-      SELECT 1 FROM user_roles ur
-      WHERE ur.user_id = auth.uid() AND ur.role = 'application_admin'
-    ))
-    OR
-    -- Union Admins can see all - simplified using the public.get_my_effective_roles() function
-    ('union_admin' = ANY(public.get_my_effective_roles()))
-    OR
-    -- Division Admins can see read status for their division members
-    (
-      'division_admin' = ANY(public.get_my_effective_roles())
-      AND EXISTS (
-        -- Join to announcements to check division relationship
-        SELECT 1
-        FROM public.announcements a
-        JOIN public.members m_user ON announcement_read_status.user_id = m_user.id
-        JOIN public.members m_admin ON auth.uid() = m_admin.id
-        WHERE
-          announcement_read_status.announcement_id = a.id
-          AND m_user.division_id = m_admin.division_id
-          AND (
-            a.target_type = 'GCA'
-            OR (a.target_type = 'division' AND m_admin.division_id = ANY(a.target_division_ids))
-          )
-      )
-    )
-  );
-```
-
-**Step 7: Create Helper Functions for Read Status Management**
+**Step 4: Create Helper Functions for Read Status Management (Migration 1)**
 
 We'll leverage the existing pattern from messages system for our announcement read status tracking:
 
@@ -299,7 +123,7 @@ DECLARE
   v_user_id UUID := auth.uid();
   v_pin_number TEXT;
 BEGIN
-  -- Get the user's pin number
+  -- Get the user's pin number (following existing message system pattern)
   SELECT pin_number::text INTO v_pin_number
   FROM public.members
   WHERE id = v_user_id;
@@ -314,7 +138,7 @@ BEGIN
   ON CONFLICT (announcement_id, user_id) DO
     UPDATE SET read_at = timezone('utc'::text, now());
 
-  -- Add to the read_by array in the announcements table if not already there
+  -- Add to the read_by array in the announcements table if not already there (consistent with existing message system)
   UPDATE public.announcements
   SET read_by = array_append(read_by, v_pin_number)
   WHERE id = announcement_id AND NOT (v_pin_number = ANY(read_by));
@@ -328,7 +152,7 @@ DECLARE
   v_user_id UUID := auth.uid();
   v_pin_number TEXT;
 BEGIN
-  -- Get the user's pin number
+  -- Get the user's pin number (following existing message system pattern)
   SELECT pin_number::text INTO v_pin_number
   FROM public.members
   WHERE id = v_user_id;
@@ -341,7 +165,7 @@ BEGIN
   DELETE FROM public.announcement_read_status
   WHERE announcement_id = $1 AND user_id = auth.uid();
 
-  -- Remove from read_by array
+  -- Remove from read_by array (consistent with existing message system)
   UPDATE public.announcements
   SET read_by = array_remove(read_by, v_pin_number)
   WHERE id = announcement_id;
@@ -349,7 +173,7 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ```
 
-**Step 8: Create Functions for Creating and Managing Announcements**
+**Step 5: Create Functions for Creating and Managing Announcements (Migration 1)**
 
 ```sql
 CREATE OR REPLACE FUNCTION public.create_announcement(
@@ -422,7 +246,7 @@ BEGIN
     END;
   END IF;
 
-  -- Validate document count
+  -- Validate document count (following existing document system limits)
   IF p_document_ids IS NOT NULL AND array_length(p_document_ids, 1) > 3 THEN
     RAISE EXCEPTION 'Maximum of 3 document attachments allowed.';
   END IF;
@@ -463,7 +287,261 @@ END;
 $$;
 ```
 
-**Step 9: Implement Announcement Acknowledgment Functions**
+**Step 6: Create Helper Views for Analytics (Migration 3)**
+
+```sql
+CREATE VIEW public.announcement_read_counts AS
+SELECT
+  a.id AS announcement_id,
+  a.title,
+  a.created_at,
+  a.target_type,
+  a.target_division_ids,
+  a.require_acknowledgment,
+  COUNT(DISTINCT ars.user_id) AS read_count,
+  -- For division announcements, count eligible members
+  CASE
+    WHEN a.target_type = 'division' THEN (
+      SELECT COUNT(DISTINCT m.id)
+      FROM members m
+      WHERE m.division_id = ANY(a.target_division_ids)
+        AND m.deleted = false
+    )
+    ELSE (
+      SELECT COUNT(DISTINCT m.id)
+      FROM members m
+      WHERE m.deleted = false
+    )
+  END AS eligible_member_count
+FROM
+  public.announcements a
+LEFT JOIN
+  public.announcement_read_status ars ON a.id = ars.announcement_id
+GROUP BY
+  a.id, a.title, a.created_at, a.target_type, a.target_division_ids, a.require_acknowledgment;
+```
+
+**Step 7: Create Helper View for Union Admin Announcements (Migration 3)**
+
+This view will help optimize the RLS policies by pre-filtering announcements that are relevant to union admins:
+
+```sql
+CREATE VIEW public.union_admin_announcement_roots AS
+SELECT DISTINCT a.id AS announcement_id
+FROM public.announcements a
+WHERE a.creator_role = 'union_admin'
+   OR a.target_type = 'GCA';
+```
+
+**Step 8: Add RLS Policies (Migration 2)**
+
+Row Level Security policies will enforce access control based on user roles following existing RLS patterns in the codebase. The defined hierarchy is:
+`application_admin` (fullest access) > `union_admin` (GCA and all division functions) > `division_admin` (own division functions only).
+
+**RLS for `public.announcements` table:**
+
+```sql
+ALTER TABLE public.announcements ENABLE ROW LEVEL SECURITY;
+
+-- Policy for Application Admins (Full Access) - Following existing RLS patterns
+CREATE POLICY "APP_ADMIN_full_access_announcements" ON public.announcements
+  FOR ALL TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM user_roles ur
+    WHERE ur.user_id = auth.uid() AND ur.role = 'application_admin'
+  ));
+
+-- Policy for Union Admins (Manage GCA and All Division Announcements) - Following existing RLS patterns
+CREATE POLICY "UNION_ADMIN_manage_all_announcements" ON public.announcements
+  FOR ALL TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM user_roles ur
+      WHERE ur.user_id = auth.uid() AND ur.role = 'union_admin'
+    )
+  )
+  WITH CHECK (
+    -- For inserts and updates, restrict what union admins can create
+    EXISTS (
+      SELECT 1 FROM user_roles ur
+      WHERE ur.user_id = auth.uid() AND ur.role = 'union_admin'
+    )
+    AND created_by = auth.uid()
+    AND creator_role = 'union_admin'
+  );
+
+-- Policy for Division Admins (Manage Own Division's Announcements) - Following existing division validation patterns
+CREATE POLICY "DIV_ADMIN_manage_own_division_announcements" ON public.announcements
+  FOR ALL TO authenticated
+  USING (
+    -- Leverage existing function for optimized division admin access check
+    EXISTS (
+      SELECT 1 FROM user_roles ur
+      WHERE ur.user_id = auth.uid() AND ur.role = 'division_admin'
+    )
+    AND (
+      -- Division admins can see all GCA announcements
+      target_type = 'GCA'
+      OR
+      -- And they can see division announcements for their divisions
+      (
+        target_type = 'division'
+        AND EXISTS (
+          SELECT 1 FROM members m
+          WHERE m.id = auth.uid()
+          AND m.division_id = ANY(target_division_ids)
+        )
+      )
+    )
+  )
+  WITH CHECK (
+    -- For inserts and updates, division admins can only create/modify their own division's announcements
+    EXISTS (
+      SELECT 1 FROM user_roles ur
+      WHERE ur.user_id = auth.uid() AND ur.role = 'division_admin'
+    )
+    AND created_by = auth.uid()
+    AND creator_role = 'division_admin'
+    AND target_type = 'division'
+    AND EXISTS (
+      -- Use existing helper function for optimal performance
+      SELECT 1 FROM members m
+      WHERE m.id = auth.uid()
+      AND target_division_ids @> ARRAY[m.division_id]
+    )
+  );
+
+-- Policy for Viewing Announcements (All authenticated users) - Following existing member access patterns
+CREATE POLICY "Authenticated_view_relevant_announcements" ON public.announcements
+  FOR SELECT TO authenticated
+  USING (
+    is_active = true
+    AND start_date <= timezone('utc'::text, now())
+    AND (end_date IS NULL OR end_date >= timezone('utc'::text, now()))
+    AND (
+      -- Everyone can see GCA announcements
+      target_type = 'GCA'
+      OR
+      -- Division-specific announcements are visible to members of those divisions
+      (
+        target_type = 'division'
+        AND EXISTS (
+          SELECT 1 FROM members m
+          WHERE m.id = auth.uid()
+          AND m.division_id = ANY(target_division_ids)
+        )
+      )
+    )
+  );
+```
+
+**RLS for `public.announcement_read_status` table:**
+
+```sql
+ALTER TABLE public.announcement_read_status ENABLE ROW LEVEL SECURITY;
+
+-- Users can manage their own read status - Following existing patterns
+CREATE POLICY "Manage_own_read_status" ON public.announcement_read_status
+  FOR ALL TO authenticated
+  USING (user_id = auth.uid())
+  WITH CHECK (user_id = auth.uid());
+
+-- Admin policy for viewing read status leveraging existing helper functions
+CREATE POLICY "Admin_view_read_status" ON public.announcement_read_status
+  FOR SELECT TO authenticated
+  USING (
+    -- Application Admins can see all
+    (EXISTS (
+      SELECT 1 FROM user_roles ur
+      WHERE ur.user_id = auth.uid() AND ur.role = 'application_admin'
+    ))
+    OR
+    -- Union Admins can see all - simplified using the public.get_my_effective_roles() function
+    ('union_admin' = ANY(public.get_my_effective_roles()))
+    OR
+    -- Division Admins can see read status for their division members
+    (
+      'division_admin' = ANY(public.get_my_effective_roles())
+      AND EXISTS (
+        -- Join to announcements to check division relationship
+        SELECT 1
+        FROM public.announcements a
+        JOIN public.members m_user ON announcement_read_status.user_id = m_user.id
+        JOIN public.members m_admin ON auth.uid() = m_admin.id
+        WHERE
+          announcement_read_status.announcement_id = a.id
+          AND m_user.division_id = m_admin.division_id
+          AND (
+            a.target_type = 'GCA'
+            OR (a.target_type = 'division' AND m_admin.division_id = ANY(a.target_division_ids))
+          )
+      )
+    )
+  );
+```
+
+**Step 9: Create Helper Functions for Read Status Management**
+
+We'll leverage the existing pattern from messages system for our announcement read status tracking:
+
+```sql
+CREATE OR REPLACE FUNCTION public.mark_announcement_as_read(announcement_id UUID)
+RETURNS void AS $$
+DECLARE
+  v_user_id UUID := auth.uid();
+  v_pin_number TEXT;
+BEGIN
+  -- Get the user's pin number (following existing message system pattern)
+  SELECT pin_number::text INTO v_pin_number
+  FROM public.members
+  WHERE id = v_user_id;
+
+  IF v_pin_number IS NULL THEN
+    RAISE EXCEPTION 'User pin number not found';
+  END IF;
+
+  -- Track detailed read timestamp in the read_status table if it exists
+  INSERT INTO public.announcement_read_status (announcement_id, user_id)
+  VALUES (announcement_id, auth.uid())
+  ON CONFLICT (announcement_id, user_id) DO
+    UPDATE SET read_at = timezone('utc'::text, now());
+
+  -- Add to the read_by array in the announcements table if not already there (consistent with existing message system)
+  UPDATE public.announcements
+  SET read_by = array_append(read_by, v_pin_number)
+  WHERE id = announcement_id AND NOT (v_pin_number = ANY(read_by));
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Also add function to mark as unread if needed
+CREATE OR REPLACE FUNCTION public.mark_announcement_as_unread(announcement_id UUID)
+RETURNS void AS $$
+DECLARE
+  v_user_id UUID := auth.uid();
+  v_pin_number TEXT;
+BEGIN
+  -- Get the user's pin number (following existing message system pattern)
+  SELECT pin_number::text INTO v_pin_number
+  FROM public.members
+  WHERE id = v_user_id;
+
+  IF v_pin_number IS NULL THEN
+    RAISE EXCEPTION 'User pin number not found';
+  END IF;
+
+  -- Remove from read_status table
+  DELETE FROM public.announcement_read_status
+  WHERE announcement_id = $1 AND user_id = auth.uid();
+
+  -- Remove from read_by array (consistent with existing message system)
+  UPDATE public.announcements
+  SET read_by = array_remove(read_by, v_pin_number)
+  WHERE id = announcement_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+```
+
+**Step 10: Implement Announcement Acknowledgment Functions**
 
 For announcements with `require_acknowledgment = true`, create functions to handle acknowledgment similar to the existing message acknowledgment system:
 
@@ -475,7 +553,7 @@ DECLARE
   v_user_id UUID := auth.uid();
   v_pin_number TEXT;
 BEGIN
-  -- Get the user's pin number
+  -- Get the user's pin number (following existing message system pattern)
   SELECT pin_number::text INTO v_pin_number
   FROM public.members
   WHERE id = v_user_id;
@@ -487,13 +565,15 @@ BEGIN
   -- First mark as read
   PERFORM public.mark_announcement_as_read(announcement_id);
 
-  -- Then add to acknowledged_by array if not already there
+  -- Then add to acknowledged_by array if not already there (consistent with existing message system)
   UPDATE public.announcements
   SET acknowledged_by = array_append(acknowledged_by, v_pin_number)
   WHERE id = announcement_id AND NOT (v_pin_number = ANY(acknowledged_by));
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ```
+
+This division context integration ensures that the announcements system maintains the same level of data isolation and security as the meetings system, preventing any cross-contamination of division information.
 
 - [ ] ### Phase 2: State Management
 
@@ -630,6 +710,7 @@ interface AnnouncementStore {
   // Fetch helpers with division context
   _fetchAndSetAnnouncements: (divisionName: string) => Promise<void>;
   _calculateUnreadCounts: () => void;
+  _updateBadgeStore: (unreadCounts: { division: number; gca: number; total: number }) => void; // Integration with existing badgeStore
 
   // Public API with division context support
   initializeAnnouncementStore: (userId: string, assignedDivisionId: number | null, roles: string[]) => () => void;
@@ -708,6 +789,47 @@ export const useAnnouncementStore = create<AnnouncementStore>((set, get) => ({
     });
   },
 
+  // Integration with existing badgeStore using different categories
+  _updateBadgeStore: (unreadCounts) => {
+    // Import badgeStore dynamically to avoid circular dependencies
+    import("@/store/badgeStore")
+      .then(({ useBadgeStore }) => {
+        // Update badge store with announcement-specific categories
+        // This will be separate from message badges but use the same system
+        useBadgeStore.getState().updateAnnouncementBadges?.(unreadCounts);
+      })
+      .catch((error) => {
+        console.error("[AnnouncementStore] Failed to update badge store:", error);
+      });
+  },
+
+  // Calculate unread counts and update badge store
+  _calculateUnreadCounts: () => {
+    const state = get();
+    let divisionCount = 0;
+    let gcaCount = 0;
+
+    // Calculate division announcements unread count
+    Object.entries(state.announcements).forEach(([divisionName, announcements]) => {
+      if (divisionName === "GCA") {
+        gcaCount += announcements.filter((a) => !state.readStatusMap[a.id]).length;
+      } else {
+        divisionCount += announcements.filter((a) => !state.readStatusMap[a.id]).length;
+      }
+    });
+
+    const newUnreadCount = {
+      division: divisionCount,
+      gca: gcaCount,
+      total: divisionCount + gcaCount,
+    };
+
+    set({ unreadCount: newUnreadCount });
+
+    // Update badge store with new counts
+    get()._updateBadgeStore(newUnreadCount);
+  },
+
   // Fetch division announcements with context validation (following pattern from divisionMeetingStore)
   fetchDivisionAnnouncements: async (divisionName: string) => {
     get().setLoadingState(true, `Loading ${divisionName} announcements`);
@@ -739,6 +861,9 @@ export const useAnnouncementStore = create<AnnouncementStore>((set, get) => ({
           [divisionName]: data || [],
         },
       }));
+
+      // Recalculate unread counts
+      get()._calculateUnreadCounts();
 
       get().setLoadingState(false);
     } catch (error) {
@@ -926,232 +1051,672 @@ export const useAnnouncementStore = create<AnnouncementStore>((set, get) => ({
     return { isValid, issues };
   },
 
-  // Helper function to update announcement badge counts
-  _updateAnnouncementBadges: (unreadCounts) => {
-    if (Platform.OS !== "web") {
-      // Update badge counts but keep separate from notification badges
-      // Only used internally by the store
-    }
-  },
-
   // Other implementation details following the same patterns...
+  // Mark as read, acknowledge, create, update, delete functions will be implemented
+  // following the existing patterns from divisionMeetingStore and message system
 }));
 ```
 
-- [ ] ### Phase 3: Admin UI for Managing Announcements
+**Note on Store Initialization**: This store will be initialized after the notification store but before admin stores in the useAuth.tsx initialization sequence, as specified in the clarifications.
 
-- [ ] #### Step 1: Create Division Admin Announcement Management Screen
+- [ ] #### Step 3: Extend Badge Store for Announcements
 
 ```typescript
-// components/admin/division/DivisionAnnouncements.tsx
+// store/badgeStore.ts - Add announcement-specific methods
 
-import React, { useState, useEffect } from "react";
-import { useAnnouncementStore } from "@/store/announcementStore";
-import { useUserStore } from "@/store/userStore";
-// ... other imports
+// Add to the BadgeState interface:
+interface BadgeState {
+  // ... existing properties ...
+  announcementUnreadCount: {
+    division: number;
+    gca: number;
+    total: number;
+  };
 
-interface DivisionAnnouncementsProps {
-  division: string; // Division name passed as prop (following pattern from DivisionMeetings.tsx)
-  isAdmin?: boolean;
+  // ... existing methods ...
+  updateAnnouncementBadges: (counts: { division: number; gca: number; total: number }) => void;
+  fetchUnreadAnnouncementCount: (userId: string, type: "division" | "gca" | "total") => Promise<number>;
+  resetAnnouncementBadges: () => void;
 }
 
-export function DivisionAnnouncements({ division, isAdmin = false }: DivisionAnnouncementsProps) {
-  // Following the exact pattern from DivisionMeetings.tsx for division context management
+// Add to the store implementation:
+export const useBadgeStore = create<BadgeState>((set, get) => ({
+  // ... existing state ...
+  announcementUnreadCount: {
+    division: 0,
+    gca: 0,
+    total: 0,
+  },
 
-  // Use the store with individual selectors (following pattern from DivisionMeetings.tsx)
-  const announcements = useAnnouncementStore((state) => state.announcements);
-  const isLoading = useAnnouncementStore((state) => state.isLoading);
-  const loadingOperation = useAnnouncementStore((state) => state.loadingOperation);
-  const error = useAnnouncementStore((state) => state.error);
-  const currentDivisionContext = useAnnouncementStore((state) => state.currentDivisionContext);
+  // ... existing methods ...
 
-  // Get store actions (following pattern from DivisionMeetings.tsx)
-  const fetchDivisionAnnouncements = useAnnouncementStore((state) => state.fetchDivisionAnnouncements);
-  const setDivisionContext = useAnnouncementStore((state) => state.setDivisionContext);
-  const subscribeToAnnouncements = useAnnouncementStore((state) => state.subscribeToAnnouncements);
-  const unsubscribeFromAnnouncements = useAnnouncementStore((state) => state.unsubscribeFromAnnouncements);
-  const createAnnouncement = useAnnouncementStore((state) => state.createAnnouncement);
-  const updateAnnouncement = useAnnouncementStore((state) => state.updateAnnouncement);
-  const deleteAnnouncement = useAnnouncementStore((state) => state.deleteAnnouncement);
+  updateAnnouncementBadges: (counts) => {
+    set({ announcementUnreadCount: counts });
 
-  // Set division context and fetch announcements (following pattern from DivisionMeetings.tsx)
-  useEffect(() => {
-    if (division) {
-      setDivisionContext(division);
-      fetchDivisionAnnouncements(division);
+    // Update platform-specific badge if needed
+    if (Platform.OS !== "web") {
+      // Update app icon badge with total unread (messages + announcements)
+      const currentMessageCount = get().unreadCount;
+      const totalBadgeCount = currentMessageCount + counts.total;
+      Notifications.setBadgeCountAsync(totalBadgeCount);
     }
-  }, [division, setDivisionContext, fetchDivisionAnnouncements]);
+  },
 
-  // Subscribe to realtime updates (following pattern from DivisionMeetings.tsx)
-  useEffect(() => {
-    const cleanup = subscribeToAnnouncements(division);
-    return cleanup;
-  }, [division, subscribeToAnnouncements]);
+  fetchUnreadAnnouncementCount: async (userId: string, type: "division" | "gca" | "total") => {
+    try {
+      // Implementation will query announcements table for unread count
+      // This will be similar to existing fetchUnreadCount but for announcements
+      const { data, error } = await supabase
+        .from("announcements")
+        .select("id, read_by, target_type, target_division_ids")
+        .eq("is_active", true);
 
-  // Get division-specific announcements (following pattern from DivisionMeetings.tsx)
-  const divisionAnnouncements = announcements[division] || [];
+      if (error) throw error;
 
-  // Implementation of the division admin announcement management UI
-  // - List view of division announcements (filtered by division context)
-  // - Create/edit/delete functionality (with division context validation)
-  // - Toggle active status
-  // - View read analytics (scoped to division members only)
+      // Get user's pin number and division for filtering
+      const { data: memberData } = await supabase
+        .from("members")
+        .select("pin_number, division_id")
+        .eq("id", userId)
+        .single();
 
-  return (
-    <div>
-      {/* Division-specific announcement management UI */}
-      {/* Following existing UI patterns from DivisionMeetings.tsx */}
-    </div>
-  );
-}
+      if (!memberData) return 0;
+
+      const userPin = memberData.pin_number.toString();
+      let count = 0;
+
+      data?.forEach((announcement) => {
+        const isRead = announcement.read_by?.includes(userPin);
+        if (isRead) return;
+
+        if (type === "gca" && announcement.target_type === "GCA") {
+          count++;
+        } else if (type === "division" && announcement.target_type === "division") {
+          if (announcement.target_division_ids?.includes(memberData.division_id)) {
+            count++;
+          }
+        } else if (type === "total") {
+          if (
+            announcement.target_type === "GCA" ||
+            (announcement.target_type === "division" &&
+              announcement.target_division_ids?.includes(memberData.division_id))
+          ) {
+            count++;
+          }
+        }
+      });
+
+      return count;
+    } catch (error) {
+      console.error("[BadgeStore] Error fetching announcement unread count:", error);
+      return 0;
+    }
+  },
+
+  resetAnnouncementBadges: () => {
+    set({
+      announcementUnreadCount: { division: 0, gca: 0, total: 0 },
+    });
+  },
+}));
 ```
 
-- [ ] #### Step 2: Create Union Admin Announcement Management Screen
+- [ ] ### Phase 3: UI Component Extensions
+
+- [ ] #### Step 1: Extend NavigationCard Component for Badge Support
 
 ```typescript
-// components/admin/union/UnionAnnouncements.tsx
+// components/NavigationCard.tsx - Extend to support badges
 
-import React, { useState, useEffect } from "react";
-import { useAnnouncementStore } from "@/store/announcementStore";
-import { useUserStore } from "@/store/userStore";
-// ... other imports
-
-export function UnionAnnouncements() {
-  // Following pattern from DivisionMeetings.tsx but for union-level management
-
-  // Use the store with individual selectors
-  const announcements = useAnnouncementStore((state) => state.announcements);
-  const isLoading = useAnnouncementStore((state) => state.isLoading);
-  const error = useAnnouncementStore((state) => state.error);
-
-  // Get store actions
-  const fetchGCAnnouncements = useAnnouncementStore((state) => state.fetchGCAnnouncements);
-  const fetchDivisionAnnouncements = useAnnouncementStore((state) => state.fetchDivisionAnnouncements);
-  const subscribeToAnnouncements = useAnnouncementStore((state) => state.subscribeToAnnouncements);
-  const createAnnouncement = useAnnouncementStore((state) => state.createAnnouncement);
-  const updateAnnouncement = useAnnouncementStore((state) => state.updateAnnouncement);
-  const deleteAnnouncement = useAnnouncementStore((state) => state.deleteAnnouncement);
-
-  // Fetch all announcements for union admin view
-  useEffect(() => {
-    // Fetch GCA announcements
-    fetchGCAnnouncements();
-
-    // Fetch all division announcements (union admins can see all)
-    // This would need to be implemented to fetch all divisions
-    // Following the pattern but for multiple divisions
-  }, [fetchGCAnnouncements, fetchDivisionAnnouncements]);
-
-  // Subscribe to realtime updates for all announcement types
-  useEffect(() => {
-    const cleanup = subscribeToAnnouncements(); // No division specified = all announcements
-    return cleanup;
-  }, [subscribeToAnnouncements]);
-
-  // Implementation of the union admin announcement management UI
-  // - Tabbed interface for managing GCA and all division announcements
-  // - Create/edit/delete functionality for union announcements
-  // - View read analytics across all announcements
-  // - Scheduling capabilities
-  // - Division context awareness for proper data segregation
-
-  return (
-    <div>
-      {/* Union-level announcement management UI */}
-      {/* Tabbed interface with proper division context handling */}
-    </div>
-  );
-}
-```
-
-- [ ] #### Step 3: Create Announcement Card Component with Division Context Awareness
-
-```typescript
-// components/ui/AnnouncementCard.tsx
-
-import React from "react";
-import { useAnnouncementStore } from "@/store/announcementStore";
-// ... other imports
-
-interface AnnouncementCardProps {
-  announcement: Announcement;
-  isAdmin?: boolean;
-  divisionContext?: string; // Add division context for validation
-  onEdit?: () => void;
-  onDelete?: () => void;
+interface NavigationCardProps {
+  title: string;
+  description: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  href: LinkProps["href"];
+  params?: Record<string, string | number>;
+  withAnchor?: boolean;
+  badge?: React.ReactNode; // Add optional badge prop for future extensibility
+  badgeCount?: number; // Add optional badge count for simple numeric badges
+  badgeColor?: string; // Add optional badge color customization
 }
 
-export function AnnouncementCard({ announcement, isAdmin, divisionContext, onEdit, onDelete }: AnnouncementCardProps) {
-  // Validate that announcement belongs to current division context
-  const isValidForContext = React.useMemo(() => {
-    if (!divisionContext) return true; // No context restriction
+export function NavigationCard({
+  title,
+  description,
+  icon,
+  href,
+  params,
+  withAnchor = true,
+  badge,
+  badgeCount,
+  badgeColor = "#FF3B30", // Default red badge color
+}: NavigationCardProps) {
+  const colorScheme = (useColorScheme() ?? "light") as ColorSchemeName;
+  const { width } = useWindowDimensions();
+  const isWeb = Platform.OS === "web";
 
-    if (announcement.target_type === "GCA") return true; // GCA announcements visible to all
+  // Calculate card width based on platform
+  const cardWidth = isWeb ? 400 : width - 32;
+  const cardStyle = [styles.cardWrapper, { width: cardWidth }];
 
-    if (announcement.target_type === "division") {
-      // Check if current division is in target divisions
-      // This would need division ID lookup logic
-      return true; // Simplified for now
+  // Render badge if provided
+  const renderBadge = () => {
+    if (badge) {
+      return badge; // Custom badge component
     }
 
-    return false;
-  }, [announcement, divisionContext]);
+    if (badgeCount && badgeCount > 0) {
+      const displayCount = badgeCount > 99 ? "99+" : badgeCount.toString();
+      return (
+        <ThemedView style={[styles.badge, { backgroundColor: badgeColor }]}>
+          <ThemedText style={styles.badgeText}>{displayCount}</ThemedText>
+        </ThemedView>
+      );
+    }
 
-  if (!isValidForContext) {
-    console.warn(`Announcement ${announcement.id} not valid for division context ${divisionContext}`);
-    return null; // Don't render announcements that don't belong to current context
-  }
+    return null;
+  };
 
-  // Implement the card component that displays:
-  // - Title
-  // - Message with formatting
-  // - Links
-  // - Document links (with validation for up to 3 attachments, 25 MB file size limit)
-  // - Read/unread indicator
-  // - Acknowledgment status and UI if required
-  // - Admin controls if isAdmin is true
-  // - Division context validation
+  const CardContent = () => (
+    <ThemedView style={styles.card}>
+      <ThemedView style={styles.innerContainer}>
+        <ThemedView style={styles.iconContainer}>
+          <Ionicons
+            name={icon}
+            size={32}
+            color="#B4975A" // Using BLET gold for icons
+          />
+          {/* Badge positioned over icon */}
+          {renderBadge()}
+        </ThemedView>
+        <ThemedView style={styles.content}>
+          <ThemedText style={styles.title} numberOfLines={1}>
+            {title}
+          </ThemedText>
+          <ThemedText style={styles.description} numberOfLines={2}>
+            {description}
+          </ThemedText>
+        </ThemedView>
+        <ThemedView style={styles.chevronContainer}>
+          <Ionicons name="chevron-forward" size={24} color="#B4975A" />
+        </ThemedView>
+      </ThemedView>
+    </ThemedView>
+  );
 
-  return <div>{/* Announcement card UI with division context awareness */}</div>;
+  // ... rest of component implementation remains the same ...
 }
+
+// Add badge styles to existing styles
+const styles = StyleSheet.create({
+  // ... existing styles ...
+  badge: {
+    position: "absolute",
+    top: -4,
+    right: -4,
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 6,
+    zIndex: 1,
+  },
+  badgeText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "600",
+    textAlign: "center",
+  },
+});
 ```
 
-- [ ] #### Step 4: Create Announcement Badge Component with Division Context
+- [ ] #### Step 2: Create Announcement Badge Component
 
 ```typescript
 // components/ui/AnnouncementBadge.tsx
 
 import React from "react";
-import { useAnnouncementStore } from "@/store/announcementStore";
-// ... other imports
+import { StyleSheet, ViewStyle } from "react-native";
+import { ThemedView } from "@/components/ThemedView";
+import { ThemedText } from "@/components/ThemedText";
+import { useBadgeStore } from "@/store/badgeStore";
+import { useAuth } from "@/hooks/useAuth";
 
 interface AnnouncementBadgeProps {
-  style?: any;
-  targetType?: "division" | "union" | "all";
+  style?: ViewStyle;
+  targetType?: "division" | "gca" | "total";
   divisionContext?: string; // Add division context for proper filtering
+  color?: string; // Allow custom badge colors
 }
 
-export function AnnouncementBadge({ style, targetType, divisionContext }: AnnouncementBadgeProps) {
-  // Get unread counts with division context awareness
-  const unreadCount = useAnnouncementStore((state) => {
-    if (!divisionContext) return state.unreadCount.total;
+export function AnnouncementBadge({
+  style,
+  targetType = "total",
+  divisionContext,
+  color = "#007AFF", // Default blue for division, can be overridden
+}: AnnouncementBadgeProps) {
+  const { member } = useAuth();
+  const announcementUnreadCount = useBadgeStore((state) => state.announcementUnreadCount);
+
+  // Get unread count based on target type and division context
+  const getUnreadCount = () => {
+    if (!member) return 0;
 
     switch (targetType) {
       case "division":
-        return state.unreadCount.division;
-      case "union":
-        return state.unreadCount.gca;
+        // Only show division count if user's division matches context or no context specified
+        if (divisionContext && member.division?.name !== divisionContext) {
+          return 0;
+        }
+        return announcementUnreadCount.division;
+      case "gca":
+        return announcementUnreadCount.gca;
+      case "total":
+        return announcementUnreadCount.total;
       default:
-        return state.unreadCount.total;
+        return 0;
     }
-  });
+  };
 
-  // Implementation of the badge component that shows unread count
-  // - Filter by targetType and divisionContext if provided
-  // - Prevent cross-contamination by respecting division boundaries
+  const unreadCount = getUnreadCount();
 
-  return unreadCount > 0 ? <div style={style}>{unreadCount}</div> : null;
+  // Don't render anything if there are no unread announcements
+  if (unreadCount <= 0) {
+    return null;
+  }
+
+  // Limit displayed count for visual neatness (e.g., 99+)
+  const displayCount = unreadCount > 99 ? "99+" : unreadCount.toString();
+
+  return (
+    <ThemedView style={[styles.badgeContainer, { backgroundColor: color }, style]}>
+      <ThemedText style={styles.badgeText}>{displayCount}</ThemedText>
+    </ThemedView>
+  );
 }
+
+const styles = StyleSheet.create({
+  badgeContainer: {
+    position: "absolute",
+    top: -4,
+    right: -4,
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 6,
+    zIndex: 1,
+  },
+  badgeText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "600",
+    textAlign: "center",
+  },
+});
+```
+
+- [ ] #### Step 3: Create Announcement Modal Component (Reusing Existing Patterns)
+
+```typescript
+// components/modals/AnnouncementModal.tsx
+
+import React, { useState, useRef, useEffect } from "react";
+import { Modal, StyleSheet, TouchableOpacity, ScrollView, Pressable, Platform, Linking } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { format, parseISO } from "date-fns";
+import { ThemedView } from "@/components/ThemedView";
+import { ThemedText } from "@/components/ThemedText";
+import { Colors } from "@/constants/Colors";
+import { useColorScheme } from "@/hooks/useColorScheme";
+import { DocumentViewer } from "@/components/DocumentViewer"; // Reuse existing document viewer
+import type { Announcement } from "@/types/announcements";
+
+interface AnnouncementModalProps {
+  announcement: Announcement | null;
+  visible: boolean;
+  onClose: () => void;
+  onAcknowledge: (announcement: Announcement) => Promise<void>;
+  onMarkAsRead: (announcementId: string) => Promise<void>;
+}
+
+export function AnnouncementModal({
+  announcement,
+  visible,
+  onClose,
+  onAcknowledge,
+  onMarkAsRead,
+}: AnnouncementModalProps) {
+  const theme = (useColorScheme() ?? "light") as ColorScheme;
+  const [hasReadFully, setHasReadFully] = useState(false);
+  const [contentHeight, setContentHeight] = useState(0);
+  const [containerHeight, setContainerHeight] = useState(0);
+  const scrollViewRef = useRef<ScrollView>(null);
+
+  // Reset read state when announcement changes
+  useEffect(() => {
+    if (announcement) {
+      setHasReadFully(false);
+      setContentHeight(0);
+      setContainerHeight(0);
+    }
+  }, [announcement?.id]);
+
+  if (!announcement) return null;
+
+  // Handle scroll to track reading progress (following MessageModal pattern)
+  const handleScroll = (event: any) => {
+    const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+    const paddingToBottom = 20;
+    const isScrolledToBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - paddingToBottom;
+
+    if (isScrolledToBottom && !hasReadFully) {
+      setHasReadFully(true);
+      // Mark as read when user scrolls to bottom
+      onMarkAsRead(announcement.id);
+    }
+  };
+
+  const handleContainerLayout = (event: any) => {
+    setContainerHeight(event.nativeEvent.layout.height);
+  };
+
+  const handleContentLayout = (event: any) => {
+    const height = event.nativeEvent.layout.height;
+    setContentHeight(height);
+
+    // If content fits in container, mark as read immediately
+    if (height <= containerHeight && !hasReadFully) {
+      setHasReadFully(true);
+      onMarkAsRead(announcement.id);
+    }
+  };
+
+  const handleAcknowledge = async () => {
+    if (hasReadFully && announcement.require_acknowledgment) {
+      await onAcknowledge(announcement);
+      onClose();
+    }
+  };
+
+  const isAcknowledged = announcement.has_been_acknowledged;
+  const showAcknowledgeButton = announcement.require_acknowledgment && !isAcknowledged;
+
+  // Render links if any
+  const renderLinks = () => {
+    if (!announcement.links || announcement.links.length === 0) return null;
+
+    return (
+      <ThemedView style={styles.linksSection}>
+        <ThemedText style={styles.sectionTitle}>Links</ThemedText>
+        {announcement.links.map((link, index) => (
+          <TouchableOpacity key={index} style={styles.linkItem} onPress={() => Linking.openURL(link.url)}>
+            <Ionicons name="link" size={16} color={Colors[theme].tint} />
+            <ThemedText style={[styles.linkText, { color: Colors[theme].tint }]}>{link.label || link.url}</ThemedText>
+          </TouchableOpacity>
+        ))}
+      </ThemedView>
+    );
+  };
+
+  // Render document attachments if any (using existing document system)
+  const renderDocuments = () => {
+    if (!announcement.document_ids || announcement.document_ids.length === 0) return null;
+
+    return (
+      <ThemedView style={styles.documentsSection}>
+        <ThemedText style={styles.sectionTitle}>Attachments</ThemedText>
+        {announcement.document_ids.map((docId, index) => (
+          <TouchableOpacity
+            key={index}
+            style={styles.documentItem}
+            onPress={() => {
+              // Open document using existing DocumentViewer
+              // This would need to fetch document details and open in modal
+            }}
+          >
+            <Ionicons name="document-text" size={16} color={Colors[theme].text} />
+            <ThemedText style={styles.documentText}>Document {index + 1}</ThemedText>
+          </TouchableOpacity>
+        ))}
+      </ThemedView>
+    );
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.overlay} onPress={onClose}>
+        <Pressable
+          style={[styles.modalContent, { backgroundColor: Colors[theme].card }]}
+          onPress={(e) => e.stopPropagation()}
+        >
+          {/* Header */}
+          <ThemedView style={styles.header}>
+            <ThemedView style={styles.headerLeft}>
+              <ThemedView
+                style={[styles.iconWrapper, announcement.require_acknowledgment && styles.mustAcknowledgeIconWrapper]}
+              >
+                <Ionicons
+                  name="megaphone"
+                  size={24}
+                  color={announcement.require_acknowledgment ? Colors[theme].primary : Colors[theme].text}
+                />
+              </ThemedView>
+              <ThemedView>
+                <ThemedView style={styles.typeContainer}>
+                  <ThemedText style={styles.announcementType}>
+                    {announcement.target_type === "GCA" ? "GCA Announcement" : "Division Announcement"}
+                  </ThemedText>
+                  {announcement.require_acknowledgment && !isAcknowledged && (
+                    <ThemedView style={[styles.acknowledgmentBadge, { backgroundColor: Colors[theme].primary }]}>
+                      <ThemedText style={styles.acknowledgmentBadgeText}>Requires Acknowledgment</ThemedText>
+                    </ThemedView>
+                  )}
+                </ThemedView>
+                <ThemedText style={styles.timestamp}>
+                  {format(parseISO(announcement.created_at), "MMM d, yyyy h:mm a")}
+                </ThemedText>
+                {announcement.author_name && (
+                  <ThemedText style={styles.author}>By {announcement.author_name}</ThemedText>
+                )}
+              </ThemedView>
+            </ThemedView>
+            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+              <Ionicons name="close" size={24} color={Colors[theme].text} />
+            </TouchableOpacity>
+          </ThemedView>
+
+          {/* Title */}
+          <ThemedText style={styles.title}>{announcement.title}</ThemedText>
+
+          {/* Content */}
+          <ScrollView
+            ref={scrollViewRef}
+            style={styles.contentScroll}
+            contentContainerStyle={styles.contentContainer}
+            onScroll={handleScroll}
+            scrollEventThrottle={16}
+            onLayout={handleContainerLayout}
+          >
+            <ThemedView onLayout={handleContentLayout}>
+              <ThemedText style={styles.content}>{announcement.message}</ThemedText>
+              {renderLinks()}
+              {renderDocuments()}
+            </ThemedView>
+          </ScrollView>
+
+          {/* Footer */}
+          <ThemedView style={styles.footer}>
+            {showAcknowledgeButton && (
+              <TouchableOpacity
+                style={[
+                  styles.acknowledgeButton,
+                  { backgroundColor: hasReadFully ? Colors[theme].primary : Colors[theme].disabled },
+                ]}
+                onPress={handleAcknowledge}
+                disabled={!hasReadFully}
+              >
+                <Ionicons name="checkmark" size={16} color="#fff" />
+                <ThemedText style={styles.acknowledgeButtonText}>
+                  {hasReadFully
+                    ? "Acknowledge Announcement"
+                    : contentHeight <= containerHeight
+                    ? "Loading..."
+                    : "Scroll to End to Acknowledge"}
+                </ThemedText>
+              </TouchableOpacity>
+            )}
+          </ThemedView>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+// Styles following MessageModal patterns
+const styles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  modalContent: {
+    width: "90%",
+    maxWidth: 500,
+    maxHeight: "80%",
+    borderRadius: 16,
+    overflow: "hidden",
+  },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(128, 128, 128, 0.1)",
+  },
+  headerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  iconWrapper: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(128, 128, 128, 0.1)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  mustAcknowledgeIconWrapper: {
+    backgroundColor: Colors.light.primary + "20",
+  },
+  typeContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  announcementType: {
+    fontSize: 14,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  acknowledgmentBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  acknowledgmentBadgeText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "500",
+  },
+  timestamp: {
+    fontSize: 12,
+    opacity: 0.6,
+  },
+  author: {
+    fontSize: 12,
+    opacity: 0.8,
+    fontStyle: "italic",
+  },
+  closeButton: {
+    padding: 8,
+  },
+  title: {
+    fontSize: 20,
+    fontWeight: "600",
+    padding: 16,
+    paddingTop: 8,
+  },
+  contentScroll: {
+    maxHeight: "60%",
+  },
+  contentContainer: {
+    padding: 16,
+    paddingTop: 0,
+  },
+  content: {
+    fontSize: 16,
+    lineHeight: 24,
+  },
+  linksSection: {
+    marginTop: 16,
+  },
+  documentsSection: {
+    marginTop: 16,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    marginBottom: 8,
+  },
+  linkItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 4,
+  },
+  linkText: {
+    fontSize: 14,
+    textDecorationLine: "underline",
+  },
+  documentItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 4,
+  },
+  documentText: {
+    fontSize: 14,
+  },
+  footer: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    alignItems: "center",
+    padding: 16,
+    gap: 8,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(128, 128, 128, 0.1)",
+  },
+  acknowledgeButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    gap: 4,
+  },
+  acknowledgeButtonText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+});
 ```
 
 - [ ] ### Phase 4: Member UI for Viewing Announcements
@@ -1163,6 +1728,14 @@ export function AnnouncementBadge({ style, targetType, divisionContext }: Announ
 - Important announcements should have special visual styling to highlight their importance
 - Expired announcements should remain visible but be clearly marked as expired
 - **Division context must be strictly enforced to prevent cross-contamination of division information**
+
+**Document Integration Approach:**
+
+- **Use existing document upload/viewer components as-is** - No announcement-specific document flow needed
+- **Integrate document IDs into announcement creation** - Store document references in `document_ids` array
+- **Leverage existing DocumentViewer component** - Use the same component that handles other document viewing in the app
+- **Follow existing document validation** - Use the same 25MB limit and file type restrictions as current document system
+- **Reuse existing document storage patterns** - Store in Supabase Storage using the same bucket structure
 
 - [ ] #### Step 1: Create Division Announcements Screen with Division Context
 
@@ -1367,32 +1940,86 @@ export default function UnionAnnouncementsPage() {
 // In the navigation card components:
 
 // Division Card Badge (Blue badge for division announcements)
-<AnnouncementBadge
-  targetType="division"
-  divisionContext={member?.division?.name} // Pass user's division context
-  style={styles.divisionBadge}
+<NavigationCard
+  title="My Division"
+  description="Division-specific content and announcements"
+  icon="people"
+  href="/(division)/[divisionName]"
+  params={{ divisionName: member?.division?.name }}
+  badge={
+    <AnnouncementBadge
+      targetType="division"
+      divisionContext={member?.division?.name}
+      color="#007AFF" // Blue for division
+    />
+  }
 />
 
 // GCA Card Badge (Green badge for GCA announcements)
-<AnnouncementBadge
-  targetType="union"
-  divisionContext="GCA" // GCA context for union announcements
-  style={styles.gcaBadge}
+<NavigationCard
+  title="GCA"
+  description="Union-wide content and announcements"
+  icon="business"
+  href="/(gca)"
+  badge={
+    <AnnouncementBadge
+      targetType="gca"
+      divisionContext="GCA"
+      color="#34C759" // Green for GCA
+    />
+  }
+/>
+
+// Alternative approach using badgeCount prop for simpler implementation:
+<NavigationCard
+  title="My Division"
+  description="Division-specific content and announcements"
+  icon="people"
+  href="/(division)/[divisionName]"
+  params={{ divisionName: member?.division?.name }}
+  badgeCount={announcementUnreadCount.division}
+  badgeColor="#007AFF"
+/>
+
+<NavigationCard
+  title="GCA"
+  description="Union-wide content and announcements"
+  icon="business"
+  href="/(gca)"
+  badgeCount={announcementUnreadCount.gca}
+  badgeColor="#34C759"
 />
 
 // Sub-navigation badges with proper context filtering:
 // "Announcements" sub-navigation card under "My Division" (Blue badge)
-<AnnouncementBadge
-  targetType="division"
-  divisionContext={member?.division?.name}
-  style={styles.subNavBadge}
+<NavigationCard
+  title="Division Announcements"
+  description="Important announcements for your division"
+  icon="megaphone"
+  href="/(division)/[divisionName]/announcements"
+  params={{ divisionName: member?.division?.name }}
+  badge={
+    <AnnouncementBadge
+      targetType="division"
+      divisionContext={member?.division?.name}
+      color="#007AFF"
+    />
+  }
 />
 
 // "GCA Announcements" sub-navigation card under "GCA" (Green badge)
-<AnnouncementBadge
-  targetType="union"
-  divisionContext="GCA"
-  style={styles.subNavBadge}
+<NavigationCard
+  title="GCA Announcements"
+  description="Union-wide announcements and updates"
+  icon="megaphone"
+  href="/(gca)/announcements"
+  badge={
+    <AnnouncementBadge
+      targetType="gca"
+      divisionContext="GCA"
+      color="#34C759"
+    />
+  }
 />
 ```
 
@@ -1727,3 +2354,26 @@ If implementing this on an existing system without division context:
 - **Network Traffic**: Reduced data transfer due to precise filtering
 
 This division context integration ensures that the announcements system maintains the same level of data isolation and security as the meetings system, preventing any cross-contamination of division information.
+
+## Summary
+
+The announcements feature implementation plan is now complete and ready for implementation. The plan incorporates:
+
+✅ **Database Migration Strategy**: 2-3 separate migrations for easier rollback  
+✅ **Badge Store Extension**: Extended existing badgeStore for all announcement badges  
+✅ **NavigationCard Enhancement**: Extended for future badge extensibility  
+✅ **Document Integration**: Using existing document components as-is  
+✅ **Acknowledgment Patterns**: Reusing existing modal and acknowledgment UX  
+✅ **Division Context Security**: Following exact patterns from meetings system  
+✅ **Phase-by-Phase Implementation**: With review pauses after each phase
+
+The implementation will proceed through 6 phases:
+
+1. **Database Schema Design** (3 migrations)
+2. **State Management** (Zustand store with division context)
+3. **UI Component Extensions** (NavigationCard, badges, modals)
+4. **Member UI** (Division and GCA announcement viewing)
+5. **Admin UI** (Management interfaces for all admin types)
+6. **Testing and Deployment** (Manual testing after each phase)
+
+All clarifications have been incorporated and the plan is ready for implementation.
