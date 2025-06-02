@@ -7,6 +7,7 @@ import { Platform, AppState } from "react-native";
 import { UserRole, UserProfile } from "@/types/auth";
 import { useUserStore } from "@/store/userStore";
 import { useNotificationStore } from "@/store/notificationStore";
+import { useAnnouncementStore } from "@/store/announcementStore";
 import { useCalendarStore, setupCalendarSubscriptions } from "@/store/calendarStore";
 import { useVacationCalendarStore, setupVacationCalendarSubscriptions } from "@/store/vacationCalendarStore";
 import { useAdminNotificationStore } from "@/store/adminNotificationStore";
@@ -77,6 +78,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const initializedUserIdRef = useRef<string | null>(null);
   // Refs for cleanup functions
   const notificationCleanupRef = useRef<(() => void) | null>(null);
+  const announcementCleanupRef = useRef<(() => void) | null>(null);
   const calendarCleanupRef = useRef<(() => void) | null>(null);
   const vacationCalendarCleanupRef = useRef<(() => void) | null>(null);
   const adminNotificationCleanupRef = useRef<(() => void) | null>(null); // Add ref for admin store cleanup
@@ -140,6 +142,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
       notificationCleanupRef.current = null;
     }
 
+    if (announcementCleanupRef.current) {
+      console.log("[Auth] Cleaning up announcement subscription...");
+      announcementCleanupRef.current();
+      announcementCleanupRef.current = null;
+    }
+
     if (calendarCleanupRef.current) {
       console.log("[Auth] Cleaning up PLD/SDV calendar subscription/state...");
       calendarCleanupRef.current();
@@ -169,6 +177,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     // Reset initialized flags in stores - doing this for all user types to ensure clean state
     useNotificationStore.getState().setIsInitialized(false);
+    useAnnouncementStore.getState().setIsInitialized(false);
     useCalendarStore.getState().setIsInitialized(false);
     useVacationCalendarStore.getState().setIsInitialized(false);
     useUserStore.getState().reset();
@@ -187,8 +196,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
     console.log("[Auth] Initializing user stores with userId:", userId, "calendarId:", calendarId);
 
     try {
-      // UPDATED INITIALIZATION ORDER: Notification Store → Calendar → Vacation Calendar → Time Store → Admin Store
-      // This prioritizes urgent notifications while other stores initialize
+      // UPDATED INITIALIZATION ORDER: Notification Store → Announcements Store → Calendar → Vacation Calendar → Time Store → Admin Store
+      // This prioritizes urgent user-facing content while other stores initialize
 
       // 1. Initialize notification store for the user (MOVED TO FIRST POSITION)
       const notificationStore = useNotificationStore.getState();
@@ -203,9 +212,25 @@ export function AuthProvider({ children }: AuthProviderProps) {
         console.log("[Auth] Notification store initialized");
       }
 
+      // 2. Initialize announcement store immediately after notifications (NEW)
+      const announcementStore = useAnnouncementStore.getState();
+      if (!announcementStore.isInitialized) {
+        console.log("[Auth] Initializing announcement store...");
+        const member = useUserStore.getState().member;
+        const userRole = useUserStore.getState().userRole;
+        const roles = userRole ? [userRole] : [];
+        const announcementCleanup = announcementStore.initializeAnnouncementStore(
+          userId,
+          member?.division_id || null,
+          roles
+        );
+        announcementCleanupRef.current = announcementCleanup;
+        console.log("[Auth] Announcement store initialized");
+      }
+
       // Initialize calendar-dependent stores only if calendarId is available
       if (calendarId) {
-        // 2. Initialize calendar store
+        // 3. Initialize calendar store
         const calendarStore = useCalendarStore.getState();
         if (!calendarStore.isInitialized) {
           console.log("[Auth] Initializing calendar store...");
@@ -224,7 +249,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
           calendarCleanupRef.current = calendarCleanup;
         }
 
-        // 3. Initialize vacation calendar store
+        // 4. Initialize vacation calendar store
         const vacationCalendarStore = useVacationCalendarStore.getState();
         if (!vacationCalendarStore.isInitialized) {
           console.log("[Auth] Initializing vacation calendar store...");
@@ -243,7 +268,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
           vacationCalendarCleanupRef.current = vacationCalendarCleanup;
         }
 
-        // 4. Initialize Time Store
+        // 5. Initialize Time Store
         console.log("[Auth] Initializing time store...");
         try {
           const timeStore = useTimeStore.getState();
@@ -263,7 +288,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         console.log("[Auth] No calendar ID found for member, skipping calendar store initialization.");
       }
 
-      // 5. Initialize MyTime hook
+      // 6. Initialize MyTime hook
       // console.log("[Auth] Initializing myTime hook..."); // Remove old init call
       // try {
       // const { cleanup: myTimeCleanup } = await initializeMyTimeHook(userId, true); // Remove old init call

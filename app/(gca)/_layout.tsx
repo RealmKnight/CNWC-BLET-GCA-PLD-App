@@ -29,6 +29,12 @@ export default function GCALayout() {
           }}
         />
         <Stack.Screen
+          name="announcements"
+          options={{
+            title: "GCA Announcements",
+          }}
+        />
+        <Stack.Screen
           name="gca-officers"
           options={{
             title: "GCA Officers and Members",

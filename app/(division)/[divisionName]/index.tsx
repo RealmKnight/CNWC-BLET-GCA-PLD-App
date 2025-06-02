@@ -7,6 +7,8 @@ import { ThemedText } from "@/components/ThemedText";
 import { ThemedScrollView } from "@/components/ThemedScrollView";
 import { NavigationCard } from "@/components/NavigationCard";
 import { useAuth } from "@/hooks/useAuth";
+import { AnnouncementBadge } from "@/components/ui/AnnouncementBadge";
+import { Colors } from "@/constants/Colors";
 
 interface DivisionDetails {
   id: number;
@@ -170,6 +172,13 @@ export default function DivisionDetailsScreen() {
           description="View division announcements and updates"
           icon="megaphone"
           href={`/${encodeURIComponent(division.name)}/announcements`}
+          badge={
+            <AnnouncementBadge
+              targetType="division"
+              divisionId={division.id}
+              color={Colors.dark.announcementBadgeDivision}
+            />
+          }
         />
         <NavigationCard
           title="Meetings"

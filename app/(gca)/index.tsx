@@ -2,6 +2,8 @@ import { StyleSheet } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedScrollView } from "@/components/ThemedScrollView";
 import { NavigationCard } from "@/components/NavigationCard";
+import { AnnouncementBadge } from "@/components/ui/AnnouncementBadge";
+import { Colors } from "@/constants/Colors";
 
 export default function GCAScreen() {
   return (
@@ -11,7 +13,8 @@ export default function GCAScreen() {
           title="GCA Announcements"
           description="Important GCA announcements and updates"
           icon="megaphone"
-          href="/(gca)/gca-announcements"
+          href="/(gca)/announcements"
+          badge={<AnnouncementBadge targetType="gca" color={Colors.dark.announcementBadgeGCA} />}
         />
         <NavigationCard
           title="Documents"

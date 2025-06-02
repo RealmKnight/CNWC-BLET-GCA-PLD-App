@@ -77,6 +77,15 @@ export default function DivisionLayout() {
             },
           }}
         />
+        <Stack.Screen
+          name="[divisionName]/announcements"
+          options={{
+            title: "Division Announcements",
+            headerTitle: ({ children }) => {
+              return <ThemedText style={{ fontSize: 17, fontWeight: "600" }}>Announcements</ThemedText>;
+            },
+          }}
+        />
       </Stack>
     </LayoutWithAppHeader>
   );

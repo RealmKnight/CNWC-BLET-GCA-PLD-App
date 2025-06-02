@@ -9,10 +9,13 @@ import { ThemedText } from "@/components/ThemedText";
 import { HelloWave } from "@/components/HelloWave";
 import { Colors } from "@/constants/Colors";
 import { AdvertisementBanner } from "@/components/AdvertisementBanner";
+import { AnnouncementBadge } from "@/components/ui/AnnouncementBadge";
+import { useBadgeStore } from "@/store/badgeStore";
 
 export default function HomeScreen() {
   const { member } = useAuth();
   const division = useUserStore((state) => state.division);
+  const announcementUnreadCount = useBadgeStore((state) => state.announcementUnreadCount);
 
   return (
     <ParallaxScrollView
@@ -39,6 +42,13 @@ export default function HomeScreen() {
             description="View your division information, officers, and members"
             icon="people"
             href={division ? `/(division)/${division}` : "/(division)"}
+            badge={
+              <AnnouncementBadge
+                targetType="division"
+                divisionId={member?.division_id || undefined}
+                color={Colors.dark.announcementBadgeDivision}
+              />
+            }
           />
           <NavigationCard
             title="Rosters"
@@ -51,6 +61,7 @@ export default function HomeScreen() {
             description="Access GCA resources and information"
             icon="business"
             href="/(gca)"
+            badge={<AnnouncementBadge targetType="gca" color={Colors.dark.announcementBadgeGCA} />}
           />
           <NavigationCard
             title="Agreements"

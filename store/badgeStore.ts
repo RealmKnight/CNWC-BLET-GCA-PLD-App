@@ -7,10 +7,25 @@ interface BadgeState {
     unreadCount: number;
     loading: boolean;
     error: string | null;
+    // Announcement-specific badge counts
+    announcementUnreadCount: {
+        division: number;
+        gca: number;
+        total: number;
+    };
     fetchUnreadCount: (userId: string) => Promise<number>;
     incrementBadge: (count?: number) => void;
     decrementBadge: (count?: number) => void;
     resetBadge: () => void;
+    // Announcement-specific methods
+    updateAnnouncementBadges: (
+        counts: { division: number; gca: number; total: number },
+    ) => void;
+    fetchUnreadAnnouncementCount: (
+        userId: string,
+        type: "division" | "gca" | "total",
+    ) => Promise<number>;
+    resetAnnouncementBadges: () => void;
 }
 
 /**
@@ -27,6 +42,11 @@ export const useBadgeStore = create<BadgeState>((set, get) => ({
     unreadCount: 0,
     loading: false,
     error: null,
+    announcementUnreadCount: {
+        division: 0,
+        gca: 0,
+        total: 0,
+    },
 
     /**
      * Fetch unread count from database and update badge
@@ -232,5 +252,89 @@ export const useBadgeStore = create<BadgeState>((set, get) => ({
                     console.error("[BadgeStore] Error resetting badge:", error)
                 );
         }
+    },
+
+    updateAnnouncementBadges: (
+        counts: { division: number; gca: number; total: number },
+    ) => {
+        set({ announcementUnreadCount: counts });
+
+        // Update platform-specific badge if needed
+        if (Platform.OS !== "web") {
+            // Update app icon badge with total unread (messages + announcements)
+            const currentMessageCount = get().unreadCount;
+            const totalBadgeCount = currentMessageCount + counts.total;
+            Notifications.setBadgeCountAsync(totalBadgeCount);
+        }
+    },
+
+    fetchUnreadAnnouncementCount: async (
+        userId: string,
+        type: "division" | "gca" | "total",
+    ) => {
+        try {
+            // Implementation will query announcements table for unread count
+            // This will be similar to existing fetchUnreadCount but for announcements
+            const { data, error } = await supabase
+                .from("announcements")
+                .select("id, read_by, target_type, target_division_ids")
+                .eq("is_active", true);
+
+            if (error) throw error;
+
+            // Get user's pin number and division for filtering
+            const { data: memberData } = await supabase
+                .from("members")
+                .select("pin_number, division_id")
+                .eq("id", userId)
+                .single();
+
+            if (!memberData) return 0;
+
+            const userPin = memberData.pin_number.toString();
+            let count = 0;
+
+            data?.forEach((announcement) => {
+                const isRead = announcement.read_by?.includes(userPin);
+                if (isRead) return;
+
+                if (type === "gca" && announcement.target_type === "GCA") {
+                    count++;
+                } else if (
+                    type === "division" &&
+                    announcement.target_type === "division"
+                ) {
+                    if (
+                        announcement.target_division_ids?.includes(
+                            memberData.division_id,
+                        )
+                    ) {
+                        count++;
+                    }
+                } else if (type === "total") {
+                    if (
+                        announcement.target_type === "GCA" ||
+                        (announcement.target_type === "division" &&
+                            announcement.target_division_ids?.includes(
+                                memberData.division_id,
+                            ))
+                    ) {
+                        count++;
+                    }
+                }
+            });
+
+            return count;
+        } catch (error) {
+            console.error(
+                "[BadgeStore] Error fetching announcement unread count:",
+                error,
+            );
+            return 0;
+        }
+    },
+
+    resetAnnouncementBadges: () => {
+        set({ announcementUnreadCount: { division: 0, gca: 0, total: 0 } });
     },
 }));

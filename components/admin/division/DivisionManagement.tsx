@@ -11,6 +11,7 @@ import { DivisionMeetings } from "./DivisionMeetings";
 import { useDivisionManagementStore, DivisionView } from "@/store/divisionManagementStore";
 import { DivisionDocumentsAdmin } from "./DivisionDocumentsAdmin";
 import { DivisionEmailManagement } from "./DivisionEmailManagement";
+import { DivisionAnnouncementsAdmin } from "./DivisionAnnouncementsAdmin";
 
 const AnimatedThemedView = Animated.createAnimatedComponent(ThemedView);
 
@@ -66,9 +67,7 @@ export function DivisionManagement({ division }: DivisionManagementProps) {
             contentContainerStyle={styles.contentContainer}
             nestedScrollEnabled={true}
           >
-            <ThemedView style={styles.placeholderContainer}>
-              <ThemedText style={styles.placeholderText}>Announcements Management Coming Soon</ThemedText>
-            </ThemedView>
+            <DivisionAnnouncementsAdmin division={division} />
           </ScrollView>
         );
       case "documents":
