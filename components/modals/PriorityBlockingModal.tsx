@@ -178,7 +178,7 @@ export function PriorityBlockingModal({
             onPress={onNavigateToItem}
             activeOpacity={0.8}
           >
-            <Ionicons name="arrow-forward" size={20} color="#fff" />
+            <Ionicons name="arrow-forward" size={20} color={Colors.dark.buttonText} />
             <ThemedText style={styles.actionButtonText}>
               {currentItem.priority === "critical" ? "Read Critical Message" : "Review Announcement"}
             </ThemedText>
@@ -254,7 +254,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
   progressContainer: {
-    backgroundColor: "rgba(255, 255, 255, 0.1)",
+    backgroundColor: Colors.dark.card,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 12,
@@ -318,7 +318,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   actionButtonText: {
-    color: "#fff",
+    color: Colors.dark.buttonText,
     fontSize: 16,
     fontWeight: "700",
   },

@@ -5,6 +5,7 @@ import { useAnnouncementStore } from "@/store/announcementStore";
 import { useNotificationStore } from "@/store/notificationStore";
 import { useBadgeStore } from "@/store/badgeStore";
 import { useUserStore } from "@/store/userStore";
+import { AppState } from "react-native";
 
 interface PriorityItem {
     id: string;
@@ -38,6 +39,70 @@ export function usePriorityRouter() {
     // Get store data
     const messages = useNotificationStore((state) => state.messages);
     const announcements = useAnnouncementStore((state) => state.announcements);
+
+    // Add app state monitoring to refresh stores when app comes to foreground
+    useEffect(() => {
+        const handleAppStateChange = async (nextAppState: string) => {
+            if (nextAppState === "active" && member) {
+                console.log(
+                    "[PriorityRouter] App came to foreground, refreshing stores",
+                );
+
+                // Force refresh both stores
+                try {
+                    // Refresh notification store
+                    const notificationStore = useNotificationStore.getState();
+                    if (
+                        notificationStore.refreshMessages &&
+                        member.pin_number && member.id
+                    ) {
+                        await notificationStore.refreshMessages(
+                            member.pin_number,
+                            member.id,
+                            true,
+                        );
+                    }
+
+                    // Refresh announcement stores
+                    const announcementStore = useAnnouncementStore.getState();
+                    if (announcementStore.refreshAnnouncements) {
+                        // Refresh GCA announcements
+                        await announcementStore.refreshAnnouncements(
+                            "GCA",
+                            true,
+                        );
+
+                        // Refresh division announcements if user has a division
+                        if (division) {
+                            await announcementStore.refreshAnnouncements(
+                                division,
+                                true,
+                            );
+                        }
+                    }
+
+                    console.log(
+                        "[PriorityRouter] Stores refreshed, triggering priority check",
+                    );
+                    // Force a priority check after refresh
+                    setTimeout(() => {
+                        checkForPriorityItems();
+                    }, 1000);
+                } catch (error) {
+                    console.error(
+                        "[PriorityRouter] Error refreshing stores:",
+                        error,
+                    );
+                }
+            }
+        };
+
+        const subscription = AppState.addEventListener(
+            "change",
+            handleAppStateChange,
+        );
+        return () => subscription?.remove();
+    }, [member, division]);
 
     // Memoize checkForPriorityItems with stable dependencies only
     const checkForPriorityItems = useCallback(async () => {
@@ -157,6 +222,7 @@ export function usePriorityRouter() {
         announcements,
         division,
         isProcessingPriority,
+        // REMOVED priorityItems from dependencies to break circular dependency
     ]);
 
     const getNextUnhandledItem = useCallback(() => {
@@ -181,7 +247,19 @@ export function usePriorityRouter() {
             console.log(
                 `[PriorityRouter] Routing to next priority item: ${nextItem.title}`,
             );
+
+            // Mark this item as currently being handled BEFORE routing
             setCurrentlyHandlingItem(nextItem.id);
+
+            // Also temporarily remove it from the priority items list to prevent re-triggering
+            setPriorityItems((prev) =>
+                prev.filter((item) => item.id !== nextItem.id)
+            );
+
+            console.log(
+                `[PriorityRouter] Marked item ${nextItem.id} as being handled and temporarily removed from priority list`,
+            );
+
             router.push(nextItem.targetRoute as any);
             return true;
         }
@@ -210,6 +288,22 @@ export function usePriorityRouter() {
             setCurrentlyHandlingItem(null);
         }
     }, [currentlyHandlingItem]);
+
+    // Add a function to restore items if user navigates away without handling them
+    const restoreUnhandledItem = useCallback((itemId: string) => {
+        if (currentlyHandlingItem === itemId) {
+            console.log(
+                `[PriorityRouter] Restoring unhandled item ${itemId} to priority list`,
+            );
+
+            // Re-check for priority items to restore the item if it still needs attention
+            setTimeout(() => {
+                checkForPriorityItems();
+            }, 500);
+
+            setCurrentlyHandlingItem(null);
+        }
+    }, [currentlyHandlingItem, checkForPriorityItems]);
 
     const isOnPriorityRoute = useCallback(() => {
         return pathname.includes("/notifications") ||
@@ -254,6 +348,19 @@ export function usePriorityRouter() {
             console.log(
                 "[PriorityRouter] Messages or announcements changed, checking for priority items",
             );
+            console.log(
+                `[PriorityRouter] Current state - Messages: ${messages.length}, Announcements: ${
+                    Object.keys(announcements).length
+                }`,
+            );
+            console.log(
+                `[PriorityRouter] Must-read messages found: ${
+                    messages.filter((m) =>
+                        m.message_type === "must_read" &&
+                        m.requires_acknowledgment
+                    ).length
+                }`,
+            );
 
             // Debounce the check to prevent rapid fire updates
             const timeoutId = setTimeout(() => {
@@ -267,6 +374,21 @@ export function usePriorityRouter() {
                     const currentAnnouncements =
                         useAnnouncementStore.getState().announcements;
 
+                    console.log(
+                        `[PriorityRouter] Realtime check - Messages: ${currentMessages.length}, Announcement keys: ${
+                            Object.keys(currentAnnouncements).length
+                        }`,
+                    );
+
+                    // Log subscription status
+                    const notificationSubStatus =
+                        useNotificationStore.getState().subscriptionStatus;
+                    const announcementSubStatus =
+                        useAnnouncementStore.getState().subscriptionStatus;
+                    console.log(
+                        `[PriorityRouter] Store subscription status - Notifications: ${notificationSubStatus}, Announcements: ${announcementSubStatus}`,
+                    );
+
                     // Simplified priority check without circular dependencies
                     const items: PriorityItem[] = [];
 
@@ -279,10 +401,18 @@ export function usePriorityRouter() {
                                     member.id || "",
                                 ));
 
+                        console.log(
+                            `[PriorityRouter] Checking message ${msg.id}: type=${msg.message_type}, requires_ack=${msg.requires_acknowledgment}, isUnread=${isUnread}, isUnacknowledged=${isUnacknowledged}`,
+                        );
+
                         return msg.message_type === "must_read" &&
                             msg.requires_acknowledgment &&
                             (isUnread || isUnacknowledged);
                     });
+
+                    console.log(
+                        `[PriorityRouter] Found ${criticalMessages.length} critical messages`,
+                    );
 
                     criticalMessages.forEach((msg) => {
                         items.push({
@@ -304,6 +434,7 @@ export function usePriorityRouter() {
                     });
 
                     // Check high priority announcements
+                    let announcementCount = 0;
                     Object.values(currentAnnouncements).flat().forEach(
                         (announcement) => {
                             if (announcement.require_acknowledgment) {
@@ -315,7 +446,12 @@ export function usePriorityRouter() {
                                 const isUnacknowledged = !announcement
                                     .acknowledged_by?.includes(userIdentifier);
 
+                                console.log(
+                                    `[PriorityRouter] Checking announcement ${announcement.id}: require_ack=${announcement.require_acknowledgment}, isUnread=${isUnread}, isUnacknowledged=${isUnacknowledged}`,
+                                );
+
                                 if (isUnread || isUnacknowledged) {
+                                    announcementCount++;
                                     const route =
                                         announcement.target_type === "GCA"
                                             ? `/(gca)/announcements`
@@ -338,6 +474,10 @@ export function usePriorityRouter() {
                         },
                     );
 
+                    console.log(
+                        `[PriorityRouter] Found ${announcementCount} priority announcements`,
+                    );
+
                     // Sort items
                     items.sort((a, b) => {
                         const priorityOrder = {
@@ -353,7 +493,7 @@ export function usePriorityRouter() {
                     });
 
                     console.log(
-                        `[PriorityRouter] Realtime check found ${items.length} priority items`,
+                        `[PriorityRouter] Realtime check found ${items.length} total priority items`,
                     );
                     setPriorityItems(items);
 
@@ -371,21 +511,181 @@ export function usePriorityRouter() {
             return () => clearTimeout(timeoutId);
         }
     }, [
-        messages.length, // Only watch length changes, not the full array
-        Object.keys(announcements).length, // Only watch keys length, not full object
-        member?.id, // Only watch member ID, not full member object
+        // Simplified dependency watching - just watch critical fields that matter for priority detection
+        messages.length,
+        messages.reduce(
+            (acc, m) =>
+                acc +
+                (m.message_type === "must_read" && m.requires_acknowledgment
+                    ? 1
+                    : 0),
+            0,
+        ),
+        Object.values(announcements).flat().reduce(
+            (acc, a) => acc + (a.require_acknowledgment ? 1 : 0),
+            0,
+        ),
+        member?.id,
         hasCompletedInitialCheck,
         division,
         currentlyHandlingItem,
     ]);
+
+    // Monitor for items getting acknowledged and automatically mark them as handled
+    useEffect(() => {
+        if (!member || priorityItems.length === 0) return;
+
+        // Check if any of our priority items have been acknowledged since last check
+        const userIdentifier = member.pin_number?.toString() || member.id || "";
+
+        priorityItems.forEach((item) => {
+            if (item.type === "announcement") {
+                // Find the actual announcement in the store
+                const announcement = Object.values(announcements).flat().find(
+                    (a) => a.id === item.id,
+                );
+                if (announcement) {
+                    const isNowAcknowledged = announcement.acknowledged_by
+                        ?.includes(userIdentifier);
+                    const isNowRead = announcement.read_by?.includes(
+                        userIdentifier,
+                    );
+
+                    // If the item was previously unacknowledged/unread but is now acknowledged/read, mark as handled
+                    if (
+                        (!item.isAcknowledged && isNowAcknowledged) ||
+                        (!item.isRead && isNowRead &&
+                            !announcement.require_acknowledgment)
+                    ) {
+                        console.log(
+                            `[PriorityRouter] Announcement ${item.id} has been acknowledged/read, marking as handled`,
+                        );
+                        markItemAsHandled(item.id);
+                    }
+                }
+            } else if (item.type === "message") {
+                // Find the actual message in the store
+                const message = messages.find((m) => m.id === item.id);
+                if (message) {
+                    const isNowAcknowledged = message.acknowledged_by?.includes(
+                        member.id || "",
+                    );
+                    const isNowRead = message.is_read;
+
+                    // If the item was previously unacknowledged/unread but is now acknowledged/read, mark as handled
+                    if (
+                        (!item.isAcknowledged && isNowAcknowledged) ||
+                        (!item.isRead && isNowRead &&
+                            !message.requires_acknowledgment)
+                    ) {
+                        console.log(
+                            `[PriorityRouter] Message ${item.id} has been acknowledged/read, marking as handled`,
+                        );
+                        markItemAsHandled(item.id);
+                    }
+                }
+            }
+        });
+    }, [
+        announcements,
+        messages,
+        priorityItems,
+        member,
+        markItemAsHandled,
+    ]);
+
+    // Monitor navigation changes to detect if user leaves priority routes without handling items
+    useEffect(() => {
+        // If user is currently handling an item but navigates away from priority routes, restore the item
+        if (
+            currentlyHandlingItem && !isOnPriorityRoute() &&
+            pathname !== "/(tabs)"
+        ) {
+            console.log(
+                `[PriorityRouter] User navigated away from priority route while handling item ${currentlyHandlingItem}, restoring item`,
+            );
+            restoreUnhandledItem(currentlyHandlingItem);
+        }
+    }, [
+        pathname,
+        currentlyHandlingItem,
+        isOnPriorityRoute,
+        restoreUnhandledItem,
+    ]);
+
+    const manualCheckForPriorityItems = useCallback(async () => {
+        console.log("[PriorityRouter] Manual priority check triggered");
+        return await checkForPriorityItems();
+    }, [checkForPriorityItems]);
+
+    // Enhanced debug function to show detailed store state
+    const debugStoreState = useCallback(() => {
+        const currentMessages = useNotificationStore.getState().messages;
+        const currentAnnouncements =
+            useAnnouncementStore.getState().announcements;
+
+        console.log("[PriorityRouter] === DETAILED STORE DEBUG ===");
+        console.log(
+            "[PriorityRouter] Messages in store:",
+            currentMessages.length,
+        );
+
+        const mustReadMessages = currentMessages.filter((m) =>
+            m.message_type === "must_read" && m.requires_acknowledgment
+        );
+        console.log(
+            "[PriorityRouter] Must-read messages:",
+            mustReadMessages.map((m) => ({
+                id: m.id,
+                subject: m.subject,
+                is_read: m.is_read,
+                requires_acknowledgment: m.requires_acknowledgment,
+                acknowledged_by: m.acknowledged_by,
+                created_at: m.created_at,
+            })),
+        );
+
+        console.log(
+            "[PriorityRouter] Announcements by division:",
+            Object.keys(currentAnnouncements),
+        );
+        Object.entries(currentAnnouncements).forEach(([divisionName, anns]) => {
+            const requireAck = anns.filter((a) => a.require_acknowledgment);
+            console.log(
+                `[PriorityRouter] ${divisionName} announcements requiring acknowledgment:`,
+                requireAck.map((a) => ({
+                    id: a.id,
+                    title: a.title,
+                    require_acknowledgment: a.require_acknowledgment,
+                    read_by: a.read_by,
+                    acknowledged_by: a.acknowledged_by,
+                    created_at: a.created_at,
+                })),
+            );
+        });
+
+        console.log("[PriorityRouter] Member info:", {
+            id: member?.id,
+            pin_number: member?.pin_number,
+            division: division,
+        });
+        console.log(
+            "[PriorityRouter] Current handling item:",
+            currentlyHandlingItem,
+        );
+        console.log("[PriorityRouter] === END STORE DEBUG ===");
+    }, [member, division, currentlyHandlingItem]);
 
     return {
         isCheckingPriority,
         priorityItems,
         currentlyHandlingItem,
         checkForPriorityItems,
+        manualCheckForPriorityItems,
+        debugStoreState,
         routeToNextPriorityItem,
         markItemAsHandled,
+        restoreUnhandledItem,
         shouldBlockNavigation,
         isOnPriorityRoute,
         hasCriticalItems: priorityItems.some((item) =>
@@ -395,5 +695,23 @@ export function usePriorityRouter() {
             item.priority === "high"
         ),
         totalPriorityItems: priorityItems.length,
+        // Debug information
+        debugInfo: {
+            messagesCount: messages.length,
+            announcementsCount: Object.keys(announcements).length,
+            mustReadMessagesCount:
+                messages.filter((m) =>
+                    m.message_type === "must_read" && m.requires_acknowledgment
+                ).length,
+            requireAckAnnouncementsCount:
+                Object.values(announcements).flat().filter((a) =>
+                    a.require_acknowledgment
+                ).length,
+            notificationSubStatus:
+                useNotificationStore.getState().subscriptionStatus,
+            announcementSubStatus:
+                useAnnouncementStore.getState().subscriptionStatus,
+            currentlyHandlingItem: currentlyHandlingItem,
+        },
     };
 }
