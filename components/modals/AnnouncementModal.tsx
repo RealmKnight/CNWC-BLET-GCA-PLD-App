@@ -9,6 +9,7 @@ import {
   NativeSyntheticEvent,
   LayoutChangeEvent,
   Linking,
+  Platform,
 } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -118,6 +119,7 @@ export function AnnouncementModal({
     onClose();
   };
 
+  // Enhanced scroll handling with Android-specific logic
   const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
     const paddingToBottom = 20;
@@ -134,6 +136,20 @@ export function AnnouncementModal({
       onMarkAsRead(announcement.id);
     }
   };
+
+  // Android-specific simplified scroll handling
+  const handleScrollAndroid =
+    Platform.OS === "android"
+      ? (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+          // Simplified logic for Android
+          const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+          const isCloseToBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - 10;
+          if (isCloseToBottom && !hasReadFully) {
+            setHasReadFully(true);
+            onMarkAsRead(announcement.id);
+          }
+        }
+      : handleScroll;
 
   const handleContentLayout = (event: LayoutChangeEvent) => {
     const height = event.nativeEvent.layout.height;
@@ -242,11 +258,17 @@ export function AnnouncementModal({
           {/* Content */}
           <ScrollView
             ref={scrollViewRef}
-            style={styles.contentScroll}
-            contentContainerStyle={styles.contentContainer}
-            onScroll={handleScroll}
+            style={[styles.contentScroll, Platform.OS === "android" && styles.androidContentScroll]}
+            contentContainerStyle={[
+              styles.contentContainer,
+              Platform.OS === "android" && styles.androidContentContainer,
+            ]}
+            onScroll={handleScrollAndroid}
             scrollEventThrottle={16}
             onLayout={handleContainerLayout}
+            nestedScrollEnabled={false}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={Platform.OS !== "android"}
           >
             <ThemedView onLayout={handleContentLayout}>
               <ThemedText style={styles.content}>{announcement.message}</ThemedText>
@@ -365,9 +387,18 @@ const styles = StyleSheet.create({
   contentScroll: {
     maxHeight: "60%",
   },
+  androidContentScroll: {
+    maxHeight: "60%",
+    minHeight: 0,
+  },
   contentContainer: {
     padding: 16,
     paddingTop: 0,
+  },
+  androidContentContainer: {
+    padding: 16,
+    paddingTop: 0,
+    flexGrow: 1,
   },
   content: {
     fontSize: 16,

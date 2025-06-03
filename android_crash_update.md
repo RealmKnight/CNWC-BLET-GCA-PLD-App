@@ -573,6 +573,53 @@ Ensure consistency across all division admin components:
    };
    ```
 
+### **Phase 7: Fix Union Admin text input focus issue (Web)**
+
+**ISSUE DISCOVERED DURING IMPLEMENTATION**: On web, when creating announcements in the Union Admin section, text inputs lose focus with every character typed. This does NOT happen in the Division Admin create announcement section.
+
+**Root Cause**: The `CreateAnnouncementTab` function was defined inside the main component render method, causing it to be recreated on every render. This makes React treat it as a new component, losing input focus.
+
+**File:** `components/admin/union/UnionAnnouncementManager.tsx`
+
+**Solution**: Restructure the component functions to render directly in the switch statement instead of being nested function components:
+
+```tsx
+// BEFORE (Problematic):
+const CreateAnnouncementTab = () => <ScrollView>{/* Form content */}</ScrollView>;
+
+const renderContent = () => {
+  switch (activeTab) {
+    case "create":
+      return <CreateAnnouncementTab />; // Function recreated on every render!
+  }
+};
+
+// AFTER (Fixed):
+const renderCreateForm = () => <ScrollView>{/* Form content */}</ScrollView>;
+
+const renderContent = () => {
+  switch (activeTab) {
+    case "create":
+      return renderCreateForm(); // Function called, not component recreated
+  }
+};
+```
+
+**Changes Made:**
+
+1. Renamed `CreateAnnouncementTab` to `renderCreateForm`
+2. Renamed `ManageAnnouncementsTab` to `renderManageForm`
+3. Renamed `ScheduledAnnouncementsTab` to `renderScheduledForm`
+4. Renamed `AnalyticsTab` to `renderAnalyticsForm`
+5. Updated renderContent to call functions directly instead of treating them as components
+
+**Testing:**
+
+- ✅ Web text inputs maintain focus while typing
+- ✅ No regressions on mobile platforms
+- ✅ Form functionality remains identical
+- ✅ Matches working pattern from DivisionAnnouncementsAdmin
+
 ## Testing Strategy
 
 ### **Phase 1 Testing:**
@@ -672,6 +719,13 @@ Ensure consistency across all division admin components:
    - Test that analytics data is cached appropriately
    - Verify no memory leaks from analytics data storage
 
+### **Phase 7 Testing:**
+
+1. Test Union Admin text input focus issue on web
+2. Verify text inputs maintain focus while typing
+3. Test form functionality remains identical
+4. Cross-platform testing (iOS, Web, Android)
+
 ## Risk Assessment
 
 ### **Low Risk:**
@@ -705,6 +759,7 @@ Ensure consistency across all division admin components:
 4. **Low Priority:** ThemedScrollView enhancements (Phase 4)
 5. **Maintenance:** Update other components (Phase 5)
 6. **Low Priority:** Fix Analytics Button Behavior (Phase 6)
+7. **Low Priority:** Fix Union Admin text input focus issue (Phase 7)
 
 ## Success Criteria
 
@@ -720,6 +775,9 @@ Ensure consistency across all division admin components:
 - ✅ Consistent behavior with union admin (which works)
 - ✅ No regressions on other platforms
 - ✅ Performance maintained or improved
+- ✅ Web text inputs maintain focus while typing
+- ✅ No regressions on mobile platforms
+- ✅ Form functionality remains identical
 
 ## Notes
 

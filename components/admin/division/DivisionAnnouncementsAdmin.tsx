@@ -17,11 +17,12 @@ import { useColorScheme } from "@/hooks/useColorScheme";
 import { useAnnouncementStore } from "@/store/announcementStore";
 import { useUserStore } from "@/store/userStore";
 import { AnnouncementModal } from "@/components/modals/AnnouncementModal";
+import { AnnouncementAnalyticsModal } from "@/components/modals/AnnouncementAnalyticsModal";
 import { AnnouncementCard } from "@/components/ui/AnnouncementCard";
 import { AnnouncementAnalyticsDashboard } from "@/components/admin/analytics/AnnouncementAnalyticsDashboard";
 import { Input } from "@/components/ui/Input";
 import { Select, SelectOption } from "@/components/ui/Select";
-import { Announcement } from "@/types/announcements";
+import { Announcement, DetailedAnnouncementAnalytics } from "@/types/announcements";
 
 type ColorSchemeName = keyof typeof Colors;
 
@@ -47,7 +48,7 @@ export function DivisionAnnouncementsAdmin({ division }: DivisionAnnouncementsAd
   const deleteAnnouncement = useAnnouncementStore((state) => state.deleteAnnouncement);
   const markAnnouncementAsRead = useAnnouncementStore((state) => state.markAnnouncementAsRead);
   const acknowledgeAnnouncement = useAnnouncementStore((state) => state.acknowledgeAnnouncement);
-  const getAnnouncementAnalytics = useAnnouncementStore((state) => state.getAnnouncementAnalytics);
+  const getDetailedAnnouncementAnalytics = useAnnouncementStore((state) => state.getDetailedAnnouncementAnalytics);
 
   // User info
   const member = useUserStore((state) => state.member);
@@ -59,6 +60,11 @@ export function DivisionAnnouncementsAdmin({ division }: DivisionAnnouncementsAd
   const [selectedAnnouncement, setSelectedAnnouncement] = useState<Announcement | null>(null);
   const [isAnnouncementModalVisible, setIsAnnouncementModalVisible] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Analytics modal state
+  const [selectedAnnouncementForAnalytics, setSelectedAnnouncementForAnalytics] = useState<string | null>(null);
+  const [analyticsModalVisible, setAnalyticsModalVisible] = useState(false);
+  const [currentAnalytics, setCurrentAnalytics] = useState<DetailedAnnouncementAnalytics | null>(null);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -305,9 +311,16 @@ export function DivisionAnnouncementsAdmin({ division }: DivisionAnnouncementsAd
               <View style={styles.adminActions}>
                 <TouchableOpacity
                   style={[styles.actionButton, styles.analyticsButton]}
-                  onPress={() => {
-                    getAnnouncementAnalytics(announcement.id);
-                    setActiveTab("analytics");
+                  onPress={async () => {
+                    try {
+                      setSelectedAnnouncementForAnalytics(announcement.id);
+                      const analytics = await getDetailedAnnouncementAnalytics(announcement.id);
+                      setCurrentAnalytics(analytics);
+                      setAnalyticsModalVisible(true);
+                    } catch (error) {
+                      console.error("Failed to load analytics:", error);
+                      Alert.alert("Error", "Failed to load analytics data");
+                    }
                   }}
                 >
                   <Ionicons name="analytics" size={16} color={Colors[colorScheme].background} />
@@ -493,6 +506,21 @@ export function DivisionAnnouncementsAdmin({ division }: DivisionAnnouncementsAd
         }}
         onMarkAsRead={handleMarkAsRead}
         onAcknowledge={handleAcknowledge}
+      />
+
+      <AnnouncementAnalyticsModal
+        analytics={currentAnalytics}
+        visible={analyticsModalVisible}
+        onClose={() => {
+          setAnalyticsModalVisible(false);
+          setSelectedAnnouncementForAnalytics(null);
+          setCurrentAnalytics(null);
+        }}
+        onExport={(format) => {
+          // Handle export functionality
+          console.log(`Export analytics for announcement ${selectedAnnouncementForAnalytics} as ${format}`);
+          // Could implement export logic here
+        }}
       />
     </ThemedView>
   );

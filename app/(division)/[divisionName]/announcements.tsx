@@ -1,12 +1,11 @@
 import { useEffect, useState } from "react";
-import { StyleSheet, Platform, useWindowDimensions } from "react-native";
+import { StyleSheet, Platform, useWindowDimensions, ScrollView } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 // Components
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
-import { ThemedScrollView } from "@/components/ThemedScrollView";
 import { Colors } from "@/constants/Colors";
 import { DivisionLoadingIndicator } from "@/components/ui/DivisionLoadingIndicator";
 import { useColorScheme } from "@/hooks/useColorScheme";
@@ -125,7 +124,13 @@ export default function DivisionAnnouncementsPage() {
   };
 
   return (
-    <ThemedScrollView style={styles.container}>
+    <ScrollView
+      style={[styles.container, Platform.OS === "android" && styles.androidContainer]}
+      contentContainerStyle={[styles.contentContainer, Platform.OS === "android" && styles.androidContentContainer]}
+      nestedScrollEnabled={true}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={true}
+    >
       <ThemedView style={styles.content}>
         {/* Division Announcements Header */}
         <ThemedView style={styles.header}>
@@ -168,7 +173,7 @@ export default function DivisionAnnouncementsPage() {
           />
         )}
       </ThemedView>
-    </ThemedScrollView>
+    </ScrollView>
   );
 }
 
@@ -176,6 +181,18 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.dark.background,
+  },
+  androidContainer: {
+    flex: 1,
+    height: "auto",
+    maxHeight: "100%",
+  },
+  contentContainer: {
+    flexGrow: 1,
+  },
+  androidContentContainer: {
+    flexGrow: 1,
+    paddingBottom: 50,
   },
   content: {
     flex: 1,

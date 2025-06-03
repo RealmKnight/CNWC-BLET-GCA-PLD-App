@@ -752,9 +752,12 @@ export const useAnnouncementStore = create<AnnouncementStore>((set, get) => ({
                         [cacheKey]: analytics.last_updated,
                     },
                 }));
+
+                // Return the analytics data
+                return analytics;
             }
 
-            return analytics;
+            return null;
         } catch (error) {
             console.error(
                 "[AnnouncementStore] Error fetching detailed analytics:",

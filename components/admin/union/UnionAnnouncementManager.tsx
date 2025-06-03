@@ -9,11 +9,12 @@ import { Ionicons } from "@expo/vector-icons";
 import { useAnnouncementStore } from "@/store/announcementStore";
 import { useUserStore } from "@/store/userStore";
 import { AnnouncementModal } from "@/components/modals/AnnouncementModal";
+import { AnnouncementAnalyticsModal } from "@/components/modals/AnnouncementAnalyticsModal";
 import { AnnouncementCard } from "@/components/ui/AnnouncementCard";
 import { AnnouncementAnalyticsDashboard } from "@/components/admin/analytics/AnnouncementAnalyticsDashboard";
 import { Input } from "@/components/ui/Input";
 import { Picker } from "@react-native-picker/picker";
-import { Announcement } from "@/types/announcements";
+import { Announcement, DetailedAnnouncementAnalytics } from "@/types/announcements";
 
 interface DivisionOption {
   value: string;
@@ -37,7 +38,7 @@ export function UnionAnnouncementManager() {
   const deleteAnnouncement = useAnnouncementStore((state) => state.deleteAnnouncement);
   const markAnnouncementAsRead = useAnnouncementStore((state) => state.markAnnouncementAsRead);
   const acknowledgeAnnouncement = useAnnouncementStore((state) => state.acknowledgeAnnouncement);
-  const getAnnouncementAnalytics = useAnnouncementStore((state) => state.getAnnouncementAnalytics);
+  const getDetailedAnnouncementAnalytics = useAnnouncementStore((state) => state.getDetailedAnnouncementAnalytics);
 
   // User info
   const member = useUserStore((state) => state.member);
@@ -49,6 +50,11 @@ export function UnionAnnouncementManager() {
   const [refreshing, setRefreshing] = useState(false);
   const [selectedDivision, setSelectedDivision] = useState<string>("GCA");
   const [divisions, setDivisions] = useState<DivisionOption[]>([]);
+
+  // Analytics modal state
+  const [selectedAnnouncementForAnalytics, setSelectedAnnouncementForAnalytics] = useState<string | null>(null);
+  const [analyticsModalVisible, setAnalyticsModalVisible] = useState(false);
+  const [currentAnalytics, setCurrentAnalytics] = useState<DetailedAnnouncementAnalytics | null>(null);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -275,8 +281,8 @@ export function UnionAnnouncementManager() {
     { key: "analytics", title: "Analytics", icon: "analytics", outlineIcon: "analytics-outline" },
   ];
 
-  // Create Announcement Tab
-  const CreateAnnouncementTab = () => (
+  // Create Announcement Tab - moved to renderContent to prevent recreation
+  const renderCreateForm = () => (
     <ScrollView style={styles.scrollContainer}>
       <ThemedView style={styles.formContainer}>
         <ThemedView style={styles.formHeader}>
@@ -427,8 +433,8 @@ export function UnionAnnouncementManager() {
     </ScrollView>
   );
 
-  // Manage Announcements Tab
-  const ManageAnnouncementsTab = () => {
+  // Manage Announcements Tab - renamed for consistency
+  const renderManageForm = () => {
     const currentAnnouncements = getCurrentAnnouncements();
 
     return (
@@ -477,9 +483,16 @@ export function UnionAnnouncementManager() {
                 <View style={styles.adminActions}>
                   <TouchableOpacity
                     style={[styles.actionButton, styles.analyticsButton]}
-                    onPress={() => {
-                      getAnnouncementAnalytics(announcement.id);
-                      setActiveTab("analytics");
+                    onPress={async () => {
+                      try {
+                        setSelectedAnnouncementForAnalytics(announcement.id);
+                        const analytics = await getDetailedAnnouncementAnalytics(announcement.id);
+                        setCurrentAnalytics(analytics);
+                        setAnalyticsModalVisible(true);
+                      } catch (error) {
+                        console.error("Failed to load analytics:", error);
+                        Alert.alert("Error", "Failed to load analytics data");
+                      }
                     }}
                   >
                     <Ionicons name="analytics" size={16} color={Colors[colorScheme].background} />
@@ -501,8 +514,8 @@ export function UnionAnnouncementManager() {
     );
   };
 
-  // Scheduled Announcements Tab (placeholder)
-  const ScheduledAnnouncementsTab = () => (
+  // Scheduled Announcements Tab
+  const renderScheduledForm = () => (
     <ThemedView style={styles.placeholderContainer}>
       <ThemedText style={styles.placeholderText}>Scheduled Announcements Coming Soon</ThemedText>
       <ThemedText style={styles.placeholderSubtext}>
@@ -512,18 +525,18 @@ export function UnionAnnouncementManager() {
   );
 
   // Analytics Tab
-  const AnalyticsTab = () => <AnnouncementAnalyticsDashboard showExportOptions={true} />;
+  const renderAnalyticsForm = () => <AnnouncementAnalyticsDashboard showExportOptions={true} />;
 
   const renderContent = () => {
     switch (activeTab) {
       case "create":
-        return <CreateAnnouncementTab />;
+        return renderCreateForm();
       case "manage":
-        return <ManageAnnouncementsTab />;
+        return renderManageForm();
       case "scheduled":
-        return <ScheduledAnnouncementsTab />;
+        return renderScheduledForm();
       case "analytics":
-        return <AnalyticsTab />;
+        return renderAnalyticsForm();
       default:
         return null;
     }
@@ -573,6 +586,22 @@ export function UnionAnnouncementManager() {
         }}
         onMarkAsRead={handleMarkAsRead}
         onAcknowledge={handleAcknowledge}
+      />
+
+      {/* Analytics Modal */}
+      <AnnouncementAnalyticsModal
+        analytics={currentAnalytics}
+        visible={analyticsModalVisible}
+        onClose={() => {
+          setAnalyticsModalVisible(false);
+          setSelectedAnnouncementForAnalytics(null);
+          setCurrentAnalytics(null);
+        }}
+        onExport={(format) => {
+          // Handle export functionality
+          console.log(`Export analytics for announcement ${selectedAnnouncementForAnalytics} as ${format}`);
+          // Could implement export logic here
+        }}
       />
     </ThemedView>
   );

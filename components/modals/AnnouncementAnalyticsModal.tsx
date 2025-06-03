@@ -1,5 +1,16 @@
-import React, { useState } from "react";
-import { Modal, StyleSheet, TouchableOpacity, ScrollView, Pressable, View, useWindowDimensions } from "react-native";
+import React, { useState, useEffect } from "react";
+import {
+  Modal,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  Pressable,
+  View,
+  useWindowDimensions,
+  Platform,
+  FlatList,
+  TextInput,
+} from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { Ionicons } from "@expo/vector-icons";
@@ -24,6 +35,53 @@ export function AnnouncementAnalyticsModal({ analytics, visible, onClose, onExpo
 
   const [activeTab, setActiveTab] = useState<"overview" | "members" | "divisions">("overview");
 
+  // Performance optimization state
+  const [isLargeDataset, setIsLargeDataset] = useState(false);
+  const [showSearchForLarge, setShowSearchForLarge] = useState(false);
+  const [readSearchTerm, setReadSearchTerm] = useState("");
+  const [unreadSearchTerm, setUnreadSearchTerm] = useState("");
+
+  // Performance monitoring
+  const [performanceMetrics, setPerformanceMetrics] = useState({
+    renderTime: 0,
+    memberCount: 0,
+    showWarning: false,
+  });
+
+  // Update performance states when analytics changes
+  useEffect(() => {
+    if (analytics) {
+      const totalMembers = analytics.total_eligible_members;
+      setIsLargeDataset(totalMembers > 100);
+      setShowSearchForLarge(totalMembers > 20);
+    }
+  }, [analytics]);
+
+  // Monitor performance for large datasets
+  useEffect(() => {
+    if (!analytics) return;
+
+    const startTime = performance.now();
+    const memberCount = (analytics.members_who_read?.length || 0) + (analytics.members_who_not_read?.length || 0);
+
+    // Show warning for large datasets (>500 members)
+    const showWarning = memberCount > 500;
+
+    // Simulate render completion timing
+    const timer = setTimeout(() => {
+      const endTime = performance.now();
+      const renderTime = endTime - startTime;
+
+      setPerformanceMetrics({
+        renderTime,
+        memberCount,
+        showWarning,
+      });
+    }, 100);
+
+    return () => clearTimeout(timer);
+  }, [analytics]);
+
   if (!analytics) return null;
 
   // Calculate additional metrics
@@ -33,6 +91,28 @@ export function AnnouncementAnalyticsModal({ analytics, visible, onClose, onExpo
 
   const isExpired = analytics.end_date && new Date(analytics.end_date) < new Date();
   const isActive = analytics.is_active && !isExpired;
+
+  // Filter members for search
+  const filteredReadMembers = analytics.members_who_read.filter((member) =>
+    `${member.first_name} ${member.last_name} ${member.pin}`.toLowerCase().includes(readSearchTerm.toLowerCase())
+  );
+  const filteredUnreadMembers = analytics.members_who_not_read.filter((member) =>
+    `${member.first_name} ${member.last_name} ${member.pin}`.toLowerCase().includes(unreadSearchTerm.toLowerCase())
+  );
+
+  // Render performance warning for very large datasets
+  const renderPerformanceWarning = () => {
+    if (!performanceMetrics.showWarning) return null;
+
+    return (
+      <ThemedView style={[styles.performanceWarning, { backgroundColor: Colors[theme].warning + "20" }]}>
+        <Ionicons name="warning" size={16} color={Colors[theme].warning} />
+        <ThemedText style={[styles.performanceWarningText, { color: Colors[theme].warning }]}>
+          Large dataset ({performanceMetrics.memberCount} members). Performance may be affected.
+        </ThemedText>
+      </ThemedView>
+    );
+  };
 
   // Render header with announcement info
   const renderHeader = () => (
@@ -202,43 +282,30 @@ export function AnnouncementAnalyticsModal({ analytics, visible, onClose, onExpo
 
         <View style={styles.metricCard}>
           <View style={styles.metricHeader}>
-            <Ionicons name="people" size={20} color="#007AFF" />
-            <ThemedText style={styles.metricValue}>{analytics.total_eligible_members}</ThemedText>
+            <Ionicons name="time" size={20} color="#007AFF" />
+            <ThemedText style={styles.metricValue}>{daysSinceCreated}</ThemedText>
           </View>
-          <ThemedText style={styles.metricLabel}>Total Members</ThemedText>
-          <ThemedText style={styles.metricSubtext}>Eligible to view</ThemedText>
+          <ThemedText style={styles.metricLabel}>Days Active</ThemedText>
+          <ThemedText style={styles.metricSubtext}>Since {format(parseISO(analytics.created_at), "MMM d")}</ThemedText>
         </View>
 
         <View style={styles.metricCard}>
           <View style={styles.metricHeader}>
-            <Ionicons name="calendar" size={20} color="#8E8E93" />
-            <ThemedText style={styles.metricValue}>{daysSinceCreated}</ThemedText>
+            <Ionicons name="people" size={20} color="#8E8E93" />
+            <ThemedText style={styles.metricValue}>{analytics.total_eligible_members}</ThemedText>
           </View>
-          <ThemedText style={styles.metricLabel}>Days Active</ThemedText>
-          <ThemedText style={styles.metricSubtext}>Since creation</ThemedText>
-        </View>
-      </View>
-
-      {analytics.end_date && (
-        <View style={styles.expirationInfo}>
-          <Ionicons
-            name={isExpired ? "warning" : "time"}
-            size={16}
-            color={isExpired ? Colors[theme].error : Colors[theme].text}
-          />
-          <ThemedText style={[styles.expirationText, isExpired && { color: Colors[theme].error }]}>
-            {isExpired
-              ? `Expired on ${format(parseISO(analytics.end_date), "MMM d, yyyy")}`
-              : `Expires on ${format(parseISO(analytics.end_date), "MMM d, yyyy")}`}
+          <ThemedText style={styles.metricLabel}>Eligible Members</ThemedText>
+          <ThemedText style={styles.metricSubtext}>
+            {analytics.target_type === "GCA" ? "All members" : "Division only"}
           </ThemedText>
         </View>
-      )}
+      </View>
     </View>
   );
 
-  // Render member status
-  const renderMemberStatus = (member: MemberReadStatus, index: number) => (
-    <View key={`${member.user_id}-${index}`} style={styles.memberItem}>
+  // Render individual member status (optimized for FlatList)
+  const renderMemberStatus = ({ item: member, index }: { item: MemberReadStatus; index: number }) => (
+    <View style={[styles.memberItem, index === 0 && styles.firstMemberItem]}>
       <View style={styles.memberInfo}>
         <ThemedText style={styles.memberName}>
           {member.first_name} {member.last_name}
@@ -248,59 +315,132 @@ export function AnnouncementAnalyticsModal({ analytics, visible, onClose, onExpo
         </ThemedText>
       </View>
       <View style={styles.memberStatus}>
-        <View style={[styles.statusIndicator, { backgroundColor: member.has_read ? "#34C759" : "#FF3B30" }]}>
-          <Ionicons name={member.has_read ? "eye" : "eye-off"} size={12} color="#fff" />
-        </View>
-        {analytics.require_acknowledgment && (
-          <View style={[styles.statusIndicator, { backgroundColor: member.has_acknowledged ? "#FF9500" : "#8E8E93" }]}>
-            <Ionicons name={member.has_acknowledged ? "checkmark" : "close"} size={12} color="#fff" />
+        {member.has_read && (
+          <View style={styles.statusItem}>
+            <Ionicons name="eye" size={14} color="#34C759" />
+            <ThemedText style={styles.statusText}>
+              {member.read_at ? format(parseISO(member.read_at), "MMM d, h:mm a") : "Read"}
+            </ThemedText>
+          </View>
+        )}
+        {member.has_acknowledged && (
+          <View style={styles.statusItem}>
+            <Ionicons name="checkmark-circle" size={14} color="#FF9500" />
+            <ThemedText style={styles.statusText}>
+              {member.acknowledged_at ? format(parseISO(member.acknowledged_at), "MMM d, h:mm a") : "Acknowledged"}
+            </ThemedText>
           </View>
         )}
       </View>
-      {member.read_at && (
-        <ThemedText style={styles.memberTimestamp}>
-          Read: {format(parseISO(member.read_at), "MMM d, h:mm a")}
-        </ThemedText>
-      )}
-      {member.acknowledged_at && (
-        <ThemedText style={styles.memberTimestamp}>
-          Ack: {format(parseISO(member.acknowledged_at), "MMM d, h:mm a")}
-        </ThemedText>
-      )}
     </View>
   );
 
-  // Render members tab
+  // Render members with optimized FlatList for large datasets
   const renderMembers = () => {
-    const readMembers = analytics.members_who_read;
-    const unreadMembers = analytics.members_who_not_read;
-
     return (
       <View style={styles.tabContent}>
+        {renderPerformanceWarning()}
+
+        {/* Read Members Section */}
         <View style={styles.memberSection}>
           <View style={styles.sectionHeader}>
             <Ionicons name="eye" size={16} color="#34C759" />
-            <ThemedText style={styles.sectionTitle}>Read ({readMembers.length})</ThemedText>
+            <ThemedText style={styles.sectionTitle}>Read ({analytics.members_who_read.length})</ThemedText>
           </View>
-          {readMembers.length > 0 ? (
-            readMembers.map((member, index) => renderMemberStatus(member, index))
+
+          {/* Search for Read Members */}
+          {showSearchForLarge && analytics.members_who_read.length > 20 && (
+            <TextInput
+              style={[
+                styles.searchInput,
+                {
+                  borderColor: Colors[theme].border,
+                  color: Colors[theme].text,
+                  backgroundColor: Colors[theme].background,
+                },
+              ]}
+              placeholder="Search read members..."
+              value={readSearchTerm}
+              onChangeText={setReadSearchTerm}
+              placeholderTextColor={Colors[theme].textDim}
+            />
+          )}
+
+          {filteredReadMembers.length > 0 ? (
+            <FlatList
+              data={filteredReadMembers}
+              keyExtractor={(item, index) => `read-${item.user_id}-${index}`}
+              renderItem={renderMemberStatus}
+              style={styles.memberFlatList}
+              nestedScrollEnabled={false}
+              scrollEnabled={false}
+              initialNumToRender={20}
+              maxToRenderPerBatch={20}
+              windowSize={10}
+              removeClippedSubviews={Platform.OS === "android"}
+              getItemLayout={(data, index) => ({
+                length: 80,
+                offset: 80 * index,
+                index,
+              })}
+            />
           ) : (
             <View style={styles.emptyState}>
-              <ThemedText style={styles.emptyText}>No members have read this announcement yet</ThemedText>
+              <ThemedText style={styles.emptyText}>
+                {readSearchTerm ? "No matching members found" : "No members have read this announcement yet"}
+              </ThemedText>
             </View>
           )}
         </View>
 
+        {/* Unread Members Section */}
         <View style={styles.memberSection}>
           <View style={styles.sectionHeader}>
             <Ionicons name="eye-off" size={16} color="#FF3B30" />
-            <ThemedText style={styles.sectionTitle}>Not Read ({unreadMembers.length})</ThemedText>
+            <ThemedText style={styles.sectionTitle}>Not Read ({analytics.members_who_not_read.length})</ThemedText>
           </View>
-          {unreadMembers.length > 0 ? (
-            unreadMembers.map((member, index) => renderMemberStatus(member, index))
+
+          {/* Search for Unread Members */}
+          {showSearchForLarge && analytics.members_who_not_read.length > 20 && (
+            <TextInput
+              style={[
+                styles.searchInput,
+                {
+                  borderColor: Colors[theme].border,
+                  color: Colors[theme].text,
+                  backgroundColor: Colors[theme].background,
+                },
+              ]}
+              placeholder="Search unread members..."
+              value={unreadSearchTerm}
+              onChangeText={setUnreadSearchTerm}
+              placeholderTextColor={Colors[theme].textDim}
+            />
+          )}
+
+          {filteredUnreadMembers.length > 0 ? (
+            <FlatList
+              data={filteredUnreadMembers}
+              keyExtractor={(item, index) => `unread-${item.user_id}-${index}`}
+              renderItem={renderMemberStatus}
+              style={styles.memberFlatList}
+              nestedScrollEnabled={false}
+              scrollEnabled={false}
+              initialNumToRender={20}
+              maxToRenderPerBatch={20}
+              windowSize={10}
+              removeClippedSubviews={Platform.OS === "android"}
+              getItemLayout={(data, index) => ({
+                length: 80,
+                offset: 80 * index,
+                index,
+              })}
+            />
           ) : (
             <View style={styles.emptyState}>
-              <ThemedText style={styles.emptyText}>All eligible members have read this announcement</ThemedText>
+              <ThemedText style={styles.emptyText}>
+                {unreadSearchTerm ? "No matching members found" : "All eligible members have read this announcement"}
+              </ThemedText>
             </View>
           )}
         </View>
@@ -388,13 +528,20 @@ export function AnnouncementAnalyticsModal({ analytics, visible, onClose, onExpo
           style={[
             styles.modalContent,
             { backgroundColor: Colors[theme].card },
-            isMobile ? styles.mobileModal : styles.desktopModal,
+            Platform.OS === "android" ? styles.androidModal : isMobile ? styles.mobileModal : styles.desktopModal,
           ]}
           onPress={(e) => e.stopPropagation()}
         >
           {renderHeader()}
           {renderTabs()}
-          <ScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          <ScrollView
+            style={[styles.scrollContent, Platform.OS === "android" && styles.androidScrollContent]}
+            contentContainerStyle={Platform.OS === "android" ? styles.androidContentContainer : undefined}
+            nestedScrollEnabled={true}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={Platform.OS !== "android"}
+            removeClippedSubviews={true}
+          >
             {renderContent()}
           </ScrollView>
           {renderFooter()}
@@ -414,7 +561,24 @@ const styles = StyleSheet.create({
   modalContent: {
     borderRadius: 16,
     overflow: "hidden",
+    ...(Platform.OS === "android"
+      ? {
+          flex: 1,
+          height: "90%",
+          maxHeight: "90%",
+          minHeight: "80%",
+        }
+      : {
+          maxHeight: "90%",
+          minHeight: "60%",
+        }),
+  },
+  androidModal: {
+    width: "95%",
+    height: "90%",
+    maxWidth: 400,
     maxHeight: "90%",
+    flex: 1,
   },
   mobileModal: {
     width: "95%",
@@ -424,11 +588,17 @@ const styles = StyleSheet.create({
     width: "80%",
     maxWidth: 800,
   },
+  androidScrollContent: {
+    flex: 1,
+    minHeight: 0,
+  },
+  androidContentContainer: {
+    flexGrow: 1,
+    paddingBottom: 20,
+  },
   header: {
-    borderWidth: 1,
+    borderBottomWidth: 1,
     borderColor: Colors.dark.border,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
     paddingHorizontal: 16,
     paddingVertical: 12,
   },
@@ -438,8 +608,9 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
   },
   headerLeft: {
-    flexDirection: "row",
     flex: 1,
+    flexDirection: "row",
+    alignItems: "flex-start",
     gap: 12,
   },
   iconWrapper: {
@@ -451,17 +622,18 @@ const styles = StyleSheet.create({
   },
   headerInfo: {
     flex: 1,
+    gap: 4,
   },
   announcementTitle: {
-    fontSize: 18,
-    fontWeight: "600",
-    marginBottom: 4,
+    fontSize: 16,
+    fontWeight: "700",
+    lineHeight: 20,
   },
   metadata: {
     flexDirection: "row",
-    flexWrap: "wrap",
+    alignItems: "center",
     gap: 12,
-    marginBottom: 4,
+    flexWrap: "wrap",
   },
   metadataItem: {
     flexDirection: "row",
@@ -470,12 +642,11 @@ const styles = StyleSheet.create({
   },
   metadataText: {
     fontSize: 12,
-    opacity: 0.7,
+    fontWeight: "500",
   },
   authorInfo: {
     fontSize: 12,
-    opacity: 0.6,
-    fontStyle: "italic",
+    opacity: 0.7,
   },
   headerRight: {
     alignItems: "flex-end",
@@ -488,15 +659,15 @@ const styles = StyleSheet.create({
   },
   statusText: {
     fontSize: 12,
-    fontWeight: "500",
+    fontWeight: "600",
   },
   closeButton: {
-    padding: 8,
+    padding: 4,
   },
   tabContainer: {
     flexDirection: "row",
     borderBottomWidth: 1,
-    borderBottomColor: Colors.dark.border,
+    borderColor: Colors.dark.border,
   },
   tab: {
     flex: 1,
@@ -505,22 +676,30 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingVertical: 12,
     paddingHorizontal: 8,
-    gap: 4,
-    borderWidth: 1,
-    borderColor: "transparent",
+    gap: 6,
+    borderBottomWidth: 3,
+    borderBottomColor: "transparent",
   },
   activeTab: {
+    borderBottomColor: Colors.dark.tint,
     backgroundColor: Colors.dark.tint,
   },
   tabText: {
-    fontSize: 12,
-    fontWeight: "500",
+    fontSize: 14,
+    fontWeight: "600",
   },
   scrollContent: {
     flex: 1,
+    ...(Platform.OS === "android" && {
+      minHeight: 0,
+    }),
   },
   tabContent: {
     padding: 16,
+    ...(Platform.OS === "android" && {
+      flex: 1,
+      minHeight: 0,
+    }),
   },
   metricsGrid: {
     flexDirection: "row",
@@ -530,11 +709,11 @@ const styles = StyleSheet.create({
   },
   metricCard: {
     flex: 1,
-    minWidth: 140,
+    minWidth: 120,
     padding: 12,
-    borderRadius: 8,
     borderWidth: 1,
     borderColor: Colors.dark.border,
+    borderRadius: 12,
     backgroundColor: Colors.dark.background,
   },
   metricHeader: {
@@ -545,61 +724,67 @@ const styles = StyleSheet.create({
   },
   metricValue: {
     fontSize: 20,
-    fontWeight: "bold",
+    fontWeight: "700",
   },
   metricLabel: {
     fontSize: 12,
-    fontWeight: "500",
+    fontWeight: "600",
+    opacity: 0.8,
     marginBottom: 2,
   },
   metricSubtext: {
     fontSize: 10,
-    opacity: 0.7,
-  },
-  expirationInfo: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    padding: 12,
-    borderRadius: 8,
-    backgroundColor: Colors.dark.background,
-  },
-  expirationText: {
-    fontSize: 14,
-    fontWeight: "500",
+    opacity: 0.6,
   },
   memberSection: {
     marginBottom: 24,
+    ...(Platform.OS === "android" && {
+      flex: 1,
+      minHeight: 200,
+    }),
   },
   sectionHeader: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
     marginBottom: 12,
-    paddingBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.dark.border,
   },
   sectionTitle: {
     fontSize: 16,
     fontWeight: "600",
   },
-  memberItem: {
-    padding: 12,
-    borderRadius: 8,
+  searchInput: {
     borderWidth: 1,
-    borderColor: Colors.dark.border,
-    marginBottom: 8,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 12,
+    fontSize: 14,
+  },
+  memberFlatList: {
+    maxHeight: 400,
+    minHeight: 200,
+  },
+  memberItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.dark.border,
+    minHeight: 80,
+  },
+  firstMemberItem: {
+    borderTopWidth: 0,
   },
   memberInfo: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    marginBottom: 4,
+    flex: 1,
   },
   memberName: {
     fontSize: 14,
-    fontWeight: "500",
+    fontWeight: "600",
+    marginBottom: 4,
   },
   memberDetails: {
     fontSize: 12,
@@ -607,20 +792,13 @@ const styles = StyleSheet.create({
   },
   memberStatus: {
     flexDirection: "row",
-    gap: 8,
-    marginBottom: 4,
-  },
-  statusIndicator: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
     alignItems: "center",
-    justifyContent: "center",
+    gap: 8,
   },
-  memberTimestamp: {
-    fontSize: 10,
-    opacity: 0.6,
-    marginTop: 2,
+  statusItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
   },
   emptyState: {
     padding: 24,
@@ -631,23 +809,39 @@ const styles = StyleSheet.create({
     opacity: 0.7,
     textAlign: "center",
   },
-  divisionCard: {
+  performanceWarning: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
     padding: 12,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: Colors.dark.border,
-    marginBottom: 8,
+    backgroundColor: Colors.dark.background,
+    marginBottom: 16,
+  },
+  performanceWarningText: {
+    fontSize: 12,
+    fontWeight: "500",
+    color: Colors.dark.warning,
+  },
+  divisionCard: {
+    padding: 16,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    borderRadius: 12,
+    marginBottom: 12,
+    backgroundColor: Colors.dark.background,
   },
   divisionHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "flex-start",
+    alignItems: "center",
     marginBottom: 8,
   },
   divisionName: {
     fontSize: 16,
-    fontWeight: "500",
-    flex: 1,
+    fontWeight: "600",
   },
   divisionMetrics: {
     flexDirection: "row",
@@ -657,11 +851,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   divisionMetricValue: {
-    fontSize: 16,
-    fontWeight: "bold",
+    fontSize: 18,
+    fontWeight: "700",
   },
   divisionMetricLabel: {
-    fontSize: 10,
+    fontSize: 12,
     opacity: 0.7,
   },
   divisionSubtext: {
@@ -672,14 +866,15 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: 16,
     borderTopWidth: 1,
-    borderTopColor: Colors.dark.border,
+    borderColor: Colors.dark.border,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
   },
   lastUpdated: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
+    gap: 6,
   },
   lastUpdatedText: {
     fontSize: 12,
@@ -692,14 +887,14 @@ const styles = StyleSheet.create({
   exportButton: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 6,
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
+    paddingVertical: 8,
     borderWidth: 1,
-    gap: 4,
+    borderRadius: 8,
   },
   exportButtonText: {
     fontSize: 12,
-    fontWeight: "500",
+    fontWeight: "600",
   },
 });
