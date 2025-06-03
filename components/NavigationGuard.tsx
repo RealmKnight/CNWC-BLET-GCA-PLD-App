@@ -41,10 +41,11 @@ export function NavigationGuard({ children }: NavigationGuardProps) {
     }
   }, [pathname, isOnPriorityRoute]);
 
-  // Get current item being handled
+  // Get the first unhandled priority item (not necessarily the "currently handling" one)
   const getCurrentItem = () => {
-    if (!currentlyHandlingItem) return null;
-    return priorityItems.find((item) => item.id === currentlyHandlingItem) || priorityItems[0] || null;
+    // Find the first item that needs attention (unread or unacknowledged)
+    const unhandledItem = priorityItems.find((item) => !item.isRead || !item.isAcknowledged);
+    return unhandledItem || null;
   };
 
   const getCurrentIndex = () => {
@@ -56,7 +57,14 @@ export function NavigationGuard({ children }: NavigationGuardProps) {
   const handleNavigateToItem = () => {
     console.log("[NavigationGuard] User clicked to navigate to priority item");
     setShowBlockingModal(false);
-    routeToNextPriorityItem();
+
+    // Route to the next priority item
+    const success = routeToNextPriorityItem();
+
+    if (!success) {
+      console.log("[NavigationGuard] No priority item to route to");
+      // If no item to route to, keep modal hidden
+    }
   };
 
   const currentItem = getCurrentItem();

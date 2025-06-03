@@ -2,58 +2,40 @@
 
 ## Overview
 
-The Priority Navigation System is a critical feature that ensures users address mandatory messages and announcements before being able to navigate freely within the application. This system implements a blocking modal approach that prevents navigation until all critical items are read and acknowledged.
+The Priority Navigation System ensures users handle critical "Must Read" messages and "Must Acknowledge" announcements before accessing other parts of the app. Instead of automatic routing, the system shows a **blocking modal** that requires user interaction to proceed.
 
 ## Features
 
-### Automatic Priority Detection
+### Modal-First Approach
 
-- **Must Read Messages**: Highest priority (critical)
-- **Must Acknowledge Announcements**: Second priority (high)
-- **Regular Priority**: Normal messages and announcements
+- **Strict Priority Order**: Critical messages > High priority announcements > Normal items
+- **Sequential Handling**: Users must handle items one by one, cannot skip
+- **Realtime Updates**: Automatically detects new priority items
+- **Complete Navigation Blocking**: No dismissible options until handled
+- **Seamless Integration**: Works with existing message/announcement systems
 
-### Navigation Blocking
+### Priority Levels
 
-- Completely blocks navigation until critical items are handled
-- Shows a modal that cannot be dismissed until action is taken
-- Prevents access to all app features until requirements are met
+#### Critical Priority (Must Read Messages)
 
-### Sequential Processing
-
-- Handles multiple priority items one by one in sequence
-- Shows progress indicator (e.g., "2 of 5")
-- Automatically moves to next item after current one is handled
-
-### Real-time Updates
-
-- Monitors for new priority items via realtime subscriptions
-- Automatically shows blocking modal when new critical items arrive
-- Updates priority queue dynamically
-
-## Priority Levels
-
-### 1. Critical Priority - Must Read Messages
-
-- **Trigger**: Messages with `requires_acknowledgment: true` and `message_type: 'must_read'`
+- **Type**: Messages with `message_type = "must_read"` AND `requires_acknowledgment = true`
 - **Condition**: `!is_read OR !acknowledged_by.includes(user_id)`
-- **Route**: `/(tabs)/notifications/{message_id}`
-- **Icon**: Warning (⚠️)
-- **Color**: Error/Red theme color
+- **Behavior**: Highest priority, blocks ALL navigation
+- **Modal Color**: Red theme
+- **Action Button**: "Read Critical Message"
 
-### 2. High Priority - Must Acknowledge Announcements
+#### High Priority (Must Acknowledge Announcements)
 
-- **Trigger**: Announcements with `require_acknowledgment: true`
-- **Condition**: `!has_been_read OR !has_been_acknowledged`
-- **Route**:
-  - GCA announcements: `/(gca)/announcements`
-  - Division announcements: `/(division)/{division}/announcements`
-- **Icon**: Alert Circle (🛈)
-- **Color**: Primary theme color
+- **Type**: Announcements with `require_acknowledgment = true`
+- **Condition**: `!read_by.includes(user_pin) OR !acknowledged_by.includes(user_pin)`
+- **Behavior**: Second priority, blocks navigation when no critical items exist
+- **Modal Color**: Blue theme
+- **Action Button**: "Review Announcement"
 
-### 3. Normal Priority
+#### Normal Priority
 
-- Regular messages and announcements without mandatory requirements
-- These do not block navigation
+- **Type**: Regular messages and announcements
+- **Behavior**: No navigation blocking
 
 ## Architecture
 
@@ -64,20 +46,20 @@ The Priority Navigation System is a critical feature that ensures users address 
 - **Purpose**: Central management of priority item detection and routing
 - **Key Functions**:
   - `checkForPriorityItems()`: Scans for unhandled critical items
-  - `routeToNextPriorityItem()`: Navigates to next priority item
+  - `routeToNextPriorityItem()`: Navigates to next priority item (ONLY when called by modal)
   - `markItemAsHandled()`: Removes item from priority queue
   - `shouldBlockNavigation()`: Determines if navigation should be blocked
-  - `isOnPriorityRoute()`: Checks if user is on a priority-handling route
+  - `isOnPriorityRoute()`: Checks if user is already on valid priority route
 
 #### 2. `PriorityBlockingModal` Component (`components/modals/PriorityBlockingModal.tsx`)
 
 - **Purpose**: Modal interface that blocks all navigation
 - **Features**:
-  - Cannot be dismissed by user action
-  - Shows item details and priority level
-  - Displays progress indicator
-  - Provides action button to navigate to item
-  - Shows status indicators (read/acknowledged)
+  - Non-dismissible modal (no backdrop dismissal)
+  - Priority indicators (warning/alert icons, colors)
+  - Progress tracking ("2 of 5 priority items")
+  - Status indicators (read/acknowledged checkmarks)
+  - Action button to navigate to item
 
 #### 3. `NavigationGuard` Component (`components/NavigationGuard.tsx`)
 
@@ -87,20 +69,79 @@ The Priority Navigation System is a critical feature that ensures users address 
 
 ### Data Flow
 
-```
-1. User logs in or app receives realtime update
+**New Modal-First Flow:**
+
+1. User opens app OR new priority items are detected
 2. usePriorityRouter.checkForPriorityItems() scans for critical items
-3. If critical items found:
-   a. Sets shouldBlockNavigation() to true
-   b. NavigationGuard detects this and shows PriorityBlockingModal
-   c. User clicks action button
-   d. NavigationGuard calls routeToNextPriorityItem()
-   e. User is routed to the priority item page
-4. When item is read/acknowledged:
-   a. Item is removed from priority queue
-   b. System checks for next priority item
-   c. Either routes to next item or removes blocking modal
-```
+3. NavigationGuard detects priority items and shows PriorityBlockingModal
+4. User sees blocking modal with item details and action button
+5. User clicks action button → NavigationGuard calls routeToNextPriorityItem()
+6. User is routed to notifications/announcements page
+7. User reads/acknowledges item → automatically removed from priority queue
+8. If more items exist → modal reappears for next item
+9. When no priority items remain → normal navigation resumes
+
+### Integration Points
+
+#### Message Store Integration (`store/notificationStore.ts`)
+
+- `acknowledgeMessage()` updates `acknowledged_by` array
+- `markAsRead()` updates `is_read` status
+- Changes trigger priority router realtime monitoring
+
+#### Announcement Store Integration (`store/announcementStore.ts`)
+
+- Acknowledgment updates `acknowledged_by` array
+- Read status updates `read_by` array
+- Changes trigger priority router realtime monitoring
+
+#### Badge Store Integration (`store/badgeStore.ts`)
+
+- Priority items included in badge count calculations
+- Badge updates reflect priority status changes
+
+### Route Handling
+
+**Valid Priority Routes** (where modal is hidden):
+
+- `/(tabs)/notifications` - For critical messages
+- `/(gca)/announcements` - For GCA announcements
+- `/(division)/[division]/announcements` - For division announcements
+- `/(admin)/*/AdminMessages` - For admin message handling
+- `/(tabs)` - Main tabs index page
+
+**Blocked Routes**: All other routes when priority items exist
+
+### Realtime Monitoring
+
+The system monitors changes to:
+
+- `messages` table (for new must-read messages)
+- `announcements` table (for new must-acknowledge announcements)
+- User read/acknowledgment status updates
+
+**Debouncing**: 300ms debounce on realtime updates to prevent rapid-fire checks
+
+### Error Handling
+
+- **Missing member data**: System waits for auth to be ready
+- **Invalid routes**: Fallback to main notifications tab
+- **Store sync issues**: System re-checks priority items periodically
+- **Network issues**: Graceful degradation, continues with cached data
+
+### Security Considerations
+
+- **No bypass options**: Modal cannot be dismissed until items are handled
+- **User validation**: All acknowledgments tied to authenticated user
+- **Data integrity**: Acknowledgment status stored in database arrays
+- **Route protection**: Navigation completely blocked for non-priority routes
+
+### Performance Optimizations
+
+- **Debounced updates**: Prevents excessive realtime checks
+- **Dependency optimization**: Minimal useEffect dependencies
+- **Selective monitoring**: Only watches array lengths, not full objects
+- **Efficient filtering**: Priority items filtered client-side after fetching
 
 ## Implementation Details
 
@@ -181,12 +222,22 @@ For an announcement to trigger high priority:
 
 ### Test Scenarios
 
-1. **Single Critical Message**: User has one must-read message
-2. **Multiple Priority Items**: User has both messages and announcements
-3. **Mixed Priorities**: User has critical, high, and normal priority items
-4. **Realtime Updates**: New critical items arrive while app is running
-5. **Navigation Attempts**: User tries to navigate while items are pending
-6. **Item Completion**: User reads/acknowledges items in sequence
+#### Basic Priority Flow
+
+1. **Create must-read message** → Verify modal appears with critical styling
+2. **User clicks action** → Verify routes to notifications
+3. **User acknowledges** → Verify modal disappears and navigation unblocked
+
+#### Multiple Items
+
+1. **Create multiple priority items** → Verify modal shows first item with correct count
+2. **Handle first item** → Verify modal reappears with next item
+3. **Handle all items** → Verify modal disappears permanently
+
+#### Realtime Updates
+
+1. **User on app** → Send new must-read message → Verify modal appears immediately
+2. **User handles item** → Verify priority queue updates in realtime
 
 ### Manual Testing Steps
 
@@ -198,35 +249,52 @@ For an announcement to trigger high priority:
 6. Read and acknowledge message
 7. Verify modal disappears and navigation is restored
 
-## Troubleshooting
-
-### Common Issues
+### Troubleshooting
 
 #### Modal Not Appearing
 
-- Check if user has unread/unacknowledged critical items
+- Check `shouldBlockNavigation()` function
 - Verify priority router hook is properly integrated
-- Check console logs for priority detection
+- Check member authentication status
+- Verify message/announcement has correct priority fields
 
-#### Navigation Not Blocked
+#### Navigation Still Blocked
 
-- Ensure NavigationGuard is wrapping the main Slot component
-- Verify shouldBlockNavigation() logic
-- Check if user is already on a priority route
-
-#### Items Not Clearing
-
-- Verify read/acknowledgment status is being updated in database
+- Check priority items are being properly removed from queue
+- Verify acknowledgment/read status being saved correctly
 - Check markItemAsHandled() function
-- Ensure realtime subscriptions are working
+- Look for realtime sync issues
 
-### Debug Logging
+#### Performance Issues
 
-The system includes comprehensive logging with prefixes:
+- Monitor console for excessive priority checks
+- Check useEffect dependency arrays
+- Verify debouncing is working correctly
+
+### Development Guidelines
+
+#### Console Logging
+
+All system events are logged with prefixes:
 
 - `[PriorityRouter]`: Priority detection and routing logic
-- `[NavigationGuard]`: Modal display and navigation blocking
+- `[NavigationGuard]`: Modal display and navigation logic
 - `[PriorityBlockingModal]`: Modal interaction events
+
+#### Adding New Priority Types
+
+1. Update `PriorityItem` interface in `usePriorityRouter.ts`
+2. Add detection logic in `checkForPriorityItems()`
+3. Update routing logic in `routeToNextPriorityItem()`
+4. Add appropriate styling in `PriorityBlockingModal.tsx`
+
+#### Testing New Changes
+
+- Test with must-read messages
+- Test with must-acknowledge announcements
+- Test mixed priority scenarios
+- Test realtime updates
+- Test navigation blocking/unblocking
 
 ## Future Enhancements
 
