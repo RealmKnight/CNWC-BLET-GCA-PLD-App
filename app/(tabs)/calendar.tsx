@@ -2167,17 +2167,6 @@ export default function CalendarScreen() {
           // The visual marking comes from getDateAvailability + Calendar component.
         })()}
 
-      {/* Request Button - Only for Vacation if a week is selected */}
-      {activeCalendar === "Vacation" && selectedWeek && (
-        <TouchableOpacity
-          style={styles.requestButton}
-          onPress={() => setRequestDialogVisible(true)}
-          disabled={!isVacationInitialized} // Disable if Vacation store isn't ready
-        >
-          <ThemedText style={styles.requestButtonText}>View Week Details</ThemedText>
-        </TouchableOpacity>
-      )}
-
       {/* Request Dialog for PLD/SDV - Render conditionally */}
       {requestDialogVisible &&
         activeCalendar === "PLD/SDV" &&

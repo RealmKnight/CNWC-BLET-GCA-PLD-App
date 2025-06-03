@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { StyleSheet, TouchableOpacity, ScrollView, View, Alert, RefreshControl } from "react-native";
+import { StyleSheet, TouchableOpacity, ScrollView, View, Alert, RefreshControl, Platform } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { Colors } from "@/constants/Colors";
@@ -12,7 +12,7 @@ import { AnnouncementModal } from "@/components/modals/AnnouncementModal";
 import { AnnouncementCard } from "@/components/ui/AnnouncementCard";
 import { AnnouncementAnalyticsDashboard } from "@/components/admin/analytics/AnnouncementAnalyticsDashboard";
 import { Input } from "@/components/ui/Input";
-import { Select, SelectOption } from "@/components/ui/Select";
+import { Picker } from "@react-native-picker/picker";
 import { Announcement } from "@/types/announcements";
 
 interface DivisionOption {
@@ -320,13 +320,19 @@ export function UnionAnnouncementManager() {
         {formData.target_type === "division" && (
           <ThemedView style={styles.formGroup}>
             <ThemedText style={styles.label}>Select Division *</ThemedText>
-            <Select
-              value={formData.target_division}
-              onValueChange={(value) => setFormData((prev) => ({ ...prev, target_division: value as string }))}
-              options={divisions.filter((d) => d.value !== "GCA")}
-              placeholder="Select a division"
-              style={styles.select}
-            />
+            <ThemedView style={styles.pickerContainer}>
+              <Picker
+                selectedValue={formData.target_division}
+                onValueChange={(value) => setFormData((prev) => ({ ...prev, target_division: value as string }))}
+                style={styles.select}
+              >
+                {divisions
+                  .filter((d) => d.value !== "GCA")
+                  .map((d) => (
+                    <Picker.Item key={d.value} label={d.label} value={d.value} />
+                  ))}
+              </Picker>
+            </ThemedView>
           </ThemedView>
         )}
 
@@ -435,13 +441,15 @@ export function UnionAnnouncementManager() {
             <ThemedText type="subtitle">Manage Announcements</ThemedText>
             <View style={styles.divisionSelector}>
               <ThemedText style={styles.selectorLabel}>Viewing: </ThemedText>
-              <Select
-                value={selectedDivision}
+              <Picker
+                selectedValue={selectedDivision}
                 onValueChange={(value) => setSelectedDivision(value as string)}
-                options={divisions}
-                placeholder="Select context"
                 style={styles.divisionSelect}
-              />
+              >
+                {divisions.map((d) => (
+                  <Picker.Item key={d.value} label={d.label} value={d.value} />
+                ))}
+              </Picker>
             </View>
           </ThemedView>
 
@@ -611,6 +619,28 @@ const styles = StyleSheet.create({
   },
   select: {
     height: 48,
+    width: "auto",
+    backgroundColor: Colors.dark.card,
+    color: Colors.dark.text,
+    borderColor: Colors.dark.border,
+    borderWidth: 1,
+    borderRadius: 8,
+    ...Platform.select({
+      ios: {
+        height: 48,
+        cursor: "pointer",
+      },
+      android: {
+        height: 48,
+        width: "100%",
+        cursor: "pointer",
+      },
+      web: {
+        height: 48,
+        paddingRight: 24,
+        cursor: "pointer",
+      },
+    }),
   },
   targetTypeContainer: {
     flexDirection: "row",
@@ -707,6 +737,27 @@ const styles = StyleSheet.create({
   divisionSelect: {
     minWidth: 150,
     height: 40,
+    backgroundColor: Colors.dark.card,
+    color: Colors.dark.text,
+    borderColor: Colors.dark.border,
+    borderWidth: 1,
+    borderRadius: 8,
+    ...Platform.select({
+      ios: {
+        height: 40,
+        cursor: "pointer",
+      },
+      android: {
+        height: 40,
+        width: "100%",
+        cursor: "pointer",
+      },
+      web: {
+        height: 40,
+        paddingRight: 24,
+        cursor: "pointer",
+      },
+    }),
   },
   listSubtitle: {
     fontSize: 14,
@@ -795,5 +846,10 @@ const styles = StyleSheet.create({
   errorText: {
     flex: 1,
     fontSize: 14,
+  },
+  pickerContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
 });

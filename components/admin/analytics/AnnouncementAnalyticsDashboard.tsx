@@ -388,7 +388,7 @@ export function AnnouncementAnalyticsDashboard({
   const renderHeader = () => (
     <ThemedView style={styles.header}>
       <View style={styles.headerTop}>
-        <ThemedText type="title">{getAnalyticsTitle()}</ThemedText>
+        <ThemedText type="subtitle">{getAnalyticsTitle()}</ThemedText>
         {showExportOptions && (
           <View style={styles.exportButtons}>
             <TouchableOpacity
@@ -810,6 +810,7 @@ const styles = StyleSheet.create({
   },
   headerTop: {
     flexDirection: "row",
+    flexWrap: "wrap",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 16,
