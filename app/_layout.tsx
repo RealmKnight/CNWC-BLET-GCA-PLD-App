@@ -25,6 +25,7 @@ import { StatusBar } from "expo-status-bar";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import * as SplashScreen from "expo-splash-screen";
 import { createRealtimeCallback } from "@/utils/realtimeErrorHandler";
+import { NavigationGuard } from "@/components/NavigationGuard";
 
 // Prevent the splash screen from auto-hiding before App component declaration/export
 SplashScreen.preventAutoHideAsync().catch((error) => {
@@ -321,7 +322,9 @@ function AuthAwareRouteHandler() {
   // console.log(`[Router] Auth status is '${authStatus}'. Rendering Slot.`);
   return (
     <Suspense fallback={<LoadingScreen />} key="client-only-suspense">
-      <Slot />
+      <NavigationGuard>
+        <Slot />
+      </NavigationGuard>
     </Suspense>
   );
 }
