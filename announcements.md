@@ -367,7 +367,7 @@ The member viewing experience is now complete and ready for Phase 5 (Admin UI de
 **✅ Component Architecture** - COMPLETED
 
 - ✅ **Form Components**: Integrated announcement creation forms in both division and union admin interfaces
-- ✅ **Analytics Placeholder**: Analytics tabs ready for future implementation with proper navigation
+- ✅ **Analytics Integration**: Full analytics dashboard implementation with AnnouncementAnalyticsDashboard component
 - ✅ **Store Integration**: Full integration with existing announcement store following division context patterns
 - ✅ **Error Handling**: Comprehensive error handling and loading states
 - ✅ **Responsive Design**: Works across web desktop, web mobile, and native mobile platforms
@@ -378,7 +378,7 @@ The member viewing experience is now complete and ready for Phase 5 (Admin UI de
 - ✅ Union admins can create, edit, and delete announcements for GCA and all divisions (via division selector)
 - ✅ Application admins have full control via appropriate interfaces
 - ✅ **Company Admin: NO ACCESS** to announcements (as specified)
-- ⏳ Admin analytics to show read/unread status for division members (placeholder ready)
+- ✅ Admin analytics to show read/unread status for division members with detailed member lists
 - ⏳ Scheduled announcements (future start dates) for union admin only (placeholder ready)
 - ✅ Integration with existing admin navigation and layouts
 
@@ -391,11 +391,105 @@ All admin UI components for managing announcements have been successfully implem
 - **Real-time Experience**: All announcement operations update in real-time with proper store integration
 - **Form Validation**: Comprehensive form validation and error handling for all admin operations
 - **Responsive Design**: Admin interfaces work across all platforms following existing design patterns
-- **Future-Ready**: Analytics and scheduled announcement placeholders ready for Phase 6 implementation
+- **Analytics Dashboard**: Complete analytics implementation with detailed member tracking and engagement metrics
+- **Future-Ready**: Scheduled announcement placeholders ready for future implementation
 
 The admin management experience is now complete and ready for full testing and deployment.
 
-- [ ] ### Phase 6: Testing and Deployment
+- [x] ### Phase 6: Enhanced Analytics System ✅ **COMPLETED**
+
+**✅ Analytics Types and Interfaces** - COMPLETED
+
+- ✅ **MemberReadStatus Interface**: Individual member read/acknowledgment tracking with PIN, name, division
+- ✅ **DivisionAnalytics Interface**: Division-level metrics with read/acknowledgment percentages
+- ✅ **DetailedAnnouncementAnalytics Interface**: Comprehensive announcement analytics with member lists
+- ✅ **AnnouncementsDashboardAnalytics Interface**: Dashboard-level metrics with low engagement alerts
+- ✅ **AnalyticsExportRequest Interface**: Export functionality structure for CSV/PDF
+
+**✅ Enhanced Store Implementation** - COMPLETED
+
+- ✅ **Analytics Cache**: Real-time caching system for detailed analytics with 5-minute cache expiry
+- ✅ **Dashboard Analytics**: Cached dashboard analytics with 10-minute cache expiry
+- ✅ **getDetailedAnnouncementAnalytics**: Individual announcement analytics with member-level details
+- ✅ **getDashboardAnalytics**: Overview analytics with division breakdown and low engagement alerts
+- ✅ **getLowEngagementAnnouncements**: Configurable thresholds for identifying underperforming announcements
+- ✅ **exportAnalytics**: Placeholder implementation ready for CSV/PDF export integration
+
+**✅ Analytics Utility Functions** - COMPLETED
+
+- ✅ **utils/announcementAnalytics.ts**: Comprehensive utility functions for all analytics operations
+- ✅ **Member Status Tracking**: Detailed tracking of who has/hasn't read each announcement
+- ✅ **Division Breakdown**: Automatic calculation of division-specific engagement metrics
+- ✅ **Low Engagement Detection**: Configurable alerts for announcements with poor engagement
+- ✅ **Real-time Data**: Live updates as members read and acknowledge announcements
+
+**✅ Analytics Dashboard Component** - COMPLETED
+
+- ✅ **AnnouncementAnalyticsDashboard**: Full-featured analytics dashboard component
+- ✅ **Overview Metrics**: Total announcements, read rates, acknowledgment rates, recent activity
+- ✅ **Division Breakdown**: Division-specific engagement metrics for union admins
+- ✅ **Low Engagement Alerts**: Visual alerts for announcements needing attention
+- ✅ **Date Range Filtering**: 7 days, 30 days, 90 days, and all-time filters
+- ✅ **Export Integration**: CSV and PDF export buttons (ready for implementation)
+- ✅ **Permission Control**: Role-based access with proper division context enforcement
+- ✅ **Responsive Design**: Works across all platforms with mobile-optimized layouts
+
+**✅ Analytics Context Separation** - COMPLETED
+
+- ✅ **Division Admin**: Only sees analytics for announcements targeted to their specific division
+- ✅ **Union Admin GCA View**: Only sees analytics for GCA announcements
+- ✅ **Union Admin Division View**: Sees analytics for selected division's announcements
+- ✅ **Union Admin Total View**: Sees combined analytics with division breakdown
+- ✅ **Proper Filtering**: Database queries filter by `target_type` and `target_division_ids`
+- ✅ **Analytics Caching Fix**: Context-based caching ensures division selector shows correct analytics
+- ✅ **Fresh Data Loading**: Force refresh when switching between analytics contexts ensures accurate data
+- ✅ **Division Breakdown Fix**: Fixed division summaries calculation in total view to show correct announcement counts and member engagement metrics
+- ✅ **Member Query Fix**: Fixed member queries that were failing with HTTP 400 errors due to using non-existent `is_active` field - replaced with correct `deleted` field filtering and fixed `pin` vs `pin_number` field name inconsistencies
+- ✅ **Individual Announcement Analytics**: Added detailed analytics display for each announcement in the dashboard showing read counts, acknowledgment counts, status badges, and detailed analytics modal for both division and union admins
+
+**✅ Admin Integration** - COMPLETED
+
+- ✅ **Division Admin Analytics**: Integrated analytics dashboard into DivisionAnnouncementsAdmin
+- ✅ **Union Admin Analytics**: Integrated analytics dashboard into UnionAnnouncementManager
+- ✅ **Contextual Analytics**: Division-specific analytics for division admins, cross-division for union admins
+- ✅ **Navigation Integration**: Seamless navigation between analytics and announcement management
+- ✅ **Real-time Updates**: Live analytics updates with refresh controls
+
+**Analytics Features Implemented:** ✅ **FULLY COMPLETE**
+
+1. ✅ **Data Display & Metrics**: read_count/eligible_member_count, read_percentage, individual member read status lists, acknowledgment analytics, division breakdown
+2. ✅ **UI/UX Layout**: Dashboard as default with individual announcement analytics available, division admin one view, union admin three separate views (GCA/Division/Total)
+3. ✅ **Permission & Access Control**: Division admins see member names for their division only, union admins see cross-division analytics, export functionality ready
+4. ✅ **Real-time Updates**: Live analytics updates, live read counts
+5. ✅ **Additional Features**: Date filtering, notification alerts for low read rates (admin controlled)
+6. ✅ **Integration Points**: Separate analytics system, navigation between analytics and announcements, no automated actions (ready for future)
+
+**✅ Analytics Context Isolation** - COMPLETED
+
+- ✅ **Division Admin**: Only sees analytics for announcements targeted to their specific division
+- ✅ **Union Admin GCA View**: Only sees analytics for GCA announcements
+- ✅ **Union Admin Division View**: Sees analytics for selected division's announcements
+- ✅ **Union Admin Total View**: Sees combined analytics with division breakdown
+- ✅ **Proper Filtering**: Database queries filter by `target_type` and `target_division_ids`
+- ✅ **Analytics Caching Fix**: Context-based caching ensures division selector shows correct analytics
+- ✅ **Fresh Data Loading**: Force refresh when switching between analytics contexts ensures accurate data
+
+**Phase 6 Summary:**
+The enhanced analytics system has been fully implemented with comprehensive tracking and reporting capabilities. The system provides complete separation of analytics contexts:
+
+- **Division Admin Analytics**: Isolated to their division announcements only (no GCA data mixing)
+- **Union Admin Analytics**: Three distinct views (GCA-only, Division-specific, Total combined)
+- **Real-time Analytics**: Live updates as members interact with announcements
+- **Division Context Enforcement**: Proper division isolation and cross-division analytics for union admins
+- **Performance Monitoring**: Low engagement alerts and configurable thresholds
+- **Export Ready**: Infrastructure in place for CSV/PDF exports
+- **Role-based Access**: Granular permissions ensuring appropriate data access
+- **Responsive Design**: Analytics work across all platforms with optimal user experience
+- **Cache Optimization**: Intelligent caching reduces database load while maintaining real-time accuracy
+
+The analytics system now provides accurate, context-separated insights into announcement engagement across all organizational levels with complete data isolation between division and union contexts.
+
+- [ ] ### Phase 7: Testing and Deployment
 
 **Step 1: Create test cases**
 

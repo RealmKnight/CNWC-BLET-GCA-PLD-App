@@ -1,9 +1,14 @@
 import { create } from "zustand";
 import { supabase } from "@/utils/supabase";
 import type {
+    AnalyticsExportRequest,
     Announcement,
     AnnouncementAnalytics,
     AnnouncementReadStatus,
+    AnnouncementsDashboardAnalytics,
+    DetailedAnnouncementAnalytics,
+    DivisionAnalytics,
+    MemberReadStatus,
 } from "@/types/announcements";
 import type {
     RealtimeChannel,
@@ -80,6 +85,11 @@ interface AnnouncementStore {
     loadingOperation: string | null; // Track what operation is currently loading
     userDivisionId: number | null; // Store user's division ID for badge calculations
 
+    // Enhanced analytics state
+    analyticsCache: Record<string, DetailedAnnouncementAnalytics>;
+    dashboardAnalyticsCache: Record<string, AnnouncementsDashboardAnalytics>; // Changed from single to context-based cache
+    analyticsLastUpdated: Record<string, string>; // Track when analytics were last fetched
+
     // Realtime subscriptions (following pattern from divisionMeetingStore)
     realtimeSubscriptions: {
         announcements: RealtimeChannel | null;
@@ -131,9 +141,45 @@ interface AnnouncementStore {
         updates: Partial<Announcement>,
     ) => Promise<void>;
     deleteAnnouncement: (id: string) => Promise<void>;
+
+    // Enhanced Analytics Methods
     getAnnouncementAnalytics: (
         announcementId: string,
     ) => Promise<AnnouncementAnalytics | null>;
+    getDetailedAnnouncementAnalytics: (
+        announcementId: string,
+        forceRefresh?: boolean,
+    ) => Promise<DetailedAnnouncementAnalytics | null>;
+    getDashboardAnalytics: (
+        divisionContext?: string,
+        dateRange?: { start_date: string; end_date: string },
+        forceRefresh?: boolean,
+    ) => Promise<AnnouncementsDashboardAnalytics | null>;
+    exportAnalytics: (
+        request: AnalyticsExportRequest,
+    ) => Promise<{ url: string; filename: string } | null>;
+    getLowEngagementAnnouncements: (
+        thresholdPercentage?: number,
+        daysThreshold?: number,
+        divisionContext?: string,
+    ) => Promise<
+        Array<{
+            announcement_id: string;
+            title: string;
+            read_percentage: number;
+            days_since_created: number;
+        }>
+    >;
+
+    // Data integrity validation (following pattern from divisionMeetingStore)
+    validateAnnouncementDataIntegrity: (divisionName: string) => Promise<{
+        isValid: boolean;
+        issues: string[];
+    }>;
+    // Loading state management (following pattern from divisionMeetingStore)
+    setLoadingState: (isLoading: boolean, operation?: string) => void;
+
+    // Store management methods
     cleanupAnnouncementStore: () => void;
     setIsInitialized: (initialized: boolean) => void;
     refreshAnnouncements: (
@@ -142,13 +188,6 @@ interface AnnouncementStore {
     ) => Promise<void>;
     subscribeToAnnouncements: (divisionName?: string) => () => void; // Following pattern from divisionMeetingStore
     unsubscribeFromAnnouncements: () => void; // Following pattern from divisionMeetingStore
-    // Data integrity validation (following pattern from divisionMeetingStore)
-    validateAnnouncementDataIntegrity: (divisionName: string) => Promise<{
-        isValid: boolean;
-        issues: string[];
-    }>;
-    // Loading state management (following pattern from divisionMeetingStore)
-    setLoadingState: (isLoading: boolean, operation?: string) => void;
 }
 
 export const useAnnouncementStore = create<AnnouncementStore>((set, get) => ({
@@ -168,6 +207,12 @@ export const useAnnouncementStore = create<AnnouncementStore>((set, get) => ({
     subscriptionStatus: "none",
     loadingOperation: null,
     userDivisionId: null,
+
+    // Enhanced analytics state
+    analyticsCache: {},
+    dashboardAnalyticsCache: {},
+    analyticsLastUpdated: {},
+
     realtimeSubscriptions: {
         announcements: null,
         readStatus: null,
@@ -664,6 +709,154 @@ export const useAnnouncementStore = create<AnnouncementStore>((set, get) => ({
         }
     },
 
+    // Enhanced Analytics Methods
+    getDetailedAnnouncementAnalytics: async (
+        announcementId: string,
+        forceRefresh?: boolean,
+    ) => {
+        try {
+            const state = get();
+            const cacheKey = announcementId;
+
+            // Check cache if not forcing refresh
+            if (!forceRefresh && state.analyticsCache[cacheKey]) {
+                const cached = state.analyticsCache[cacheKey];
+                const lastUpdated = new Date(cached.last_updated);
+                const now = new Date();
+                const diffMinutes = (now.getTime() - lastUpdated.getTime()) /
+                    (1000 * 60);
+
+                // Return cached data if less than 5 minutes old
+                if (diffMinutes < 5) {
+                    return cached;
+                }
+            }
+
+            // Import and call the analytics utility function
+            const { getDetailedAnnouncementAnalytics } = await import(
+                "@/utils/announcementAnalytics"
+            );
+            const analytics = await getDetailedAnnouncementAnalytics(
+                announcementId,
+            );
+
+            if (analytics) {
+                // Cache the result
+                set((state) => ({
+                    analyticsCache: {
+                        ...state.analyticsCache,
+                        [cacheKey]: analytics,
+                    },
+                    analyticsLastUpdated: {
+                        ...state.analyticsLastUpdated,
+                        [cacheKey]: analytics.last_updated,
+                    },
+                }));
+            }
+
+            return analytics;
+        } catch (error) {
+            console.error(
+                "[AnnouncementStore] Error fetching detailed analytics:",
+                error,
+            );
+            return null;
+        }
+    },
+
+    getDashboardAnalytics: async (
+        divisionContext?: string,
+        dateRange?: { start_date: string; end_date: string },
+        forceRefresh?: boolean,
+    ) => {
+        try {
+            const state = get();
+            const cacheKey = divisionContext || "default"; // Use a fallback key for undefined context
+
+            // Check cache if not forcing refresh
+            if (!forceRefresh && state.dashboardAnalyticsCache[cacheKey]) {
+                const lastUpdated = new Date(
+                    state.dashboardAnalyticsCache[cacheKey].last_updated,
+                );
+                const now = new Date();
+                const diffMinutes = (now.getTime() - lastUpdated.getTime()) /
+                    (1000 * 60);
+
+                // Return cached data if less than 10 minutes old
+                if (diffMinutes < 10) {
+                    return state.dashboardAnalyticsCache[cacheKey];
+                }
+            }
+
+            // Import and call the dashboard analytics utility function
+            const { getDashboardAnalytics } = await import(
+                "@/utils/announcementAnalytics"
+            );
+            const analytics = await getDashboardAnalytics(
+                divisionContext,
+                dateRange,
+            );
+
+            if (analytics) {
+                // Cache the dashboard analytics with the proper key
+                set((state) => ({
+                    dashboardAnalyticsCache: {
+                        ...state.dashboardAnalyticsCache,
+                        [cacheKey]: analytics,
+                    },
+                }));
+            }
+
+            return analytics;
+        } catch (error) {
+            console.error(
+                "[AnnouncementStore] Error fetching dashboard analytics:",
+                error,
+            );
+            return null;
+        }
+    },
+
+    exportAnalytics: async (request: AnalyticsExportRequest) => {
+        try {
+            // Import and call the export utility function
+            const { exportAnalytics } = await import(
+                "@/utils/announcementAnalytics"
+            );
+            return await exportAnalytics(request);
+        } catch (error) {
+            console.error(
+                "[AnnouncementStore] Error exporting analytics:",
+                error,
+            );
+            return null;
+        }
+    },
+
+    getLowEngagementAnnouncements: async (
+        thresholdPercentage?: number,
+        daysThreshold?: number,
+        divisionContext?: string,
+    ) => {
+        try {
+            // Import and call the low engagement utility function
+            const { getLowEngagementAnnouncements } = await import(
+                "@/utils/announcementAnalytics"
+            );
+            return await getLowEngagementAnnouncements(
+                thresholdPercentage,
+                daysThreshold,
+                divisionContext,
+            );
+        } catch (error) {
+            console.error(
+                "[AnnouncementStore] Error fetching low engagement announcements:",
+                error,
+            );
+            return [];
+        }
+    },
+
     // Subscription handling with division context (following pattern from divisionMeetingStore)
     subscribeToAnnouncements: (divisionName?: string) => {
         const { unsubscribeFromAnnouncements } = get();
@@ -908,6 +1101,15 @@ export const useAnnouncementStore = create<AnnouncementStore>((set, get) => ({
             subscriptionStatus: "none",
             loadingOperation: null,
             userDivisionId: null,
+            // Clear analytics caches
+            analyticsCache: {},
+            dashboardAnalyticsCache: {},
+            analyticsLastUpdated: {},
+            // Clear realtime subscriptions
+            realtimeSubscriptions: {
+                announcements: null,
+                readStatus: null,
+            },
         });
     },
 

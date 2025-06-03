@@ -18,6 +18,7 @@ import { useAnnouncementStore } from "@/store/announcementStore";
 import { useUserStore } from "@/store/userStore";
 import { AnnouncementModal } from "@/components/modals/AnnouncementModal";
 import { AnnouncementCard } from "@/components/ui/AnnouncementCard";
+import { AnnouncementAnalyticsDashboard } from "@/components/admin/analytics/AnnouncementAnalyticsDashboard";
 import { Input } from "@/components/ui/Input";
 import { Select, SelectOption } from "@/components/ui/Select";
 import { Announcement } from "@/types/announcements";
@@ -440,8 +441,10 @@ export function DivisionAnnouncementsAdmin({ division }: DivisionAnnouncementsAd
   const renderAnalytics = () => (
     <ScrollView style={styles.scrollContainer}>
       <ThemedView style={styles.analyticsContainer}>
-        <ThemedText type="subtitle">Announcement Analytics</ThemedText>
-        <ThemedText style={styles.placeholderText}>Analytics component will be implemented next</ThemedText>
+        <AnnouncementAnalyticsDashboard
+          divisionContext={division}
+          showExportOptions={userRole === "application_admin" || userRole === "union_admin"}
+        />
       </ThemedView>
     </ScrollView>
   );
@@ -686,11 +689,5 @@ const styles = StyleSheet.create({
   errorText: {
     flex: 1,
     fontSize: 14,
-  },
-  placeholderText: {
-    fontSize: 16,
-    textAlign: "center",
-    opacity: 0.7,
-    marginTop: 24,
   },
 });

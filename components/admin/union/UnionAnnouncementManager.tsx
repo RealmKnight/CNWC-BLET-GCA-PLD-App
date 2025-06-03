@@ -10,6 +10,7 @@ import { useAnnouncementStore } from "@/store/announcementStore";
 import { useUserStore } from "@/store/userStore";
 import { AnnouncementModal } from "@/components/modals/AnnouncementModal";
 import { AnnouncementCard } from "@/components/ui/AnnouncementCard";
+import { AnnouncementAnalyticsDashboard } from "@/components/admin/analytics/AnnouncementAnalyticsDashboard";
 import { Input } from "@/components/ui/Input";
 import { Select, SelectOption } from "@/components/ui/Select";
 import { Announcement } from "@/types/announcements";
@@ -502,15 +503,8 @@ export function UnionAnnouncementManager() {
     </ThemedView>
   );
 
-  // Analytics Tab (placeholder)
-  const AnalyticsTab = () => (
-    <ThemedView style={styles.placeholderContainer}>
-      <ThemedText style={styles.placeholderText}>Announcement Analytics Coming Soon</ThemedText>
-      <ThemedText style={styles.placeholderSubtext}>
-        This feature will show detailed analytics for all announcements
-      </ThemedText>
-    </ThemedView>
-  );
+  // Analytics Tab
+  const AnalyticsTab = () => <AnnouncementAnalyticsDashboard showExportOptions={true} />;
 
   const renderContent = () => {
     switch (activeTab) {
