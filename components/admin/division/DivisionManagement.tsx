@@ -105,7 +105,7 @@ export function DivisionManagement({ division }: DivisionManagementProps) {
 
   // Content Rendering based on selected view with proper key management
   const renderContent = useCallback(() => {
-    const componentProps = { division, key: contentKey };
+    const componentProps = { division };
 
     switch (currentView) {
       case "announcements":
@@ -117,7 +117,7 @@ export function DivisionManagement({ division }: DivisionManagementProps) {
             nestedScrollEnabled={true}
             showsVerticalScrollIndicator={false}
           >
-            <DivisionAnnouncementsAdmin {...componentProps} />
+            <DivisionAnnouncementsAdmin key={contentKey} {...componentProps} />
           </ScrollView>
         );
       case "documents":
@@ -129,7 +129,7 @@ export function DivisionManagement({ division }: DivisionManagementProps) {
             nestedScrollEnabled={true}
             showsVerticalScrollIndicator={false}
           >
-            <DivisionDocumentsAdmin {...componentProps} />
+            <DivisionDocumentsAdmin key={contentKey} {...componentProps} />
           </ScrollView>
         );
       case "officers":
@@ -141,7 +141,7 @@ export function DivisionManagement({ division }: DivisionManagementProps) {
             nestedScrollEnabled={true}
             showsVerticalScrollIndicator={false}
           >
-            <DivisionOfficers {...componentProps} />
+            <DivisionOfficers key={contentKey} {...componentProps} />
           </ScrollView>
         );
       case "meetings":
@@ -153,7 +153,7 @@ export function DivisionManagement({ division }: DivisionManagementProps) {
             nestedScrollEnabled={true}
             showsVerticalScrollIndicator={false}
           >
-            <DivisionMeetings {...componentProps} isAdmin={true} />
+            <DivisionMeetings key={contentKey} {...componentProps} isAdmin={true} />
           </ScrollView>
         );
       case "emails":
@@ -165,7 +165,7 @@ export function DivisionManagement({ division }: DivisionManagementProps) {
             nestedScrollEnabled={true}
             showsVerticalScrollIndicator={false}
           >
-            <DivisionEmailManagement {...componentProps} />
+            <DivisionEmailManagement key={contentKey} {...componentProps} />
           </ScrollView>
         );
       default:

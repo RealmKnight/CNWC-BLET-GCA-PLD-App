@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { StyleSheet, Platform } from "react-native";
 import { Picker } from "@react-native-picker/picker";
 import { ThemedView } from "@/components/ThemedView";
@@ -25,9 +25,22 @@ export function DivisionSelector({
 }: DivisionSelectorProps) {
   const [divisions, setDivisions] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [hasInitialized, setHasInitialized] = useState(false);
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
 
+  // Use ref to track if component is mounted to prevent state updates after unmount
+  const isMountedRef = useRef(true);
+
   useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    // Only fetch divisions once
+    if (hasInitialized) return;
+
     async function fetchDivisions() {
       try {
         console.log("[DivisionSelector] Fetching divisions...");
@@ -40,7 +53,9 @@ export function DivisionSelector({
 
         if (!data || data.length === 0) {
           console.warn("[DivisionSelector] No divisions found");
-          setDivisions([]);
+          if (isMountedRef.current) {
+            setDivisions([]);
+          }
           return;
         }
 
@@ -48,29 +63,26 @@ export function DivisionSelector({
         console.log("[DivisionSelector] Fetched divisions:", {
           count: divisionNames.length,
           names: divisionNames,
-          currentDivision,
         });
-        setDivisions(divisionNames);
+
+        if (isMountedRef.current) {
+          setDivisions(divisionNames);
+          setHasInitialized(true);
+        }
       } catch (error) {
         console.error("[DivisionSelector] Error in fetchDivisions:", error);
-        setDivisions([]); // Reset to empty array on error
+        if (isMountedRef.current) {
+          setDivisions([]); // Reset to empty array on error
+        }
       } finally {
-        setIsLoading(false);
+        if (isMountedRef.current) {
+          setIsLoading(false);
+        }
       }
     }
 
     fetchDivisions();
-  }, []); // Remove currentDivision from dependency array
-
-  useEffect(() => {
-    console.log("[DivisionSelector] State update:", {
-      currentDivision,
-      availableDivisions: divisions,
-      isLoading,
-      isAdmin,
-      disabled,
-    });
-  }, [currentDivision, divisions, isLoading, isAdmin, disabled]);
+  }, [hasInitialized]); // Only depend on hasInitialized
 
   if (!isAdmin) {
     return (

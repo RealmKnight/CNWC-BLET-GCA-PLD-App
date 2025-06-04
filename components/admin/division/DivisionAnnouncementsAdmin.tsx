@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   StyleSheet,
   TouchableOpacity,
@@ -40,22 +40,42 @@ export function DivisionAnnouncementsAdmin({ division }: DivisionAnnouncementsAd
   const currentDivisionRef = useRef(division);
   const isInitializedRef = useRef(false);
 
-  // Store selectors
-  const announcements = useAnnouncementStore((state) => state.announcements[division] || []);
-  const isLoading = useAnnouncementStore((state) => state.isLoading);
-  const error = useAnnouncementStore((state) => state.error);
+  // Use a single stable store subscription to prevent getSnapshot caching issues
+  const storeState = useAnnouncementStore();
 
-  // Store actions
-  const setDivisionContext = useAnnouncementStore((state) => state.setDivisionContext);
-  const fetchDivisionAnnouncements = useAnnouncementStore((state) => state.fetchDivisionAnnouncements);
-  const createAnnouncement = useAnnouncementStore((state) => state.createAnnouncement);
-  const updateAnnouncement = useAnnouncementStore((state) => state.updateAnnouncement);
-  const deleteAnnouncement = useAnnouncementStore((state) => state.deleteAnnouncement);
-  const markAnnouncementAsRead = useAnnouncementStore((state) => state.markAnnouncementAsRead);
-  const acknowledgeAnnouncement = useAnnouncementStore((state) => state.acknowledgeAnnouncement);
-  const getDetailedAnnouncementAnalytics = useAnnouncementStore((state) => state.getDetailedAnnouncementAnalytics);
+  // Extract values from store state to prevent accessing nested properties in render
+  const announcements = useMemo(() => {
+    return storeState.announcements[division] || [];
+  }, [storeState.announcements, division]);
 
-  // User info
+  const isLoading = storeState.isLoading;
+  const error = storeState.error;
+
+  // Get store actions once and memoize them
+  const storeActions = useMemo(
+    () => ({
+      fetchDivisionAnnouncements: storeState.fetchDivisionAnnouncements,
+      setDivisionContext: storeState.setDivisionContext,
+      createAnnouncement: storeState.createAnnouncement,
+      updateAnnouncement: storeState.updateAnnouncement,
+      deleteAnnouncement: storeState.deleteAnnouncement,
+      markAnnouncementAsRead: storeState.markAnnouncementAsRead,
+      acknowledgeAnnouncement: storeState.acknowledgeAnnouncement,
+      getDetailedAnnouncementAnalytics: storeState.getDetailedAnnouncementAnalytics,
+    }),
+    [
+      storeState.fetchDivisionAnnouncements,
+      storeState.setDivisionContext,
+      storeState.createAnnouncement,
+      storeState.updateAnnouncement,
+      storeState.deleteAnnouncement,
+      storeState.markAnnouncementAsRead,
+      storeState.acknowledgeAnnouncement,
+      storeState.getDetailedAnnouncementAnalytics,
+    ]
+  );
+
+  // User info with stable selectors
   const member = useUserStore((state) => state.member);
   const userRole = useUserStore((state) => state.userRole);
   const userDivision = useUserStore((state) => state.division);
@@ -84,8 +104,8 @@ export function DivisionAnnouncementsAdmin({ division }: DivisionAnnouncementsAd
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  // Memoize permission check function to prevent infinite loops
-  const canManageAnnouncements = useCallback(() => {
+  // Stable permission check function - moved outside useEffect
+  const canManageAnnouncements = useMemo(() => {
     if (userRole === "application_admin" || userRole === "union_admin") {
       return true; // Can manage any division
     }
@@ -118,7 +138,7 @@ export function DivisionAnnouncementsAdmin({ division }: DivisionAnnouncementsAd
 
       // Add a small delay to prevent rapid fire division changes
       const divisionChangeTimer = setTimeout(() => {
-        if (isMountedRef.current && currentDivisionRef.current === division) {
+        if (isMountedRef.current && currentDivisionRef.current === division && canManageAnnouncements) {
           // Only proceed if we're still mounted and division hasn't changed again
           initializeDivisionData();
         }
@@ -129,17 +149,13 @@ export function DivisionAnnouncementsAdmin({ division }: DivisionAnnouncementsAd
 
     // Initialize division data if not already done
     const initializeDivisionData = async () => {
-      if (!canManageAnnouncements()) {
-        return;
-      }
-
-      if (!isInitializedRef.current && isMountedRef.current) {
+      if (!isInitializedRef.current && isMountedRef.current && canManageAnnouncements) {
         isInitializedRef.current = true;
 
         try {
           console.log(`[DivisionAnnouncementsAdmin] Initializing data for division: ${division}`);
-          setDivisionContext(division);
-          await fetchDivisionAnnouncements(division);
+          storeActions.setDivisionContext(division);
+          await storeActions.fetchDivisionAnnouncements(division);
         } catch (error) {
           console.error(`[DivisionAnnouncementsAdmin] Error initializing division ${division}:`, error);
           if (isMountedRef.current) {
@@ -149,11 +165,11 @@ export function DivisionAnnouncementsAdmin({ division }: DivisionAnnouncementsAd
       }
     };
 
-    // Call initialization if division context hasn't changed
-    if (currentDivisionRef.current === division) {
+    // Call initialization if division context hasn't changed and we can manage announcements
+    if (currentDivisionRef.current === division && canManageAnnouncements) {
       initializeDivisionData();
     }
-  }, [division, canManageAnnouncements, setDivisionContext, fetchDivisionAnnouncements]);
+  }, [division, canManageAnnouncements, storeActions]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -164,11 +180,11 @@ export function DivisionAnnouncementsAdmin({ division }: DivisionAnnouncementsAd
 
   // Handle refresh
   const onRefresh = useCallback(async () => {
-    if (!isMountedRef.current || !canManageAnnouncements()) return;
+    if (!isMountedRef.current || !canManageAnnouncements) return;
 
     setRefreshing(true);
     try {
-      await fetchDivisionAnnouncements(division);
+      await storeActions.fetchDivisionAnnouncements(division);
     } catch (error) {
       console.error("Error refreshing announcements:", error);
     } finally {
@@ -176,11 +192,11 @@ export function DivisionAnnouncementsAdmin({ division }: DivisionAnnouncementsAd
         setRefreshing(false);
       }
     }
-  }, [division, fetchDivisionAnnouncements, canManageAnnouncements]);
+  }, [division, storeActions, canManageAnnouncements]);
 
   // Handle form submission
   const handleSubmit = async () => {
-    if (!canManageAnnouncements()) {
+    if (!canManageAnnouncements) {
       setFormError("You don't have permission to manage announcements for this division");
       return;
     }
@@ -199,7 +215,7 @@ export function DivisionAnnouncementsAdmin({ division }: DivisionAnnouncementsAd
         supabase.from("divisions").select("id").eq("name", division).single()
       );
 
-      await createAnnouncement({
+      await storeActions.createAnnouncement({
         title: formData.title.trim(),
         message: formData.message.trim(),
         links: formData.links.filter((link) => link.url.trim() && link.label.trim()),
@@ -243,7 +259,7 @@ export function DivisionAnnouncementsAdmin({ division }: DivisionAnnouncementsAd
           style: "destructive",
           onPress: async () => {
             try {
-              await deleteAnnouncement(announcement.id);
+              await storeActions.deleteAnnouncement(announcement.id);
             } catch (error) {
               Alert.alert("Error", "Failed to delete announcement");
             }
@@ -261,12 +277,12 @@ export function DivisionAnnouncementsAdmin({ division }: DivisionAnnouncementsAd
 
   // Handle mark as read
   const handleMarkAsRead = async (announcementId: string) => {
-    await markAnnouncementAsRead(announcementId);
+    await storeActions.markAnnouncementAsRead(announcementId);
   };
 
   // Handle acknowledge
   const handleAcknowledge = async (announcement: Announcement) => {
-    await acknowledgeAnnouncement(announcement.id);
+    await storeActions.acknowledgeAnnouncement(announcement.id);
   };
 
   // Add link to form
@@ -376,7 +392,7 @@ export function DivisionAnnouncementsAdmin({ division }: DivisionAnnouncementsAd
                   onPress={async () => {
                     try {
                       setSelectedAnnouncementForAnalytics(announcement.id);
-                      const analytics = await getDetailedAnnouncementAnalytics(announcement.id);
+                      const analytics = await storeActions.getDetailedAnnouncementAnalytics(announcement.id);
                       setCurrentAnalytics(analytics);
                       setAnalyticsModalVisible(true);
                     } catch (error) {
@@ -525,7 +541,7 @@ export function DivisionAnnouncementsAdmin({ division }: DivisionAnnouncementsAd
   );
 
   // Show permission error if user can't manage announcements
-  if (!canManageAnnouncements()) {
+  if (!canManageAnnouncements) {
     return (
       <ThemedView style={styles.container}>
         <ThemedView style={styles.errorContainer}>
