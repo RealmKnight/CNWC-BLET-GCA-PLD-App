@@ -319,6 +319,8 @@ const styles = StyleSheet.create({
     maxHeight: "80%",
     borderRadius: 16,
     overflow: "hidden",
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
   },
   header: {
     flexDirection: "row",

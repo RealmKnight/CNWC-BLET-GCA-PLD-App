@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { StyleSheet, Platform, Pressable, useWindowDimensions, View, TouchableOpacity, ScrollView } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -6,7 +6,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { DivisionOfficers } from "./DivisionOfficers";
-import Animated, { FadeIn, FadeOut, SlideInRight, SlideOutLeft } from "react-native-reanimated";
+import Animated, { FadeIn, FadeOut, SlideInRight, SlideOutLeft, runOnJS } from "react-native-reanimated";
 import { DivisionMeetings } from "./DivisionMeetings";
 import { useDivisionManagementStore, DivisionView } from "@/store/divisionManagementStore";
 import { DivisionDocumentsAdmin } from "./DivisionDocumentsAdmin";
@@ -29,6 +29,38 @@ export function DivisionManagement({ division }: DivisionManagementProps) {
   const { width } = useWindowDimensions();
   const isMobile = Platform.OS !== "web" || width < 768;
 
+  // Add ref to track component unmount state
+  const isMountedRef = useRef(true);
+  const previousDivisionRef = useRef(division);
+  const [isAnimating, setIsAnimating] = useState(false);
+
+  // Track when division changes to handle cleanup
+  useEffect(() => {
+    if (previousDivisionRef.current !== division) {
+      previousDivisionRef.current = division;
+      setIsAnimating(true);
+
+      // Reset animation state after a short delay
+      const timer = setTimeout(() => {
+        if (isMountedRef.current) {
+          setIsAnimating(false);
+        }
+      }, 300);
+
+      return () => clearTimeout(timer);
+    }
+  }, [division]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  // Memoize the content key to ensure proper component unmounting/mounting
+  const contentKey = useMemo(() => `${division}-${currentView}`, [division, currentView]);
+
   // Action Button Rendering
   const renderActionButton = useCallback(
     (view: DivisionView, icon: string, label: string) => {
@@ -47,76 +79,106 @@ export function DivisionManagement({ division }: DivisionManagementProps) {
             isMobile && styles.mobileActionButton,
             { minWidth: buttonSize, height: buttonSize },
           ]}
-          onPress={() => setCurrentView(division, view)}
+          onPress={() => {
+            if (!isAnimating) {
+              setCurrentView(division, view);
+            }
+          }}
+          disabled={isAnimating}
         >
           <Ionicons name={icon as any} size={iconSize} color={iconColor} />
           {!isMobile && <ThemedText style={[styles.buttonText, isActive && styles.activeText]}>{label}</ThemedText>}
         </ButtonComponent>
       );
     },
-    [currentView, isMobile, tintColor, colorScheme, division, setCurrentView]
+    [currentView, isMobile, tintColor, colorScheme, division, setCurrentView, isAnimating]
   );
 
-  // Content Rendering based on selected view
+  // Content Rendering based on selected view with proper key management
   const renderContent = useCallback(() => {
+    const componentProps = { division, key: contentKey };
+
     switch (currentView) {
       case "announcements":
         return (
           <ScrollView
+            key={`${contentKey}-scroll`}
             style={[styles.contentScroll, Platform.OS === "android" && styles.androidContentScroll]}
             contentContainerStyle={styles.contentContainer}
             nestedScrollEnabled={true}
+            showsVerticalScrollIndicator={false}
           >
-            <DivisionAnnouncementsAdmin division={division} />
+            <DivisionAnnouncementsAdmin {...componentProps} />
           </ScrollView>
         );
       case "documents":
         return (
           <ScrollView
+            key={`${contentKey}-scroll`}
             style={[styles.contentScroll, Platform.OS === "android" && styles.androidContentScroll]}
             contentContainerStyle={styles.contentContainer}
             nestedScrollEnabled={true}
+            showsVerticalScrollIndicator={false}
           >
-            <DivisionDocumentsAdmin division={division} />
+            <DivisionDocumentsAdmin {...componentProps} />
           </ScrollView>
         );
       case "officers":
         return (
           <ScrollView
+            key={`${contentKey}-scroll`}
             style={[styles.contentScroll, Platform.OS === "android" && styles.androidContentScroll]}
             contentContainerStyle={styles.contentContainer}
             nestedScrollEnabled={true}
+            showsVerticalScrollIndicator={false}
           >
-            <DivisionOfficers division={division} />
+            <DivisionOfficers {...componentProps} />
           </ScrollView>
         );
       case "meetings":
         return (
           <ScrollView
+            key={`${contentKey}-scroll`}
             style={[styles.contentScroll, Platform.OS === "android" && styles.androidContentScroll]}
             contentContainerStyle={styles.contentContainer}
             nestedScrollEnabled={true}
+            showsVerticalScrollIndicator={false}
           >
-            <DivisionMeetings division={division} isAdmin={true} />
+            <DivisionMeetings {...componentProps} isAdmin={true} />
           </ScrollView>
         );
       case "emails":
         return (
           <ScrollView
+            key={`${contentKey}-scroll`}
             style={[styles.contentScroll, Platform.OS === "android" && styles.androidContentScroll]}
             contentContainerStyle={styles.contentContainer}
             nestedScrollEnabled={true}
+            showsVerticalScrollIndicator={false}
           >
-            <DivisionEmailManagement division={division} />
+            <DivisionEmailManagement {...componentProps} />
           </ScrollView>
         );
       default:
         return null;
     }
-  }, [currentView, division]);
+  }, [currentView, division, contentKey]);
+
+  // Animation callbacks for better lifecycle management
+  const handleAnimationStart = useCallback(() => {
+    if (isMountedRef.current) {
+      setIsAnimating(true);
+    }
+  }, []);
+
+  const handleAnimationEnd = useCallback(() => {
+    if (isMountedRef.current) {
+      setIsAnimating(false);
+    }
+  }, []);
 
   return (
-    <ThemedView style={styles.container}>
+    <ThemedView style={styles.container} key={division}>
       <ThemedView style={styles.header}>
         <View style={styles.titleRow}>
           <View style={styles.actionButtons}>
@@ -137,8 +199,37 @@ export function DivisionManagement({ division }: DivisionManagementProps) {
 
       <View style={styles.contentArea}>
         <AnimatedThemedView
-          entering={isMobile ? SlideInRight : FadeIn}
-          exiting={isMobile ? SlideOutLeft : FadeOut}
+          key={contentKey}
+          entering={
+            isMobile
+              ? SlideInRight.withCallback((finished) => {
+                  "worklet";
+                  if (finished) {
+                    runOnJS(handleAnimationEnd)();
+                  }
+                })
+              : FadeIn.withCallback((finished) => {
+                  "worklet";
+                  if (finished) {
+                    runOnJS(handleAnimationEnd)();
+                  }
+                })
+          }
+          exiting={
+            isMobile
+              ? SlideOutLeft.withCallback((finished) => {
+                  "worklet";
+                  if (finished) {
+                    runOnJS(handleAnimationStart)();
+                  }
+                })
+              : FadeOut.withCallback((finished) => {
+                  "worklet";
+                  if (finished) {
+                    runOnJS(handleAnimationStart)();
+                  }
+                })
+          }
           style={styles.content}
         >
           {renderContent()}

@@ -240,21 +240,45 @@ export const useAnnouncementStore = create<AnnouncementStore>((set, get) => ({
 
     // Integration with existing badgeStore using different categories
     _updateBadgeStore: (unreadCounts) => {
-        // Import badgeStore dynamically to avoid circular dependencies
-        import("@/store/badgeStore")
-            .then(({ useBadgeStore }) => {
-                // Update badge store with announcement-specific categories
-                // This will be separate from message badges but use the same system
-                useBadgeStore.getState().updateAnnouncementBadges?.(
-                    unreadCounts,
-                );
-            })
-            .catch((error) => {
-                console.error(
-                    "[AnnouncementStore] Failed to update badge store:",
-                    error,
-                );
-            });
+        try {
+            // Import badgeStore dynamically to avoid circular dependencies
+            import("@/store/badgeStore")
+                .then(({ useBadgeStore }) => {
+                    const badgeStoreState = useBadgeStore.getState();
+
+                    // Only update if the function exists and counts have changed
+                    if (badgeStoreState.updateAnnouncementBadges) {
+                        const currentCounts =
+                            badgeStoreState.announcementUnreadCount;
+
+                        // Only update if counts have actually changed
+                        if (
+                            currentCounts.division !== unreadCounts.division ||
+                            currentCounts.gca !== unreadCounts.gca ||
+                            currentCounts.total !== unreadCounts.total
+                        ) {
+                            badgeStoreState.updateAnnouncementBadges(
+                                unreadCounts,
+                            );
+                            console.log(
+                                "[AnnouncementStore] Updated badge store:",
+                                unreadCounts,
+                            );
+                        }
+                    }
+                })
+                .catch((error) => {
+                    console.error(
+                        "[AnnouncementStore] Failed to update badge store:",
+                        error,
+                    );
+                });
+        } catch (error) {
+            console.error(
+                "[AnnouncementStore] Error in badge store integration:",
+                error,
+            );
+        }
     },
 
     // Calculate unread counts and update badge store
@@ -862,9 +886,17 @@ export const useAnnouncementStore = create<AnnouncementStore>((set, get) => ({
 
     // Subscription handling with division context (following pattern from divisionMeetingStore)
     subscribeToAnnouncements: (divisionName?: string) => {
-        const { unsubscribeFromAnnouncements } = get();
+        const { unsubscribeFromAnnouncements, subscriptionStatus } = get();
 
-        // Clean up existing subscriptions
+        // Don't set up new subscriptions if we're already subscribed
+        if (subscriptionStatus === "subscribed") {
+            console.log(
+                "[AnnouncementStore] Already subscribed, skipping setup",
+            );
+            return unsubscribeFromAnnouncements;
+        }
+
+        // Clean up existing subscriptions first
         unsubscribeFromAnnouncements();
 
         console.log(
@@ -873,17 +905,30 @@ export const useAnnouncementStore = create<AnnouncementStore>((set, get) => ({
             }`,
         );
 
+        // Set subscribing status to prevent race conditions
+        set({ subscriptionStatus: "subscribing" });
+
         // Get division ID for filtering if division is specified
         let divisionId: number | null = null;
         if (divisionName && divisionName !== "GCA") {
-            supabase
-                .from("divisions")
-                .select("id")
-                .eq("name", divisionName)
-                .single()
-                .then(({ data }) => {
+            // Fetch division ID asynchronously but don't block subscription setup
+            const fetchDivisionId = async () => {
+                try {
+                    const { data } = await supabase
+                        .from("divisions")
+                        .select("id")
+                        .eq("name", divisionName)
+                        .single();
                     divisionId = data?.id || null;
-                });
+                } catch (error) {
+                    console.error(
+                        "[AnnouncementStore] Error fetching division ID:",
+                        error,
+                    );
+                }
+            };
+
+            fetchDivisionId();
         }
 
         const channelSuffix = divisionName ? `-${divisionName}` : "";
@@ -1012,14 +1057,11 @@ export const useAnnouncementStore = create<AnnouncementStore>((set, get) => ({
     unsubscribeFromAnnouncements: () => {
         const { realtimeSubscriptions } = get();
 
-        if (realtimeSubscriptions.announcements) {
-            supabase.removeChannel(realtimeSubscriptions.announcements);
-        }
+        console.log(
+            "[AnnouncementStore] Unsubscribing from announcement channels",
+        );
 
-        if (realtimeSubscriptions.readStatus) {
-            supabase.removeChannel(realtimeSubscriptions.readStatus);
-        }
-
+        // Clear state first to prevent any new subscriptions
         set({
             realtimeSubscriptions: {
                 announcements: null,
@@ -1027,6 +1069,35 @@ export const useAnnouncementStore = create<AnnouncementStore>((set, get) => ({
             },
             subscriptionStatus: "none",
         });
+
+        // Clean up subscriptions with error handling
+        if (realtimeSubscriptions.announcements) {
+            try {
+                console.log(
+                    "[AnnouncementStore] Removing announcements channel",
+                );
+                supabase.removeChannel(realtimeSubscriptions.announcements);
+            } catch (error) {
+                console.error(
+                    "[AnnouncementStore] Error removing announcements channel:",
+                    error,
+                );
+            }
+        }
+
+        if (realtimeSubscriptions.readStatus) {
+            try {
+                console.log("[AnnouncementStore] Removing read status channel");
+                supabase.removeChannel(realtimeSubscriptions.readStatus);
+            } catch (error) {
+                console.error(
+                    "[AnnouncementStore] Error removing read status channel:",
+                    error,
+                );
+            }
+        }
+
+        console.log("[AnnouncementStore] Unsubscription complete");
     },
 
     // Initialize announcement store

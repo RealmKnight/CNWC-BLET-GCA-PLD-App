@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   StyleSheet,
   TouchableOpacity,
@@ -34,6 +34,11 @@ export function DivisionAnnouncementsAdmin({ division }: DivisionAnnouncementsAd
   const colorScheme = (useColorScheme() ?? "light") as ColorSchemeName;
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
+
+  // Add refs to track component state and prevent race conditions
+  const isMountedRef = useRef(true);
+  const currentDivisionRef = useRef(division);
+  const isInitializedRef = useRef(false);
 
   // Store selectors
   const announcements = useAnnouncementStore((state) => state.announcements[division] || []);
@@ -90,31 +95,65 @@ export function DivisionAnnouncementsAdmin({ division }: DivisionAnnouncementsAd
     return false;
   }, [userRole, userDivision, division]);
 
-  // Initialize division context and fetch data - Fixed to prevent infinite loops
+  // Handle division changes and cleanup
   useEffect(() => {
     if (!division) {
       return;
+    }
+
+    // If division has changed, reset state
+    if (currentDivisionRef.current !== division) {
+      currentDivisionRef.current = division;
+      setActiveTab("list");
+      setSelectedAnnouncement(null);
+      setIsAnnouncementModalVisible(false);
+      setAnalyticsModalVisible(false);
+      setCurrentAnalytics(null);
+      setFormError(null);
+      isInitializedRef.current = false;
     }
 
     if (!canManageAnnouncements()) {
       return;
     }
 
-    setDivisionContext(division);
-    fetchDivisionAnnouncements(division);
-  }, [division, userRole]); // Only depend on division and userRole, not userDivision
+    if (!isInitializedRef.current) {
+      isInitializedRef.current = true;
+
+      // Set division context and fetch data
+      const initializeDivision = async () => {
+        if (isMountedRef.current) {
+          setDivisionContext(division);
+          await fetchDivisionAnnouncements(division);
+        }
+      };
+
+      initializeDivision();
+    }
+  }, [division, canManageAnnouncements, setDivisionContext, fetchDivisionAnnouncements]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // Handle refresh
   const onRefresh = useCallback(async () => {
+    if (!isMountedRef.current || !canManageAnnouncements()) return;
+
     setRefreshing(true);
     try {
       await fetchDivisionAnnouncements(division);
     } catch (error) {
       console.error("Error refreshing announcements:", error);
     } finally {
-      setRefreshing(false);
+      if (isMountedRef.current) {
+        setRefreshing(false);
+      }
     }
-  }, [division, fetchDivisionAnnouncements]);
+  }, [division, fetchDivisionAnnouncements, canManageAnnouncements]);
 
   // Handle form submission
   const handleSubmit = async () => {
