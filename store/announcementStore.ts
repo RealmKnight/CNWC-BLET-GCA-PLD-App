@@ -1070,32 +1070,46 @@ export const useAnnouncementStore = create<AnnouncementStore>((set, get) => ({
             subscriptionStatus: "none",
         });
 
-        // Clean up subscriptions with error handling
-        if (realtimeSubscriptions.announcements) {
-            try {
-                console.log(
-                    "[AnnouncementStore] Removing announcements channel",
-                );
-                supabase.removeChannel(realtimeSubscriptions.announcements);
-            } catch (error) {
-                console.error(
-                    "[AnnouncementStore] Error removing announcements channel:",
-                    error,
-                );
-            }
-        }
+        // Clean up subscriptions with error handling and timeout protection
+        const cleanupChannel = (
+            channel: RealtimeChannel | null,
+            channelName: string,
+        ) => {
+            if (channel) {
+                try {
+                    console.log(
+                        `[AnnouncementStore] Removing ${channelName} channel`,
+                    );
 
-        if (realtimeSubscriptions.readStatus) {
-            try {
-                console.log("[AnnouncementStore] Removing read status channel");
-                supabase.removeChannel(realtimeSubscriptions.readStatus);
-            } catch (error) {
-                console.error(
-                    "[AnnouncementStore] Error removing read status channel:",
-                    error,
-                );
+                    // Set a timeout to prevent hanging operations
+                    const cleanupTimer = setTimeout(() => {
+                        console.warn(
+                            `[AnnouncementStore] ${channelName} cleanup timed out`,
+                        );
+                    }, 5000);
+
+                    const removePromise = supabase.removeChannel(channel);
+
+                    // Clear the timer if removal completes
+                    if (
+                        removePromise &&
+                        typeof removePromise.then === "function"
+                    ) {
+                        removePromise.finally(() => clearTimeout(cleanupTimer));
+                    } else {
+                        clearTimeout(cleanupTimer);
+                    }
+                } catch (error) {
+                    console.error(
+                        `[AnnouncementStore] Error removing ${channelName} channel:`,
+                        error,
+                    );
+                }
             }
-        }
+        };
+
+        cleanupChannel(realtimeSubscriptions.announcements, "announcements");
+        cleanupChannel(realtimeSubscriptions.readStatus, "read status");
 
         console.log("[AnnouncementStore] Unsubscription complete");
     },

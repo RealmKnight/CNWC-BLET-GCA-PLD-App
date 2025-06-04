@@ -29,23 +29,32 @@ export function DivisionManagement({ division }: DivisionManagementProps) {
   const { width } = useWindowDimensions();
   const isMobile = Platform.OS !== "web" || width < 768;
 
-  // Add ref to track component unmount state
+  // Add refs to track component state and prevent race conditions
   const isMountedRef = useRef(true);
   const previousDivisionRef = useRef(division);
   const [isAnimating, setIsAnimating] = useState(false);
+  const [divisionKey, setDivisionKey] = useState(division);
 
-  // Track when division changes to handle cleanup
+  // Track when division changes to handle cleanup and prevent stale state
   useEffect(() => {
     if (previousDivisionRef.current !== division) {
+      console.log(`[DivisionManagement] Division changed from ${previousDivisionRef.current} to ${division}`);
+
+      // Update refs first
       previousDivisionRef.current = division;
+
+      // Create new key to force component re-mount
+      setDivisionKey(division);
+
+      // Set animating state
       setIsAnimating(true);
 
-      // Reset animation state after a short delay
+      // Reset animation state after a delay to allow for proper cleanup
       const timer = setTimeout(() => {
         if (isMountedRef.current) {
           setIsAnimating(false);
         }
-      }, 300);
+      }, 500); // Increased timeout for better stability
 
       return () => clearTimeout(timer);
     }
@@ -59,7 +68,7 @@ export function DivisionManagement({ division }: DivisionManagementProps) {
   }, []);
 
   // Memoize the content key to ensure proper component unmounting/mounting
-  const contentKey = useMemo(() => `${division}-${currentView}`, [division, currentView]);
+  const contentKey = useMemo(() => `${divisionKey}-${currentView}`, [divisionKey, currentView]);
 
   // Action Button Rendering
   const renderActionButton = useCallback(
@@ -178,63 +187,72 @@ export function DivisionManagement({ division }: DivisionManagementProps) {
   }, []);
 
   return (
-    <ThemedView style={styles.container} key={division}>
-      <ThemedView style={styles.header}>
-        <View style={styles.titleRow}>
-          <View style={styles.actionButtons}>
-            {renderActionButton("announcements", "megaphone-outline", "Announcements")}
-            {renderActionButton("meetings", "people-circle-outline", "Meetings")}
-            {renderActionButton("documents", "document-text-outline", "Documents")}
-            {renderActionButton("officers", "ribbon-outline", "Officers")}
-            {renderActionButton("emails", "mail-outline", "Emails")}
-          </View>
-        </View>
-        <View style={styles.divisionContainer}>
-          <View style={styles.divisionRow}>
-            <ThemedText style={styles.divisionLabel}>Division: </ThemedText>
-            <ThemedText style={styles.divisionText}>{division}</ThemedText>
-          </View>
-        </View>
-      </ThemedView>
+    <ThemedView style={styles.container} key={divisionKey}>
+      {/* Only render if division matches divisionKey to prevent stale data */}
+      {division === divisionKey ? (
+        <>
+          <ThemedView style={styles.header}>
+            <View style={styles.titleRow}>
+              <View style={styles.actionButtons}>
+                {renderActionButton("announcements", "megaphone-outline", "Announcements")}
+                {renderActionButton("meetings", "people-circle-outline", "Meetings")}
+                {renderActionButton("documents", "document-text-outline", "Documents")}
+                {renderActionButton("officers", "ribbon-outline", "Officers")}
+                {renderActionButton("emails", "mail-outline", "Emails")}
+              </View>
+            </View>
+            <View style={styles.divisionContainer}>
+              <View style={styles.divisionRow}>
+                <ThemedText style={styles.divisionLabel}>Division: </ThemedText>
+                <ThemedText style={styles.divisionText}>{division}</ThemedText>
+              </View>
+            </View>
+          </ThemedView>
 
-      <View style={styles.contentArea}>
-        <AnimatedThemedView
-          key={contentKey}
-          entering={
-            isMobile
-              ? SlideInRight.withCallback((finished) => {
-                  "worklet";
-                  if (finished) {
-                    runOnJS(handleAnimationEnd)();
-                  }
-                })
-              : FadeIn.withCallback((finished) => {
-                  "worklet";
-                  if (finished) {
-                    runOnJS(handleAnimationEnd)();
-                  }
-                })
-          }
-          exiting={
-            isMobile
-              ? SlideOutLeft.withCallback((finished) => {
-                  "worklet";
-                  if (finished) {
-                    runOnJS(handleAnimationStart)();
-                  }
-                })
-              : FadeOut.withCallback((finished) => {
-                  "worklet";
-                  if (finished) {
-                    runOnJS(handleAnimationStart)();
-                  }
-                })
-          }
-          style={styles.content}
-        >
-          {renderContent()}
-        </AnimatedThemedView>
-      </View>
+          <View style={styles.contentArea}>
+            <AnimatedThemedView
+              key={contentKey}
+              entering={
+                isMobile
+                  ? SlideInRight.withCallback((finished) => {
+                      "worklet";
+                      if (finished) {
+                        runOnJS(handleAnimationEnd)();
+                      }
+                    })
+                  : FadeIn.withCallback((finished) => {
+                      "worklet";
+                      if (finished) {
+                        runOnJS(handleAnimationEnd)();
+                      }
+                    })
+              }
+              exiting={
+                isMobile
+                  ? SlideOutLeft.withCallback((finished) => {
+                      "worklet";
+                      if (finished) {
+                        runOnJS(handleAnimationStart)();
+                      }
+                    })
+                  : FadeOut.withCallback((finished) => {
+                      "worklet";
+                      if (finished) {
+                        runOnJS(handleAnimationStart)();
+                      }
+                    })
+              }
+              style={styles.content}
+            >
+              {renderContent()}
+            </AnimatedThemedView>
+          </View>
+        </>
+      ) : (
+        <ThemedView style={styles.loadingContainer}>
+          <ThemedText>Switching to {division}...</ThemedText>
+        </ThemedView>
+      )}
     </ThemedView>
   );
 }
@@ -340,5 +358,10 @@ const styles = StyleSheet.create({
     fontSize: 18,
     textAlign: "center",
     color: Colors.light.textDim,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
   },
 });

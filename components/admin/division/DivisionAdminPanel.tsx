@@ -1,8 +1,7 @@
-import React, { useState, forwardRef, Ref } from "react";
-import { StyleSheet, Platform, Pressable, useWindowDimensions, View } from "react-native";
+import React, { useState, useRef, forwardRef, Ref, useEffect } from "react";
+import { View, StyleSheet, Platform, Pressable, TouchableOpacity, useWindowDimensions } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
-import { TouchableOpacity } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
@@ -12,6 +11,7 @@ import { MessageCenter } from "./MessageCenter";
 import { AdminMessages } from "./AdminMessages";
 import { CalendarManager } from "./CalendarManager";
 import { EmailAlertsBadge } from "@/components/ui/EmailAlertsBadge";
+import { useUserStore } from "@/store/userStore";
 import Animated, {
   FadeIn,
   FadeOut,
@@ -53,96 +53,107 @@ interface DivisionAdminPanelProps {
   division: string;
 }
 
-export const DivisionAdminPanel = forwardRef<View, DivisionAdminPanelProps>(({ division }, ref: Ref<View>) => {
-  const [activeSection, setActiveSection] = useState<Section>("members");
-  const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
-  const tintColor = Colors[colorScheme].tint;
-  const { width } = useWindowDimensions();
+export const DivisionAdminPanel = forwardRef<View, DivisionAdminPanelProps>(
+  ({ division: initialDivision }, ref: Ref<View>) => {
+    const [activeSection, setActiveSection] = useState<Section>("members");
+    const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
+    const tintColor = Colors[colorScheme].tint;
+    const { width } = useWindowDimensions();
 
-  const isWeb = Platform.OS === "web";
-  const isMobileWeb = isWeb && width < MOBILE_BREAKPOINT;
-  const shouldUseMobileLayout = !isWeb || isMobileWeb;
-  const ButtonComponent = isWeb ? AnimatedPressable : AnimatedTouchableOpacity;
+    // Get current division from userStore for union admins, fallback to prop for division admins
+    const userRole = useUserStore((state) => state.userRole);
+    const userStoreDivision = useUserStore((state) => state.division);
+    const isUnionAdmin = userRole === "application_admin" || userRole === "union_admin";
 
-  const renderNavigationButton = (section: SectionButton) => {
-    const isActive = activeSection === section.key;
-    const buttonAnimation = useAnimatedStyle(() => {
-      const scale = withSpring(isActive ? 1.1 : 1, {
-        damping: 15,
-        stiffness: 150,
+    // Use userStore division for union admins (they can change divisions), initial prop for division admins
+    const currentDivision = isUnionAdmin ? userStoreDivision || initialDivision : initialDivision;
+
+    const isWeb = Platform.OS === "web";
+    const isMobileWeb = isWeb && width < MOBILE_BREAKPOINT;
+    const shouldUseMobileLayout = !isWeb || isMobileWeb;
+    const ButtonComponent = isWeb ? AnimatedPressable : AnimatedTouchableOpacity;
+
+    const renderNavigationButton = (section: SectionButton) => {
+      const isActive = activeSection === section.key;
+      const buttonAnimation = useAnimatedStyle(() => {
+        const scale = withSpring(isActive ? 1.1 : 1, {
+          damping: 15,
+          stiffness: 150,
+        });
+        return {
+          transform: [{ scale }],
+        };
       });
-      return {
-        transform: [{ scale }],
-      };
-    });
+
+      return (
+        <ButtonComponent
+          key={section.key}
+          style={[
+            shouldUseMobileLayout ? styles.mobileSectionButton : styles.webSectionButton,
+            isActive && (shouldUseMobileLayout ? styles.mobileActiveSectionButton : styles.webActiveSectionButton),
+            buttonAnimation,
+          ]}
+          onPress={() => setActiveSection(section.key)}
+        >
+          <Ionicons
+            name={isActive ? section.icon : section.outlineIcon}
+            size={shouldUseMobileLayout ? 28 : 24}
+            color={isActive ? (shouldUseMobileLayout ? tintColor : "#000000") : Colors[colorScheme].text}
+          />
+          {section.key === "adminMessages" && <AdminMessageBadge />}
+          {section.key === "division" && <EmailAlertsBadge divisionFilter={currentDivision} />}
+          {!shouldUseMobileLayout && (
+            <ThemedText style={[styles.sectionButtonText, isActive && styles.activeSectionButtonText]}>
+              {section.title}
+            </ThemedText>
+          )}
+        </ButtonComponent>
+      );
+    };
+
+    const renderSection = () => {
+      const Component = (() => {
+        switch (activeSection) {
+          case "members":
+            return MemberManagement;
+          case "division":
+            return () => <DivisionManagement division={currentDivision} key={`division-mgmt-${currentDivision}`} />;
+          case "messages":
+            return MessageCenter;
+          case "adminMessages":
+            return AdminMessages;
+          case "calendar":
+            return CalendarManager;
+          default:
+            return null;
+        }
+      })();
+
+      if (!Component) return null;
+
+      return (
+        <AnimatedThemedView
+          key={`section-${activeSection}-${currentDivision}`}
+          entering={shouldUseMobileLayout ? SlideInRight : FadeIn}
+          exiting={shouldUseMobileLayout ? SlideOutLeft : FadeOut}
+          style={shouldUseMobileLayout ? styles.mobileContent : styles.webContent}
+        >
+          <Component />
+        </AnimatedThemedView>
+      );
+    };
 
     return (
-      <ButtonComponent
-        key={section.key}
-        style={[
-          shouldUseMobileLayout ? styles.mobileSectionButton : styles.webSectionButton,
-          isActive && (shouldUseMobileLayout ? styles.mobileActiveSectionButton : styles.webActiveSectionButton),
-          buttonAnimation,
-        ]}
-        onPress={() => setActiveSection(section.key)}
-      >
-        <Ionicons
-          name={isActive ? section.icon : section.outlineIcon}
-          size={shouldUseMobileLayout ? 28 : 24}
-          color={isActive ? (shouldUseMobileLayout ? tintColor : "#000000") : Colors[colorScheme].text}
-        />
-        {section.key === "adminMessages" && <AdminMessageBadge />}
-        {section.key === "division" && <EmailAlertsBadge divisionFilter={division} />}
-        {!shouldUseMobileLayout && (
-          <ThemedText style={[styles.sectionButtonText, isActive && styles.activeSectionButtonText]}>
-            {section.title}
-          </ThemedText>
-        )}
-      </ButtonComponent>
+      <ThemedView style={[styles.container, { flexDirection: shouldUseMobileLayout ? "column" : "row" }]} ref={ref}>
+        <AnimatedThemedView style={shouldUseMobileLayout ? styles.mobileNavigation : styles.webNavigation}>
+          {sections.map(renderNavigationButton)}
+        </AnimatedThemedView>
+
+        {renderSection()}
+      </ThemedView>
     );
-  };
-
-  const renderSection = () => {
-    const Component = (() => {
-      switch (activeSection) {
-        case "members":
-          return MemberManagement;
-        case "division":
-          return () => <DivisionManagement division={division} />;
-        case "messages":
-          return MessageCenter;
-        case "adminMessages":
-          return AdminMessages;
-        case "calendar":
-          return CalendarManager;
-        default:
-          return null;
-      }
-    })();
-
-    if (!Component) return null;
-
-    return (
-      <AnimatedThemedView
-        entering={shouldUseMobileLayout ? SlideInRight : FadeIn}
-        exiting={shouldUseMobileLayout ? SlideOutLeft : FadeOut}
-        style={shouldUseMobileLayout ? styles.mobileContent : styles.webContent}
-      >
-        <Component />
-      </AnimatedThemedView>
-    );
-  };
-
-  return (
-    <ThemedView style={[styles.container, { flexDirection: shouldUseMobileLayout ? "column" : "row" }]} ref={ref}>
-      <AnimatedThemedView style={shouldUseMobileLayout ? styles.mobileNavigation : styles.webNavigation}>
-        {sections.map(renderNavigationButton)}
-      </AnimatedThemedView>
-
-      {renderSection()}
-    </ThemedView>
-  );
-});
+  }
+);
 
 const styles = StyleSheet.create({
   container: {

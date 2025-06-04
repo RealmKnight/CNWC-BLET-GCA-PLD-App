@@ -101,9 +101,13 @@ export function DivisionAnnouncementsAdmin({ division }: DivisionAnnouncementsAd
       return;
     }
 
-    // If division has changed, reset state
+    // If division has changed, reset state immediately to prevent stale data
     if (currentDivisionRef.current !== division) {
+      console.log(`[DivisionAnnouncementsAdmin] Division changing from ${currentDivisionRef.current} to ${division}`);
+
       currentDivisionRef.current = division;
+
+      // Reset all component state immediately
       setActiveTab("list");
       setSelectedAnnouncement(null);
       setIsAnnouncementModalVisible(false);
@@ -111,24 +115,43 @@ export function DivisionAnnouncementsAdmin({ division }: DivisionAnnouncementsAd
       setCurrentAnalytics(null);
       setFormError(null);
       isInitializedRef.current = false;
+
+      // Add a small delay to prevent rapid fire division changes
+      const divisionChangeTimer = setTimeout(() => {
+        if (isMountedRef.current && currentDivisionRef.current === division) {
+          // Only proceed if we're still mounted and division hasn't changed again
+          initializeDivisionData();
+        }
+      }, 100);
+
+      return () => clearTimeout(divisionChangeTimer);
     }
 
-    if (!canManageAnnouncements()) {
-      return;
-    }
+    // Initialize division data if not already done
+    const initializeDivisionData = async () => {
+      if (!canManageAnnouncements()) {
+        return;
+      }
 
-    if (!isInitializedRef.current) {
-      isInitializedRef.current = true;
+      if (!isInitializedRef.current && isMountedRef.current) {
+        isInitializedRef.current = true;
 
-      // Set division context and fetch data
-      const initializeDivision = async () => {
-        if (isMountedRef.current) {
+        try {
+          console.log(`[DivisionAnnouncementsAdmin] Initializing data for division: ${division}`);
           setDivisionContext(division);
           await fetchDivisionAnnouncements(division);
+        } catch (error) {
+          console.error(`[DivisionAnnouncementsAdmin] Error initializing division ${division}:`, error);
+          if (isMountedRef.current) {
+            setFormError(error instanceof Error ? error.message : "Failed to initialize division data");
+          }
         }
-      };
+      }
+    };
 
-      initializeDivision();
+    // Call initialization if division context hasn't changed
+    if (currentDivisionRef.current === division) {
+      initializeDivisionData();
     }
   }, [division, canManageAnnouncements, setDivisionContext, fetchDivisionAnnouncements]);
 
