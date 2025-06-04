@@ -9,6 +9,7 @@ import {
   useWindowDimensions,
   Platform,
   FlatList,
+  SectionList,
   TextInput,
 } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
@@ -64,8 +65,8 @@ export function AnnouncementAnalyticsModal({ analytics, visible, onClose, onExpo
     const startTime = performance.now();
     const memberCount = (analytics.members_who_read?.length || 0) + (analytics.members_who_not_read?.length || 0);
 
-    // Show warning for large datasets (>500 members)
-    const showWarning = memberCount > 500;
+    // Show warning for large datasets (>1000 members)
+    const showWarning = memberCount > 1000;
 
     // Simulate render completion timing
     const timer = setTimeout(() => {
@@ -303,147 +304,128 @@ export function AnnouncementAnalyticsModal({ analytics, visible, onClose, onExpo
     </View>
   );
 
-  // Render individual member status (optimized for FlatList)
-  const renderMemberStatus = ({ item: member, index }: { item: MemberReadStatus; index: number }) => (
-    <View style={[styles.memberItem, index === 0 && styles.firstMemberItem]}>
-      <View style={styles.memberInfo}>
-        <ThemedText style={styles.memberName}>
-          {member.first_name} {member.last_name}
-        </ThemedText>
-        <ThemedText style={styles.memberDetails}>
-          PIN: {member.pin} • {member.division_name}
-        </ThemedText>
-      </View>
-      <View style={styles.memberStatus}>
-        {member.has_read && (
-          <View style={styles.statusItem}>
-            <Ionicons name="eye" size={14} color="#34C759" />
-            <ThemedText style={styles.statusText}>
-              {member.read_at ? format(parseISO(member.read_at), "MMM d, h:mm a") : "Read"}
-            </ThemedText>
-          </View>
-        )}
-        {member.has_acknowledged && (
-          <View style={styles.statusItem}>
-            <Ionicons name="checkmark-circle" size={14} color="#FF9500" />
-            <ThemedText style={styles.statusText}>
-              {member.acknowledged_at ? format(parseISO(member.acknowledged_at), "MMM d, h:mm a") : "Acknowledged"}
-            </ThemedText>
-          </View>
-        )}
-      </View>
-    </View>
-  );
-
-  // Render members with optimized FlatList for large datasets
+  // Render members with a single sectioned FlatList to avoid nested scroll issues
   const renderMembers = () => {
+    // Prepare sectioned data for single FlatList
+    const sectionedData = [
+      {
+        title: `Read (${filteredReadMembers.length})`,
+        data: filteredReadMembers,
+        type: "read" as const,
+        icon: "eye" as const,
+        color: "#34C759",
+      },
+      {
+        title: `Not Read (${filteredUnreadMembers.length})`,
+        data: filteredUnreadMembers,
+        type: "unread" as const,
+        icon: "eye-off" as const,
+        color: "#FF3B30",
+      },
+    ];
+
+    const renderSectionHeader = ({ section }: { section: (typeof sectionedData)[0] }) => (
+      <View style={styles.sectionHeaderContainer}>
+        <View style={styles.sectionHeader}>
+          <Ionicons name={section.icon} size={16} color={section.color} />
+          <ThemedText style={styles.sectionTitle}>{section.title}</ThemedText>
+        </View>
+        {/* Search for this section */}
+        {showSearchForLarge && section.data.length > 20 && (
+          <TextInput
+            style={[
+              styles.searchInput,
+              {
+                borderColor: Colors[theme].border,
+                color: Colors[theme].text,
+                backgroundColor: Colors[theme].background,
+              },
+            ]}
+            placeholder={`Search ${section.type} members...`}
+            value={section.type === "read" ? readSearchTerm : unreadSearchTerm}
+            onChangeText={section.type === "read" ? setReadSearchTerm : setUnreadSearchTerm}
+            placeholderTextColor={Colors[theme].textDim}
+          />
+        )}
+      </View>
+    );
+
+    const renderSectionFooter = ({ section }: { section: (typeof sectionedData)[0] }) => {
+      if (section.data.length > 0) return null;
+
+      return (
+        <View style={styles.emptyState}>
+          <ThemedText style={styles.emptyText}>
+            {section.type === "read"
+              ? readSearchTerm
+                ? "No matching members found"
+                : "No members have read this announcement yet"
+              : unreadSearchTerm
+              ? "No matching members found"
+              : "All eligible members have read this announcement"}
+          </ThemedText>
+        </View>
+      );
+    };
+
+    const renderItem = ({
+      item,
+      index,
+      section,
+    }: {
+      item: MemberReadStatus;
+      index: number;
+      section: (typeof sectionedData)[0];
+    }) => (
+      <View style={[styles.memberItem, index === 0 && styles.firstMemberItem]}>
+        <View style={styles.memberInfo}>
+          <ThemedText style={styles.memberName}>
+            {item.first_name} {item.last_name}
+          </ThemedText>
+          <ThemedText style={styles.memberDetails}>
+            PIN: {item.pin} • {item.division_name}
+          </ThemedText>
+        </View>
+        <View style={styles.memberStatus}>
+          {item.has_read && (
+            <View style={styles.statusItem}>
+              <Ionicons name="eye" size={14} color="#34C759" />
+              <ThemedText style={styles.statusText}>
+                {item.read_at ? format(parseISO(item.read_at), "MMM d, h:mm a") : "Read"}
+              </ThemedText>
+            </View>
+          )}
+          {item.has_acknowledged && (
+            <View style={styles.statusItem}>
+              <Ionicons name="checkmark-circle" size={14} color="#FF9500" />
+              <ThemedText style={styles.statusText}>
+                {item.acknowledged_at ? format(parseISO(item.acknowledged_at), "MMM d, h:mm a") : "Acknowledged"}
+              </ThemedText>
+            </View>
+          )}
+        </View>
+      </View>
+    );
+
     return (
-      <View style={styles.tabContent}>
+      <View style={styles.membersTabContent}>
         {renderPerformanceWarning()}
-
-        {/* Read Members Section */}
-        <View style={styles.memberSection}>
-          <View style={styles.sectionHeader}>
-            <Ionicons name="eye" size={16} color="#34C759" />
-            <ThemedText style={styles.sectionTitle}>Read ({analytics.members_who_read.length})</ThemedText>
-          </View>
-
-          {/* Search for Read Members */}
-          {showSearchForLarge && analytics.members_who_read.length > 20 && (
-            <TextInput
-              style={[
-                styles.searchInput,
-                {
-                  borderColor: Colors[theme].border,
-                  color: Colors[theme].text,
-                  backgroundColor: Colors[theme].background,
-                },
-              ]}
-              placeholder="Search read members..."
-              value={readSearchTerm}
-              onChangeText={setReadSearchTerm}
-              placeholderTextColor={Colors[theme].textDim}
-            />
-          )}
-
-          {filteredReadMembers.length > 0 ? (
-            <FlatList
-              data={filteredReadMembers}
-              keyExtractor={(item, index) => `read-${item.user_id}-${index}`}
-              renderItem={renderMemberStatus}
-              style={styles.memberFlatList}
-              nestedScrollEnabled={false}
-              scrollEnabled={false}
-              initialNumToRender={20}
-              maxToRenderPerBatch={20}
-              windowSize={10}
-              removeClippedSubviews={Platform.OS === "android"}
-              getItemLayout={(data, index) => ({
-                length: 80,
-                offset: 80 * index,
-                index,
-              })}
-            />
-          ) : (
-            <View style={styles.emptyState}>
-              <ThemedText style={styles.emptyText}>
-                {readSearchTerm ? "No matching members found" : "No members have read this announcement yet"}
-              </ThemedText>
-            </View>
-          )}
-        </View>
-
-        {/* Unread Members Section */}
-        <View style={styles.memberSection}>
-          <View style={styles.sectionHeader}>
-            <Ionicons name="eye-off" size={16} color="#FF3B30" />
-            <ThemedText style={styles.sectionTitle}>Not Read ({analytics.members_who_not_read.length})</ThemedText>
-          </View>
-
-          {/* Search for Unread Members */}
-          {showSearchForLarge && analytics.members_who_not_read.length > 20 && (
-            <TextInput
-              style={[
-                styles.searchInput,
-                {
-                  borderColor: Colors[theme].border,
-                  color: Colors[theme].text,
-                  backgroundColor: Colors[theme].background,
-                },
-              ]}
-              placeholder="Search unread members..."
-              value={unreadSearchTerm}
-              onChangeText={setUnreadSearchTerm}
-              placeholderTextColor={Colors[theme].textDim}
-            />
-          )}
-
-          {filteredUnreadMembers.length > 0 ? (
-            <FlatList
-              data={filteredUnreadMembers}
-              keyExtractor={(item, index) => `unread-${item.user_id}-${index}`}
-              renderItem={renderMemberStatus}
-              style={styles.memberFlatList}
-              nestedScrollEnabled={false}
-              scrollEnabled={false}
-              initialNumToRender={20}
-              maxToRenderPerBatch={20}
-              windowSize={10}
-              removeClippedSubviews={Platform.OS === "android"}
-              getItemLayout={(data, index) => ({
-                length: 80,
-                offset: 80 * index,
-                index,
-              })}
-            />
-          ) : (
-            <View style={styles.emptyState}>
-              <ThemedText style={styles.emptyText}>
-                {unreadSearchTerm ? "No matching members found" : "All eligible members have read this announcement"}
-              </ThemedText>
-            </View>
-          )}
-        </View>
+        <SectionList
+          sections={sectionedData}
+          keyExtractor={(item, index) => `member-${item.user_id}-${index}`}
+          renderItem={renderItem}
+          renderSectionHeader={renderSectionHeader}
+          renderSectionFooter={renderSectionFooter}
+          style={styles.membersSectionList}
+          contentContainerStyle={styles.membersListContent}
+          showsVerticalScrollIndicator={true}
+          initialNumToRender={15}
+          maxToRenderPerBatch={10}
+          windowSize={10}
+          removeClippedSubviews={Platform.OS === "android"}
+          keyboardShouldPersistTaps="handled"
+          stickySectionHeadersEnabled={true}
+        />
       </View>
     );
   };
@@ -477,7 +459,7 @@ export function AnnouncementAnalyticsModal({ analytics, visible, onClose, onExpo
     </View>
   );
 
-  // Render content based on active tab
+  // Render content based on active tab with proper scroll handling
   const renderContent = () => {
     switch (activeTab) {
       case "overview":
@@ -534,16 +516,21 @@ export function AnnouncementAnalyticsModal({ analytics, visible, onClose, onExpo
         >
           {renderHeader()}
           {renderTabs()}
-          <ScrollView
-            style={[styles.scrollContent, Platform.OS === "android" && styles.androidScrollContent]}
-            contentContainerStyle={Platform.OS === "android" ? styles.androidContentContainer : undefined}
-            nestedScrollEnabled={true}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={Platform.OS !== "android"}
-            removeClippedSubviews={true}
-          >
-            {renderContent()}
-          </ScrollView>
+          {/* Conditional scroll container - Members tab doesn't need outer ScrollView */}
+          {activeTab === "members" ? (
+            renderContent()
+          ) : (
+            <ScrollView
+              style={[styles.scrollContent, Platform.OS === "android" && styles.androidScrollContent]}
+              contentContainerStyle={Platform.OS === "android" ? styles.androidContentContainer : undefined}
+              nestedScrollEnabled={true}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={Platform.OS !== "android"}
+              removeClippedSubviews={true}
+            >
+              {renderContent()}
+            </ScrollView>
+          )}
           {renderFooter()}
         </Pressable>
       </Pressable>
@@ -597,8 +584,10 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
   },
   header: {
-    borderBottomWidth: 1,
+    borderWidth: 1,
     borderColor: Colors.dark.border,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
     paddingHorizontal: 16,
     paddingVertical: 12,
   },
@@ -739,8 +728,8 @@ const styles = StyleSheet.create({
   memberSection: {
     marginBottom: 24,
     ...(Platform.OS === "android" && {
-      flex: 1,
-      minHeight: 200,
+      flex: 0,
+      minHeight: 0,
     }),
   },
   sectionHeader: {
@@ -762,8 +751,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   memberFlatList: {
-    maxHeight: 400,
-    minHeight: 200,
+    maxHeight: Platform.OS === "android" ? 300 : 400,
+    minHeight: 150,
+    flex: 0,
   },
   memberItem: {
     flexDirection: "row",
@@ -896,5 +886,19 @@ const styles = StyleSheet.create({
   exportButtonText: {
     fontSize: 12,
     fontWeight: "600",
+  },
+  membersTabContent: {
+    flex: 1,
+    padding: 16,
+  },
+  membersSectionList: {
+    flex: 1,
+  },
+  membersListContent: {
+    paddingBottom: 20,
+  },
+  sectionHeaderContainer: {
+    backgroundColor: Colors.dark.card,
+    paddingBottom: 8,
   },
 });

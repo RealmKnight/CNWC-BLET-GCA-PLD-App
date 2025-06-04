@@ -773,11 +773,11 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     ...Platform.select({
       ios: {
-        height: 40,
+        height: 56,
         cursor: "pointer",
       },
       android: {
-        height: 40,
+        height: 64,
         width: "100%",
         cursor: "pointer",
       },

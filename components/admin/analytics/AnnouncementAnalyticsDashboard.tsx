@@ -7,6 +7,7 @@ import {
   Alert,
   RefreshControl,
   useWindowDimensions,
+  Platform,
 } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -1024,7 +1025,22 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   divisionSelectorSelect: {
-    height: 40,
+    ...Platform.select({
+      ios: {
+        height: 64,
+        cursor: "pointer",
+      },
+      android: {
+        height: 64,
+        width: "100%",
+        cursor: "pointer",
+      },
+      web: {
+        height: 48,
+        paddingRight: 24,
+        cursor: "pointer",
+      },
+    }),
   },
   announcementAnalyticsCard: {
     padding: 12,

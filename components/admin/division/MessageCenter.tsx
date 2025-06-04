@@ -159,7 +159,8 @@ export function MessageCenter() {
         messageDraft.recipients,
         messageDraft.subject,
         messageDraft.content,
-        messageDraft.requiresAcknowledgment
+        messageDraft.requiresAcknowledgment,
+        messageDraft.requiresAcknowledgment ? "must_read" : "direct_message"
       );
 
       // Reset form

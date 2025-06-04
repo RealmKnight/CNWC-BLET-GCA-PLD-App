@@ -735,7 +735,7 @@ const styles = StyleSheet.create({
     borderLeftWidth: 4,
   },
   mustAcknowledgeIconWrapper: {
-    backgroundColor: Colors.light.primary + "20",
+    backgroundColor: Colors.dark.primary + "20",
   },
   acknowledgmentBadge: {
     paddingHorizontal: 8,
@@ -743,7 +743,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   acknowledgmentBadgeText: {
-    color: "#fff",
+    color: Colors.dark.error,
     fontSize: 12,
     fontWeight: "500",
   },

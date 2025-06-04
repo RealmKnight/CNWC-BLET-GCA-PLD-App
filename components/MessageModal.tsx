@@ -264,7 +264,7 @@ export function MessageModal({ message, visible, onClose, onAcknowledge, onDelet
                 onPress={handleAcknowledge}
                 disabled={!hasReadFully}
               >
-                <Ionicons name="checkmark" size={16} color="#fff" />
+                <Ionicons name="checkmark" size={16} color={Colors[theme].buttonText} />
                 <ThemedText style={styles.acknowledgeButtonText}>
                   {hasReadFully
                     ? "Acknowledge Message"
@@ -357,7 +357,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   acknowledgmentBadgeText: {
-    color: "#fff",
+    color: Colors.dark.error,
     fontSize: 12,
     fontWeight: "500",
   },
@@ -403,7 +403,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   acknowledgeButtonText: {
-    color: "#fff",
+    color: Colors.dark.error,
     fontSize: 14,
     fontWeight: "600",
   },

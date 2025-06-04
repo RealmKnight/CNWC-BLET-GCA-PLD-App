@@ -127,9 +127,12 @@ export function usePriorityRouter() {
             // Only include messages that are UNREAD or UNACKNOWLEDGED
             const criticalMessages = messages.filter((msg) => {
                 const isUnread = !msg.is_read;
+                // Use PIN number for consistency with how acknowledgeMessage stores data
+                const userIdentifier = member.pin_number?.toString() ||
+                    member.id || "";
                 const isUnacknowledged = msg.requires_acknowledgment &&
                     (!msg.acknowledged_at ||
-                        !msg.acknowledged_by?.includes(member.id || ""));
+                        !msg.acknowledged_by?.includes(userIdentifier));
 
                 return msg.message_type === "must_read" &&
                     msg.requires_acknowledgment &&
@@ -137,6 +140,9 @@ export function usePriorityRouter() {
             });
 
             criticalMessages.forEach((msg) => {
+                // Use PIN number for consistency with how acknowledgeMessage stores data
+                const userIdentifier = member.pin_number?.toString() ||
+                    member.id || "";
                 items.push({
                     id: msg.id,
                     type: "message",
@@ -146,7 +152,7 @@ export function usePriorityRouter() {
                     requiresAcknowledgment: true,
                     isRead: msg.is_read || false,
                     isAcknowledged:
-                        msg.acknowledged_by?.includes(member.id || "") ||
+                        msg.acknowledged_by?.includes(userIdentifier) ||
                         false,
                     createdAt: msg.created_at || new Date().toISOString(),
                     messageType: msg.message_type,
@@ -438,10 +444,13 @@ export function usePriorityRouter() {
                     // Check critical messages
                     const criticalMessages = currentMessages.filter((msg) => {
                         const isUnread = !msg.is_read;
+                        // Use PIN number for consistency with how acknowledgeMessage stores data
+                        const userIdentifier = member.pin_number?.toString() ||
+                            member.id || "";
                         const isUnacknowledged = msg.requires_acknowledgment &&
                             (!msg.acknowledged_at ||
                                 !msg.acknowledged_by?.includes(
-                                    member.id || "",
+                                    userIdentifier,
                                 ));
 
                         return msg.message_type === "must_read" &&
@@ -450,6 +459,9 @@ export function usePriorityRouter() {
                     });
 
                     criticalMessages.forEach((msg) => {
+                        // Use PIN number for consistency with how acknowledgeMessage stores data
+                        const userIdentifier = member.pin_number?.toString() ||
+                            member.id || "";
                         items.push({
                             id: msg.id,
                             type: "message",
@@ -459,7 +471,7 @@ export function usePriorityRouter() {
                             requiresAcknowledgment: true,
                             isRead: msg.is_read || false,
                             isAcknowledged: msg.acknowledged_by?.includes(
-                                member.id || "",
+                                userIdentifier,
                             ) || false,
                             createdAt: msg.created_at ||
                                 new Date().toISOString(),
