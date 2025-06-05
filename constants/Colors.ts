@@ -27,6 +27,9 @@ export interface ColorSchemeColors {
   border: string;
   card: string;
   textDim: string;
+  // Announcement-specific colors
+  announcementBadgeDivision: string; // Blue for division announcements
+  announcementBadgeGCA: string; // Green for GCA announcements
 }
 
 const tintColorLight = "#2f95dc";
@@ -58,6 +61,9 @@ export const Colors = {
     warning: "#F59E0B",
     disabled: "#6c757d80", // 50% opacity gray
     secondary: "#6c757d",
+    // Announcement-specific colors
+    announcementBadgeDivision: "#007AFF", // Blue for division announcements
+    announcementBadgeGCA: "#34C759", // Green for GCA announcements
   },
   light: {
     // Light theme preserved for future use, currently defaulting to dark
@@ -85,5 +91,8 @@ export const Colors = {
     warning: "#F59E0B",
     disabled: "#6c757d80", // 50% opacity gray
     secondary: "#6c757d",
+    // Announcement-specific colors
+    announcementBadgeDivision: "#007AFF", // Blue for division announcements
+    announcementBadgeGCA: "#34C759", // Green for GCA announcements
   },
 } as const;

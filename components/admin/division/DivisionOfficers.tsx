@@ -14,8 +14,8 @@ import { format } from "date-fns";
 import DateTimePickerModal from "react-native-modal-datetime-picker";
 import Toast from "react-native-toast-message";
 import { supabase } from "@/utils/supabase";
-import DateTimePicker from "@react-native-community/datetimepicker";
 import { Modal } from "@/components/ui/Modal";
+import { ClientOnlyDatePicker } from "@/components/ClientOnlyDatePicker";
 
 const AnimatedThemedView = Animated.createAnimatedComponent(ThemedView);
 const isWeb = Platform.OS === "web";
@@ -274,23 +274,15 @@ export function DivisionOfficers({ division }: DivisionOfficersProps) {
           title={`Update Start Date - ${selectedPosition}`}
         >
           <View style={styles.webDatePickerContainer}>
-            <input
-              type="date"
-              value={format(selectedDate, "yyyy-MM-dd")}
-              onChange={(e) => {
-                if (e.target.value) {
-                  const newDate = new Date(e.target.value + "T12:00:00Z");
-                  setSelectedDate(newDate);
-                }
+            {/* Use DatePicker for consistent UX */}
+            <ClientOnlyDatePicker
+              date={selectedDate}
+              onDateChange={(date) => {
+                if (date) setSelectedDate(date);
               }}
-              style={{
-                fontSize: "16px",
-                padding: "8px 12px",
-                borderRadius: "8px",
-                border: "1px solid #ccc",
-                marginBottom: "20px",
-                width: "200px",
-              }}
+              mode="date"
+              placeholder="Select date"
+              style={{ marginBottom: 20, width: 200 }}
             />
             <View style={styles.webDatePickerButtons}>
               <TouchableOpacityComponent
@@ -343,12 +335,11 @@ const styles = StyleSheet.create({
   },
   positionItem: {
     borderRadius: 8,
-    backgroundColor: Colors.light.background,
+    borderColor: Colors.dark.border,
+    borderWidth: 1,
+    backgroundColor: Colors.dark.card,
     elevation: 1,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
+    boxShadow: "0 0 10px 0 rgba(0, 0, 0, 0.1)",
   },
   positionHeader: {
     flexDirection: "row",
@@ -368,23 +359,28 @@ const styles = StyleSheet.create({
   },
   optionalBadge: {
     fontSize: 12,
-    color: Colors.light.tint,
-    backgroundColor: Colors.light.tint + "20",
+    color: Colors.dark.tint,
+    backgroundColor: Colors.dark.tint + "20",
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
   },
   selectedPosition: {
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.dark.tint,
+    color: Colors.dark.buttonText,
   },
   selectedPositionText: {
-    color: "#fff",
+    color: Colors.dark.buttonText,
   },
   positionDetails: {
     padding: 16,
     borderTopWidth: 1,
-    borderTopColor: "rgba(0,0,0,0.1)",
-    backgroundColor: Colors.light.background,
+    borderBottomLeftRadius: 8,
+    borderBottomRightRadius: 8,
+    borderTopColor: Colors.dark.border,
+    borderBottomColor: Colors.dark.border,
+    backgroundColor: Colors.dark.card,
+    color: Colors.dark.text,
   },
   officerInfo: {
     flexDirection: "row",
@@ -428,25 +424,28 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   updateDateButton: {
-    backgroundColor: Colors.light.tint + "CC", // Slightly more transparent
+    backgroundColor: Colors.dark.buttonBackground,
   },
   changeButton: {
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.dark.buttonBackground,
+    color: Colors.dark.buttonText,
   },
   assignButton: {
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.dark.buttonBackground,
     paddingHorizontal: 24,
     paddingVertical: 8,
     borderRadius: 8,
   },
   buttonText: {
-    color: "#fff",
+    color: Colors.dark.buttonText,
     fontSize: 14,
     fontWeight: "600",
   },
   webDatePickerContainer: {
     padding: 20,
     alignItems: "center",
+    backgroundColor: Colors.dark.card,
+    borderRadius: 8,
   },
   webDatePicker: {
     marginBottom: 20,
@@ -456,9 +455,11 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   cancelButton: {
-    backgroundColor: Colors.light.text + "80",
+    backgroundColor: Colors.dark.buttonBackground,
+    color: Colors.dark.buttonText,
   },
   updateButton: {
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.dark.buttonBackground,
+    color: Colors.dark.buttonText,
   },
 });

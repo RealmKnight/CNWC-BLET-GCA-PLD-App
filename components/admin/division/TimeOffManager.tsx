@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Platform,
   useWindowDimensions,
+  Alert,
 } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -15,25 +16,39 @@ import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { Ionicons } from "@expo/vector-icons";
 import { useUserStore } from "@/store/userStore";
-import { useAdminCalendarManagementStore } from "@/store/adminCalendarManagementStore";
+import {
+  useAdminCalendarManagementStore,
+  calculateVacationWeeks,
+  calculatePLDs,
+} from "@/store/adminCalendarManagementStore";
 import type { Member } from "@/store/adminCalendarManagementStore";
+import type { Calendar } from "@/types/calendar";
+import { CalendarFilter } from "./CalendarFilter";
+import { supabase } from "@/utils/supabase";
+import * as Print from "expo-print";
+import * as Sharing from "expo-sharing";
 
 interface TimeOffManagerProps {
   selectedDivision: string;
   selectedCalendarId: string | null;
 }
 
-type YearType = "current" | "next";
+export type YearType = "current" | "next";
 
 export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOffManagerProps) {
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const { width } = useWindowDimensions();
   const isMobile = Platform.OS !== "web" || width < 768;
-  const { member } = useUserStore();
+  const { member, userRole } = useUserStore();
 
   // Local state
   const [searchQuery, setSearchQuery] = useState("");
   const [isSaving, setIsSaving] = useState<Record<number, boolean>>({});
+  const [selectedFilterCalendarId, setSelectedFilterCalendarId] = useState<string | null>(null);
+  const [availableCalendars, setAvailableCalendars] = useState<Calendar[]>([]);
+  const [isCalendarsLoading, setIsCalendarsLoading] = useState(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
   // Use store state and actions
   const {
@@ -54,14 +69,102 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
   // Calculated state
   const hasChanges = useMemo(() => Object.keys(timeOffChanges).length > 0, [timeOffChanges]);
 
+  // Effect to track unsaved changes
+  useEffect(() => {
+    setHasUnsavedChanges(hasChanges);
+  }, [hasChanges]);
+
+  // Effect to handle division changes
+  useEffect(() => {
+    if (selectedDivision) {
+      const loadDivisionData = async () => {
+        try {
+          // Get division_id from the database
+          const { data: divisionData, error: divisionError } = await supabase
+            .from("divisions")
+            .select("id")
+            .eq("name", selectedDivision)
+            .single();
+
+          if (divisionError) throw divisionError;
+          if (!divisionData) {
+            console.error("Division not found:", selectedDivision);
+            return;
+          }
+
+          // Reset any existing changes before fetching new data
+          resetTimeOffChanges();
+          setHasUnsavedChanges(false); // Ensure the flag is reset
+
+          // Fetch member data for the new division
+          await fetchMemberTimeOffData(divisionData.id);
+
+          // Reset calendar filter when switching divisions
+          setSelectedFilterCalendarId(null);
+        } catch (err) {
+          console.error("Error loading division data:", err);
+        }
+      };
+
+      loadDivisionData();
+    }
+  }, [selectedDivision, resetTimeOffChanges, fetchMemberTimeOffData]);
+
+  // Effect to handle calendar changes
+  useEffect(() => {
+    if (selectedDivision) {
+      const fetchCalendars = async () => {
+        setIsCalendarsLoading(true);
+        try {
+          // First get the division ID
+          const { data: divisionData, error: divisionError } = await supabase
+            .from("divisions")
+            .select("id")
+            .eq("name", selectedDivision)
+            .single();
+
+          if (divisionError) throw divisionError;
+          if (!divisionData) {
+            console.error("Division not found:", selectedDivision);
+            return;
+          }
+
+          // Then fetch calendars for this division
+          const { data: calendars, error: calendarsError } = await supabase
+            .from("calendars")
+            .select("*")
+            .eq("division_id", divisionData.id)
+            .eq("is_active", true)
+            .order("name");
+
+          if (calendarsError) throw calendarsError;
+
+          console.log("Fetched calendars:", calendars);
+          setAvailableCalendars(calendars || []);
+
+          // If user is division_admin, automatically select their calendar
+          if (userRole === "division_admin" && member?.calendar_id) {
+            setSelectedFilterCalendarId(member.calendar_id);
+          }
+        } catch (err) {
+          console.error("Error fetching calendars:", err);
+          setAvailableCalendars([]);
+        } finally {
+          setIsCalendarsLoading(false);
+        }
+      };
+
+      fetchCalendars();
+    }
+  }, [selectedDivision, userRole, member?.calendar_id]);
+
   // Add a debug log to check if changes are detected
   useEffect(() => {
     console.log("Time off changes:", timeOffChanges);
     console.log("Has changes:", hasChanges);
   }, [timeOffChanges, hasChanges]);
 
-  // Instead of using Object.values which sorts by PIN numbers (object keys),
-  // we'll preserve the order from the backend
+  // Update membersList type
   const membersList = useMemo(() => {
     // Get the raw data array from the store if available
     const storeData = useAdminCalendarManagementStore.getState().memberTimeOffDataArray || [];
@@ -75,15 +178,68 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
     return Object.values(memberTimeOffData);
   }, [memberTimeOffData]);
 
-  // Load division members when selectedDivision changes
+  // Effect to automatically stage changes if calculated values differ from stored ones
+  const prevMembersListRef = React.useRef<Member[]>();
   useEffect(() => {
-    if (selectedDivision) {
-      // Get division_id from member or from a divisionMapping if available
-      const divisionId = member?.division_id || 0; // This should be replaced with actual division ID matching
+    // Access the original, potentially unmodified data directly from the store state
+    const originalMemberData = useAdminCalendarManagementStore.getState().memberTimeOffData;
 
-      fetchMemberTimeOffData(divisionId);
-    }
-  }, [selectedDivision, fetchMemberTimeOffData]);
+    membersList.forEach((member: Member) => {
+      if (!member || !originalMemberData[member.pin_number]) return; // Skip if member data is missing
+
+      const pinNumber = member.pin_number;
+      const originalData = originalMemberData[pinNumber];
+      const existingChanges = timeOffChanges[pinNumber] || {};
+
+      const isCurrentYear = selectedTimeOffYear === "current";
+
+      // Determine the reference date for calculation
+      const currentReferenceDate = new Date();
+      const nextReferenceDate = new Date();
+      nextReferenceDate.setFullYear(currentReferenceDate.getFullYear() + 1);
+      const referenceDate = isCurrentYear ? currentReferenceDate : nextReferenceDate;
+
+      // --- Check Vacation Weeks ---
+      const calculatedVacationWeeks = calculateVacationWeeks(member.company_hire_date, referenceDate);
+      const originalVacationField = isCurrentYear ? "curr_vacation_weeks" : "next_vacation_weeks";
+      const originalVacationValue = originalData[originalVacationField];
+
+      // ---- REMOVE Detailed Logging ----
+      const isFieldManuallyChanged = existingChanges[originalVacationField] !== undefined;
+      const valuesDiffer = calculatedVacationWeeks !== originalVacationValue;
+      // console.log( // <-- REMOVE
+      //   `[TimeOffManager Debug - ${pinNumber} (${originalVacationField})] Calculated: ${calculatedVacationWeeks} (Type: ${typeof calculatedVacationWeeks}), Original: ${originalVacationValue} (Type: ${typeof originalVacationValue}), Differs: ${valuesDiffer}, Manually Changed: ${isFieldManuallyChanged}`
+      // );
+      // ---- End REMOVE Detailed Logging ----
+
+      // If calculated value differs from original AND user hasn't already changed it
+      if (valuesDiffer && !isFieldManuallyChanged) {
+        // console.log( // <-- Keep this potentially useful log for now
+        //   `[TimeOffManager] Staging calculated ${originalVacationField} change for ${pinNumber}: ${originalVacationValue} -> ${calculatedVacationWeeks}`
+        // );
+        // Use a timeout to avoid triggering state updates during render cycle if possible
+        // and prevent potential infinite loops if calculateVacationWeeks had side effects (it shouldn't)
+        setTimeout(() => {
+          // ---- REMOVE Logging inside setTimeout ----
+          // console.log( // <-- REMOVE
+          //   `[TimeOffManager Debug - ${pinNumber}] Calling setTimeOffChange for ${originalVacationField} with value ${calculatedVacationWeeks} inside setTimeout`
+          // );
+          // ---- End REMOVE Logging inside setTimeout ----
+          setTimeOffChange(pinNumber, originalVacationField, calculatedVacationWeeks);
+        }, 0);
+      }
+
+      // --- Optionally Check PLDs (but likely not needed based on rules) ---
+      // const calculatedPlds = calculatePLDs(member.company_hire_date, referenceDate);
+      // const originalPldValue = originalData.max_plds; // Assuming max_plds always reflects current
+      // if (calculatedPlds !== originalPldValue && existingChanges['max_plds'] === undefined) {
+      //   // console.log(`[TimeOffManager] Staging calculated PLD change for ${pinNumber}: ${originalPldValue} -> ${calculatedPlds}`);
+      //   // setTimeOffChange(pinNumber, 'max_plds', calculatedPlds); // Be cautious enabling this
+      // }
+    });
+    // Depend on membersList and selectedTimeOffYear to re-run checks when they change.
+    // Also include setTimeOffChange in dependency array as per linting rules.
+  }, [membersList, selectedTimeOffYear, setTimeOffChange]);
 
   // Add console log to check member order
   useEffect(() => {
@@ -99,25 +255,16 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
     }
   }, [membersList]);
 
-  // Handle year selection change
-  const handleYearChange = (year: YearType) => {
-    setSelectedTimeOffYear(year);
-  };
-
-  // Filter members based on search query
-  const filteredMembers = useMemo(() => {
-    if (!searchQuery.trim()) {
-      return membersList;
-    }
-
-    const query = searchQuery.toLowerCase().trim();
-    return membersList.filter(
-      (member: Member) =>
-        member.first_name.toLowerCase().includes(query) ||
-        member.last_name.toLowerCase().includes(query) ||
-        member.pin_number.toString().includes(query)
-    );
-  }, [membersList, searchQuery]);
+  // Add debug logging when calendar selection changes
+  useEffect(() => {
+    console.log("Calendar selection changed:", {
+      selectedCalendarId: selectedFilterCalendarId,
+      availableCalendars: availableCalendars.map((cal) => ({
+        id: cal.id,
+        name: cal.name,
+      })),
+    });
+  }, [selectedFilterCalendarId, availableCalendars]);
 
   // Calculate weeks to bid
   const calculateWeeksToBid = (vacationWeeks: number, vacationSplit: number) => {
@@ -174,29 +321,53 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
 
     return (
       <View style={styles.yearSelectorContainer}>
-        <ThemedText style={styles.yearSelectorLabel}>View/Edit Time Off for:</ThemedText>
-        <View style={styles.yearButtonsContainer}>
-          <TouchableOpacity
-            style={[styles.yearButton, selectedTimeOffYear === "current" && styles.selectedYearButton]}
-            onPress={() => handleYearChange("current")}
-            disabled={isTimeOffLoading}
-          >
-            <ThemedText
-              style={[styles.yearButtonText, selectedTimeOffYear === "current" && styles.selectedYearButtonText]}
+        <View style={styles.yearSelectorAndButtonContainer}>
+          <View style={styles.yearSelectorContent}>
+            <ThemedText style={styles.yearSelectorLabel}>View/Edit Time Off for:</ThemedText>
+          </View>
+          <View style={styles.yearButtonsContainer}>
+            <TouchableOpacity
+              style={[styles.yearButton, selectedTimeOffYear === "current" && styles.selectedYearButton]}
+              onPress={() => handleYearChange("current")}
+              disabled={isTimeOffLoading}
             >
-              {currentYear} (Current)
-            </ThemedText>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.yearButton, selectedTimeOffYear === "next" && styles.selectedYearButton]}
-            onPress={() => handleYearChange("next")}
-            disabled={isTimeOffLoading}
-          >
-            <ThemedText
-              style={[styles.yearButtonText, selectedTimeOffYear === "next" && styles.selectedYearButtonText]}
+              <ThemedText
+                style={[styles.yearButtonText, selectedTimeOffYear === "current" && styles.selectedYearButtonText]}
+              >
+                {currentYear} (Current)
+              </ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.yearButton, selectedTimeOffYear === "next" && styles.selectedYearButton]}
+              onPress={() => handleYearChange("next")}
+              disabled={isTimeOffLoading}
             >
-              {currentYear + 1} (Next)
-            </ThemedText>
+              <ThemedText
+                style={[styles.yearButtonText, selectedTimeOffYear === "next" && styles.selectedYearButtonText]}
+              >
+                {currentYear + 1} (Next)
+              </ThemedText>
+            </TouchableOpacity>
+          </View>
+          <TouchableOpacity
+            style={[styles.saveAllButton, !hasChanges && styles.saveAllButtonDisabled]}
+            disabled={!hasChanges || isTimeOffLoading}
+            onPress={handleSaveAllChanges}
+          >
+            {isTimeOffLoading ? (
+              <ActivityIndicator size="small" color={Colors.light.background} />
+            ) : (
+              <>
+                <Ionicons
+                  name="save-outline"
+                  size={18}
+                  color={hasChanges ? Colors.light.background : Colors[colorScheme].textDim}
+                />
+                <ThemedText style={[styles.saveAllButtonText, !hasChanges && styles.saveAllButtonTextDisabled]}>
+                  Save All
+                </ThemedText>
+              </>
+            )}
           </TouchableOpacity>
         </View>
       </View>
@@ -228,11 +399,15 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
   const renderTableHeader = () => {
     return (
       <View style={styles.tableHeader}>
-        <ThemedText style={[styles.headerCell, { flex: 2 }]}>Name</ThemedText>
-        <ThemedText style={[styles.headerCell, { textAlign: "center" }]}>PIN</ThemedText>
-        <ThemedText style={[styles.headerCell, { flex: 1.5 }]}>Hire Date</ThemedText>
-        <ThemedText style={[styles.headerCell, { textAlign: "center" }]}>Vacation Weeks</ThemedText>
-        <ThemedText style={[styles.headerCell, { textAlign: "center" }]}>Vacation Split</ThemedText>
+        <ThemedText style={[styles.headerCell, { flex: isMobile ? 2.5 : 2 }]}>Name</ThemedText>
+        {!isMobile && <ThemedText style={[styles.headerCell, { textAlign: "center" }]}>PIN</ThemedText>}
+        {!isMobile && <ThemedText style={[styles.headerCell, { flex: 1.5 }]}>Hire Date</ThemedText>}
+        <ThemedText style={[styles.headerCell, { textAlign: "center" }]}>
+          {isMobile ? "Vac Wks" : "Vacation Weeks"}
+        </ThemedText>
+        <ThemedText style={[styles.headerCell, { textAlign: "center" }]}>
+          {isMobile ? "Vac Splt" : "Vacation Split"}
+        </ThemedText>
         <ThemedText style={[styles.headerCell, { textAlign: "center" }]}>Weeks to Bid</ThemedText>
         <ThemedText style={[styles.headerCell, { textAlign: "center" }]}>PLDs</ThemedText>
         <ThemedText style={[styles.headerCell, { textAlign: "center" }]}>SDVs</ThemedText>
@@ -243,7 +418,7 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
 
   // Render table rows
   const renderTableRows = () => {
-    if (isTimeOffLoading) {
+    if (isTimeOffLoading && !isGeneratingPdf) {
       return (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={Colors[colorScheme].tint} />
@@ -262,21 +437,35 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
       );
     }
 
-    return filteredMembers.map((member: Member) => {
-      const isCurrentYear = selectedTimeOffYear === "current";
-      const originalVacationWeeks = isCurrentYear ? member.curr_vacation_weeks : member.next_vacation_weeks;
-      const originalVacationSplit = isCurrentYear ? member.curr_vacation_split : member.next_vacation_split;
+    // Track totals as we iterate through members
+    let totalWeeksToBid = 0;
+    let totalSingleDays = 0;
 
-      // Get values from changes if they exist
+    const memberRows = filteredMembers.map((member: Member) => {
+      const isCurrentYear = selectedTimeOffYear === "current";
       const pinChanges = timeOffChanges[member.pin_number] || {};
+
+      // Determine the reference date for calculation based on selected year
+      const currentReferenceDate = new Date();
+      const nextReferenceDate = new Date();
+      nextReferenceDate.setFullYear(currentReferenceDate.getFullYear() + 1);
+      const referenceDate = isCurrentYear ? currentReferenceDate : nextReferenceDate;
+
+      // Calculate the correct base entitlements for the selected year
+      const calculatedVacationWeeks = calculateVacationWeeks(member.company_hire_date, referenceDate);
+      const calculatedPlds = calculatePLDs(member.company_hire_date, referenceDate);
+
+      // Determine displayed vacation weeks: prioritize changes, then use calculated value
       const vacationWeeks = isCurrentYear
         ? pinChanges.curr_vacation_weeks !== undefined
           ? pinChanges.curr_vacation_weeks
-          : originalVacationWeeks
+          : calculatedVacationWeeks
         : pinChanges.next_vacation_weeks !== undefined
         ? pinChanges.next_vacation_weeks
-        : originalVacationWeeks;
+        : calculatedVacationWeeks;
 
+      // Determine displayed vacation split: prioritize changes, then use original value
+      const originalVacationSplit = isCurrentYear ? member.curr_vacation_split : member.next_vacation_split;
       const vacationSplit = isCurrentYear
         ? pinChanges.curr_vacation_split !== undefined
           ? pinChanges.curr_vacation_split
@@ -295,7 +484,16 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
         sdvs = pinChanges.sdv_election !== undefined ? pinChanges.sdv_election : member.sdv_election;
       }
 
+      // Calculate weeks to bid based on the *displayed* vacationWeeks and vacationSplit
       const weeksToBid = calculateWeeksToBid(vacationWeeks, vacationSplit);
+
+      // Determine displayed PLDs (use calculated value for the selected year)
+      // Assuming PLDs aren't directly editable here, so no need to check timeOffChanges
+      const displayPlds = calculatedPlds;
+
+      // Add to running totals
+      totalWeeksToBid += weeksToBid;
+      totalSingleDays += displayPlds + sdvs;
 
       // Check if this member has any changes
       const hasChangesForMember = !!timeOffChanges[member.pin_number];
@@ -304,11 +502,15 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
 
       return (
         <View key={member.pin_number} style={styles.tableRow}>
-          <ThemedText style={[styles.cell, { flex: 2 }]}>{`${member.first_name} ${member.last_name}`}</ThemedText>
-          <ThemedText style={[styles.cell, { textAlign: "center" }]}>{member.pin_number}</ThemedText>
-          <ThemedText style={[styles.cell, { flex: 1.5 }]}>
-            {new Date(member.company_hire_date).toLocaleDateString()}
-          </ThemedText>
+          <ThemedText
+            style={[styles.cell, { flex: isMobile ? 2.5 : 2 }]}
+          >{`${member.first_name} ${member.last_name}`}</ThemedText>
+          {!isMobile && <ThemedText style={[styles.cell, { textAlign: "center" }]}>{member.pin_number}</ThemedText>}
+          {!isMobile && (
+            <ThemedText style={[styles.cell, { flex: 1.5 }]}>
+              {new Date(member.company_hire_date).toLocaleDateString()}
+            </ThemedText>
+          )}
           <ThemedText style={[styles.cell, { textAlign: "center" }]}>{vacationWeeks}</ThemedText>
 
           {/* Editable vacation split as dropdown */}
@@ -369,7 +571,7 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
           </View>
 
           <ThemedText style={[styles.cell, { textAlign: "center" }]}>{weeksToBid}</ThemedText>
-          <ThemedText style={[styles.cell, { textAlign: "center" }]}>{member.max_plds}</ThemedText>
+          <ThemedText style={[styles.cell, { textAlign: "center" }]}>{displayPlds}</ThemedText>
           <ThemedText style={[styles.cell, { textAlign: "center" }]}>{sdvs}</ThemedText>
 
           {/* Save button for this row */}
@@ -393,11 +595,366 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
         </View>
       );
     });
+
+    // Calculate totals as requested
+    const calculatedWeeksToBidRatio = Math.ceil((totalWeeksToBid / 52) * 100) / 100;
+    const calculatedSingleDaysRatio = Math.ceil((totalSingleDays / 365) * 100) / 100;
+
+    // Store these for PDF generation as well
+    const overallTotalsForPdf = {
+      rawWeeksToBid: totalWeeksToBid,
+      ratioWeeksToBid: calculatedWeeksToBidRatio,
+      rawSingleDays: totalSingleDays,
+      ratioSingleDays: calculatedSingleDaysRatio,
+    };
+
+    // Add totals row
+    return [
+      ...memberRows,
+      <View key="totals-row" style={[styles.tableRow, styles.totalsRow]}>
+        <ThemedText style={[styles.cell, styles.totalsCell, { flex: isMobile ? 2.5 : 2, fontWeight: "bold" }]}>
+          TOTALS
+        </ThemedText>
+        {!isMobile && <ThemedText style={[styles.cell, { textAlign: "center" }]}>(Allocations)</ThemedText>}
+        {!isMobile && <ThemedText style={[styles.cell, { flex: 1.5 }]}></ThemedText>}
+        <ThemedText style={[styles.cell, { textAlign: "center" }]}>Total </ThemedText>
+        <ThemedText style={[styles.cell, { textAlign: "center" }]}>Weeks to Bid</ThemedText>
+        <ThemedText style={[styles.cell, styles.totalsCell, { textAlign: "center" }]}>
+          {`${totalWeeksToBid} (${calculatedWeeksToBidRatio})`}
+        </ThemedText>
+        <ThemedText style={[styles.cell, { textAlign: "center" }]}>Total </ThemedText>
+        <ThemedText style={[styles.cell, { textAlign: "center" }]}>Single Days</ThemedText>
+        <ThemedText style={[styles.cell, styles.totalsCell, { width: 60, textAlign: "center" }]}>
+          {`${totalSingleDays} (${calculatedSingleDaysRatio})`}
+        </ThemedText>
+      </View>,
+    ];
+  };
+
+  // Add this new handler function before the return statement
+  const handleSaveAllChanges = async () => {
+    if (!hasChanges) return;
+
+    try {
+      // Convert timeOffChanges to array format expected by updateMemberTimeOff
+      const changes = Object.entries(timeOffChanges).map(([pinNumber, fields]) => ({
+        pin_number: parseInt(pinNumber, 10),
+        ...fields,
+      }));
+
+      const success = await updateMemberTimeOff(changes, selectedTimeOffYear);
+
+      if (success) {
+        // Changes saved successfully
+        console.log("All changes saved successfully");
+      } else {
+        // Handle save failure
+        console.error("Failed to save all changes");
+      }
+    } catch (error) {
+      console.error("Error saving all changes:", error);
+    }
+  };
+
+  // Filter members based on search query and selected calendar
+  const filteredMembers = useMemo(() => {
+    let filtered = membersList;
+
+    // Debug log for initial state
+    console.log("Filtering members:", {
+      totalMembers: membersList.length,
+      selectedCalendarId: selectedFilterCalendarId,
+      sampleMember: membersList[0]
+        ? {
+            name: `${membersList[0].first_name} ${membersList[0].last_name}`,
+            calendar_id: membersList[0].calendar_id,
+          }
+        : null,
+    });
+
+    // Apply calendar filter if selected
+    if (selectedFilterCalendarId) {
+      filtered = filtered.filter((member: Member) => {
+        const matches = member.calendar_id === selectedFilterCalendarId;
+        // Debug log for each member that doesn't match
+        if (!matches) {
+          console.log("Member calendar mismatch:", {
+            memberName: `${member.first_name} ${member.last_name}`,
+            memberCalendarId: member.calendar_id,
+            selectedCalendarId: selectedFilterCalendarId,
+            typeMemberCalendarId: typeof member.calendar_id,
+            typeSelectedCalendarId: typeof selectedFilterCalendarId,
+          });
+        }
+        return matches;
+      });
+      // Debug log after calendar filtering
+      console.log("After calendar filter:", {
+        remainingMembers: filtered.length,
+        selectedCalendarId: selectedFilterCalendarId,
+      });
+    }
+
+    // Apply search filter if there's a search query
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase().trim();
+      filtered = filtered.filter(
+        (member: Member) =>
+          member.first_name.toLowerCase().includes(query) ||
+          member.last_name.toLowerCase().includes(query) ||
+          member.pin_number.toString().includes(query)
+      );
+    }
+
+    return filtered;
+  }, [membersList, selectedFilterCalendarId, searchQuery]);
+
+  // Handle year selection change
+  const handleYearChange = (year: YearType) => {
+    setSelectedTimeOffYear(year);
+  };
+
+  // Helper function to generate HTML for PDF
+  const generatePdfHtml = (
+    title: string,
+    membersToPrint: Member[],
+    yearForPdf: YearType,
+    currentChanges: Record<number, any>,
+    totals: { rawWeeksToBid: number; ratioWeeksToBid: number; rawSingleDays: number; ratioSingleDays: number }
+  ): string => {
+    let tableRowsHtml = "";
+    membersToPrint.forEach((member) => {
+      const isCurrent = yearForPdf === "current";
+      const pinChanges = currentChanges[member.pin_number] || {};
+
+      const currentReferenceDate = new Date();
+      const nextReferenceDate = new Date();
+      nextReferenceDate.setFullYear(currentReferenceDate.getFullYear() + 1);
+      const referenceDate = isCurrent ? currentReferenceDate : nextReferenceDate;
+
+      const calculatedVacationWeeksVal = calculateVacationWeeks(member.company_hire_date, referenceDate);
+      const calculatedPldsVal = calculatePLDs(member.company_hire_date, referenceDate);
+
+      const vacationWeeksVal = isCurrent
+        ? pinChanges.curr_vacation_weeks !== undefined
+          ? pinChanges.curr_vacation_weeks
+          : calculatedVacationWeeksVal
+        : pinChanges.next_vacation_weeks !== undefined
+        ? pinChanges.next_vacation_weeks
+        : calculatedVacationWeeksVal;
+
+      const originalVacationSplitVal = isCurrent ? member.curr_vacation_split : member.next_vacation_split;
+      const vacationSplitVal = isCurrent
+        ? pinChanges.curr_vacation_split !== undefined
+          ? pinChanges.curr_vacation_split
+          : originalVacationSplitVal
+        : pinChanges.next_vacation_split !== undefined
+        ? pinChanges.next_vacation_split
+        : originalVacationSplitVal;
+
+      let sdvsVal: number;
+      if (isCurrent) {
+        sdvsVal = pinChanges.sdv_entitlement !== undefined ? pinChanges.sdv_entitlement : member.sdv_entitlement;
+      } else {
+        sdvsVal = pinChanges.sdv_election !== undefined ? pinChanges.sdv_election : member.sdv_election;
+      }
+      const weeksToBidVal = calculateWeeksToBid(vacationWeeksVal, vacationSplitVal);
+      const displayPldsVal = calculatedPldsVal;
+
+      tableRowsHtml += `
+        <tr>
+          <td>${member.first_name} ${member.last_name}</td>
+          <td style="text-align: center;">${member.pin_number}</td>
+          <td style="text-align: center;">${new Date(member.company_hire_date).toLocaleDateString()}</td>
+          <td style="text-align: center;">${vacationWeeksVal}</td>
+          <td style="text-align: center;">${vacationSplitVal}</td>
+          <td style="text-align: center;">${weeksToBidVal}</td>
+          <td style="text-align: center;">${displayPldsVal}</td>
+          <td style="text-align: center;">${sdvsVal}</td>
+        </tr>
+      `;
+    });
+
+    return `
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <title>${title}</title>
+          <style>
+            body { font-family: Helvetica, Arial, sans-serif; margin: 20px; background-color: #ffffff; color: #000000; }
+            h1 { text-align: center; margin-bottom: 20px; font-size: 18px; }
+            table { width: 100%; border-collapse: collapse; font-size: 10px; }
+            th, td { border: 1px solid #cccccc; padding: 6px; text-align: left; }
+            th { background-color: #f0f0f0; font-weight: bold; }
+            tfoot td { font-weight: bold; background-color: #f9f9f9; }
+            @media print {
+              thead { display: table-header-group; } /* Repeat header on each page */
+              tfoot { display: table-footer-group; } /* Repeat footer on each page if needed, though sums are usually at the end */
+            }
+          </style>
+        </head>
+        <body>
+          <h1>${title}</h1>
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th style="text-align: center;">PIN</th>
+                <th style="text-align: center;">Hire Date</th>
+                <th style="text-align: center;">Vac Weeks</th>
+                <th style="text-align: center;">Vac Split</th>
+                <th style="text-align: center;">Weeks to Bid</th>
+                <th style="text-align: center;">PLDs</th>
+                <th style="text-align: center;">SDVs</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tableRowsHtml}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colspan="5" style="text-align: right; font-weight: bold;">TOTALS:</td>
+                <td style="text-align: center;">Total weeks/weeks in the year: ${totals.rawWeeksToBid} (${totals.ratioWeeksToBid})</td>
+                <td style="text-align: center;"></td> <!-- Empty cell for PLDs total -->
+                <td style="text-align: center;">${totals.rawSingleDays} (${totals.ratioSingleDays}) (Total Single Days)</td>
+              </tr>
+            </tfoot>
+          </table>
+        </body>
+      </html>
+    `;
+  };
+
+  // Handle PDF Download
+  const handleDownloadPdf = async () => {
+    setIsGeneratingPdf(true);
+
+    // Confirmation dialog
+    if (!selectedFilterCalendarId && availableCalendars.length > 1) {
+      const userConfirmed = await new Promise<boolean>((resolve) => {
+        Alert.alert(
+          "Confirm PDF Scope",
+          "You have not selected a specific calendar, and this division has multiple calendars. The PDF will include data for all calendars in this division. Do you want to proceed?",
+          [
+            { text: "Cancel", onPress: () => resolve(false), style: "cancel" },
+            { text: "Proceed", onPress: () => resolve(true) },
+          ],
+          { cancelable: false }
+        );
+      });
+      if (!userConfirmed) {
+        setIsGeneratingPdf(false);
+        return;
+      }
+    }
+
+    let pdfTitle = `${selectedDivision} Calendar`;
+    if (selectedFilterCalendarId) {
+      const calendar = availableCalendars.find((c) => c.id === selectedFilterCalendarId);
+      if (calendar) {
+        pdfTitle = `${selectedDivision} - ${calendar.name} Calendar`;
+      }
+    }
+    pdfTitle += ` (${selectedTimeOffYear === "current" ? new Date().getFullYear() : new Date().getFullYear() + 1})`;
+
+    // Recalculate totals based on the currently filtered members for the PDF
+    let currentTotalWeeksToBid = 0;
+    let currentTotalSingleDays = 0;
+
+    filteredMembers.forEach((member: Member) => {
+      const isCurrent = selectedTimeOffYear === "current";
+      const pinChanges = timeOffChanges[member.pin_number] || {};
+      const currentReferenceDate = new Date();
+      const nextReferenceDate = new Date();
+      nextReferenceDate.setFullYear(currentReferenceDate.getFullYear() + 1);
+      const referenceDate = isCurrent ? currentReferenceDate : nextReferenceDate;
+
+      const calculatedVacationWeeksVal = calculateVacationWeeks(member.company_hire_date, referenceDate);
+      const calculatedPldsVal = calculatePLDs(member.company_hire_date, referenceDate);
+
+      const vacationWeeksVal = isCurrent
+        ? pinChanges.curr_vacation_weeks !== undefined
+          ? pinChanges.curr_vacation_weeks
+          : calculatedVacationWeeksVal
+        : pinChanges.next_vacation_weeks !== undefined
+        ? pinChanges.next_vacation_weeks
+        : calculatedVacationWeeksVal;
+      const originalVacationSplitVal = isCurrent ? member.curr_vacation_split : member.next_vacation_split;
+      const vacationSplitVal = isCurrent
+        ? pinChanges.curr_vacation_split !== undefined
+          ? pinChanges.curr_vacation_split
+          : originalVacationSplitVal
+        : pinChanges.next_vacation_split !== undefined
+        ? pinChanges.next_vacation_split
+        : originalVacationSplitVal;
+      let sdvsVal: number;
+      if (isCurrent) {
+        sdvsVal = pinChanges.sdv_entitlement !== undefined ? pinChanges.sdv_entitlement : member.sdv_entitlement;
+      } else {
+        sdvsVal = pinChanges.sdv_election !== undefined ? pinChanges.sdv_election : member.sdv_election;
+      }
+      const weeksToBidVal = calculateWeeksToBid(vacationWeeksVal, vacationSplitVal);
+      const displayPldsVal = calculatedPldsVal;
+
+      currentTotalWeeksToBid += weeksToBidVal;
+      currentTotalSingleDays += displayPldsVal + sdvsVal;
+    });
+
+    const finalTotalsForPdf = {
+      rawWeeksToBid: currentTotalWeeksToBid,
+      ratioWeeksToBid: Math.ceil((currentTotalWeeksToBid / 52) * 100) / 100,
+      rawSingleDays: currentTotalSingleDays,
+      ratioSingleDays: Math.ceil((currentTotalSingleDays / 365) * 100) / 100,
+    };
+
+    const htmlContent = generatePdfHtml(
+      pdfTitle,
+      filteredMembers,
+      selectedTimeOffYear,
+      timeOffChanges,
+      finalTotalsForPdf
+    );
+
+    try {
+      if (Platform.OS === "web") {
+        // Web: Use jsPDF and jspdf-autotable for better PDF generation
+        // Dynamically import the web-specific PDF generator
+        // @ts-expect-error Metro will resolve this to pdfGenerator.web.ts for web builds
+        const { generateWebPdf } = await import("./pdfGenerator");
+        await generateWebPdf(pdfTitle, filteredMembers, selectedTimeOffYear, timeOffChanges, finalTotalsForPdf);
+      } else {
+        // Native (iOS/Android) - use existing expo-print with HTML
+        const { uri } = await Print.printToFileAsync({ html: htmlContent });
+        console.log("File has been saved to:", uri);
+        if (!(await Sharing.isAvailableAsync())) {
+          alert("Uh oh, sharing isn't available on your platform");
+          setIsGeneratingPdf(false);
+          return;
+        }
+        await Sharing.shareAsync(uri, {
+          mimeType: "application/pdf",
+          dialogTitle: "Download Time Off Data",
+          UTI: ".pdf",
+        });
+      }
+    } catch (error) {
+      console.error("Error generating PDF:", error);
+      Alert.alert("Error", "Could not generate PDF. Please try again.");
+    } finally {
+      setIsGeneratingPdf(false);
+    }
   };
 
   return (
     <ThemedView style={styles.container}>
       <View style={styles.header}>
+        <CalendarFilter
+          calendars={availableCalendars}
+          selectedCalendarId={selectedFilterCalendarId}
+          onSelectCalendar={setSelectedFilterCalendarId}
+          style={styles.calendarFilter}
+          isLoading={isCalendarsLoading}
+        />
         {renderYearSelector()}
         {renderSearchBar()}
       </View>
@@ -408,9 +965,8 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
           <TouchableOpacity
             style={styles.retryButton}
             onPress={() => {
-              // Reload data on retry
               if (selectedDivision) {
-                const divisionId = member?.division_id || 0; // Replace with actual division ID
+                const divisionId = member?.division_id || 0;
                 fetchMemberTimeOffData(divisionId);
               }
             }}
@@ -420,15 +976,51 @@ export function TimeOffManager({ selectedDivision, selectedCalendarId }: TimeOff
         </View>
       ) : (
         <>
-          {/* Main content in a relative container - no more need for the saveButtonContainer */}
           <View style={styles.contentWithSaveButton}>
-            {/* Table area */}
             <View style={styles.tableContainer}>
               {renderTableHeader()}
-              <ScrollView style={styles.tableScrollView}>
-                {renderTableRows()}
-                <View style={{ height: 20 }} />
-              </ScrollView>
+              <View style={{ flex: 1 }}>
+                <ScrollView style={styles.tableScrollView} nestedScrollEnabled={true} scrollEnabled={true}>
+                  {renderTableRows()}
+                </ScrollView>
+              </View>
+            </View>
+            <View style={styles.bottomActionContainer}>
+              <TouchableOpacity
+                style={[styles.downloadPdfButton, isGeneratingPdf && styles.downloadPdfButtonDisabled]}
+                disabled={isGeneratingPdf || isTimeOffLoading}
+                onPress={handleDownloadPdf}
+              >
+                {isGeneratingPdf ? (
+                  <ActivityIndicator size="small" color={Colors[colorScheme].text} />
+                ) : (
+                  <>
+                    <Ionicons name="download-outline" size={18} color={Colors[colorScheme].text} />
+                    <ThemedText style={styles.downloadPdfButtonText}>Download PDF</ThemedText>
+                  </>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.saveAllButton, (!hasChanges || isGeneratingPdf) && styles.saveAllButtonDisabled]}
+                disabled={!hasChanges || isTimeOffLoading || isGeneratingPdf}
+                onPress={handleSaveAllChanges}
+              >
+                {isTimeOffLoading ? (
+                  <ActivityIndicator size="small" color={Colors.light.background} />
+                ) : (
+                  <>
+                    <Ionicons
+                      name="save-outline"
+                      size={18}
+                      color={hasChanges ? Colors.light.background : Colors[colorScheme].textDim}
+                    />
+                    <ThemedText style={[styles.saveAllButtonText, !hasChanges && styles.saveAllButtonTextDisabled]}>
+                      Save All
+                    </ThemedText>
+                  </>
+                )}
+              </TouchableOpacity>
             </View>
           </View>
         </>
@@ -455,6 +1047,18 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     flexWrap: "wrap",
   },
+  yearSelectorAndButtonContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    width: "100%",
+  } as const,
+  yearSelectorContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+  } as const,
   yearSelectorLabel: {
     fontSize: 16,
     fontWeight: "500",
@@ -462,31 +1066,34 @@ const styles = StyleSheet.create({
   },
   yearButtonsContainer: {
     flexDirection: "row",
+    flexWrap: "wrap",
+    paddingBottom: 4,
   },
   yearButton: {
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: Colors.light.border,
+    borderColor: Colors.dark.border,
     marginRight: 8,
+    backgroundColor: Colors.dark.card,
   },
   selectedYearButton: {
-    backgroundColor: Colors.light.tint,
-    borderColor: Colors.light.tint,
+    backgroundColor: Colors.dark.tint,
+    borderColor: Colors.dark.tint,
   },
   yearButtonText: {
     fontSize: 14,
     fontWeight: "500",
   },
   selectedYearButtonText: {
-    color: Colors.light.background,
+    color: Colors.dark.buttonText,
   },
   searchContainer: {
     flexDirection: "row",
     alignItems: "center",
     borderWidth: 1,
-    borderColor: Colors.light.border,
+    borderColor: Colors.dark.border,
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -505,32 +1112,32 @@ const styles = StyleSheet.create({
   tableContainer: {
     flex: 1,
     borderWidth: 1,
-    borderColor: Colors.light.border,
+    borderColor: Colors.dark.border,
     borderRadius: 8,
     overflow: "hidden",
+    display: "flex",
+    flexDirection: "column",
   },
   tableHeader: {
     flexDirection: "row",
-    backgroundColor: Colors.light.background,
+    backgroundColor: Colors.dark.card,
     paddingVertical: 12,
     paddingHorizontal: 8,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.light.border,
+    borderBottomColor: Colors.dark.border,
   },
   headerCell: {
     flex: 1,
     fontWeight: "600",
     fontSize: 14,
   },
-  tableScrollView: {
-    flex: 1,
-  },
+  tableScrollView: {},
   tableRow: {
     flexDirection: "row",
     paddingVertical: 12,
     paddingHorizontal: 8,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.light.border,
+    borderBottomColor: Colors.dark.border,
   },
   cell: {
     flex: 1,
@@ -543,7 +1150,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderColor: Colors.light.border,
+    borderColor: Colors.dark.border,
     borderRadius: 4,
     minWidth: 60,
     width: "70%",
@@ -565,43 +1172,96 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 14,
-    color: Colors.light.textDim,
+    color: Colors.dark.textDim,
   },
   errorContainer: {
     padding: 24,
     alignItems: "center",
   },
   errorText: {
-    color: Colors.light.error,
+    color: Colors.dark.error,
     marginBottom: 12,
   },
   retryButton: {
     paddingHorizontal: 16,
     paddingVertical: 8,
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.dark.tint,
     borderRadius: 8,
   },
   retryButtonText: {
-    color: Colors.light.background,
+    color: Colors.dark.buttonText,
     fontWeight: "500",
   },
   rowSaveButton: {
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.dark.tint,
     borderRadius: 4,
     width: 36,
     height: 36,
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.18,
-    shadowRadius: 1.0,
+    boxShadow: "0 0 10px 0 rgba(0, 0, 0, 0.1)",
     elevation: 1,
   },
   rowSaveButtonDisabled: {
-    backgroundColor: Colors.light.border,
+    backgroundColor: Colors.dark.border,
+  },
+  calendarFilter: {
+    marginBottom: 16,
+  },
+  saveAllButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: Colors.dark.tint,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginLeft: 16,
+  } as const,
+  saveAllButtonDisabled: {
+    backgroundColor: Colors.dark.border,
+  } as const,
+  saveAllButtonText: {
+    color: Colors.dark.buttonText,
+    marginLeft: 8,
+    fontSize: 14,
+    fontWeight: "500",
+  } as const,
+  saveAllButtonTextDisabled: {
+    color: Colors.dark.textDim,
+  } as const,
+  bottomActionContainer: {
+    position: "relative",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingTop: 16,
+  } as const,
+  totalsRow: {
+    backgroundColor: Colors.dark.card,
+    borderTopWidth: 1,
+    borderTopColor: Colors.dark.border,
+  },
+  totalsCell: {
+    fontWeight: "600",
+  },
+  downloadPdfButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: Colors.dark.card,
+    borderColor: Colors.dark.tint,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  downloadPdfButtonDisabled: {
+    backgroundColor: Colors.dark.border,
+    borderColor: Colors.dark.border,
+  },
+  downloadPdfButtonText: {
+    color: Colors.dark.text,
+    marginLeft: 8,
+    fontSize: 14,
+    fontWeight: "500",
   },
 });

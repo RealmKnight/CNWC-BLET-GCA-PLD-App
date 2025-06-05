@@ -1,10 +1,20 @@
-import React from "react";
-import { Platform, StyleSheet, TextStyle, ViewStyle } from "react-native";
+import React, { useState, useEffect } from "react";
+import {
+  Platform,
+  StyleSheet,
+  TextStyle,
+  ViewStyle,
+  View,
+  Modal,
+  TouchableOpacity,
+  useWindowDimensions,
+} from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
-import { ThemedTextInput } from "./ThemedTextInput";
-import { format, parseISO } from "date-fns";
+import { format, parseISO, isAfter, isBefore } from "date-fns";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
+import { Ionicons } from "@expo/vector-icons";
+import { ThemedText } from "./ThemedText";
 
 interface DatePickerProps {
   date: Date | null;
@@ -13,6 +23,11 @@ interface DatePickerProps {
   placeholder?: string;
   style?: ViewStyle;
   textStyle?: TextStyle;
+  disabled?: boolean;
+  minDate?: Date;
+  maxDate?: Date;
+  accessibilityLabel?: string;
+  accessibilityHint?: string;
 }
 
 export function DatePicker({
@@ -22,98 +37,209 @@ export function DatePicker({
   placeholder = "Select date",
   style,
   textStyle,
+  disabled = false,
+  minDate,
+  maxDate,
+  accessibilityLabel,
+  accessibilityHint,
 }: DatePickerProps) {
-  const [showPicker, setShowPicker] = React.useState(false);
+  const [showPicker, setShowPicker] = useState(false);
+  const [webTempDate, setWebTempDate] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
-
-  const handleChange = (event: any, selectedDate?: Date) => {
-    setShowPicker(false);
-    if (selectedDate) {
-      onDateChange(selectedDate);
-    }
-  };
+  const { width } = useWindowDimensions();
+  const isMobileWeb = Platform.OS === "web" && width < 768;
 
   const formattedDate = date ? format(date, "yyyy-MM-dd") : "";
 
-  // Create a merged style that includes theme-based styles
-  const defaultStyles: TextStyle = {
+  // Format min/max dates for web input
+  const minDateStr = minDate ? format(minDate, "yyyy-MM-dd") : "";
+  const maxDateStr = maxDate ? format(maxDate, "yyyy-MM-dd") : "";
+
+  // Validate the date is within the allowed range
+  const validateDate = (dateToCheck: Date): boolean => {
+    setError(null);
+    if (minDate && isBefore(dateToCheck, minDate)) {
+      setError(`Date must be on or after ${format(minDate, "MMM d, yyyy")}`);
+      return false;
+    }
+    if (maxDate && isAfter(dateToCheck, maxDate)) {
+      setError(`Date must be on or before ${format(maxDate, "MMM d, yyyy")}`);
+      return false;
+    }
+    return true;
+  };
+
+  // Clear error when date changes
+  useEffect(() => {
+    if (date) {
+      validateDate(date);
+    } else {
+      setError(null);
+    }
+  }, [date]);
+
+  // Themed styles
+  const defaultViewStyle: ViewStyle = {
     height: 40,
     borderWidth: 1,
     borderRadius: 8,
     paddingHorizontal: 12,
+    backgroundColor: Colors.dark.card,
+    borderColor: error ? Colors[colorScheme].error : Colors[colorScheme].border,
+    flexDirection: "row",
+    alignItems: "center",
+    opacity: disabled ? 0.6 : 1,
+  };
+  const defaultTextStyle: TextStyle = {
     fontSize: 16,
     color: Colors[colorScheme].text,
-    borderColor: Colors[colorScheme].border,
-    backgroundColor: Colors[colorScheme].background,
   };
-
-  // Merge with passed styles, giving priority to passed styles
-  const inputStyle: TextStyle = {
-    ...defaultStyles,
+  const viewStyle: ViewStyle = {
+    ...defaultViewStyle,
+    ...(style || {}),
+  };
+  const mergedTextStyle: TextStyle = {
+    ...defaultTextStyle,
     ...(textStyle || {}),
-    ...((style as TextStyle) || {}),
   };
 
-  // Handle text input changes (this will be called when user types in web input)
-  const handleTextChange = (text: string) => {
-    // For web, we'll let the native date input handle changes
-    if (Platform.OS === "web") {
-      return;
-    }
-    // For mobile, we don't want to allow direct text input
-    setShowPicker(true);
-  };
-
+  // --- Web Implementation ---
   if (Platform.OS === "web") {
-    // For web, we'll use a direct HTML input element with the appropriate props
-    const webInputStyle = {
-      ...inputStyle,
-      padding: "0 12px",
-      fontFamily: "inherit",
-      boxSizing: "border-box" as "border-box",
-    };
-
+    // On all web (desktop and mobile): use a styled, custom input with a clickable icon that opens a modal
     return (
-      <input
-        type="date"
-        style={webInputStyle as any}
-        value={formattedDate}
-        onChange={(e) => {
-          const dateValue = e.target.value;
-          if (dateValue) {
-            // Create a date object that's timezone-safe for date-only values
-            // parseISO creates a date in the local timezone
-            const parsedDate = parseISO(dateValue);
+      <>
+        <TouchableOpacity
+          style={[viewStyle, { flexDirection: "row", justifyContent: "space-between" }]}
+          onPress={() => !disabled && setShowPicker(true)}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={accessibilityLabel || placeholder}
+          accessibilityHint={accessibilityHint}
+          disabled={disabled}
+        >
+          <ThemedText
+            style={{
+              ...mergedTextStyle,
+              color: formattedDate ? Colors[colorScheme].text : Colors[colorScheme].textDim,
+            }}
+          >
+            {formattedDate || placeholder}
+          </ThemedText>
+          <Ionicons name="calendar-outline" size={20} color={Colors[colorScheme].icon} style={{ marginLeft: 8 }} />
+        </TouchableOpacity>
 
-            // For date-only values, we want midnight in the user's timezone
-            // This ensures the date they pick is the date they get, regardless of timezone
-            const selectedDate = new Date(parsedDate.getFullYear(), parsedDate.getMonth(), parsedDate.getDate());
+        {error && <ThemedText style={styles.errorText}>{error}</ThemedText>}
 
-            onDateChange(selectedDate);
-          } else {
-            onDateChange(null);
-          }
-        }}
-        placeholder={placeholder}
-      />
+        <Modal visible={showPicker} transparent animationType="fade" onRequestClose={() => setShowPicker(false)}>
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalContent]}>
+              <ThemedText style={styles.modalTitle}>{placeholder}</ThemedText>
+
+              {minDate && maxDate && (
+                <ThemedText style={styles.dateRangeText}>
+                  Select a date between {format(minDate, "MMM d, yyyy")} and {format(maxDate, "MMM d, yyyy")}
+                </ThemedText>
+              )}
+
+              <input
+                type="date"
+                value={webTempDate || formattedDate}
+                onChange={(e) => setWebTempDate(e.target.value)}
+                min={minDateStr}
+                max={maxDateStr}
+                style={{
+                  color: Colors[colorScheme].text,
+                  background: Colors[colorScheme].background,
+                  border: `1px solid ${Colors[colorScheme].border}`,
+                  borderRadius: 6,
+                  padding: 12,
+                  fontSize: 16,
+                  width: "100%",
+                  marginBottom: 16,
+                  fontFamily: "inherit",
+                }}
+                aria-label={accessibilityLabel || placeholder}
+                aria-describedby={accessibilityHint}
+                autoFocus
+              />
+              <View style={styles.modalButtons}>
+                <TouchableOpacity
+                  style={[styles.modalButton, { borderColor: Colors[colorScheme].border }]}
+                  onPress={() => {
+                    setShowPicker(false);
+                    setWebTempDate("");
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Cancel"
+                >
+                  <ThemedText>Cancel</ThemedText>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalButton, { backgroundColor: Colors[colorScheme].tint }]}
+                  onPress={() => {
+                    if (webTempDate) {
+                      const parsedDate = parseISO(webTempDate);
+                      const selectedDate = new Date(
+                        parsedDate.getFullYear(),
+                        parsedDate.getMonth(),
+                        parsedDate.getDate()
+                      );
+
+                      if (validateDate(selectedDate)) {
+                        onDateChange(selectedDate);
+                      }
+                    }
+                    setShowPicker(false);
+                    setWebTempDate("");
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Apply"
+                >
+                  <ThemedText style={{ color: Colors[colorScheme].background }}>Apply</ThemedText>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      </>
     );
   }
 
+  // --- Native (iOS/Android) Implementation ---
   return (
     <>
-      <ThemedTextInput
-        style={inputStyle}
-        value={formattedDate}
-        onChangeText={handleTextChange}
-        placeholder={placeholder}
-        onFocus={() => setShowPicker(true)}
-        editable={false} // Make input read-only on mobile
-      />
+      <TouchableOpacity
+        style={[viewStyle, { flexDirection: "row", justifyContent: "space-between" }]}
+        onPress={() => !disabled && setShowPicker(true)}
+        activeOpacity={0.7}
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel || placeholder}
+        accessibilityHint={accessibilityHint}
+        disabled={disabled}
+      >
+        <ThemedText
+          style={{ ...mergedTextStyle, color: formattedDate ? Colors[colorScheme].text : Colors[colorScheme].textDim }}
+        >
+          {formattedDate || placeholder}
+        </ThemedText>
+        <Ionicons name="calendar-outline" size={20} color={Colors[colorScheme].icon} style={{ marginLeft: 8 }} />
+      </TouchableOpacity>
+
+      {error && <ThemedText style={styles.errorText}>{error}</ThemedText>}
+
       {showPicker && (
         <DateTimePicker
           value={date || new Date()}
           mode={mode}
-          onChange={handleChange}
+          onChange={(_event, selectedDate) => {
+            setShowPicker(false);
+            if (selectedDate && validateDate(selectedDate)) {
+              onDateChange(selectedDate);
+            }
+          }}
+          minimumDate={minDate}
+          maximumDate={maxDate}
           textColor={Colors[colorScheme].text}
           themeVariant={colorScheme}
         />
@@ -123,10 +249,53 @@ export function DatePicker({
 }
 
 const styles = StyleSheet.create({
-  input: {
-    height: 40,
-    borderWidth: 1,
+  modalOverlay: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.5)",
+  },
+  modalContent: {
+    padding: 20,
     borderRadius: 8,
-    paddingHorizontal: 12,
+    borderWidth: 1,
+    width: "90%",
+    maxWidth: 400,
+    alignItems: "center",
+    gap: 16,
+    backgroundColor: Colors.dark.card,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "500",
+    marginBottom: 16,
+    textAlign: "center",
+  },
+  modalButtons: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    width: "100%",
+    marginTop: 16,
+    gap: 12,
+  },
+  modalButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 6,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: 100,
+  },
+  errorText: {
+    color: Colors.dark.error,
+    fontSize: 14,
+    marginTop: 4,
+  },
+  dateRangeText: {
+    fontSize: 14,
+    textAlign: "center",
+    marginBottom: 12,
+    opacity: 0.8,
   },
 });

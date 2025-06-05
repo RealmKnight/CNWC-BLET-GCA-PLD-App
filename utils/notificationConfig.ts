@@ -1,8 +1,14 @@
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
-import { markNotificationDelivered, markMessageRead, getUnreadMessageCount } from "./notificationService";
+// Import from central notification types to prevent circular dependencies
+import {
+  NOTIFICATION_PRIORITIES,
+  NotificationType,
+} from "@/types/notifications";
 import * as TaskManager from "expo-task-manager";
 import { router } from "expo-router";
+import Constants from "expo-constants";
+import * as Device from "expo-device";
 
 const BACKGROUND_NOTIFICATION_TASK = "BACKGROUND-NOTIFICATION-TASK";
 
@@ -10,37 +16,258 @@ type NotificationData = {
   notification: Notifications.Notification;
 };
 
+// Function injection interfaces to prevent circular imports
+interface NotificationServiceFunctions {
+  getUnreadMessageCount: (userId: number) => Promise<number>;
+  markMessageRead: (messageId: string) => Promise<void>;
+  markNotificationDelivered: (messageId: string) => Promise<void>;
+  handleNotificationDeepLink: (
+    notificationData: any,
+    actionIdentifier?: string,
+  ) => Promise<void>;
+}
+
+// Global storage for injected functions
+let notificationServiceFunctions: NotificationServiceFunctions | null = null;
+
+/**
+ * Inject notification service functions to prevent circular imports
+ * This should be called during app initialization
+ */
+export function injectNotificationServiceFunctions(
+  functions: NotificationServiceFunctions,
+) {
+  notificationServiceFunctions = functions;
+}
+
 // Register background task
-TaskManager.defineTask<NotificationData>(BACKGROUND_NOTIFICATION_TASK, async ({ data, error }) => {
-  if (error) {
-    console.error("Background task error:", error);
-    return;
-  }
+TaskManager.defineTask<NotificationData>(
+  BACKGROUND_NOTIFICATION_TASK,
+  async ({ data, error }) => {
+    if (error) {
+      console.error("[PushNotification] Background task error:", error);
+      return;
+    }
 
-  if (!data?.notification) return;
+    if (!data?.notification) {
+      console.warn(
+        "[PushNotification] No notification data in background task",
+      );
+      return;
+    }
 
-  const messageId = data.notification.request.content.data?.messageId;
+    if (!notificationServiceFunctions) {
+      console.warn(
+        "[PushNotification] Notification service functions not injected",
+      );
+      return;
+    }
 
-  if (messageId) {
-    await markNotificationDelivered(messageId as string);
-  }
-});
+    const { notification } = data;
+
+    // Safely access notification content - handle different notification structures
+    const content = notification?.request?.content;
+    if (!content) {
+      console.warn(
+        "[PushNotification] No content found in notification:",
+        notification,
+      );
+      return;
+    }
+
+    const messageId = content.data?.messageId as string;
+    const userId = content.data?.userId as string;
+    const notificationType = content.data?.notificationType as NotificationType;
+    const requiresAcknowledgment = content.data
+      ?.requiresAcknowledgment as boolean;
+
+    console.log("[PushNotification] Background notification received:", {
+      messageId,
+      userId,
+      notificationType,
+      requiresAcknowledgment,
+    });
+
+    try {
+      // Process notification delivery
+      if (messageId) {
+        await notificationServiceFunctions.markNotificationDelivered(messageId);
+
+        // Process notification actions based on type
+        const trigger = notification.request.trigger;
+        if (trigger && "type" in trigger && trigger.type === "push") {
+          switch (notificationType) {
+            case NotificationType.ADMIN_MESSAGE:
+              // Process admin messages
+              console.log(
+                "[PushNotification] Processing admin message in background",
+              );
+              break;
+            case NotificationType.GCA_ANNOUNCEMENT:
+              // Process GCA announcements
+              console.log(
+                "[PushNotification] Processing GCA announcement in background",
+              );
+              break;
+            case NotificationType.DIVISION_ANNOUNCEMENT:
+              // Process division announcements
+              console.log(
+                "[PushNotification] Processing division announcement in background",
+              );
+              break;
+            default:
+              // Process regular notifications
+              console.log(
+                "[PushNotification] Processing regular message in background",
+              );
+              break;
+          }
+        }
+
+        // Check if the notification was actioned
+        const actionId = content.data?.actionId as string;
+        if (actionId) {
+          // Handle different action types
+          switch (actionId) {
+            case "READ_ACTION":
+              console.log(
+                "[PushNotification] Processing READ action in background",
+              );
+              await notificationServiceFunctions.markMessageRead(messageId);
+              break;
+            case "ACKNOWLEDGE_ACTION":
+              console.log(
+                "[PushNotification] Processing ACKNOWLEDGE action in background",
+              );
+              await notificationServiceFunctions.markMessageRead(messageId);
+              // Additional acknowledgment handling here
+              break;
+            default:
+              console.log(`[PushNotification] Unknown action: ${actionId}`);
+              break;
+          }
+        }
+
+        // Update badge count
+        if (userId) {
+          try {
+            const unreadCount = await notificationServiceFunctions
+              .getUnreadMessageCount(Number(userId));
+            await Notifications.setBadgeCountAsync(unreadCount);
+            console.log(
+              `[PushNotification] Updated badge count to ${unreadCount} in background`,
+            );
+          } catch (error) {
+            console.error(
+              "[PushNotification] Error updating badge in background:",
+              error,
+            );
+          }
+        }
+      }
+    } catch (error) {
+      console.error(
+        "[PushNotification] Background task processing error:",
+        error,
+      );
+    }
+  },
+);
 
 export function configureNotifications() {
-  // Configuration for how notifications should be presented when the app is in the foreground
+  // Enhanced foreground notification handler with priority-based behavior
   Notifications.setNotificationHandler({
     handleNotification: async (notification) => {
-      const messageType = notification.request.content.data?.messageType as string;
-      const requiresAcknowledgment = notification.request.content.data?.requiresAcknowledgment as boolean;
+      // Safely access notification content
+      const content = notification?.request?.content;
+      if (!content) {
+        console.warn(
+          "[PushNotification] No content found in foreground notification:",
+          notification,
+        );
+        return {
+          shouldShowAlert: false,
+          shouldPlaySound: false,
+          shouldSetBadge: false,
+        };
+      }
 
+      const data = content.data || {};
+      const messageType = data.messageType as string;
+      const notificationType = data.notificationType as NotificationType;
+      const requiresAcknowledgment = data.requiresAcknowledgment as boolean;
+      const importance = data.importance as string || "medium";
+      const categoryCode = data.categoryCode as string || "general_message";
+      const groupKey = data.groupKey as string;
+
+      console.log("[PushNotification] Handling foreground notification:", {
+        messageType,
+        notificationType,
+        importance,
+        categoryCode,
+        groupKey,
+      });
+
+      // Platform-specific presentation options
+      if (Platform.OS === "ios") {
+        // iOS-specific behavior
+        return {
+          shouldShowAlert: true,
+          shouldPlaySound: importance !== "low",
+          shouldSetBadge: true,
+          // iOS-specific category
+          categoryIdentifier: getIOSCategoryIdentifier(categoryCode),
+        };
+      } else if (Platform.OS === "android") {
+        // Android-specific behavior
+        let priority = Notifications.AndroidNotificationPriority.DEFAULT;
+        let channelId = "default";
+
+        // Determine priority and channel based on message type and importance
+        if (
+          messageType === "must_read" ||
+          requiresAcknowledgment ||
+          importance === "high" ||
+          notificationType === NotificationType.ADMIN_MESSAGE ||
+          notificationType === NotificationType.SYSTEM_ALERT ||
+          notificationType === NotificationType.MUST_READ ||
+          categoryCode === "system_alert" ||
+          categoryCode === "must_read"
+        ) {
+          priority = Notifications.AndroidNotificationPriority.MAX;
+          channelId = "urgent";
+        } else if (
+          notificationType === NotificationType.GCA_ANNOUNCEMENT ||
+          notificationType === NotificationType.DIVISION_ANNOUNCEMENT ||
+          importance === "medium"
+        ) {
+          priority = Notifications.AndroidNotificationPriority.DEFAULT;
+          channelId = "default";
+        } else if (importance === "low") {
+          priority = Notifications.AndroidNotificationPriority.LOW;
+          channelId = "updates";
+        }
+
+        return {
+          shouldShowAlert: true,
+          shouldPlaySound: importance !== "low",
+          shouldSetBadge: true,
+          priority,
+          channelId,
+          // Android-specific customization
+          color: "#0066cc",
+          vibrate: importance !== "low",
+          // Enable grouping if a group key is provided
+          groupSummary: groupKey ? true : undefined,
+          groupId: groupKey,
+        };
+      }
+
+      // Default for other platforms
       return {
         shouldShowAlert: true,
-        shouldPlaySound: messageType === "must_read",
+        shouldPlaySound: true,
         shouldSetBadge: true,
-        priority:
-          messageType === "must_read"
-            ? Notifications.AndroidNotificationPriority.HIGH
-            : Notifications.AndroidNotificationPriority.DEFAULT,
       };
     },
   });
@@ -48,67 +275,264 @@ export function configureNotifications() {
   // Register background task handler
   Notifications.registerTaskAsync(BACKGROUND_NOTIFICATION_TASK);
 
-  // Only configure additional settings on iOS
-  if (Platform.OS === "ios") {
-    Notifications.setNotificationCategoryAsync("default", [
-      {
-        identifier: "default",
-        buttonTitle: "View",
-        options: {
-          isAuthenticationRequired: false,
-          opensAppToForeground: true,
-        },
-      },
-    ]);
+  // Configure platform-specific settings
+  if (Platform.OS === "android") {
+    setupAndroidChannels();
+  } else if (Platform.OS === "ios") {
+    setupIOSCategories();
   }
 }
 
-function handleNotificationNavigation(messageType: string, messageId: string) {
-  switch (messageType) {
+// Android-specific notification setup with enhanced channel configuration
+async function setupAndroidChannels() {
+  try {
+    // Create channel group
+    await Notifications.setNotificationChannelGroupAsync("pld_app", {
+      name: "PLD App Notifications",
+      description: "All notifications from the PLD App",
+    });
+
+    // Critical priority channel for urgent/important notifications
+    await Notifications.setNotificationChannelAsync("urgent", {
+      name: "Urgent Notifications",
+      description: "Critical notifications that require immediate attention",
+      importance: Notifications.AndroidImportance.MAX,
+      vibrationPattern: [0, 250, 250, 250, 250, 250],
+      lightColor: "#FF231F7C",
+      // Using default system sound
+      enableLights: true,
+      enableVibrate: true,
+      groupId: "pld_app",
+      showBadge: true,
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    });
+
+    // Default channel for most notifications
+    await Notifications.setNotificationChannelAsync("default", {
+      name: "Regular Notifications",
+      description: "Standard notifications about messages and updates",
+      importance: Notifications.AndroidImportance.DEFAULT,
+      vibrationPattern: [0, 250, 0, 250],
+      lightColor: "#0066cc",
+      enableLights: true,
+      enableVibrate: true,
+      groupId: "pld_app",
+      showBadge: true,
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
+    });
+
+    // Low priority channel for less important updates
+    await Notifications.setNotificationChannelAsync("updates", {
+      name: "App Updates",
+      description: "Non-urgent app updates and information",
+      importance: Notifications.AndroidImportance.LOW,
+      enableLights: false,
+      enableVibrate: false,
+      groupId: "pld_app",
+      showBadge: true,
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
+    });
+
+    // Division specific channel for division-related content
+    await Notifications.setNotificationChannelAsync("division", {
+      name: "Division Notifications",
+      description: "Notifications specific to your division",
+      importance: Notifications.AndroidImportance.HIGH,
+      vibrationPattern: [0, 150, 0, 150],
+      lightColor: "#32CD32",
+      enableLights: true,
+      enableVibrate: true,
+      groupId: "pld_app",
+      showBadge: true,
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
+    });
+
+    // GCA channel for organization-wide announcements
+    await Notifications.setNotificationChannelAsync("gca", {
+      name: "GCA Announcements",
+      description: "Organization-wide announcements and updates",
+      importance: Notifications.AndroidImportance.HIGH,
+      vibrationPattern: [0, 150, 0, 150],
+      lightColor: "#1E90FF",
+      enableLights: true,
+      enableVibrate: true,
+      groupId: "pld_app",
+      showBadge: true,
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
+    });
+
+    console.log("[PushNotification] Android notification channels configured");
+  } catch (error) {
+    console.error(
+      "[PushNotification] Error setting up Android channels:",
+      error,
+    );
+  }
+}
+
+// iOS-specific notification setup with enhanced categories for interactive notifications
+async function setupIOSCategories() {
+  try {
+    // Define actions for notifications
+    const readAction = {
+      identifier: "READ_ACTION",
+      buttonTitle: "Mark as Read",
+      options: {
+        isAuthenticationRequired: false,
+        isDestructive: false,
+        foreground: true,
+      },
+    };
+
+    const replyAction = {
+      identifier: "REPLY_ACTION",
+      buttonTitle: "Reply",
+      options: {
+        isAuthenticationRequired: false,
+        isDestructive: false,
+        foreground: true,
+      },
+      textInput: {
+        buttonTitle: "Send",
+        placeholder: "Type your reply...",
+      },
+    };
+
+    const acknowledgeAction = {
+      identifier: "ACKNOWLEDGE_ACTION",
+      buttonTitle: "Acknowledge",
+      options: {
+        isAuthenticationRequired: false,
+        isDestructive: false,
+        foreground: true,
+      },
+    };
+
+    const viewDetailsAction = {
+      identifier: "VIEW_ACTION",
+      buttonTitle: "View Details",
+      options: {
+        isAuthenticationRequired: false,
+        isDestructive: false,
+        foreground: true,
+      },
+    };
+
+    const dismissAction = {
+      identifier: "DISMISS_ACTION",
+      buttonTitle: "Dismiss",
+      options: {
+        isAuthenticationRequired: false,
+        isDestructive: true,
+        foreground: false,
+      },
+    };
+
+    // General message category (regular messages)
+    await Notifications.setNotificationCategoryAsync("message", [
+      readAction,
+      replyAction,
+      dismissAction,
+    ]);
+
+    // Announcement category (GCA or division)
+    await Notifications.setNotificationCategoryAsync("announcement", [
+      readAction,
+      viewDetailsAction,
+      dismissAction,
+    ]);
+
+    // Admin message category (requires acknowledgment)
+    await Notifications.setNotificationCategoryAsync("admin_message", [
+      acknowledgeAction,
+      viewDetailsAction,
+      dismissAction,
+    ]);
+
+    // Add urgent category for high priority messages
+    await Notifications.setNotificationCategoryAsync("urgent", [
+      acknowledgeAction,
+      viewDetailsAction,
+    ], {
+      allowAnnouncement: true,
+      showTitle: true,
+      showSubtitle: true,
+    });
+
+    console.log("[PushNotification] iOS notification categories configured");
+  } catch (error) {
+    console.error("[PushNotification] Error setting up iOS categories:", error);
+  }
+}
+
+// Helper to map category to iOS category identifier
+function getIOSCategoryIdentifier(categoryCode: string): string {
+  switch (categoryCode) {
     case "must_read":
-    case "news":
-      router.push(`/messages/${messageId}`);
-      break;
-    case "approval":
-    case "denial":
-    case "waitlist_promotion":
-      router.push(`/calendar/requests/${messageId}`);
-      break;
-    case "allotment_change":
-      router.push("/calendar");
-      break;
-    case "direct_message":
-      router.push(`/messages/direct/${messageId}`);
-      break;
+    case "system_alert":
+      return "urgent";
+    case "admin_message":
+      return "admin_message";
+    case "gca_announcement":
+    case "division_announcement":
+      return "announcement";
     default:
-      router.push("/");
+      return "message";
   }
 }
 
 export function setupNotificationListeners() {
   // Handle notifications that are received while the app is foregrounded
-  const foregroundSubscription = Notifications.addNotificationReceivedListener((notification) => {
-    const messageId = notification.request.content.data?.messageId as string;
-    if (messageId) {
-      markNotificationDelivered(messageId);
-    }
-  });
+  const foregroundSubscription = Notifications.addNotificationReceivedListener(
+    (notification) => {
+      const content = notification?.request?.content;
+      if (!content) {
+        console.warn(
+          "[PushNotification] No content in received notification:",
+          notification,
+        );
+        return;
+      }
+
+      const messageId = content.data?.messageId as string;
+      if (messageId) {
+        notificationServiceFunctions?.markNotificationDelivered(messageId);
+      }
+    },
+  );
 
   // Handle notifications that are tapped by the user
-  const responseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
-    const messageId = response.notification.request.content.data?.messageId as string;
-    const messageType = response.notification.request.content.data?.messageType as string;
-    const requiresAcknowledgment = response.notification.request.content.data?.requiresAcknowledgment as boolean;
+  const responseSubscription = Notifications
+    .addNotificationResponseReceivedListener((response) => {
+      const content = response.notification?.request?.content;
+      if (!content) {
+        console.warn(
+          "[PushNotification] No content in notification response:",
+          response.notification,
+        );
+        return;
+      }
 
-    if (messageId) {
-      // Mark as delivered
-      markNotificationDelivered(messageId);
+      const data = content.data;
+      const actionIdentifier = response.actionIdentifier;
 
-      // If the message requires acknowledgment, we'll handle that in the UI
-      // but still navigate to the appropriate screen
-      handleNotificationNavigation(messageType, messageId);
-    }
-  });
+      console.log("[PushNotification] Notification tapped:", {
+        data,
+        actionIdentifier,
+      });
+
+      // Use the platform-specific deep linking handler
+      notificationServiceFunctions?.handleNotificationDeepLink(
+        data,
+        actionIdentifier,
+      )
+        .catch((error) => {
+          console.error(
+            "[PushNotification] Error in deep linking handler:",
+            error,
+          );
+        });
+    });
 
   // Return cleanup function
   return () => {
@@ -118,17 +542,122 @@ export function setupNotificationListeners() {
   };
 }
 
-// Initialize badge count
-export async function initializeBadgeCount(userId: string) {
-  if (Platform.OS !== "web") {
-    const unreadCount = await getUnreadMessageCount(userId);
-    await Notifications.setBadgeCountAsync(unreadCount);
+// Handle notifications for app cold starts
+export async function getInitialNotification() {
+  try {
+    const initialNotification = await Notifications
+      .getLastNotificationResponseAsync();
+
+    if (initialNotification) {
+      // App was launched by a notification
+      const content = initialNotification.notification?.request?.content;
+      if (!content) {
+        console.warn(
+          "[PushNotification] No content in initial notification:",
+          initialNotification.notification,
+        );
+        return;
+      }
+
+      const data = content.data;
+      const actionIdentifier = initialNotification.actionIdentifier;
+
+      console.log("[PushNotification] App launched from notification:", {
+        data,
+        actionIdentifier,
+      });
+
+      // Short delay ensures app is fully initialized
+      setTimeout(() => {
+        // Use the platform-specific deep linking handler for initial notifications as well
+        notificationServiceFunctions?.handleNotificationDeepLink(
+          data,
+          actionIdentifier,
+        )
+          .catch((error) => {
+            console.error(
+              "[PushNotification] Error handling initial notification:",
+              error,
+            );
+          });
+      }, 1000);
+    }
+  } catch (error) {
+    console.error(
+      "[PushNotification] Error getting initial notification:",
+      error,
+    );
   }
 }
 
-// Reset badge count
-export async function resetBadgeCount() {
-  if (Platform.OS !== "web") {
-    await Notifications.setBadgeCountAsync(0);
+// Initialize badge count for the app
+export async function initializeBadgeCount(userId: string | number) {
+  try {
+    console.log(
+      `[PushNotification] Initializing badge count for user: ${userId}`,
+    );
+
+    // Check if userId is provided and functions are injected
+    if (!userId || !notificationServiceFunctions) {
+      console.warn(
+        "[PushNotification] Cannot initialize badge count - missing userId or service functions",
+      );
+      return;
+    }
+
+    const unreadCount = await notificationServiceFunctions
+      .getUnreadMessageCount(Number(userId));
+    await Notifications.setBadgeCountAsync(unreadCount);
+    console.log(`[PushNotification] Badge count set to ${unreadCount}`);
+  } catch (error) {
+    console.error("[PushNotification] Error initializing badge count:", error);
   }
+}
+
+// Register for push notifications and return token
+export async function registerForPushNotificationsAsync() {
+  let token;
+
+  if (!Device.isDevice) {
+    console.log(
+      "[PushNotification] Push notifications require physical device",
+    );
+    return null;
+  }
+
+  // Check existing permissions
+  const { status: existingStatus } = await Notifications.getPermissionsAsync();
+  let finalStatus = existingStatus;
+
+  // Request permissions if not granted
+  if (existingStatus !== "granted") {
+    const { status } = await Notifications.requestPermissionsAsync();
+    finalStatus = status;
+  }
+
+  if (finalStatus !== "granted") {
+    console.log("[PushNotification] Permission denied for notifications");
+    return null;
+  }
+
+  // Get project ID from app config
+  const projectId = Constants.expoConfig?.extra?.eas?.projectId;
+
+  if (!projectId) {
+    console.error("[PushNotification] Project ID not found in app config");
+    return null;
+  }
+
+  // Get Expo push token
+  try {
+    const expoPushToken = await Notifications.getExpoPushTokenAsync({
+      projectId,
+    });
+    token = expoPushToken.data;
+  } catch (error) {
+    console.error("[PushNotification] Error getting push token:", error);
+    return null;
+  }
+
+  return token;
 }

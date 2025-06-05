@@ -13,6 +13,7 @@ interface ActionToastProps extends BaseToastProps {
   props?: {
     onAction?: (action: string) => void;
     actionType?: "delete" | "confirm";
+    confirmText?: string;
   };
 }
 
@@ -38,7 +39,9 @@ const ActionToast = (props: ActionToastProps) => {
             style={[styles.button, { backgroundColor: Colors[theme].tint + "20" }]}
             onPress={() => handleAction("confirm")}
           >
-            <ThemedText style={[styles.buttonText, { color: Colors[theme].tint }]}>Update</ThemedText>
+            <ThemedText style={[styles.buttonText, { color: Colors[theme].tint }]}>
+              {customProps.confirmText || "Update"}
+            </ThemedText>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.button, { backgroundColor: Colors[theme].background }]}
@@ -118,13 +121,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 16,
     marginHorizontal: "5%",
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
+    boxShadow: "0 0 10px 0 rgba(0, 0, 0, 0.1)",
     elevation: 5,
   },
   textContainer: {

@@ -64,6 +64,11 @@ export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
     detectSessionInUrl: false,
     flowType: "pkce",
   },
+  global: {
+    headers: {
+      "X-Client-Info": "supabase-js-client",
+    },
+  },
   db: {
     schema: "public",
   },

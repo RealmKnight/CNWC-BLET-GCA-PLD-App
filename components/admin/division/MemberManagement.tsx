@@ -38,23 +38,6 @@ type MemberAction = "list" | "edit" | "bulk" | "transfer";
 
 type BulkActionTab = "calendar" | "seniority" | "sdv" | "zone";
 
-// TODO: This Member interface is temporary and needs to be refactored when implementing
-// the full edit functionality. We should consolidate this with the Database Member type
-// and MemberRow from types/auth.ts
-/*
-interface Member {
-  pin_number: string | number;
-  first_name: string;
-  last_name: string;
-  division_id: number;
-  sdv_entitlement: number | null;
-  sdv_election: number | null;
-  calendar_id: string | null;
-  calendar_name: string | null;
-  status: string;
-}
-*/
-
 type DbMember = Database["public"]["Tables"]["members"]["Row"];
 
 interface UserState {
@@ -703,12 +686,6 @@ function BulkActions({ division, onDivisionChange }: BulkActionsProps) {
             <ThemedText>Vacation Seniority management coming soon...</ThemedText>
           </ThemedView>
         );
-      case "sdv":
-        return (
-          <ThemedView style={styles.tabContent}>
-            <ThemedText>SDV Updates management coming soon...</ThemedText>
-          </ThemedView>
-        );
       case "zone":
         return renderZoneContent();
       default:
@@ -741,12 +718,6 @@ function BulkActions({ division, onDivisionChange }: BulkActionsProps) {
           onPress={() => setActiveTab("seniority")}
         >
           <ThemedText>Vacation Seniority</ThemedText>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tab, activeTab === "sdv" && styles.activeTab]}
-          onPress={() => setActiveTab("sdv")}
-        >
-          <ThemedText>SDV Updates</ThemedText>
         </TouchableOpacity>
       </ThemedView>
       {isLoading ? (
@@ -879,12 +850,6 @@ export function MemberManagement() {
             )}
           </View>
         )}
-
-        {currentAction === "transfer" && (
-          <View style={{ display: currentAction === "transfer" ? "flex" : "none", flex: 1 }}>
-            <ThemedText type="subtitle">Transfer Member</ThemedText>
-          </View>
-        )}
       </ThemedView>
     );
   }, [currentAction, lastLoadedDivision, memberListUI, selectedMember, handleCloseEditForm]);
@@ -920,7 +885,6 @@ export function MemberManagement() {
       <ThemedView style={styles.actionButtons}>
         {renderActionButton("list", "list", "Member List")}
         {isAdmin && renderActionButton("bulk", "people", "Bulk Actions")}
-        {isAdmin && renderActionButton("transfer", "swap-horizontal", "Transfer Member")}
       </ThemedView>
     ),
     [renderActionButton, isAdmin]
@@ -1080,6 +1044,7 @@ const styles = StyleSheet.create({
     gap: 16,
     borderBottomWidth: 1,
     borderBottomColor: Colors.light.border,
+    backgroundColor: Colors.dark.card,
   },
   errorContainer: {
     padding: 16,
@@ -1101,6 +1066,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     marginLeft: 12,
+    backgroundColor: Colors.dark.card,
   },
   memberText: {
     flex: 1,

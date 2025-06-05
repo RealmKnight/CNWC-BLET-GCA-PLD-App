@@ -5,10 +5,12 @@ import { useAuth } from "@/hooks/useAuth";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { HapticTab } from "@/components/HapticTab";
-import { Platform, ViewStyle } from "react-native";
+import { Platform, ViewStyle, View } from "react-native";
 import TabBarBackground from "@/components/ui/TabBarBackground";
 import { Ionicons } from "@expo/vector-icons";
 import { BottomTabNavigationOptions } from "@react-navigation/bottom-tabs";
+import { ProtectedRoute } from "@/components/ProtectedRoute";
+import { AdminMessageBadge } from "@/components/ui/AdminMessageBadge";
 
 export default function AdminLayout() {
   const { userRole } = useAuth();
@@ -31,7 +33,7 @@ export default function AdminLayout() {
   // Show only division_admin tab for division admins
   if (userRole === "division_admin") {
     return (
-      <>
+      <ProtectedRoute requiredAuth="member">
         <AppHeader />
         <Tabs screenOptions={commonScreenOptions}>
           <Tabs.Screen
@@ -39,7 +41,10 @@ export default function AdminLayout() {
             options={{
               title: "Division Admin",
               tabBarIcon: ({ color, focused }) => (
-                <Ionicons name={focused ? "people" : "people-outline"} size={28} color={color} />
+                <View>
+                  <Ionicons name={focused ? "people" : "people-outline"} size={28} color={color} />
+                  <AdminMessageBadge />
+                </View>
               ),
             }}
           />
@@ -56,26 +61,25 @@ export default function AdminLayout() {
             }}
           />
         </Tabs>
-      </>
+      </ProtectedRoute>
     );
   }
 
   // For application_admin and union_admin roles
   return (
-    <>
+    <ProtectedRoute requiredAuth="member">
       <AppHeader />
       <Tabs screenOptions={commonScreenOptions}>
-        {userRole === "application_admin" && (
-          <Tabs.Screen
-            name="application_admin"
-            options={{
-              title: "App Admin",
-              tabBarIcon: ({ color, focused }) => (
-                <Ionicons name={focused ? "settings" : "settings-outline"} size={28} color={color} />
-              ),
-            }}
-          />
-        )}
+        <Tabs.Screen
+          name="application_admin"
+          options={{
+            title: "App Admin",
+            tabBarIcon: ({ color, focused }) => (
+              <Ionicons name={focused ? "settings" : "settings-outline"} size={28} color={color} />
+            ),
+            href: userRole === "application_admin" ? undefined : null, // Only show for application_admin
+          }}
+        />
         <Tabs.Screen
           name="union_admin"
           options={{
@@ -91,12 +95,15 @@ export default function AdminLayout() {
           options={{
             title: "Division Admin",
             tabBarIcon: ({ color, focused }) => (
-              <Ionicons name={focused ? "people" : "people-outline"} size={28} color={color} />
+              <View>
+                <Ionicons name={focused ? "people" : "people-outline"} size={28} color={color} />
+                <AdminMessageBadge />
+              </View>
             ),
             href: userRole === "application_admin" || userRole === "union_admin" ? undefined : null,
           }}
         />
       </Tabs>
-    </>
+    </ProtectedRoute>
   );
 }

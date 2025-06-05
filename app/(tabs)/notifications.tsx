@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo, useCallback } from "react";
-import { StyleSheet, RefreshControl, Platform, TouchableOpacity, Image, TextInput } from "react-native";
+import { StyleSheet, RefreshControl, Platform, TouchableOpacity, Image, TextInput, Dimensions } from "react-native";
 import { useRouter } from "expo-router";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
@@ -12,6 +12,9 @@ import { useUserStore } from "@/store/userStore";
 import { Ionicons } from "@expo/vector-icons";
 import { MessageModal } from "@/components/MessageModal";
 import Toast from "react-native-toast-message";
+import { AdvertisementBanner } from "@/components/AdvertisementBanner";
+import { AdvertisementCarousel } from "@/components/AdvertisementCarousel";
+import { MemberMessageModal } from "@/components/MemberMessageModal";
 
 type ColorScheme = keyof typeof Colors;
 
@@ -179,12 +182,15 @@ export default function NotificationsScreen() {
   const [filterType, setFilterType] = useState<FilterType>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
-  const { member } = useUserStore();
+  const [showContactAdminModal, setShowContactAdminModal] = useState(false);
+  const { member, division } = useUserStore();
   const router = useRouter();
   const theme = (useColorScheme() ?? "light") as ColorScheme;
+  const isWeb = Platform.OS === "web";
+  const windowWidth = Dimensions.get("window").width;
+  const isMobileWeb = isWeb && windowWidth < 768; // 768px is a common breakpoint for tablets/desktops
 
-  const { messages, isLoading, error, fetchMessages, markAsRead, deleteMessage, subscribeToMessages } =
-    useNotificationStore();
+  const { messages, isLoading, error, fetchMessages, markAsRead, deleteMessage } = useNotificationStore();
 
   // Filter and group messages
   const filteredAndGroupedMessages = useMemo(() => {
@@ -230,10 +236,20 @@ export default function NotificationsScreen() {
     }, {} as Record<string, Message[]>);
   }, [messages, groupBy, filterType, searchQuery]);
 
+  // Initial data fetch when component mounts or member changes
+  useEffect(() => {
+    if (member?.pin_number && member?.id) {
+      console.log("[Notifications] Fetching messages for member:", member.pin_number);
+      fetchMessages(String(member.pin_number), member.id).catch((error) => {
+        console.error("[Notifications] Error fetching messages:", error);
+      });
+    }
+  }, [member?.pin_number, member?.id, fetchMessages]);
+
   const handleRefresh = useCallback(async () => {
     if (!member?.pin_number || !member?.id) return;
     setRefreshing(true);
-    await fetchMessages(member.pin_number, member.id);
+    await fetchMessages(String(member.pin_number), member.id);
     setRefreshing(false);
   }, [member, fetchMessages]);
 
@@ -264,22 +280,6 @@ export default function NotificationsScreen() {
     }
   };
 
-  // Set up realtime subscription
-  useEffect(() => {
-    if (!member?.pin_number) return;
-    const unsubscribe = subscribeToMessages(member.pin_number);
-    return () => {
-      unsubscribe();
-    };
-  }, [member]);
-
-  // Initial fetch
-  useEffect(() => {
-    if (member?.pin_number && member?.id) {
-      fetchMessages(member.pin_number, member.id);
-    }
-  }, [member]);
-
   const handleDelete = async (messageId: string) => {
     console.log("[Notifications] handleDelete called with messageId:", messageId);
 
@@ -296,10 +296,10 @@ export default function NotificationsScreen() {
           setSelectedMessage(null);
         }
 
-        // Refresh messages list
-        if (member?.pin_number) {
+        // Refresh messages list - Fix the type safety issue
+        if (member?.pin_number && member?.id) {
           console.log("[Notifications] Refreshing messages list");
-          await fetchMessages(member.pin_number, member.id);
+          await fetchMessages(String(member.pin_number), member.id);
         }
 
         Toast.show({
@@ -389,6 +389,17 @@ export default function NotificationsScreen() {
       style={styles.container}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
     >
+      {/* Top Advertisement Banner for all devices */}
+      <AdvertisementBanner location="notifications_top" style={styles.topAdBanner} maxHeight={80} />
+
+      <ThemedView style={styles.headerRow}>
+        <ThemedText style={styles.headerTitle}>Messages</ThemedText>
+        <TouchableOpacity style={styles.contactAdminButton} onPress={() => setShowContactAdminModal(true)}>
+          <Ionicons name="chatbubble-ellipses" size={20} color={Colors[theme].buttonText} />
+          <ThemedText style={styles.contactAdminText}>Contact Admin</ThemedText>
+        </TouchableOpacity>
+      </ThemedView>
+
       <ThemedView style={styles.controls}>
         <ThemedView style={styles.searchContainer}>
           <Ionicons name="search" size={20} color={Colors[theme].text} style={styles.searchIcon} />
@@ -439,27 +450,68 @@ export default function NotificationsScreen() {
         </ThemedView>
       </ThemedView>
 
-      {messages.length === 0 ? (
-        <ThemedView style={styles.emptyState}>
-          <Ionicons name="notifications-off" size={48} color={Colors[theme].text} />
-          <ThemedText style={styles.emptyText}>No notifications</ThemedText>
+      {/* Content with sidebar layout for web */}
+      {isWeb && !isMobileWeb ? (
+        <ThemedView style={styles.webLayout}>
+          <ThemedView style={styles.mainContent}>
+            {messages.length === 0 ? (
+              <ThemedView style={styles.emptyState}>
+                <Ionicons name="notifications-off" size={48} color={Colors[theme].text} />
+                <ThemedText style={styles.emptyText}>No notifications</ThemedText>
+              </ThemedView>
+            ) : (
+              Object.entries(filteredAndGroupedMessages).map(([key, groupMessages]) => (
+                <ThemedView key={key} style={styles.group}>
+                  <ThemedText style={styles.groupHeader}>{key}</ThemedText>
+                  {groupMessages.map((message) => (
+                    <NotificationItem
+                      key={message.id}
+                      message={message}
+                      onPress={() => handleMessagePress(message)}
+                      onAcknowledge={() => handleAcknowledge(message)}
+                      handleDelete={handleDelete}
+                      handleArchive={handleArchive}
+                    />
+                  ))}
+                </ThemedView>
+              ))
+            )}
+          </ThemedView>
+
+          {/* Sidebar advertisement for web */}
+          <ThemedView style={styles.sidebar}>
+            <AdvertisementBanner location="notifications_sidebar" style={styles.sidebarAd} />
+          </ThemedView>
         </ThemedView>
       ) : (
-        Object.entries(filteredAndGroupedMessages).map(([key, groupMessages]) => (
-          <ThemedView key={key} style={styles.group}>
-            <ThemedText style={styles.groupHeader}>{key}</ThemedText>
-            {groupMessages.map((message) => (
-              <NotificationItem
-                key={message.id}
-                message={message}
-                onPress={() => handleMessagePress(message)}
-                onAcknowledge={() => handleAcknowledge(message)}
-                handleDelete={handleDelete}
-                handleArchive={handleArchive}
-              />
-            ))}
-          </ThemedView>
-        ))
+        /* Mobile layout (stacked) */
+        <>
+          {messages.length === 0 ? (
+            <ThemedView style={styles.emptyState}>
+              <Ionicons name="notifications-off" size={48} color={Colors[theme].text} />
+              <ThemedText style={styles.emptyText}>No notifications</ThemedText>
+            </ThemedView>
+          ) : (
+            Object.entries(filteredAndGroupedMessages).map(([key, groupMessages]) => (
+              <ThemedView key={key} style={styles.group}>
+                <ThemedText style={styles.groupHeader}>{key}</ThemedText>
+                {groupMessages.map((message) => (
+                  <NotificationItem
+                    key={message.id}
+                    message={message}
+                    onPress={() => handleMessagePress(message)}
+                    onAcknowledge={() => handleAcknowledge(message)}
+                    handleDelete={handleDelete}
+                    handleArchive={handleArchive}
+                  />
+                ))}
+              </ThemedView>
+            ))
+          )}
+
+          {/* Bottom advertisement for mobile */}
+          <AdvertisementBanner location="notifications_bottom" style={styles.bottomAdBanner} maxHeight={80} />
+        </>
       )}
 
       <MessageModal
@@ -469,6 +521,17 @@ export default function NotificationsScreen() {
         onAcknowledge={handleAcknowledge}
         onDelete={handleDelete}
       />
+
+      {/* Contact Admin Modal */}
+      {member && (
+        <MemberMessageModal
+          visible={showContactAdminModal}
+          onClose={() => setShowContactAdminModal(false)}
+          memberPin={member.pin_number ? member.pin_number.toString() : ""}
+          memberEmail=""
+          division={division || ""}
+        />
+      )}
     </PlatformScrollView>
   );
 }
@@ -480,12 +543,12 @@ const styles = StyleSheet.create({
   controls: {
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(128, 128, 128, 0.1)",
+    borderBottomColor: Colors.dark.border,
   },
   searchContainer: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(128, 128, 128, 0.1)",
+    backgroundColor: Colors.dark.card,
     borderRadius: 8,
     padding: 8,
     marginBottom: 12,
@@ -509,16 +572,17 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 16,
     marginRight: 8,
-    backgroundColor: "rgba(128, 128, 128, 0.1)",
+    backgroundColor: Colors.dark.card,
   },
   filterButtonActive: {
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.dark.tint,
+    color: Colors.dark.buttonText,
   },
   filterButtonText: {
     fontSize: 14,
   },
   filterButtonTextActive: {
-    color: "#fff",
+    color: Colors.dark.buttonText,
   },
   actionRow: {
     flexDirection: "row",
@@ -528,6 +592,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     padding: 8,
+    backgroundColor: Colors.dark.card,
+    borderRadius: 8,
   },
   actionButtonText: {
     marginLeft: 4,
@@ -561,15 +627,10 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     overflow: "hidden",
     elevation: 2,
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 3.84,
+    boxShadow: "0 0 10px 0 rgba(0, 0, 0, 0.1)",
     borderLeftWidth: 4,
     borderLeftColor: "transparent",
+    backgroundColor: Colors.dark.card,
   },
   unreadItem: {
     backgroundColor: Colors.light.primary + "15",
@@ -579,12 +640,13 @@ const styles = StyleSheet.create({
     padding: 16,
     alignItems: "center",
     justifyContent: "flex-start",
+    backgroundColor: Colors.dark.card,
   },
   iconWrapper: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: "rgba(128, 128, 128, 0.1)",
+    backgroundColor: Colors.dark.card,
     alignItems: "center",
     justifyContent: "center",
     opacity: 0.7,
@@ -597,17 +659,20 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 16,
     paddingLeft: 0,
+    backgroundColor: Colors.dark.card,
   },
   messageHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 8,
+    backgroundColor: Colors.dark.card,
   },
   headerLeft: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
+    backgroundColor: Colors.dark.card,
   },
   messageType: {
     fontSize: 12,
@@ -642,6 +707,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
     marginTop: 8,
+    backgroundColor: Colors.dark.card,
   },
   acknowledgeButton: {
     flexDirection: "row",
@@ -650,6 +716,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 16,
     gap: 4,
+    backgroundColor: Colors.dark.card,
   },
   acknowledgeButtonText: {
     color: "#fff",
@@ -668,7 +735,7 @@ const styles = StyleSheet.create({
     borderLeftWidth: 4,
   },
   mustAcknowledgeIconWrapper: {
-    backgroundColor: Colors.light.primary + "20",
+    backgroundColor: Colors.dark.primary + "20",
   },
   acknowledgmentBadge: {
     paddingHorizontal: 8,
@@ -676,18 +743,71 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   acknowledgmentBadgeText: {
-    color: "#fff",
+    color: Colors.dark.error,
     fontSize: 12,
     fontWeight: "500",
   },
   actionButtons: {
     flexDirection: "row",
     gap: 8,
+    backgroundColor: Colors.dark.card,
   },
   iconButton: {
     padding: 8,
     borderRadius: 8,
     justifyContent: "center",
     alignItems: "center",
+  },
+  // Advertisement banner styles
+  topAdBanner: {
+    marginTop: 16,
+  },
+  bottomAdBanner: {
+    marginHorizontal: 16,
+    marginBottom: 16,
+  },
+  webLayout: {
+    flexDirection: "row",
+    flex: 1,
+  },
+  mainContent: {
+    flex: 3,
+  },
+  sidebar: {
+    flex: 1,
+    minWidth: 200,
+    maxWidth: 340,
+    padding: 16,
+    borderLeftWidth: 1,
+    borderLeftColor: "rgba(128, 128, 128, 0.1)",
+  },
+  sidebarAd: {
+    marginBottom: 16,
+  },
+  headerRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
+  },
+  headerTitle: {
+    fontSize: 24,
+    fontWeight: "700",
+  },
+  contactAdminButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: Colors.light.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    gap: 6,
+  },
+  contactAdminText: {
+    color: Colors.light.buttonText,
+    fontWeight: "600",
+    fontSize: 14,
   },
 });

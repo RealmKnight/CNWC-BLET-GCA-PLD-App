@@ -7,15 +7,7 @@ import { AdminDashboard } from "@/components/admin/AdminDashboard";
 import { Stack } from "expo-router";
 
 function ApplicationAdminScreen() {
-  const { userRole, isLoading } = useAuth();
-
-  if (isLoading) {
-    return (
-      <ThemedView style={styles.container}>
-        <ThemedText>Loading...</ThemedText>
-      </ThemedView>
-    );
-  }
+  const { userRole } = useAuth();
 
   // Only application admin can access this page
   if (userRole !== "application_admin") {

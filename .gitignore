@@ -32,6 +32,24 @@ yarn-error.*
 # local env files
 .env*.local
 .env
+.env.local
+
+# ios
+ios/
+*.xcworkspace
+*.xcuserdata
+
+# android
+android/
+*.iml
+*.gradle
+google-services.json
+
+# tests
+__tests__/
+*.test.ts
+*.test.tsx
+supabase/functions/send-email/*
 
 # typescript
 *.tsbuildinfo

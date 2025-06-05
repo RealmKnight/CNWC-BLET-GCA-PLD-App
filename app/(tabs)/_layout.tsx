@@ -11,6 +11,7 @@ import { useColorScheme } from "@/hooks/useColorScheme";
 import { AppHeader } from "@/components/AppHeader";
 import { useNotificationStore } from "@/store/notificationStore";
 import { ThemedText } from "@/components/ThemedText";
+import { ProtectedRoute } from "@/components/ProtectedRoute";
 
 type ColorScheme = "light" | "dark";
 
@@ -21,7 +22,7 @@ export default function TabLayout() {
   const tintColor = Colors[colorScheme].tint;
 
   return (
-    <>
+    <ProtectedRoute requiredAuth="member">
       <AppHeader />
       <Tabs
         screenOptions={{
@@ -97,6 +98,6 @@ export default function TabLayout() {
           }}
         />
       </Tabs>
-    </>
+    </ProtectedRoute>
   );
 }

@@ -34,7 +34,34 @@ export function ThemedTextInput({ containerStyle, style, type = "text", ...props
       ...(style && typeof style === "object" ? flattenStyle(style) : {}),
     };
 
-    return <input type={type} className="themed-input" style={webStyle} {...(props as any)} />;
+    // Extract onChangeText and other RN-specific props from props for web
+    const {
+      onChangeText,
+      multiline,
+      numberOfLines,
+      placeholderTextColor,
+      textAlignVertical,
+      keyboardType,
+      editable,
+      ...restProps
+    } = props;
+
+    // Handle the editable prop conversion for web
+    const webProps = {
+      ...restProps,
+      ...(editable === false ? { disabled: true } : {}),
+    };
+
+    // Define the web onChange handler
+    const handleWebChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+      if (onChangeText) {
+        onChangeText(event.target.value);
+      }
+    };
+
+    return (
+      <input type={type} className="themed-input" style={webStyle} onChange={handleWebChange} {...(webProps as any)} />
+    );
   }
 
   return <TextInput style={[inputStyle, style]} placeholderTextColor={isDark ? "#808080" : "#a0a0a0"} {...props} />;
@@ -78,6 +105,8 @@ function flattenStyle(style: any): any {
     } else if (key === "marginVertical") {
       result.marginTop = value;
       result.marginBottom = value;
+    } else if (key === "textAlignVertical") {
+      // Skip this prop for web as it's not supported in CSS
     } else {
       // Direct property mapping
       result[key] = value;

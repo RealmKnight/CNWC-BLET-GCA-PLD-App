@@ -1,7 +1,17 @@
-import React, { useEffect, useMemo, useCallback, useState } from "react";
+import React, { useEffect, useMemo, useCallback, useState, useRef } from "react";
 import { StyleSheet, ActivityIndicator } from "react-native";
 import { Calendar as RNCalendar, DateData } from "react-native-calendars";
-import { addMonths, format, parseISO, eachDayOfInterval, startOfDay, isAfter, isBefore, addDays } from "date-fns";
+import {
+  addMonths,
+  format,
+  parseISO,
+  eachDayOfInterval,
+  startOfDay,
+  isAfter,
+  isBefore,
+  addDays,
+  isLastDayOfMonth,
+} from "date-fns";
 import { useCalendarStore, DayRequest } from "@/store/calendarStore";
 import { ThemedView } from "./ThemedView";
 import { ThemedText } from "./ThemedText";
@@ -9,6 +19,8 @@ import { useColorScheme } from "@/hooks/useColorScheme";
 import { Colors } from "@/constants/Colors";
 import { useUserStore } from "@/store/userStore";
 import Toast from "react-native-toast-message";
+import { supabase } from "@/utils/supabase";
+import { useTimeStore } from "@/store/timeStore";
 
 type ColorScheme = keyof typeof Colors;
 
@@ -53,13 +65,17 @@ const AVAILABILITY_COLORS = {
   userRequested: { color: "#2196F3", text: "black" }, // Blue - User has already requested this day
 };
 
+// Define a type for the availability keys to ensure type safety
+type AvailabilityType = keyof typeof AVAILABILITY_COLORS;
+
 interface CalendarProps {
   current?: string;
   zoneId?: number;
   isZoneSpecific?: boolean;
+  onDayActuallyPressed?: (date: string) => void;
 }
 
-export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarProps) {
+export function Calendar({ current, zoneId, isZoneSpecific = false, onDayActuallyPressed }: CalendarProps) {
   const theme = (useColorScheme() ?? "light") as ColorScheme;
   const division = useUserStore((state) => state.division);
   const member = useUserStore((state) => state.member);
@@ -74,11 +90,48 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
     allotments,
     yearlyAllotments,
     requests,
+    sixMonthRequestDays,
     checkSixMonthRequest,
   } = useCalendarStore();
 
-  // Store days with six month requests to avoid excessive DB lookups
-  const [sixMonthRequestDays, setSixMonthRequestDays] = useState<Record<string, boolean>>({});
+  const timeOffRequests = useTimeStore((state) => state.timeOffRequests);
+
+  const pilRequestsByDate = useMemo(() => {
+    if (!member?.id || !timeOffRequests || timeOffRequests.length === 0) return {};
+
+    const pilMap: Record<string, boolean> = {};
+    timeOffRequests.forEach((request) => {
+      // Debug log for each request's structure to verify field names
+      if (request.member_id === member.id) {
+        console.log(`[Calendar] Examining timeStore request:`, {
+          hasRequestDate: !!request.request_date,
+          isPIL: request.paid_in_lieu,
+          status: request.status,
+        });
+      }
+
+      if (
+        request.member_id === member.id &&
+        request.paid_in_lieu === true &&
+        ["approved", "pending", "waitlisted", "cancellation_pending"].includes(request.status)
+      ) {
+        // Use request_date as the primary field
+        const dateField = request.request_date;
+        if (dateField) {
+          pilMap[dateField] = true;
+          console.log(`[Calendar] Found PIL request in timeStore for ${dateField}:`, request);
+        }
+      }
+    });
+
+    console.log(`[Calendar] Total PIL requests from timeStore: ${Object.keys(pilMap).length}`);
+    return pilMap;
+  }, [timeOffRequests, member?.id]);
+
+  // Use a ref to track if marked dates were already generated
+  const markedDatesGeneratedRef = useRef(false);
+  // Use a ref to store the last generated mark dates
+  const lastGeneratedMarksRef = useRef<Record<string, any>>({});
 
   // Use the current prop directly for the calendar view
   const calendarDate = current || selectedDate || format(new Date(), "yyyy-MM-dd");
@@ -102,76 +155,75 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
     };
   }, []);
 
+  useEffect(() => {
+    console.log("[Calendar] Initializing with memberId:", member?.id);
+
+    // Debug: Check if there are any PIL requests in the request data
+    if (isInitialized && member?.id) {
+      const allDates = Object.keys(requests);
+      let pilRequestCount = 0;
+
+      allDates.forEach((date) => {
+        const dateRequests = requests[date] || [];
+        const userPilRequests = dateRequests.filter(
+          (req) =>
+            req.member_id === member.id &&
+            req.paid_in_lieu === true &&
+            ["approved", "pending", "waitlisted", "cancellation_pending"].includes(req.status)
+        );
+
+        pilRequestCount += userPilRequests.length;
+        if (userPilRequests.length > 0) {
+          console.log(
+            `[Calendar] Found ${userPilRequests.length} PIL requests for ${date}:`,
+            userPilRequests.map((r) => ({
+              status: r.status,
+              leave_type: r.leave_type,
+              paid_in_lieu: r.paid_in_lieu,
+            }))
+          );
+        }
+      });
+
+      console.log(`[Calendar] Total PIL requests found across all dates: ${pilRequestCount}`);
+    }
+  }, [isInitialized, member?.id, requests]);
+
   // Function to check if user has an active regular request for a specific date
   const hasUserRequestForDate = useCallback(
-    (dateStr: string) => {
-      if (!member?.id || !requests[dateStr]) return false;
+    (dateStr: string): DayRequest | null => {
+      if (!member?.id || !requests[dateStr]) return null;
 
-      return requests[dateStr].some(
+      // Make sure we're looking at ALL requests for this user on this date
+      const userRequests = requests[dateStr].filter(
         (req) =>
           req.member_id === member.id &&
           ["approved", "pending", "waitlisted", "cancellation_pending"].includes(req.status)
       );
+
+      // Specifically check for PIL requests
+      const pilRequests = userRequests.filter((req) => req.paid_in_lieu === true);
+      if (pilRequests.length > 0) {
+        console.log(`[Calendar] hasUserRequestForDate found ${pilRequests.length} PIL requests for ${dateStr}`);
+      }
+
+      // Log all user requests for debugging
+      if (userRequests.length > 0) {
+        console.log(
+          `[Calendar] User has ${userRequests.length} requests for ${dateStr}:`,
+          userRequests.map((r) => ({ status: r.status, type: r.leave_type, isPIL: r.paid_in_lieu }))
+        );
+      }
+
+      // Return any matching request (including PIL ones)
+      return userRequests.length > 0 ? userRequests[0] : null;
     },
     [member?.id, requests]
   );
 
-  // Function to check if user has either a regular or six-month request for a date
-  const hasUserAnyRequestForDate = useCallback(
-    async (dateStr: string) => {
-      // First check regular requests
-      const hasRegularRequest = hasUserRequestForDate(dateStr);
-      if (hasRegularRequest) return true;
-
-      // If we've already checked for a six-month request for this date, use cached result
-      if (sixMonthRequestDays[dateStr] !== undefined) {
-        return sixMonthRequestDays[dateStr];
-      }
-
-      // Otherwise, check for six-month request
-      try {
-        const hasSixMonthRequest = await checkSixMonthRequest(dateStr);
-
-        // Cache the result
-        setSixMonthRequestDays((prev) => ({
-          ...prev,
-          [dateStr]: hasSixMonthRequest,
-        }));
-
-        return hasSixMonthRequest;
-      } catch (error) {
-        console.error(`[Calendar] Error checking six month request for ${dateStr}:`, error);
-        return false;
-      }
-    },
-    [hasUserRequestForDate, checkSixMonthRequest, sixMonthRequestDays]
-  );
-
-  // Prefetch six-month request data for visible dates
-  useEffect(() => {
-    if (!isInitialized || !member?.id) return;
-
-    // Get the six-month date
-    const sixMonthDate = addMonths(new Date(), 6);
-    const sixMonthDateStr = format(sixMonthDate, "yyyy-MM-dd");
-
-    // Check if user has a six-month request and cache the result
-    checkSixMonthRequest(sixMonthDateStr)
-      .then((hasRequest) => {
-        if (hasRequest) {
-          setSixMonthRequestDays((prev) => ({
-            ...prev,
-            [sixMonthDateStr]: true,
-          }));
-        }
-      })
-      .catch((error) => {
-        console.error("[Calendar] Error pre-fetching six month request data:", error);
-      });
-  }, [isInitialized, member?.id, checkSixMonthRequest]);
-
-  // Generate marked dates for the calendar
+  // Generate marked dates for the calendar - with optimized memoization to reduce recalculations
   const markedDates = useMemo(() => {
+    // Skip if not ready
     if (!division || !isInitialized) {
       console.log("[Calendar] Not ready to generate marks:", { hasDivision: !!division, isInitialized });
       return {};
@@ -185,15 +237,41 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
       hasRequests: Object.keys(requests).length,
       hasAllotments: Object.keys(allotments).length,
       hasYearlyAllotments: Object.keys(yearlyAllotments).length,
+      hasSixMonthRequests: Object.keys(sixMonthRequestDays).length,
+      hasPilRequests: Object.keys(pilRequestsByDate).length,
       selectedDate,
     });
 
+    // Always regenerate for consistency
+    markedDatesGeneratedRef.current = true;
+
     const dates: any = {};
     const now = startOfDay(new Date());
+    const currentYear = now.getFullYear();
 
-    // Get all dates in the visible range (including past month for context)
-    const visibleRangeStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const visibleRangeEnd = addMonths(now, 6);
+    // Calculate the six-month reference date
+    const sixMonthsFromNow = addMonths(now, 6);
+    const sixMonthYear = sixMonthsFromNow.getFullYear();
+    const isEndOfMonth = isLastDayOfMonth(now);
+
+    // Log these critical values for debugging
+    console.log("[Calendar] Six-month date calculation:", {
+      today: format(now, "yyyy-MM-dd"),
+      isEndOfMonth,
+      sixMonthDate: format(sixMonthsFromNow, "yyyy-MM-dd"),
+      sixMonthMonth: sixMonthsFromNow.getMonth() + 1,
+      sixMonthYear: sixMonthYear,
+      sixMonthDay: sixMonthsFromNow.getDate(),
+    });
+
+    // Expand range to cover Jan 1st of current year to Dec 31st of the six-month year
+    const visibleRangeStart = new Date(currentYear, 0, 1); // Jan 1st of current year
+    const visibleRangeEnd = new Date(sixMonthYear, 11, 31); // Dec 31st of the year the 6-month mark is in
+
+    console.log("[Calendar] Generating marks for range:", {
+      start: format(visibleRangeStart, "yyyy-MM-dd"),
+      end: format(visibleRangeEnd, "yyyy-MM-dd"),
+    });
 
     const allDates = eachDayOfInterval({
       start: visibleRangeStart,
@@ -204,24 +282,75 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
     allDates.forEach((date) => {
       const dateStr = format(date, "yyyy-MM-dd");
 
-      // First check if the user has a regular request for this date
-      const userHasRegularRequest = hasUserRequestForDate(dateStr);
+      // Check if the user has a request (Regular, PIL, or six-month)
+      const userRequest = hasUserRequestForDate(dateStr);
 
-      // Then check if the user has a six-month request for this date
+      // Check for PIL requests from timeStore
+      const hasPilRequest = pilRequestsByDate[dateStr] === true;
+
+      // ANY user request should mark the day as "userRequested"
+      const userHasRequest = !!userRequest;
       const userHasSixMonthRequest = sixMonthRequestDays[dateStr] === true;
+      const userHasAnyRequest = userHasRequest || userHasSixMonthRequest || hasPilRequest;
 
-      // User has any request (regular or six-month)
-      const userHasAnyRequest = userHasRegularRequest || userHasSixMonthRequest;
+      // Debug PIL requests specifically
+      if (userRequest?.paid_in_lieu || hasPilRequest) {
+        console.log(
+          `[Calendar] User has a PIL request for ${dateStr} - from ${userRequest ? "calendarStore" : "timeStore"}`
+        );
+      }
 
-      // If user has any request, use the userRequested color
-      // Otherwise, use the regular availability color
-      const availability = userHasAnyRequest ? "userRequested" : getDateAvailability(dateStr);
+      // CRITICAL FIX: Directly determine if this is a six-month request date
+      // Same algorithm as in calendarStore.ts
+      const isSixMonthDate = date.getTime() === sixMonthsFromNow.getTime();
+      const isSixMonthRequest =
+        isSixMonthDate ||
+        (isEndOfMonth &&
+          date.getMonth() === sixMonthsFromNow.getMonth() &&
+          date.getFullYear() === sixMonthsFromNow.getFullYear() &&
+          date.getDate() >= sixMonthsFromNow.getDate());
+
+      // Debug problematic dates to make sure they're correctly identified
+      if (date.getDate() === 31 && date.getMonth() === 9 && date.getFullYear() === 2025) {
+        // Oct 31, 2025
+        console.log(`[Calendar] Six-month status check for ${dateStr}:`, {
+          isSixMonthDate,
+          isEndOfMonth,
+          isSameMonth: date.getMonth() === sixMonthsFromNow.getMonth(),
+          isSameYear: date.getFullYear() === sixMonthsFromNow.getFullYear(),
+          dateDay: date.getDate(),
+          sixMonthDay: sixMonthsFromNow.getDate(),
+          isAfterSixMonthDay: date.getDate() >= sixMonthsFromNow.getDate(),
+          isSixMonthRequest,
+          getDateAvailabilityResult: getDateAvailability(dateStr),
+        });
+      }
+
+      // Determine availability
+      let availability: AvailabilityType;
+
+      if (userHasAnyRequest) {
+        // If user has ANY request (regular, PIL, or six-month), mark as userRequested
+        availability = "userRequested";
+      } else if (isSixMonthRequest) {
+        // If it's a six-month request date AND user doesn't have a request, mark available
+        availability = "available";
+      } else {
+        // Otherwise use the standard getDateAvailability function
+        // Type assertion to ensure it's a valid availability type
+        const dateAvailability = getDateAvailability(dateStr);
+        availability = (dateAvailability as AvailabilityType) || "unavailable";
+      }
+
       const colors = AVAILABILITY_COLORS[availability];
 
       if (!colors) {
         console.warn(`[Calendar] No colors found for availability: ${availability}`);
         return;
       }
+
+      // Determine if the date should be disabled based on the store's logic
+      const isDisabled = !isDateSelectable(dateStr);
 
       dates[dateStr] = {
         customStyles: {
@@ -233,6 +362,8 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
             fontWeight: "bold",
           },
         },
+        disabled: isDisabled, // Use disabled prop for visual cue
+        disableTouchEvent: isDisabled, // Disable touch if not selectable
       };
 
       // Add selection styling if this is the selected date
@@ -252,6 +383,8 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
       }
     });
 
+    // Store the generated dates for future use
+    lastGeneratedMarksRef.current = dates;
     return dates;
   }, [
     division,
@@ -260,42 +393,70 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
     isZoneSpecific,
     selectedDate,
     theme,
+    requests,
     allotments,
     yearlyAllotments,
-    requests,
+    sixMonthRequestDays,
     getDateAvailability,
     hasUserRequestForDate,
-    sixMonthRequestDays,
+    pilRequestsByDate,
   ]);
 
-  // Log when marked dates are regenerated
+  // Reset the marked dates generated flag when fundamental data changes
   useEffect(() => {
-    console.log("[Calendar] Marked dates updated:", {
-      hasMarks: Object.keys(markedDates).length,
-      zoneId,
-      isInitialized,
+    markedDatesGeneratedRef.current = false;
+  }, [
+    Object.keys(allotments).length,
+    Object.keys(yearlyAllotments).length,
+    Object.keys(requests).length,
+    Object.keys(sixMonthRequestDays).length,
+  ]);
+
+  // Generate a unique key for the calendar that changes when data changes
+  const calendarDataKey = useMemo(() => {
+    // Create a string that changes when any relevant data changes
+    const allotmentsLength = Object.keys(allotments).length;
+    const yearlyAllotmentsLength = Object.keys(yearlyAllotments).length;
+    const requestsLength = Object.keys(requests).length;
+
+    // Count requests by status for more detailed tracking
+    let approvedCount = 0;
+    let pendingCount = 0;
+    let waitlistedCount = 0;
+
+    // Create a hash of the data that will change when the data changes
+    Object.values(requests).forEach((dateRequests) => {
+      dateRequests.forEach((req) => {
+        if (req.status === "approved") approvedCount++;
+        else if (req.status === "pending") pendingCount++;
+        else if (req.status === "waitlisted") waitlistedCount++;
+      });
     });
-  }, [markedDates, zoneId, isInitialized]);
+
+    // Return a unique key based on data counts
+    return `calendar-${zoneId}-${isInitialized}-${calendarDate}-${allotmentsLength}-${yearlyAllotmentsLength}-${requestsLength}-${approvedCount}-${pendingCount}-${waitlistedCount}`;
+  }, [zoneId, isInitialized, calendarDate, allotments, yearlyAllotments, requests]);
 
   const handleDayPress = async (day: DateData) => {
     const now = new Date();
     const dateObj = parseISO(day.dateString);
-    const fortyEightHoursFromNow = addDays(now, 2);
-    const sixMonthsFromNow = new Date(now.getFullYear(), now.getMonth() + 6, now.getDate());
+    const sixMonthsFromNow = addMonths(now, 6);
 
-    if (isBefore(dateObj, fortyEightHoursFromNow)) {
-      Toast.show({
-        type: "info",
-        text1: "Not Available",
-        text2: "Day you clicked is no longer available to Request",
-        position: "bottom",
-        visibilityTime: 3000,
-        topOffset: 50,
-      });
-      return;
-    }
+    // Check if the date is beyond the standard six-month window
+    // But we need to handle month-end cases specially
+    const isEndOfMonth = isLastDayOfMonth(now);
 
-    if (isAfter(dateObj, sixMonthsFromNow)) {
+    // IMPORTANT: Use exact same logic as in markedDates to determine if a date is a six-month request
+    const isSixMonthDate = dateObj.getTime() === sixMonthsFromNow.getTime();
+    const isSixMonthRequest =
+      isSixMonthDate ||
+      (isEndOfMonth &&
+        dateObj.getMonth() === sixMonthsFromNow.getMonth() &&
+        dateObj.getFullYear() === sixMonthsFromNow.getFullYear() &&
+        dateObj.getDate() >= sixMonthsFromNow.getDate());
+
+    // If it's beyond six months and not a special month-end case or exact six-month date, reject
+    if (isAfter(dateObj, sixMonthsFromNow) && !isSixMonthRequest) {
       Toast.show({
         type: "info",
         text1: "Not Available",
@@ -307,22 +468,34 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
       return;
     }
 
-    // We don't need to check zone access here since we've already validated it during zone ID calculation
-    // and the calendar only shows the correct zone's data if the user has access
+    // New validation to check if the date still fits within the target month
+    if (
+      isEndOfMonth &&
+      dateObj.getMonth() === sixMonthsFromNow.getMonth() &&
+      dateObj.getFullYear() === sixMonthsFromNow.getFullYear()
+    ) {
+      // Get the last day of the target month
+      const lastDayOfMonth = new Date(dateObj.getFullYear(), dateObj.getMonth() + 1, 0).getDate();
+
+      if (dateObj.getDate() > lastDayOfMonth) {
+        Toast.show({
+          type: "info",
+          text1: "Not Available",
+          text2: "This date doesn't exist in the target month",
+          position: "bottom",
+          visibilityTime: 3000,
+          topOffset: 50,
+        });
+        return;
+      }
+    }
+
+    // Note: The rest of the six-month request handling is now managed by the calendarStore,
+    // so we don't need to maintain our own local state for sixMonthRequestDays
 
     if (isDateSelectable(day.dateString)) {
       setSelectedDate(day.dateString);
-
-      // Check if the selected date has a six-month request after selection
-      if (day.dateString) {
-        const hasSixMonthRequest = await checkSixMonthRequest(day.dateString);
-        if (hasSixMonthRequest) {
-          setSixMonthRequestDays((prev) => ({
-            ...prev,
-            [day.dateString]: true,
-          }));
-        }
-      }
+      onDayActuallyPressed?.(day.dateString);
     } else {
       // Get the availability to customize the message
       const availability = getDateAvailability(day.dateString);
@@ -341,6 +514,87 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
       });
     }
   };
+
+  // Add diagnostic logging for sixMonthRequestDays
+  useEffect(() => {
+    console.log("[Calendar Component] sixMonthRequestDays changed:", {
+      count: Object.keys(sixMonthRequestDays).length,
+      dates: Object.keys(sixMonthRequestDays),
+    });
+
+    // If user has six-month requests, check if they're actually displayed correctly
+    if (member?.id && Object.keys(sixMonthRequestDays).length > 0) {
+      // Get the first six-month date to check
+      const firstSixMonthDate = Object.keys(sixMonthRequestDays)[0];
+
+      // Wait a bit to ensure markedDates has updated
+      setTimeout(() => {
+        // Safely access markedDates without modifying it
+        const currentMarkedDates = lastGeneratedMarksRef.current || {};
+        const markedDate = currentMarkedDates[firstSixMonthDate];
+
+        if (markedDate) {
+          // Check if the date is correctly marked as userRequested
+          const userRequestedStyle =
+            markedDate.customStyles?.container?.backgroundColor === AVAILABILITY_COLORS.userRequested.color;
+
+          console.log(`[Calendar Component] Six-month date ${firstSixMonthDate} rendering diagnostic:`, {
+            isMarked: !!markedDate,
+            isDisabledTouch: markedDate.disableTouchEvent,
+            isUserRequestedStyle: userRequestedStyle,
+            backgroundColor: markedDate.customStyles?.container?.backgroundColor,
+            expectedColor: AVAILABILITY_COLORS.userRequested.color,
+          });
+
+          if (!userRequestedStyle) {
+            console.warn(
+              `[Calendar Component] RENDERING ISSUE: Six-month date ${firstSixMonthDate} is not displaying with userRequested style`
+            );
+          }
+        } else {
+          console.warn(
+            `[Calendar Component] RENDERING ISSUE: Six-month date ${firstSixMonthDate} is not present in markedDates`
+          );
+        }
+      }, 100);
+    }
+  }, [sixMonthRequestDays, member?.id]);
+
+  // Add diagnostic logging when the calendar renders with new markedDates
+  useEffect(() => {
+    const sixMonthDatesCount = Object.keys(sixMonthRequestDays).length;
+    const markedDatesCount = Object.keys(markedDates).length;
+
+    console.log("[Calendar Component] Calendar rendering with:", {
+      currentDate: calendarDate,
+      selectedDate,
+      sixMonthRequestDaysCount: sixMonthDatesCount,
+      markedDatesCount,
+      isInitialized,
+    });
+
+    if (sixMonthDatesCount > 0) {
+      // Check if all six-month requests are properly marked
+      const sixMonthDates = Object.keys(sixMonthRequestDays);
+      let missingMarks = 0;
+      let incorrectlyMarked = 0;
+
+      sixMonthDates.forEach((date) => {
+        const mark = markedDates[date];
+        if (!mark) {
+          missingMarks++;
+        } else if (mark.customStyles?.container?.backgroundColor !== AVAILABILITY_COLORS.userRequested.color) {
+          incorrectlyMarked++;
+        }
+      });
+
+      if (missingMarks > 0 || incorrectlyMarked > 0) {
+        console.warn(
+          `[Calendar Component] Marking issues detected: ${missingMarks} six-month dates missing marks, ${incorrectlyMarked} incorrectly marked`
+        );
+      }
+    }
+  }, [markedDates, sixMonthRequestDays, calendarDate, selectedDate, isInitialized]);
 
   // Only show loading state if we're not initialized
   if (!isInitialized) {
@@ -372,7 +626,7 @@ export function Calendar({ current, zoneId, isZoneSpecific = false }: CalendarPr
   return (
     <ThemedView style={styles.container}>
       <RNCalendar
-        key={`calendar-${zoneId}-${isInitialized}-${calendarDate}`}
+        key={calendarDataKey}
         theme={CALENDAR_THEME[theme]}
         markingType="custom"
         markedDates={markedDates}
