@@ -236,6 +236,27 @@ export function UnionAnnouncementManager() {
     await acknowledgeAnnouncement(announcement.id);
   };
 
+  // Handle view detailed analytics (copied from Analytics tab pattern that works on Android)
+  const handleViewDetailedAnalytics = useCallback(
+    async (announcementId: string) => {
+      try {
+        setSelectedAnnouncementForAnalytics(announcementId);
+        const analytics = await getDetailedAnnouncementAnalytics(announcementId);
+
+        if (analytics) {
+          setCurrentAnalytics(analytics);
+          setAnalyticsModalVisible(true);
+        } else {
+          Alert.alert("No Data", "No detailed analytics available for this announcement");
+        }
+      } catch (error) {
+        console.error("Error loading detailed analytics:", error);
+        Alert.alert("Error", "Failed to load analytics data");
+      }
+    },
+    [getDetailedAnnouncementAnalytics]
+  );
+
   // Add link to form
   const addLink = () => {
     setFormData((prev) => ({
@@ -483,17 +504,7 @@ export function UnionAnnouncementManager() {
                 <View style={styles.adminActions}>
                   <TouchableOpacity
                     style={[styles.actionButton, styles.analyticsButton]}
-                    onPress={async () => {
-                      try {
-                        setSelectedAnnouncementForAnalytics(announcement.id);
-                        const analytics = await getDetailedAnnouncementAnalytics(announcement.id);
-                        setCurrentAnalytics(analytics);
-                        setAnalyticsModalVisible(true);
-                      } catch (error) {
-                        console.error("Failed to load analytics:", error);
-                        Alert.alert("Error", "Failed to load analytics data");
-                      }
-                    }}
+                    onPress={() => handleViewDetailedAnalytics(announcement.id)}
                   >
                     <Ionicons name="analytics" size={16} color={Colors[colorScheme].background} />
                     <ThemedText style={styles.actionButtonText}>Analytics</ThemedText>
@@ -764,27 +775,25 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
   divisionSelect: {
-    minWidth: 150,
+    minWidth: 120,
     height: 40,
     backgroundColor: Colors.dark.card,
     color: Colors.dark.text,
     borderColor: Colors.dark.border,
     borderWidth: 1,
     borderRadius: 8,
+    cursor: "pointer",
     ...Platform.select({
       ios: {
         height: 56,
-        cursor: "pointer",
       },
       android: {
         height: 64,
-        width: "100%",
-        cursor: "pointer",
+        width: "90%",
       },
       web: {
         height: 40,
         paddingRight: 24,
-        cursor: "pointer",
       },
     }),
   },

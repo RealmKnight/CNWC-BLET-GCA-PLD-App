@@ -30,9 +30,9 @@ export function NavigationGuard({ children }: NavigationGuardProps) {
   } = usePriorityRouter();
 
   // Debug logging for subscription status
-  useEffect(() => {
-    console.log("[NavigationGuard] Debug info:", debugInfo);
-  }, [debugInfo]);
+  // useEffect(() => {
+  //   console.log("[NavigationGuard] Debug info:", debugInfo);
+  // }, [debugInfo]);
 
   // Add app state change monitoring for debugging
   useEffect(() => {
