@@ -12,6 +12,7 @@ import { sendMessageWithNotification } from "@/utils/notificationService";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { ThemedView } from "@/components/ThemedView";
 import { Database } from "@/types/supabase";
+import { showSuccessToast, showErrorToast } from "@/utils/toastHelpers";
 
 type VacationRequest = Database["public"]["Tables"]["vacation_requests"]["Row"] & {
   member: {
@@ -332,10 +333,22 @@ export function VacationSection() {
       );
 
       await fetchPendingRequests();
-      Alert.alert("Success", "Request approved successfully");
+
+      // Show success message based on platform
+      if (Platform.OS === "web") {
+        showSuccessToast("Success", "Request approved successfully");
+      } else {
+        Alert.alert("Success", "Request approved successfully");
+      }
     } catch (error) {
       console.error("Error approving request:", error);
-      Alert.alert("Error", "Failed to approve request");
+
+      // Show error message based on platform
+      if (Platform.OS === "web") {
+        showErrorToast("Error", "Failed to approve request");
+      } else {
+        Alert.alert("Error", "Failed to approve request");
+      }
     } finally {
       setIsRequestLoading(false);
     }
@@ -379,10 +392,22 @@ export function VacationSection() {
       setSelectedDenialReason(null);
       setDenialComment("");
       await fetchPendingRequests();
-      Alert.alert("Success", "Request denied successfully");
+
+      // Show success message based on platform
+      if (Platform.OS === "web") {
+        showSuccessToast("Success", "Request denied successfully");
+      } else {
+        Alert.alert("Success", "Request denied successfully");
+      }
     } catch (error) {
       console.error("Error denying request:", error);
-      Alert.alert("Error", "Failed to deny request");
+
+      // Show error message based on platform
+      if (Platform.OS === "web") {
+        showErrorToast("Error", "Failed to deny request");
+      } else {
+        Alert.alert("Error", "Failed to deny request");
+      }
     } finally {
       setIsRequestLoading(false);
     }

@@ -99,8 +99,5 @@ const styles = StyleSheet.create({
   },
   title: {
     color: "#FFFFFF",
-    textShadowColor: "rgba(0, 0, 0, 0.75)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
   },
 });

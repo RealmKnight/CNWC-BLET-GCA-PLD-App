@@ -8,9 +8,11 @@ import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { TouchableOpacityComponent } from "@/components/TouchableOpacityComponent";
 import { supabase } from "@/utils/supabase";
-import { sendMessageWithNotification } from "@/utils/notificationService";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { ThemedView } from "@/components/ThemedView";
+import { showSuccessToast, showErrorToast, showConfirmToast } from "@/utils/toastHelpers";
+import { DayRequest } from "@/store/calendarStore";
+import { Database } from "@/types/supabase";
 
 interface Member {
   pin_number: string;
@@ -250,7 +252,13 @@ export function PldSdvSection() {
       setPendingRequests(transformedData);
     } catch (error) {
       console.error("Error fetching pending requests:", error);
-      Alert.alert("Error", "Failed to load pending requests");
+
+      // Show error notification based on platform
+      if (Platform.OS === "web") {
+        showErrorToast("Error", "Failed to load pending requests");
+      } else {
+        Alert.alert("Error", "Failed to load pending requests");
+      }
     }
   }, [user?.id]);
 
@@ -267,6 +275,13 @@ export function PldSdvSection() {
       setDenialReasons(data);
     } catch (error) {
       console.error("Error fetching denial reasons:", error);
+
+      // Show error notification based on platform
+      if (Platform.OS === "web") {
+        showErrorToast("Error", "Failed to load denial reasons");
+      } else {
+        Alert.alert("Error", "Failed to load denial reasons");
+      }
     }
   }, []);
 
@@ -402,59 +417,24 @@ export function PldSdvSection() {
 
       if (error) throw error;
 
-      // Get the sender's PIN number (company admin)
-      const senderPin = getSenderPinNumber();
+      // NOTE: Notification and message creation is now handled automatically
+      // by the database trigger when status is updated, so no need to call
+      // sendMessageWithNotification here to avoid duplicates
 
-      // Get and validate the recipient's PIN number from the request
-      try {
-        const recipientPin = getRecipientPinNumber(selectedRequest.pin_number);
-
-        // Determine notification title and message based on request type and paid_in_lieu status
-        const notificationTitle = selectedRequest.paid_in_lieu
-          ? `${selectedRequest.leave_type} Paid in Lieu Approved`
-          : `${selectedRequest.leave_type} Day Off Approved`;
-
-        const notificationMessage = selectedRequest.paid_in_lieu
-          ? `Your ${selectedRequest.leave_type} payment request for ${format(
-              parseISO(selectedRequest.request_date),
-              "MMM d, yyyy"
-            )} has been approved. Please verify in CATS.`
-          : `Your ${selectedRequest.leave_type} day off request for ${format(
-              parseISO(selectedRequest.request_date),
-              "MMM d, yyyy"
-            )} has been approved. Please verify in CATS.`;
-
-        // Send notification
-        await sendMessageWithNotification(
-          senderPin,
-          [recipientPin],
-          notificationTitle,
-          notificationMessage,
-          false,
-          "approval"
-        );
-      } catch (pinError) {
-        console.error("Error with recipient PIN:", pinError);
-        Alert.alert(
-          "Partial Success",
-          "Request was approved, but notification could not be sent due to invalid recipient data."
-        );
-      }
-
-      // Refresh the list regardless of notification success
+      // Refresh the list
       await fetchPendingRequests();
-      Alert.alert("Success", "Request approved successfully");
+
+      // Show success message
+      if (Platform.OS === "web") {
+        showSuccessToast("Success", "Request approved successfully");
+      } else {
+        Alert.alert("Success", "Request approved successfully");
+      }
     } catch (error) {
       console.error("Error approving request:", error);
 
-      // If the error is related to PIN validation but the database update succeeded
-      if ((error as Error)?.message?.includes("PIN")) {
-        console.log("Request approved but notification failed due to PIN issue");
-        Alert.alert(
-          "Partial Success",
-          "Request was approved, but notification could not be sent due to invalid recipient data."
-        );
-        await fetchPendingRequests();
+      if (Platform.OS === "web") {
+        showErrorToast("Error", "Failed to approve request");
       } else {
         Alert.alert("Error", "Failed to approve request");
       }
@@ -494,56 +474,27 @@ export function PldSdvSection() {
 
       if (error) throw error;
 
-      // Get the sender's PIN number (company admin)
-      const senderPin = getSenderPinNumber();
-
-      // Get and validate the recipient's PIN number from the request
-      try {
-        const recipientPin = getRecipientPinNumber(selectedRequest.pin_number);
-
-        // Send notification
-        await sendMessageWithNotification(
-          senderPin,
-          [recipientPin],
-          "Leave Request Denied",
-          `Your ${selectedRequest.leave_type} request for ${format(
-            parseISO(selectedRequest.request_date),
-            "MMM d, yyyy"
-          )} has been denied. Please verify in CATS.`,
-          false,
-          "denial"
-        );
-      } catch (pinError) {
-        console.error("Error with recipient PIN:", pinError);
-        Alert.alert(
-          "Partial Success",
-          "Request was denied, but notification could not be sent due to invalid recipient data."
-        );
-      }
+      // NOTE: Notification and message creation is now handled automatically
+      // by the database trigger when status is updated, so no need to call
+      // sendMessageWithNotification here to avoid duplicates
 
       setIsDenialModalVisible(false);
       setSelectedRequest(null);
       setSelectedDenialReason(null);
       setDenialComment("");
       await fetchPendingRequests();
-      Alert.alert("Success", "Request denied successfully");
+
+      // Show success message
+      if (Platform.OS === "web") {
+        showSuccessToast("Success", "Request denied successfully");
+      } else {
+        Alert.alert("Success", "Request denied successfully");
+      }
     } catch (error) {
       console.error("Error denying request:", error);
 
-      // If the error is related to PIN validation but the database update succeeded
-      if ((error as Error)?.message?.includes("PIN")) {
-        console.log("Request denied but notification failed due to PIN issue");
-
-        setIsDenialModalVisible(false);
-        setSelectedRequest(null);
-        setSelectedDenialReason(null);
-        setDenialComment("");
-
-        Alert.alert(
-          "Partial Success",
-          "Request was denied, but notification could not be sent due to invalid recipient data."
-        );
-        await fetchPendingRequests();
+      if (Platform.OS === "web") {
+        showErrorToast("Error", "Failed to deny request");
       } else {
         Alert.alert("Error", "Failed to deny request");
       }
@@ -587,64 +538,24 @@ export function PldSdvSection() {
 
       if (error) throw error;
 
-      // Get the sender's PIN number (company admin)
-      const senderPin = getSenderPinNumber();
+      // NOTE: Notification and message creation is now handled automatically
+      // by the database trigger when status is updated, so no need to call
+      // sendMessageWithNotification here to avoid duplicates
 
-      // Get and validate the recipient's PIN number from the request
-      try {
-        const recipientPin = getRecipientPinNumber(selectedRequest.pin_number);
-
-        // Send notification
-        await sendMessageWithNotification(
-          senderPin,
-          [recipientPin],
-          "Leave Request Cancellation Approved",
-          `Your cancellation request for ${selectedRequest.leave_type} on ${format(
-            parseISO(selectedRequest.request_date),
-            "MMM d, yyyy"
-          )} has been approved. Please verify in CATS.`,
-          false,
-          "approval"
-        );
-      } catch (pinError) {
-        console.error("Error with recipient PIN:", pinError);
-        Alert.alert(
-          "Partial Success",
-          "Request was cancelled, but notification could not be sent due to invalid recipient data."
-        );
-      }
-
+      // Refresh list and show success message
       await fetchPendingRequests();
-      Alert.alert("Success", "Cancellation approved successfully");
+      if (Platform.OS === "web") {
+        showSuccessToast("Success", "Cancellation request approved successfully");
+      } else {
+        Alert.alert("Success", "Cancellation request approved successfully");
+      }
     } catch (error) {
       console.error("Error approving cancellation:", error);
 
-      // Update the database entry even if notification fails
-      if ((error as Error)?.message?.includes("PIN")) {
-        console.log("Attempting to update request status despite notification error...");
-        try {
-          await supabase
-            .from("pld_sdv_requests")
-            .update({
-              status: "cancelled",
-              actioned_by: user?.id,
-              actioned_at: new Date().toISOString(),
-              responded_at: new Date().toISOString(),
-              responded_by: user?.id,
-            })
-            .eq("id", selectedRequest.id);
-
-          Alert.alert(
-            "Partial Success",
-            "Request was cancelled, but notification could not be sent due to invalid recipient data."
-          );
-          await fetchPendingRequests();
-        } catch (dbError) {
-          console.error("Failed to update request status:", dbError);
-          Alert.alert("Error", "Failed to approve cancellation");
-        }
+      if (Platform.OS === "web") {
+        showErrorToast("Error", "Failed to approve cancellation request");
       } else {
-        Alert.alert("Error", "Failed to approve cancellation");
+        Alert.alert("Error", "Failed to approve cancellation request");
       }
     } finally {
       setIsRequestLoading(false);

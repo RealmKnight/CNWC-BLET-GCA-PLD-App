@@ -4,6 +4,7 @@ import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { UserRole } from "@/types/auth";
 import { DivisionAdminPanel } from "./division/DivisionAdminPanel";
+import { UnionAdminPanel } from "./union/UnionAdminPanel";
 import { useUserStore } from "@/store/userStore";
 
 interface AdminDashboardProps {
@@ -29,6 +30,10 @@ export function AdminDashboard({ role }: AdminDashboardProps) {
     return <DivisionAdminPanel division={division} />;
   }
 
+  if (role === "union_admin") {
+    return <UnionAdminPanel />;
+  }
+
   return (
     <ThemedView style={styles.container}>
       <ThemedView style={styles.header}>
@@ -43,17 +48,6 @@ export function AdminDashboard({ role }: AdminDashboardProps) {
             <ThemedText>• System Statistics</ThemedText>
             <ThemedText>• User Management</ThemedText>
             <ThemedText>• All Union and Division Features</ThemedText>
-          </>
-        )}
-
-        {role === "union_admin" && (
-          <>
-            <ThemedText type="subtitle">Union Admin Features:</ThemedText>
-            <ThemedText>• Union Announcements</ThemedText>
-            <ThemedText>• Advertisements</ThemedText>
-            <ThemedText>• GCA Officers</ThemedText>
-            <ThemedText>• Division Management</ThemedText>
-            <ThemedText>• All Division Features</ThemedText>
           </>
         )}
       </ThemedView>

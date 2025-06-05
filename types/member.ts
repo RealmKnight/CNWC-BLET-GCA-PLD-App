@@ -17,4 +17,10 @@ export interface Member {
     status?: string;
     status_id?: number;
     phone_number?: string;
+    date_of_birth?: string;
+    system_sen_type?: string;
+    prior_vac_sys?: number | string | null;
+    misc_notes?: string;
+    current_zone_id?: number;
+    home_zone_id?: number;
 }

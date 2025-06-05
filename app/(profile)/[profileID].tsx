@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { StyleSheet, ScrollView, Alert, Modal, Platform, TextInput } from "react-native";
-import { useLocalSearchParams } from "expo-router";
+import { StyleSheet, ScrollView, Alert, Modal, Platform, TextInput, View, Linking } from "react-native";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { useAuth } from "@/hooks/useAuth";
@@ -12,14 +12,17 @@ import { useColorScheme } from "@/hooks/useColorScheme";
 import { Database } from "@/types/supabase";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
-import { testEmailFunction, sendPasswordResetEmail } from "@/utils/notificationService";
 import Constants from "expo-constants";
-import { DatePicker } from "@/components/DatePicker";
 import { parseISO, format, differenceInYears, isAfter } from "date-fns";
 import Toast from "react-native-toast-message";
+import { ChangePasswordModal } from "@/components/ui/ChangePasswordModal";
+import { MemberMessageModal } from "@/components/MemberMessageModal";
+import { MeetingNotificationPreferences } from "@/components/ui/MeetingNotificationPreferences";
+import { ClientOnlyDatePicker } from "@/components/ClientOnlyDatePicker";
+import { SmsOptInModal } from "@/components/ui/SmsOptInModal";
 
 type Member = Database["public"]["Tables"]["members"]["Row"];
-type ContactPreference = "phone" | "text" | "email" | "push";
+type ContactPreference = "in_app" | "phone" | "text" | "email" | "push";
 type ColorScheme = keyof typeof Colors;
 
 interface UserPreferences {
@@ -30,6 +33,220 @@ interface UserPreferences {
   contact_preference: ContactPreference;
   created_at: string;
   updated_at: string;
+}
+
+// Base Confirmation Modal component to be reused for all notification types
+function NotificationConfirmationModal({
+  visible,
+  onClose,
+  onConfirm,
+  title,
+  children,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  title: string;
+  children: React.ReactNode;
+}) {
+  const theme = (useColorScheme() ?? "light") as ColorScheme;
+  const [hasScrolledToBottom, setHasScrolledToBottom] = useState(false);
+
+  const handleScroll = (event: any) => {
+    const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+    const paddingToBottom = 20;
+    const isScrolledToBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - paddingToBottom;
+
+    if (isScrolledToBottom && !hasScrolledToBottom) {
+      setHasScrolledToBottom(true);
+    }
+  };
+
+  useEffect(() => {
+    if (!visible) {
+      setHasScrolledToBottom(false);
+    }
+  }, [visible]);
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <ThemedView style={styles.modalOverlay}>
+        <ThemedView style={styles.modalContent}>
+          <ThemedView style={styles.modalHeader}>
+            <ThemedText type="title">{title}</ThemedText>
+            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+              <Ionicons name="close" size={24} color={Colors[theme].text} />
+            </TouchableOpacity>
+          </ThemedView>
+
+          <ScrollView style={styles.confirmationScrollContent} onScroll={handleScroll} scrollEventThrottle={16}>
+            {children}
+
+            {!hasScrolledToBottom && (
+              <ThemedView style={styles.scrollIndicatorContainer}>
+                <ThemedText style={styles.scrollIndicatorText}>Please scroll to the bottom to continue</ThemedText>
+                <Ionicons name="chevron-down" size={20} color={Colors[theme].tint} />
+              </ThemedView>
+            )}
+          </ScrollView>
+
+          <ThemedView style={styles.confirmationButtonContainer}>
+            <TouchableOpacity onPress={onClose} style={styles.secondaryButton}>
+              <ThemedText style={styles.secondaryButtonText}>Cancel</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={onConfirm}
+              style={[
+                styles.primaryButton,
+                !hasScrolledToBottom && styles.buttonDisabled,
+                { backgroundColor: hasScrolledToBottom ? Colors[theme].buttonBackground : "#888888" },
+              ]}
+              disabled={!hasScrolledToBottom}
+            >
+              <ThemedText style={[styles.buttonText, !hasScrolledToBottom && { color: "#999999" }]}>I Agree</ThemedText>
+            </TouchableOpacity>
+          </ThemedView>
+        </ThemedView>
+      </ThemedView>
+    </Modal>
+  );
+}
+
+// SMS Confirmation Modal Content
+function SMSConfirmationContent() {
+  const privacyPolicyUrl = `${Constants.expoConfig?.extra?.EXPO_PUBLIC_WEBSITE_URL}/privacy`;
+  console.log("Privacy Policy URL:", privacyPolicyUrl);
+
+  return (
+    <>
+      <ThemedText style={styles.confirmationTitle}>By enabling SMS notifications, you agree to receive:</ThemedText>
+
+      <ThemedView style={styles.bulletContainer}>
+        <ThemedText style={styles.bulletItem}>• Alerts and important union announcements</ThemedText>
+        <ThemedText style={styles.bulletItem}>• Request approval/denial notifications</ThemedText>
+        <ThemedText style={styles.bulletItem}>• Waitlist position changes</ThemedText>
+        <ThemedText style={styles.bulletItem}>• Meeting notices and reminders</ThemedText>
+        <ThemedText style={styles.bulletItem}>• Other important app-related notifications</ThemedText>
+      </ThemedView>
+
+      <ThemedText style={styles.confirmationText}>
+        You may receive up to 10 (or more) messages per month. In some cases, multiple messages may be sent in a single
+        day.
+      </ThemedText>
+
+      <ThemedText style={styles.confirmationText}>
+        Message and data rates may apply based on your wireless carrier plan. No additional fees are charged by our
+        service.
+      </ThemedText>
+
+      <ThemedText style={styles.confirmationText}>
+        You can opt-out at any time by replying STOP to any message or by changing your contact preference in the app.
+      </ThemedText>
+
+      <ThemedText style={styles.confirmationText}>
+        By tapping "I Agree" below, you consent to receive SMS messages from BLET PLD App for the purposes described
+        above.
+      </ThemedText>
+
+      <ThemedText style={styles.confirmationText}>
+        For more information about how we handle your data, please review our{" "}
+        <ThemedText style={styles.privacyLink} onPress={() => Linking.openURL(privacyPolicyUrl)}>
+          Privacy Policy
+        </ThemedText>
+        .
+      </ThemedText>
+    </>
+  );
+}
+
+// Email Confirmation Modal Content
+function EmailConfirmationContent() {
+  const privacyPolicyUrl = `${Constants.expoConfig?.extra?.EXPO_PUBLIC_WEBSITE_URL}/privacy`;
+
+  return (
+    <>
+      <ThemedText style={styles.confirmationTitle}>By enabling Email notifications, you agree to receive:</ThemedText>
+
+      <ThemedView style={styles.bulletContainer}>
+        <ThemedText style={styles.bulletItem}>• Alerts and important union announcements</ThemedText>
+        <ThemedText style={styles.bulletItem}>• Request approval/denial notifications</ThemedText>
+        <ThemedText style={styles.bulletItem}>• Waitlist position changes</ThemedText>
+        <ThemedText style={styles.bulletItem}>• Meeting notices and reminders</ThemedText>
+        <ThemedText style={styles.bulletItem}>• Other important app-related notifications</ThemedText>
+      </ThemedView>
+
+      <ThemedText style={styles.confirmationText}>
+        You may receive up to 10 (or more) emails per month. In some cases, multiple emails may be sent in a single day.
+      </ThemedText>
+
+      <ThemedText style={styles.confirmationText}>
+        Emails will be sent from notifications@bletcnwcgca.org using our email service provider.
+      </ThemedText>
+
+      <ThemedText style={styles.confirmationText}>
+        You can opt-out at any time by clicking the unsubscribe link in any email or by changing your contact preference
+        in the app.
+      </ThemedText>
+
+      <ThemedText style={styles.confirmationText}>
+        By tapping "I Agree" below, you consent to receive emails from BLET PLD App for the purposes described above.
+      </ThemedText>
+
+      <ThemedText style={styles.confirmationText}>
+        For more information about how we handle your data, please review our{" "}
+        <ThemedText style={styles.privacyLink} onPress={() => Linking.openURL(privacyPolicyUrl)}>
+          Privacy Policy
+        </ThemedText>
+        .
+      </ThemedText>
+    </>
+  );
+}
+
+// Push Confirmation Modal Content
+function PushConfirmationContent() {
+  const privacyPolicyUrl = `${Constants.expoConfig?.extra?.EXPO_PUBLIC_WEBSITE_URL}/privacy`;
+
+  return (
+    <>
+      <ThemedText style={styles.confirmationTitle}>By enabling Push notifications, you agree to receive:</ThemedText>
+
+      <ThemedView style={styles.bulletContainer}>
+        <ThemedText style={styles.bulletItem}>• Alerts and important union announcements</ThemedText>
+        <ThemedText style={styles.bulletItem}>• Request approval/denial notifications</ThemedText>
+        <ThemedText style={styles.bulletItem}>• Waitlist position changes</ThemedText>
+        <ThemedText style={styles.bulletItem}>• Meeting notices and reminders</ThemedText>
+        <ThemedText style={styles.bulletItem}>• Other important app-related notifications</ThemedText>
+      </ThemedView>
+
+      <ThemedText style={styles.confirmationText}>
+        You may receive up to 10 (or more) push notifications per month. In some cases, multiple notifications may be
+        sent in a single day.
+      </ThemedText>
+
+      <ThemedText style={styles.confirmationText}>
+        Push notifications require granting notification permissions to this app on your device.
+      </ThemedText>
+
+      <ThemedText style={styles.confirmationText}>
+        You can opt-out at any time by changing your device notification settings or by changing your contact preference
+        in the app.
+      </ThemedText>
+
+      <ThemedText style={styles.confirmationText}>
+        By tapping "I Agree" below, you consent to receive push notifications from BLET PLD App for the purposes
+        described above.
+      </ThemedText>
+
+      <ThemedText style={styles.confirmationText}>
+        For more information about how we handle your data, please review our{" "}
+        <ThemedText style={styles.privacyLink} onPress={() => Linking.openURL(privacyPolicyUrl)}>
+          Privacy Policy
+        </ThemedText>
+        .
+      </ThemedText>
+    </>
+  );
 }
 
 async function registerForPushNotificationsAsync() {
@@ -202,6 +419,7 @@ function DateOfBirthModal({
 
       // Update date_of_birth in members table
       const { error: updateError } = await supabase
+        .schema("public")
         .from("members")
         .update({ date_of_birth: formattedDate })
         .eq("user_id", session.user.id);
@@ -241,7 +459,7 @@ function DateOfBirthModal({
           )}
 
           <ThemedView style={styles.inputContainer}>
-            <DatePicker
+            <ClientOnlyDatePicker
               date={selectedDate}
               onDateChange={setSelectedDate}
               mode="date"
@@ -410,110 +628,161 @@ function PhoneUpdateModal({
 
 export default function ProfileScreen() {
   const params = useLocalSearchParams();
-  const profileID = Array.isArray(params.profileID) ? params.profileID[0] : params.profileID;
-  const { user, member, session } = useAuth();
+  const profileID = params.profileID as string | undefined;
+  const { user, session, member: loggedInMember } = useAuth(); // Use loggedInMember to avoid confusion
   const theme = (useColorScheme() ?? "light") as ColorScheme;
+  const router = useRouter();
+
+  // State for the profile being viewed
+  const [profile, setProfile] = useState<Member | null>(null);
   const [userPreferences, setUserPreferences] = useState<UserPreferences | null>(null);
-  const [phoneNumber, setPhoneNumber] = useState("");
-  const [isPhoneModalVisible, setIsPhoneModalVisible] = useState(false);
-  const [isDeviceMobile] = useState(Platform.OS !== "web");
-  const [isDateOfBirthModalVisible, setIsDateOfBirthModalVisible] = useState(false);
+  const [phoneNumber, setPhoneNumber] = useState(""); // Phone number state
   const [divisionName, setDivisionName] = useState<string | null>(null);
   const [zoneName, setZoneName] = useState<string | null>(null);
 
-  const isOwnProfile = user?.id === profileID;
-  // Users can only edit their own phone number and date of birth
-  const canEdit = isOwnProfile;
+  // UI State
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [isPhoneModalVisible, setIsPhoneModalVisible] = useState(false);
+  const [isDateOfBirthModalVisible, setIsDateOfBirthModalVisible] = useState(false);
+  const [isDeviceMobile] = useState(Platform.OS !== "web");
+  const [isPasswordModalVisible, setIsPasswordModalVisible] = useState(false);
 
-  // Fetch user data including phone number from metadata
-  useEffect(() => {
-    if (user && isOwnProfile) {
-      // Get phone from session metadata if available
-      const phoneFromMetadata = session?.user?.user_metadata?.phone_number;
-      if (phoneFromMetadata) {
-        // Remove any non-numeric characters and set the phone number
-        const cleanedPhone = phoneFromMetadata.replace(/\D/g, "");
-        setPhoneNumber(cleanedPhone);
-      } else {
-        // Fallback to user.phone if metadata is not available
-        setPhoneNumber(user.phone?.replace(/\D/g, "") || "");
-      }
-    }
-  }, [user, isOwnProfile, session?.user?.user_metadata]);
+  // Notification confirmation modals
+  const [isSMSOptInVisible, setIsSMSOptInVisible] = useState(false);
+  const [isEmailConfirmationVisible, setIsEmailConfirmationVisible] = useState(false);
+  const [isPushConfirmationVisible, setIsPushConfirmationVisible] = useState(false);
 
-  // Add debug effect for session changes
-  useEffect(() => {
-    if (session) {
-      console.log("Session user metadata:", session.user.user_metadata);
-    }
-  }, [session]);
+  // Pending preference selection
+  const [pendingPreference, setPendingPreference] = useState<ContactPreference | null>(null);
 
-  // Fetch user preferences
-  useEffect(() => {
-    if (member?.pin_number) {
-      supabase
-        .from("user_preferences")
-        .select("*")
-        .eq("pin_number", member.pin_number)
-        .single()
-        .then(({ data, error }) => {
-          if (error) {
-            if (error.code === "PGRST116") {
-              // No preferences found, create default preferences
-              createDefaultPreferences();
-            } else {
-              console.error("Error fetching preferences:", error);
-            }
-          } else {
-            setUserPreferences(data as UserPreferences);
-          }
-        });
-    }
-  }, [member?.pin_number]);
+  // Add new state for contact admin modal
+  const [showContactAdminModal, setShowContactAdminModal] = useState(false);
 
-  // Add effect to fetch division and zone names
+  // Determine if the logged-in user is viewing their own profile
+  const isOwnProfile = session?.user?.id === profile?.id;
+  // Permissions: can edit basic info only if it's their own profile
+  const canEditProfileDetails = isOwnProfile;
+
+  // --- Data Fetching Effect ---
   useEffect(() => {
-    async function fetchDivisionAndZone() {
-      if (!member?.division_id || !member?.current_zone_id) return;
+    const fetchProfileData = async () => {
+      setIsLoading(true);
+      setError(null);
+      // Reset state variables at the beginning
+      setProfile(null);
+      setDivisionName(null);
+      setZoneName(null);
+      setUserPreferences(null);
+      setPhoneNumber(""); // Reset phone number
 
       try {
-        // Fetch division name
-        const { data: divisionData, error: divisionError } = await supabase
-          .from("divisions")
-          .select("name")
-          .eq("id", member.division_id)
+        // Enhanced validation for profileID
+        if (!profileID || profileID.trim() === "" || profileID === "index") {
+          console.error("Invalid or missing profileID:", profileID);
+          throw new Error("Invalid Profile ID provided.");
+        }
+
+        // 1. Fetch member data using the validated profileID
+        console.log(`[ProfileScreen] Fetching profile data for ID: ${profileID}`);
+        const { data: memberData, error: memberError } = await supabase
+          .schema("public")
+          .from("members")
+          .select("*") // Select all member fields
+          .eq("id", profileID)
           .single();
 
-        if (divisionError) throw divisionError;
-        setDivisionName(divisionData?.name || null);
+        if (memberError) throw memberError;
+        if (!memberData) throw new Error("Profile not found.");
 
-        // Fetch zone name
-        const { data: zoneData, error: zoneError } = await supabase
-          .from("zones")
-          .select("name")
-          .eq("id", member.current_zone_id)
-          .single();
+        setProfile(memberData);
+        // If viewing own profile, update phone number state from metadata/user record
+        if (session?.user?.id === memberData.id) {
+          const phoneFromMetadata = session?.user?.user_metadata?.phone_number;
+          if (phoneFromMetadata) {
+            const cleanedPhone = phoneFromMetadata.replace(/\D/g, "");
+            setPhoneNumber(cleanedPhone);
+          } else {
+            setPhoneNumber(session?.user?.phone?.replace(/\D/g, "") || "");
+          }
+        }
 
-        if (zoneError) throw zoneError;
-        setZoneName(zoneData?.name || null);
-      } catch (error) {
-        console.error("Error fetching division/zone names:", error);
+        // 2. Fetch user preferences using the fetched member's user_id (which is memberData.id)
+        const { data: preferencesData, error: preferencesError } = await supabase
+          .schema("public")
+          .from("user_preferences")
+          .select("*")
+          .eq("user_id", memberData.id) // Use memberData.id which is the auth user ID
+          .maybeSingle(); // Use maybeSingle as preferences might not exist yet
+
+        if (preferencesError && preferencesError.code !== "PGRST116") {
+          // Ignore 'No rows found'
+          console.warn("Error fetching preferences:", preferencesError);
+        } else if (!preferencesData && memberData.id === session?.user?.id) {
+          // If viewing own profile and no prefs found, create defaults
+          await createDefaultPreferences(memberData.id, memberData.pin_number);
+        } else {
+          setUserPreferences(preferencesData as UserPreferences | null);
+        }
+
+        // 3. Fetch division name using memberData.division_id
+        if (memberData.division_id) {
+          const { data: divisionData, error: divisionError } = await supabase
+            .schema("public")
+            .from("divisions")
+            .select("name")
+            .eq("id", memberData.division_id)
+            .single();
+          if (divisionError) {
+            console.error("Error fetching division name:", divisionError);
+          } else {
+            setDivisionName(divisionData?.name || null);
+          }
+        } else {
+          setDivisionName(null);
+        }
+
+        // 4. Fetch zone name using memberData.current_zone_id
+        if (memberData.current_zone_id) {
+          const { data: zoneData, error: zoneError } = await supabase
+            .schema("public")
+            .from("zones")
+            .select("name")
+            .eq("id", memberData.current_zone_id)
+            .single();
+          if (zoneError) {
+            console.error("Error fetching zone name:", zoneError);
+          } else {
+            setZoneName(zoneData?.name || null);
+          }
+        } else {
+          setZoneName(null);
+        }
+      } catch (err: any) {
+        console.error("Error fetching profile data:", err);
+        setError(err.message || "An error occurred while loading the profile.");
+      } finally {
+        setIsLoading(false);
+        console.log("[ProfileScreen] Finished fetching profile data attempt.");
       }
-    }
+    };
 
-    fetchDivisionAndZone();
-  }, [member?.division_id, member?.current_zone_id]);
+    fetchProfileData();
+  }, [profileID, session?.user?.id]); // Re-fetch if profileID changes or session potentially changes
 
-  const createDefaultPreferences = async () => {
-    if (!member?.pin_number || !user?.id) return;
+  // --- Helper Functions ---
 
+  const createDefaultPreferences = async (userId: string, pinNumber: number | null) => {
+    if (!pinNumber || !userId) return;
+    console.log("[ProfileScreen] Creating default preferences for user:", userId);
     try {
       const { data, error } = await supabase
+        .schema("public")
         .from("user_preferences")
         .insert({
-          user_id: user.id,
-          pin_number: member.pin_number,
-          contact_preference: "email",
+          user_id: userId,
+          pin_number: pinNumber,
+          contact_preference: "in_app", // Default to in-app only
           push_token: null,
         })
         .select()
@@ -521,116 +790,162 @@ export default function ProfileScreen() {
 
       if (error) throw error;
       setUserPreferences(data as UserPreferences);
+      console.log("[ProfileScreen] Default preferences created.");
     } catch (error) {
       console.error("Error creating default preferences:", error);
-      Alert.alert("Error", "Failed to set up contact preferences");
     }
   };
 
   const handleUpdatePreference = async (preference: ContactPreference) => {
-    try {
-      if (!session || !member?.pin_number) throw new Error("No active session");
-      if (!user?.id) throw new Error("No user ID available");
+    if (!isOwnProfile || !profile || !profile.pin_number || !session?.user?.id) return;
 
-      if (preference === "push") {
-        if (!isDeviceMobile) {
-          Alert.alert("Error", "Push notifications are only available on mobile devices");
-          return;
-        }
+    // Set the pending preference
+    setPendingPreference(preference);
 
-        const token = await registerForPushNotificationsAsync();
-        if (!token) {
-          Alert.alert("Error", "Failed to setup push notifications. Please check your device settings.");
-          return;
-        }
+    // For in-app, immediately apply the change without confirmation
+    if (preference === "in_app") {
+      await applyPreferenceChange(preference);
+      return;
+    }
 
-        // First try to update existing preference
-        const { data: existingPref, error: fetchError } = await supabase
-          .from("user_preferences")
-          .select()
-          .eq("user_id", user.id)
-          .single();
-
-        if (fetchError && fetchError.code !== "PGRST116") {
-          // PGRST116 means no rows returned
-          throw fetchError;
-        }
-
-        if (existingPref) {
-          // Update existing preference
-          const { error: updateError } = await supabase
-            .from("user_preferences")
-            .update({
-              push_token: token,
-              contact_preference: preference,
-              updated_at: new Date().toISOString(),
-            })
-            .eq("user_id", user.id);
-
-          if (updateError) throw updateError;
-        } else {
-          // Insert new preference
-          const { error: insertError } = await supabase.from("user_preferences").insert({
-            user_id: user.id,
-            pin_number: member.pin_number,
-            push_token: token,
-            contact_preference: preference,
-          });
-
-          if (insertError) throw insertError;
-        }
-      } else {
-        // Handle non-push preferences (email, text, etc.)
-        const { data: existingPref, error: fetchError } = await supabase
-          .from("user_preferences")
-          .select()
-          .eq("user_id", user.id)
-          .single();
-
-        if (fetchError && fetchError.code !== "PGRST116") {
-          throw fetchError;
-        }
-
-        if (existingPref) {
-          // Update existing preference
-          const { error: updateError } = await supabase
-            .from("user_preferences")
-            .update({
-              push_token: null,
-              contact_preference: preference,
-              updated_at: new Date().toISOString(),
-            })
-            .eq("user_id", user.id);
-
-          if (updateError) throw updateError;
-        } else {
-          // Insert new preference
-          const { error: insertError } = await supabase.from("user_preferences").insert({
-            user_id: user.id,
-            pin_number: member.pin_number,
-            push_token: null,
-            contact_preference: preference,
-          });
-
-          if (insertError) throw insertError;
-        }
+    // For text preference, validate phone number first
+    if (preference === "text") {
+      // Check if user has phone number
+      if (!phoneNumber || phoneNumber.length !== 10) {
+        Alert.alert(
+          "Phone Number Required",
+          "A valid phone number is required to receive text messages. Please update your phone number first.",
+          [{ text: "OK", onPress: () => setIsPhoneModalVisible(true) }]
+        );
+        return;
       }
 
-      // Refresh preferences after update
-      const { data: updatedPrefs, error: refreshError } = await supabase
+      // Show SMS confirmation modal
+      setIsSMSOptInVisible(true);
+      return;
+    }
+
+    // For email preference
+    if (preference === "email") {
+      // Validate email
+      if (!user?.email) {
+        Alert.alert("Email Required", "A valid email is required to receive email notifications.");
+        return;
+      }
+
+      // Show email confirmation modal
+      setIsEmailConfirmationVisible(true);
+      return;
+    }
+
+    // For push preference
+    if (preference === "push") {
+      if (!isDeviceMobile) {
+        Alert.alert("Error", "Push notifications are only available on mobile devices");
+        return;
+      }
+
+      // Show push confirmation modal
+      setIsPushConfirmationVisible(true);
+      return;
+    }
+  };
+
+  // Function to apply the preference change after confirmation
+  const applyPreferenceChange = async (preference: ContactPreference) => {
+    if (!profile || !session?.user?.id) return;
+
+    const userId = session.user.id;
+    const pinNumber = profile.pin_number;
+    let updatedToken: string | null = userPreferences?.push_token || null;
+
+    console.log(`[ProfileScreen] Updating preference to ${preference} for user ${userId}`);
+
+    try {
+      // Handle push notifications differently
+      if (preference === "push") {
+        const token = await registerForPushNotificationsAsync();
+        if (!token) {
+          Alert.alert("Error", "Failed to setup push notifications. Please check settings.");
+          return;
+        }
+        updatedToken = token;
+      } else {
+        updatedToken = null; // Clear push token for non-push preferences
+      }
+
+      // Upsert preferences
+      const { data, error } = await supabase
+        .schema("public")
         .from("user_preferences")
-        .select("*")
-        .eq("user_id", user.id)
+        .upsert(
+          {
+            user_id: userId,
+            pin_number: pinNumber,
+            contact_preference: preference,
+            push_token: updatedToken,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "user_id" }
+        )
+        .select()
         .single();
 
-      if (refreshError) throw refreshError;
-      setUserPreferences(updatedPrefs as UserPreferences);
+      if (error) throw error;
 
-      Alert.alert("Success", "Contact preference updated successfully!");
+      setUserPreferences(data as UserPreferences);
+
+      // Show appropriate success message
+      let successMessage = "Contact preference updated successfully!";
+
+      if (preference === "text") {
+        successMessage =
+          "You've successfully opted-in to SMS notifications. Reply STOP to any message to opt-out at any time.";
+      } else if (preference === "email") {
+        successMessage =
+          "You've successfully opted-in to Email notifications. You can unsubscribe from any email or change your preferences here.";
+      } else if (preference === "push") {
+        successMessage =
+          "You've successfully opted-in to Push notifications. You can manage notification settings in your device settings.";
+      } else if (preference === "in_app") {
+        successMessage = "You will now only receive notifications when using the app.";
+      }
+
+      Alert.alert("Success", successMessage);
     } catch (error: any) {
       console.error("Error updating preference:", error);
       Alert.alert("Error", "Failed to update contact preference. Please try again.");
+    } finally {
+      // Reset pending preference
+      setPendingPreference(null);
     }
+  };
+
+  // Handle confirmation for each notification type
+  const handleEmailConfirmation = async () => {
+    setIsEmailConfirmationVisible(false);
+    await applyPreferenceChange("email");
+  };
+
+  const handlePushConfirmation = async () => {
+    setIsPushConfirmationVisible(false);
+    await applyPreferenceChange("push");
+  };
+
+  // Cancel handlers for each confirmation
+  const handleCancelSMSOptIn = () => {
+    setIsSMSOptInVisible(false);
+    setPendingPreference(null);
+  };
+
+  const handleCancelEmailConfirmation = () => {
+    setIsEmailConfirmationVisible(false);
+    setPendingPreference(null);
+  };
+
+  const handleCancelPushConfirmation = () => {
+    setIsPushConfirmationVisible(false);
+    setPendingPreference(null);
   };
 
   const handlePhoneUpdateSuccess = (newPhone: string) => {
@@ -639,7 +954,10 @@ export default function ProfileScreen() {
   };
 
   const handleDateOfBirthUpdateSuccess = (newDateOfBirth: string) => {
-    // The member object will be updated on the next render via the useAuth hook
+    // Update local profile state immediately for better UX
+    if (profile) {
+      setProfile({ ...profile, date_of_birth: newDateOfBirth });
+    }
     Toast.show({
       type: "success",
       text1: "Success",
@@ -647,71 +965,105 @@ export default function ProfileScreen() {
     });
   };
 
-  const handleUpdatePassword = async () => {
-    try {
-      if (!user?.email) {
-        Alert.alert("Error", "No email address found for your account");
-        return;
-      }
-
-      // Use our enhanced function with fallbacks
-      const success = await sendPasswordResetEmail(user.email);
-
-      if (success) {
-        Alert.alert("Success", "Password reset email sent! Please check your inbox.");
-      } else {
-        Alert.alert(
-          "Email Delivery Issue",
-          "We're having difficulty sending emails right now. Please try again later or contact support."
-        );
-      }
-    } catch (error) {
-      console.error("Error sending reset password email:", error);
-      Alert.alert("Error", "Failed to send reset password email. Please try again.");
-    }
-  };
-
-  if (!member || !user) {
+  // --- Conditional Renders ---
+  if (isLoading) {
     return (
-      <ThemedView style={styles.container}>
+      <ThemedView style={styles.loadingContainer}>
         <ThemedText>Loading profile...</ThemedText>
       </ThemedView>
     );
   }
 
+  if (error) {
+    return (
+      <ThemedView style={styles.loadingContainer}>
+        <ThemedText style={styles.errorText}>Error: {error}</ThemedText>
+      </ThemedView>
+    );
+  }
+
+  if (!profile) {
+    return (
+      <ThemedView style={styles.loadingContainer}>
+        <ThemedText>Profile not found.</ThemedText>
+      </ThemedView>
+    );
+  }
+
+  // --- Main Render ---
   return (
     <ScrollView style={styles.container}>
-      <PhoneUpdateModal
-        visible={isPhoneModalVisible}
-        onClose={() => setIsPhoneModalVisible(false)}
-        onSuccess={handlePhoneUpdateSuccess}
-        currentPhone={phoneNumber}
-        targetUserId={profileID as string}
+      {/* Modals - only allow opening if it's own profile AND profile ID exists */}
+      {profile?.id && (
+        <PhoneUpdateModal
+          visible={isPhoneModalVisible && isOwnProfile}
+          onClose={() => setIsPhoneModalVisible(false)}
+          onSuccess={handlePhoneUpdateSuccess}
+          currentPhone={phoneNumber}
+          targetUserId={profile.id} // Safe to use profile.id here
+        />
+      )}
+
+      {profile?.id && (
+        <DateOfBirthModal
+          visible={isDateOfBirthModalVisible && isOwnProfile}
+          onClose={() => setIsDateOfBirthModalVisible(false)}
+          onSuccess={handleDateOfBirthUpdateSuccess}
+          currentDateOfBirth={profile.date_of_birth || null}
+          targetUserId={profile.id} // Safe to use profile.id here
+        />
+      )}
+
+      {/* SMS Opt-In Modal */}
+      <SmsOptInModal
+        visible={isSMSOptInVisible}
+        onClose={handleCancelSMSOptIn}
+        onOptIn={async (phoneNumber: string) => {
+          // Update phone number in state
+          const cleanedPhone = phoneNumber.replace(/\D/g, "");
+          setPhoneNumber(cleanedPhone);
+
+          // Apply the SMS preference change
+          await applyPreferenceChange("text");
+        }}
+        currentPhoneNumber={phoneNumber}
       />
 
-      <DateOfBirthModal
-        visible={isDateOfBirthModalVisible}
-        onClose={() => setIsDateOfBirthModalVisible(false)}
-        onSuccess={handleDateOfBirthUpdateSuccess}
-        currentDateOfBirth={member?.date_of_birth || null}
-        targetUserId={profileID as string}
-      />
+      {/* Email and Push Notification Confirmation Modals */}
+      <NotificationConfirmationModal
+        visible={isEmailConfirmationVisible}
+        onClose={handleCancelEmailConfirmation}
+        onConfirm={handleEmailConfirmation}
+        title="Email Notifications Opt-In"
+      >
+        <EmailConfirmationContent />
+      </NotificationConfirmationModal>
 
+      <NotificationConfirmationModal
+        visible={isPushConfirmationVisible}
+        onClose={handleCancelPushConfirmation}
+        onConfirm={handlePushConfirmation}
+        title="Push Notifications Opt-In"
+      >
+        <PushConfirmationContent />
+      </NotificationConfirmationModal>
+
+      {/* Personal Info Section */}
       <ThemedView style={styles.section}>
         <ThemedText type="title">Personal Information</ThemedText>
         <ThemedView style={styles.infoRow}>
           <ThemedText type="subtitle">Name:</ThemedText>
-          <ThemedText>{`${member?.first_name} ${member?.last_name}`}</ThemedText>
+          <ThemedText>{`${profile.first_name} ${profile.last_name}`}</ThemedText>
         </ThemedView>
         <ThemedView style={styles.infoRow}>
           <ThemedText type="subtitle">Email:</ThemedText>
-          <ThemedText>{user?.email}</ThemedText>
+          <ThemedText>{user?.email || "Not set"}</ThemedText>
         </ThemedView>
         <ThemedView style={styles.infoRow}>
           <ThemedText type="subtitle">Phone:</ThemedText>
           <ThemedView style={styles.editRow}>
             <ThemedText>{phoneNumber ? formatPhoneNumber(phoneNumber) : "Not set"}</ThemedText>
-            {canEdit && (
+            {canEditProfileDetails && (
               <TouchableOpacity onPress={() => setIsPhoneModalVisible(true)} style={styles.iconButton}>
                 <Ionicons name="pencil" size={24} color={Colors[theme].tint} />
               </TouchableOpacity>
@@ -721,8 +1073,10 @@ export default function ProfileScreen() {
         <ThemedView style={styles.infoRow}>
           <ThemedText type="subtitle">Date of Birth:</ThemedText>
           <ThemedView style={styles.editRow}>
-            <ThemedText>{member?.date_of_birth || "Not set"}</ThemedText>
-            {canEdit && (
+            <ThemedText>
+              {profile.date_of_birth ? format(parseISO(profile.date_of_birth), "MM/dd/yyyy") : "Not set"}
+            </ThemedText>
+            {canEditProfileDetails && (
               <TouchableOpacity onPress={() => setIsDateOfBirthModalVisible(true)} style={styles.iconButton}>
                 <Ionicons name="pencil" size={24} color={Colors[theme].tint} />
               </TouchableOpacity>
@@ -730,121 +1084,178 @@ export default function ProfileScreen() {
           </ThemedView>
         </ThemedView>
       </ThemedView>
-
+      {/* Contact Preferences (Only for own profile) */}
       {isOwnProfile && (
-        <>
-          <ThemedView style={styles.section}>
-            <ThemedText type="title">Contact Preferences</ThemedText>
-            <ThemedView style={styles.preferenceContainer}>
-              <ThemedView style={styles.preferenceButtons}>
+        <ThemedView style={styles.section}>
+          <ThemedText type="title">Contact Preferences</ThemedText>
+          <ThemedText style={styles.preferencesDescription}>
+            Choose how you want to receive notifications from the app:
+          </ThemedText>
+          <ThemedView style={styles.preferenceContainer}>
+            <ThemedView style={styles.preferenceButtons}>
+              {/* In-App Only Button */}
+              <TouchableOpacity
+                style={[
+                  styles.preferenceButton,
+                  userPreferences?.contact_preference === "in_app" && styles.preferenceButtonActive,
+                ]}
+                onPress={() => handleUpdatePreference("in_app")}
+              >
+                <ThemedText
+                  style={[
+                    styles.preferenceButtonText,
+                    userPreferences?.contact_preference === "in_app" && styles.preferenceButtonTextActive,
+                  ]}
+                >
+                  In-App Only
+                </ThemedText>
+              </TouchableOpacity>
+
+              {/* Text Preference Button */}
+              <TouchableOpacity
+                style={[
+                  styles.preferenceButton,
+                  userPreferences?.contact_preference === "text" && styles.preferenceButtonActive,
+                ]}
+                onPress={() => handleUpdatePreference("text")}
+              >
+                <ThemedText
+                  style={[
+                    styles.preferenceButtonText,
+                    userPreferences?.contact_preference === "text" && styles.preferenceButtonTextActive,
+                  ]}
+                >
+                  Text Message
+                </ThemedText>
+              </TouchableOpacity>
+
+              {/* Email Preference Button */}
+              <TouchableOpacity
+                style={[
+                  styles.preferenceButton,
+                  userPreferences?.contact_preference === "email" && styles.preferenceButtonActive,
+                ]}
+                onPress={() => handleUpdatePreference("email")}
+              >
+                <ThemedText
+                  style={[
+                    styles.preferenceButtonText,
+                    userPreferences?.contact_preference === "email" && styles.preferenceButtonTextActive,
+                  ]}
+                >
+                  Email
+                </ThemedText>
+              </TouchableOpacity>
+            </ThemedView>
+
+            {/* Push Notification Button (Mobile Only) */}
+            {isDeviceMobile && (
+              <ThemedView style={styles.pushNotificationContainer}>
                 <TouchableOpacity
                   style={[
                     styles.preferenceButton,
-                    userPreferences?.contact_preference === "text" && styles.preferenceButtonActive,
+                    styles.pushNotificationButton,
+                    userPreferences?.contact_preference === "push" && styles.preferenceButtonActive,
                   ]}
-                  onPress={() => handleUpdatePreference("text")}
+                  onPress={() => handleUpdatePreference("push")}
                 >
                   <ThemedText
                     style={[
                       styles.preferenceButtonText,
-                      userPreferences?.contact_preference === "text" && styles.preferenceButtonTextActive,
+                      userPreferences?.contact_preference === "push" && styles.preferenceButtonTextActive,
                     ]}
                   >
-                    Text Message
+                    Push Notifications
                   </ThemedText>
                 </TouchableOpacity>
+
+                {/* Advanced PUSH Notification Settings Button */}
+
                 <TouchableOpacity
-                  style={[
-                    styles.preferenceButton,
-                    userPreferences?.contact_preference === "email" && styles.preferenceButtonActive,
-                  ]}
-                  onPress={() => handleUpdatePreference("email")}
+                  style={styles.advancedSettingsButton}
+                  onPress={() => router.push("/(profile)/notification-settings")}
                 >
-                  <ThemedText
-                    style={[
-                      styles.preferenceButtonText,
-                      userPreferences?.contact_preference === "email" && styles.preferenceButtonTextActive,
-                    ]}
-                  >
-                    Email
-                  </ThemedText>
+                  <Ionicons name="notifications-outline" size={20} color={Colors[theme].tint} />
+                  <ThemedText style={styles.advancedSettingsText}>Advanced PUSH Notification Settings</ThemedText>
                 </TouchableOpacity>
               </ThemedView>
-              {isDeviceMobile && (
-                <ThemedView style={styles.pushNotificationContainer}>
-                  <TouchableOpacity
-                    style={[
-                      styles.preferenceButton,
-                      styles.pushNotificationButton,
-                      userPreferences?.contact_preference === "push" && styles.preferenceButtonActive,
-                    ]}
-                    onPress={() => handleUpdatePreference("push")}
-                  >
-                    <ThemedText
-                      style={[
-                        styles.preferenceButtonText,
-                        userPreferences?.contact_preference === "push" && styles.preferenceButtonTextActive,
-                      ]}
-                    >
-                      Push Notifications
-                    </ThemedText>
-                  </TouchableOpacity>
-                </ThemedView>
-              )}
-            </ThemedView>
-          </ThemedView>
+            )}
 
-          <ThemedView style={styles.section}>
-            <ThemedText type="title">Account Settings</ThemedText>
-            <ThemedText type="subtitle">Send an email with a reset link to change your password</ThemedText>
-            <TouchableOpacity onPress={handleUpdatePassword} style={styles.settingButton}>
-              <ThemedText style={styles.settingButtonText}>Change Password</ThemedText>
+            {/* Notification Settings Section */}
+            <ThemedText style={styles.sectionTitle}>Notification Settings</ThemedText>
+            <View style={styles.notificationPreferences}>
+              <MeetingNotificationPreferences />
+            </View>
+          </ThemedView>
+        </ThemedView>
+      )}
+      {/* Account Settings (Only for own profile) */}
+      {isOwnProfile && (
+        <ThemedView style={styles.section}>
+          <ThemedText type="title">Account Settings</ThemedText>
+          <ThemedText type="subtitle">Change your account password</ThemedText>
+          <TouchableOpacity onPress={() => setIsPasswordModalVisible(true)} style={styles.settingButton}>
+            <ThemedText style={styles.settingButtonText}>Change Password</ThemedText>
+          </TouchableOpacity>
+        </ThemedView>
+      )}
+      <ChangePasswordModal
+        visible={isPasswordModalVisible}
+        onClose={() => setIsPasswordModalVisible(false)}
+        signOutOnSuccess={false}
+        showBackButton={true}
+      />
+      {/* Union Information Section */}
+      <ThemedView style={styles.section}>
+        <ThemedView style={styles.sectionHeader}>
+          <ThemedText type="title">Union Information</ThemedText>
+          {isOwnProfile && (
+            <TouchableOpacity style={styles.contactAdminButton} onPress={() => setShowContactAdminModal(true)}>
+              <Ionicons name="chatbubble-ellipses" size={18} color={Colors[theme].buttonText} />
+              <ThemedText style={styles.contactAdminText}>Contact Admin</ThemedText>
             </TouchableOpacity>
+          )}
+        </ThemedView>
+        {isOwnProfile && (
+          <ThemedText type="subtitle" style={styles.preferencesDescription}>
+            Contact division admin to change this information if any of it is wrong.
+          </ThemedText>
+        )}
+        <ThemedView style={styles.infoRow}>
+          <ThemedText type="subtitle">PIN:</ThemedText>
+          <ThemedText>{profile.pin_number}</ThemedText>
+        </ThemedView>
+        <ThemedView style={styles.infoRow}>
+          <ThemedText type="subtitle">Division:</ThemedText>
+          <ThemedText>{divisionName || "Not assigned"}</ThemedText>
+        </ThemedView>
+        <ThemedView style={styles.infoRow}>
+          <ThemedText type="subtitle">Zone:</ThemedText>
+          <ThemedText>{zoneName || "Not assigned"}</ThemedText>
+        </ThemedView>
+        <ThemedView style={styles.infoRow}>
+          <ThemedText type="subtitle">Engineer Date:</ThemedText>
+          <ThemedText>
+            {profile.engineer_date ? format(parseISO(profile.engineer_date), "MM/dd/yyyy") : "Not set"}
+          </ThemedText>
+        </ThemedView>
+        <ThemedView style={styles.infoRow}>
+          <ThemedText type="subtitle">Company Hire Date:</ThemedText>
+          <ThemedText>
+            {profile.company_hire_date ? format(parseISO(profile.company_hire_date), "MM/dd/yyyy") : "Not set"}
+          </ThemedText>
+        </ThemedView>
+      </ThemedView>
 
-            <TouchableOpacity
-              onPress={async () => {
-                try {
-                  const success = await testEmailFunction(user?.email || "");
-                  Alert.alert(
-                    success ? "Success" : "Error",
-                    success ? "Test email sent successfully!" : "Failed to send test email"
-                  );
-                } catch (error) {
-                  console.error("Error testing email:", error);
-                  Alert.alert("Error", "Failed to send test email");
-                }
-              }}
-              style={styles.settingButton}
-            >
-              <ThemedText style={styles.settingButtonText}>Test Email Function</ThemedText>
-            </TouchableOpacity>
-          </ThemedView>
-
-          <ThemedView style={styles.section}>
-            <ThemedText type="title">Union Information</ThemedText>
-            <ThemedText type="subtitle">Contact your division admin to change any of this information</ThemedText>
-            <ThemedView style={styles.infoRow}>
-              <ThemedText type="subtitle">PIN:</ThemedText>
-              <ThemedText>{member.pin_number}</ThemedText>
-            </ThemedView>
-            <ThemedView style={styles.infoRow}>
-              <ThemedText type="subtitle">Division:</ThemedText>
-              <ThemedText>{divisionName || "Not assigned"}</ThemedText>
-            </ThemedView>
-            <ThemedView style={styles.infoRow}>
-              <ThemedText type="subtitle">Zone:</ThemedText>
-              <ThemedText>{zoneName || "Not assigned"}</ThemedText>
-            </ThemedView>
-            <ThemedView style={styles.infoRow}>
-              <ThemedText type="subtitle">Engineer Date:</ThemedText>
-              <ThemedText>{member.engineer_date}</ThemedText>
-            </ThemedView>
-            <ThemedView style={styles.infoRow}>
-              <ThemedText type="subtitle">Company Hire Date:</ThemedText>
-              <ThemedText>{member.company_hire_date}</ThemedText>
-            </ThemedView>
-          </ThemedView>
-        </>
+      {/* Contact Admin Modal */}
+      {profile && (
+        <MemberMessageModal
+          visible={showContactAdminModal}
+          onClose={() => setShowContactAdminModal(false)}
+          memberPin={profile.pin_number ? profile.pin_number.toString() : ""}
+          memberEmail=""
+          division={divisionName || ""}
+        />
       )}
     </ScrollView>
   );
@@ -859,31 +1270,41 @@ const styles = StyleSheet.create({
     marginBottom: 24,
     padding: 16,
     gap: 16,
+    backgroundColor: Colors.dark.card,
+    borderRadius: 12,
   },
   infoRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     paddingVertical: 8,
+    backgroundColor: Colors.dark.card,
   },
   editRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
+    backgroundColor: Colors.dark.card,
   },
   iconButton: {
     padding: 8,
   },
   preferenceContainer: {
     gap: 12,
+    backgroundColor: Colors.dark.card,
   },
   preferenceButtons: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
+    backgroundColor: Colors.dark.card,
   },
   pushNotificationContainer: {
     width: "100%",
+    backgroundColor: Colors.dark.card,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
   },
   pushNotificationButton: {
     width: "100%",
@@ -957,10 +1378,17 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   } as any,
   secondaryButton: {
-    backgroundColor: "transparent",
+    flex: 1,
+    padding: 12,
+    borderRadius: 8,
+    alignItems: "center",
     borderWidth: 1,
-    borderColor: Colors.light.tint,
-  } as any,
+    borderColor: Colors.dark.buttonBorder,
+    marginRight: 8,
+  },
+  secondaryButtonText: {
+    color: Colors.dark.buttonTextSecondary,
+  },
   buttonText: {
     color: Colors.dark.buttonText,
     fontWeight: "600",
@@ -977,4 +1405,111 @@ const styles = StyleSheet.create({
   buttonDisabled: {
     opacity: 0.5,
   } as any,
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  confirmationScrollContent: {
+    maxHeight: 300,
+    marginBottom: 16,
+  },
+  confirmationTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    marginBottom: 12,
+  },
+  confirmationText: {
+    marginBottom: 12,
+    lineHeight: 20,
+  },
+  confirmationButtonContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 8,
+  },
+  primaryButton: {
+    flex: 1,
+    backgroundColor: Colors.dark.buttonBackground,
+    padding: 12,
+    borderRadius: 8,
+    alignItems: "center",
+    marginLeft: 8,
+  },
+  bulletContainer: {
+    marginLeft: 5,
+    marginBottom: 15,
+  },
+  bulletItem: {
+    fontSize: 14,
+    marginBottom: 10,
+    lineHeight: 20,
+  },
+  scrollIndicatorContainer: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 12,
+  },
+  scrollIndicatorText: {
+    marginRight: 8,
+  },
+  preferencesDescription: {
+    marginBottom: 12,
+    fontSize: 14,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+    backgroundColor: Colors.dark.card,
+    flexWrap: "wrap",
+  },
+  contactAdminButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: Colors.dark.buttonBackground,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    gap: 6,
+    marginTop: 8,
+  },
+  contactAdminText: {
+    color: Colors.dark.buttonText,
+    fontWeight: "600",
+    fontSize: 12,
+  },
+  sectionTitle: {
+    paddingTop: 16,
+    fontSize: 18,
+    fontWeight: "600",
+    marginBottom: 4,
+    backgroundColor: Colors.dark.card,
+  },
+  notificationPreferences: {
+    gap: 6,
+    backgroundColor: Colors.dark.card,
+  },
+  privacyLink: {
+    color: "#b8860b",
+    textDecorationLine: "underline",
+    fontWeight: "600",
+  },
+  advancedSettingsButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.dark.buttonBorder,
+    backgroundColor: Colors.dark.buttonBackground,
+    marginTop: 8,
+  },
+  advancedSettingsText: {
+    color: Colors.dark.buttonText,
+    fontWeight: "600",
+    marginLeft: 8,
+  },
 });

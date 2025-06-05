@@ -1,5 +1,61 @@
-import { Redirect } from "expo-router";
+import { Redirect, useNavigationContainerRef } from "expo-router";
+import { useAuth } from "@/hooks/useAuth";
+import { View, StyleSheet } from "react-native";
+import { ThemedText } from "@/components/ThemedText";
+import { Colors } from "@/constants/Colors";
 
+/**
+ * Root index page - redirects users based on auth status
+ * BUT only when navigation is fully ready
+ */
 export default function Index() {
-  return <Redirect href="/(tabs)" />;
+  const { authStatus } = useAuth();
+  // Add navigation container ref check
+  const navigationRef = useNavigationContainerRef();
+
+  // TEMPORARY: Skip navigation readiness check to debug the issue
+  if (!navigationRef.current?.isReady()) {
+    console.log("[Index] Navigation not ready, but proceeding anyway for debugging");
+    // Temporarily comment out the return to see if this is causing the issue
+    // return (
+    //   <View style={styles.container}>
+    //     <ThemedText>Preparing navigation...</ThemedText>
+    //   </View>
+    // );
+  }
+
+  console.log(`[Index] Navigation ready, auth status: ${authStatus}`);
+
+  // Based on authentication status, redirect to appropriate screen
+  switch (authStatus) {
+    case "loading":
+      // Return an empty view instead of null to avoid problems
+      return (
+        <View style={styles.container}>
+          <ThemedText>Loading auth state...</ThemedText>
+        </View>
+      );
+    case "signedOut":
+      console.log("[Index] Auth status is signedOut, redirecting to sign-in");
+      return <Redirect href="/(auth)/sign-in" />;
+    case "needsAssociation":
+      return <Redirect href="/(auth)/member-association" />;
+    case "signedInAdmin":
+      console.log("[Index] Redirecting signed-in admin to company-admin.");
+      return <Redirect href="/company-admin" />;
+    case "signedInMember":
+      console.log("[Index] Redirecting signed-in member to tabs.");
+      return <Redirect href="/(tabs)" />;
+    default:
+      return <Redirect href="/(auth)/sign-in" />;
+  }
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: Colors.dark.background,
+  },
+});

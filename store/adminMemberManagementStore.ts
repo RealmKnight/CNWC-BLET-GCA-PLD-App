@@ -12,6 +12,7 @@ interface MemberSummary {
     pin_number: number;
     first_name: string;
     last_name: string;
+    calendar_id: string | null;
 }
 
 // Define the data-only Member type
@@ -113,6 +114,7 @@ interface AdminMemberManagementState {
     setError: (error: Error | null) => void;
     fetchMembersByCalendarId: (calendarId: string) => Promise<void>;
     updateMemberListUIState: (newState: Partial<MemberListUIState>) => void;
+    fetchAllMembers: () => Promise<void>; // New method for Union Admin
 }
 
 export const useAdminMemberManagementStore = create<AdminMemberManagementState>(
@@ -355,7 +357,9 @@ export const useAdminMemberManagementStore = create<AdminMemberManagementState>(
             try {
                 const { data, error } = await supabase
                     .from("members")
-                    .select("id, pin_number, first_name, last_name")
+                    .select(
+                        "id, pin_number, first_name, last_name, calendar_id",
+                    )
                     .eq("calendar_id", calendarId)
                     .eq("status", "ACTIVE") // Only fetch active members for requests
                     .order("last_name", { ascending: true });
@@ -369,6 +373,7 @@ export const useAdminMemberManagementStore = create<AdminMemberManagementState>(
                     pin_number: member.pin_number,
                     first_name: member.first_name || "",
                     last_name: member.last_name || "",
+                    calendar_id: member.calendar_id,
                 }));
 
                 set((state) => ({
@@ -387,6 +392,77 @@ export const useAdminMemberManagementStore = create<AdminMemberManagementState>(
                     error: error as Error,
                     isLoadingMembersByCalendar: false,
                 });
+            }
+        },
+
+        // Implementation for new action to fetch all members regardless of division
+        fetchAllMembers: async () => {
+            try {
+                set({ isLoading: true, error: null });
+
+                // Get all calendars first if not already loaded
+                if (get().availableCalendars.length === 0) {
+                    const { data: calendarsData, error: calendarsError } =
+                        await supabase
+                            .from("calendars")
+                            .select("id, name")
+                            .order("name");
+
+                    if (calendarsError) throw calendarsError;
+                    set({ availableCalendars: calendarsData || [] });
+                }
+
+                // Get all members
+                const { data: membersData, error: membersError } =
+                    await supabase
+                        .from("members")
+                        .select(`
+                        first_name,
+                        last_name,
+                        pin_number,
+                        division_id,
+                        sdv_entitlement,
+                        sdv_election,
+                        calendar_id,
+                        status
+                    `)
+                        .order("last_name", { ascending: true });
+
+                if (membersError) throw membersError;
+
+                // Create a map of calendar IDs to names
+                const calendarMap = new Map(
+                    get().availableCalendars?.map((
+                        cal: Calendar,
+                    ) => [cal.id, cal.name]) || [],
+                );
+
+                const formattedMembers = (membersData || []).map((
+                    member: SupabaseMember,
+                ): MemberData => ({
+                    first_name: member.first_name || "",
+                    last_name: member.last_name || "",
+                    pin_number: member.pin_number,
+                    division_id: member.division_id || 0,
+                    sdv_entitlement: member.sdv_entitlement,
+                    sdv_election: member.sdv_election,
+                    calendar_id: member.calendar_id,
+                    calendar_name: member.calendar_id
+                        ? calendarMap.get(member.calendar_id) || null
+                        : null,
+                    status: member.status || "IN-ACTIVE",
+                }));
+
+                set({
+                    members: formattedMembers,
+                    error: null,
+                    currentDivisionId: null, // Clear division ID since we're showing all members
+                    lastLoadedDivision: null,
+                });
+            } catch (error) {
+                set({ error: error as Error });
+            } finally {
+                set({ isLoading: false });
             }
         },
     }),

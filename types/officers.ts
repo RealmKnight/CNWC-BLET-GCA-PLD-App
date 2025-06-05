@@ -77,5 +77,5 @@ export const POSITION_RULES = {
   } as const,
 
   // Maximum number of positions a member can hold
-  maxPositionsPerMember: 3,
+  maxPositionsPerMember: 4,
 } as const;

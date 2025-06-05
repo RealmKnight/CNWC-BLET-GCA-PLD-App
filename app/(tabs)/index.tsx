@@ -1,3 +1,4 @@
+import React from "react";
 import { Image, StyleSheet, Platform } from "react-native";
 import ParallaxScrollView from "@/components/ParallaxScrollView";
 import { ThemedView } from "@/components/ThemedView";
@@ -7,15 +8,24 @@ import { useUserStore } from "@/store/userStore";
 import { ThemedText } from "@/components/ThemedText";
 import { HelloWave } from "@/components/HelloWave";
 import { Colors } from "@/constants/Colors";
+import { AdvertisementBanner } from "@/components/AdvertisementBanner";
+import { AnnouncementBadge } from "@/components/ui/AnnouncementBadge";
+import { useBadgeStore } from "@/store/badgeStore";
 
 export default function HomeScreen() {
   const { member } = useAuth();
   const division = useUserStore((state) => state.division);
+  const announcementUnreadCount = useBadgeStore((state) => state.announcementUnreadCount);
 
   return (
     <ParallaxScrollView
-      headerBackgroundColor={{ light: "#A1CEDC", dark: "#000000FF" }}
-      headerImage={<Image source={require("@/assets/images/BLETblackgold.png")} style={styles.reactLogo} />}
+      headerBackgroundColor={{ light: "#A1CEDC", dark: Colors.dark.card }}
+      headerImage={
+        <ThemedView style={styles.headerContainer}>
+          <Image source={require("@/assets/images/BLETblackgold.png")} style={styles.reactLogo} />
+          <AdvertisementBanner location="home" style={styles.adBanner} maxHeight={70} />
+        </ThemedView>
+      }
     >
       <ThemedView style={styles.container}>
         <ThemedView style={styles.cardContainer}>
@@ -24,7 +34,7 @@ export default function HomeScreen() {
             <ThemedText style={styles.welcomeText}>Welcome, {member?.first_name}</ThemedText>
           </ThemedView>
           <ThemedText style={styles.noticeText}>
-            Most of the links below are only placeholders for future functionality of the app. They work, but the
+            The links below "Agreements" are only placeholders for future functionality of the app. They work, but the
             subsequent links on the pages they lead to do not.
           </ThemedText>
           <NavigationCard
@@ -32,12 +42,26 @@ export default function HomeScreen() {
             description="View your division information, officers, and members"
             icon="people"
             href={division ? `/(division)/${division}` : "/(division)"}
+            badge={
+              <AnnouncementBadge
+                targetType="division"
+                divisionId={member?.division_id || undefined}
+                color={Colors.dark.announcementBadgeDivision}
+              />
+            }
           />
           <NavigationCard
             title="Rosters"
             description="Access division rosters and schedules"
             icon="calendar"
             href="/(rosters)"
+          />
+          <NavigationCard
+            title="GCA"
+            description="Access GCA resources and information"
+            icon="business"
+            href="/(gca)"
+            badge={<AnnouncementBadge targetType="gca" color={Colors.dark.announcementBadgeGCA} />}
           />
           <NavigationCard
             title="Agreements"
@@ -52,22 +76,16 @@ export default function HomeScreen() {
             href="/(claims)"
           />
           <NavigationCard
-            title="GCA"
-            description="Access GCA resources and information"
-            icon="business"
-            href="/(gca)"
+            title="Safety"
+            description="Report safety concerns and access safety resources"
+            icon="shield-checkmark"
+            href="/(safety)"
           />
           <NavigationCard
             title="Tools & Links"
             description="Access helpful tools and important links"
             icon="construct"
             href="/(tools)"
-          />
-          <NavigationCard
-            title="Safety"
-            description="Report safety concerns and access safety resources"
-            icon="shield-checkmark"
-            href="/(safety)"
           />
           <NavigationCard
             title="Training"
@@ -93,13 +111,23 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     gap: 12,
   },
+  headerContainer: {
+    width: "100%",
+    height: 250,
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 10,
+    backgroundColor: Colors.dark.card,
+  },
   reactLogo: {
-    width: 180,
-    height: 226,
-    position: "absolute",
-    top: 10,
-    left: "50%",
-    transform: [{ translateX: -90 }],
+    width: 120,
+    height: 150,
+    backgroundColor: Colors.dark.card,
+  },
+  adBanner: {
+    width: 640,
+    backgroundColor: Colors.dark.card,
+    maxHeight: 70,
   },
   welcomeContainer: {
     flexDirection: "row",
@@ -117,6 +145,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     textAlign: "center",
     marginBottom: 16,
-    color: Colors.dark.disabled,
+    color: Colors.dark.warning,
   },
 });

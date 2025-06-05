@@ -1,256 +1,383 @@
-import { Stack, Slot } from "expo-router";
-import { ThemeProvider } from "@/components/ThemeProvider";
-import { AuthProvider, useAuth } from "@/hooks/useAuth";
+import React, { useEffect, useState, Suspense } from "react";
+import { Slot, usePathname, useSegments, useNavigationContainerRef } from "expo-router";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { StyleSheet, Image, TouchableOpacity } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
-import { useRouter, useSegments } from "expo-router";
-import { useEffect, useState } from "react";
+import { StyleSheet, Platform, AppState } from "react-native";
+import { Colors } from "@/constants/Colors";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
-import { configureNotifications, setupNotificationListeners } from "@/utils/notificationConfig";
-import Toast, { BaseToast, ErrorToast, BaseToastProps } from "react-native-toast-message";
-import { Colors } from "@/constants/Colors";
 import { ThemedToast } from "@/components/ThemedToast";
-import { useNotificationStore } from "@/store/notificationStore";
+import {
+  configureNotifications,
+  setupNotificationListeners,
+  getInitialNotification,
+  initializeBadgeCount,
+} from "@/utils/notificationConfig";
+import { handlePasswordResetURL } from "@/utils/authRedirects";
+import { ThemeProvider } from "@/components/ThemeProvider";
+import { AuthProvider, useAuth } from "@/hooks/useAuth";
+import { ChangePasswordModal } from "@/components/ui/ChangePasswordModal";
+import { SafeAreaProvider } from "react-native-safe-area-context";
+import { usePushTokenStore } from "@/store/pushTokenStore";
+import { useBadgeStore } from "@/store/badgeStore";
+import { RealtimeChannel } from "@supabase/supabase-js";
+import { supabase } from "@/utils/supabase";
+import { StatusBar } from "expo-status-bar";
+import { useColorScheme } from "@/hooks/useColorScheme";
+import * as SplashScreen from "expo-splash-screen";
+import { createRealtimeCallback } from "@/utils/realtimeErrorHandler";
+import { NavigationGuard } from "@/components/NavigationGuard";
 
-// Define toast config
-const toastConfig = {
-  info: (props: BaseToastProps) => (
-    <BaseToast
-      {...props}
-      style={{
-        borderLeftColor: Colors.light.tint,
-        backgroundColor: Colors.light.background,
-      }}
-      contentContainerStyle={{ paddingHorizontal: 15 }}
-      text1Style={{
-        fontSize: 16,
-        fontWeight: "600",
-        color: Colors.light.text,
-      }}
-      text2Style={{
-        fontSize: 14,
-        color: Colors.light.text,
-      }}
-    />
-  ),
-};
+// Prevent the splash screen from auto-hiding before App component declaration/export
+SplashScreen.preventAutoHideAsync().catch((error) => {
+  console.warn("[SplashScreen] Error preventing auto-hide:", error);
+});
 
-function RootLayoutContent() {
-  const { isLoading, session, userRole, member, signOut, user } = useAuth();
-  const segments = useSegments();
-  const router = useRouter();
-  const { fetchMessages, subscribeToMessages } = useNotificationStore();
-  const [initialRouteHandled, setInitialRouteHandled] = useState(false);
-
-  useEffect(() => {
-    // Configure notifications when the app starts
-    configureNotifications();
-
-    // Set up notification listeners and store cleanup function
-    const cleanupNotifications = setupNotificationListeners();
-
-    return () => {
-      // Clean up notification listeners when component unmounts
-      cleanupNotifications();
-    };
-  }, []);
-
-  // Initialize notifications when user is authenticated
-  useEffect(() => {
-    if (session && member?.pin_number) {
-      console.log("[Notifications] Initializing notifications for user:", member.pin_number);
-      // Fetch initial messages
-      fetchMessages(member.pin_number);
-      // Subscribe to real-time updates
-      const unsubscribe = subscribeToMessages(member.pin_number);
-
-      return () => {
-        console.log("[Notifications] Cleaning up notifications subscription");
-        unsubscribe();
-      };
-    }
-  }, [session, member?.pin_number, fetchMessages, subscribeToMessages]);
-
-  useEffect(() => {
-    console.log("[Router Check] Start", { isLoading, initialRouteHandled, session: !!session, segments });
-
-    // If loading, reset the handled flag and wait
-    if (isLoading) {
-      setInitialRouteHandled(false);
-      console.log("[Router Check] Waiting: isLoading is true");
-      return;
-    }
-
-    // If already handled initial route after loading, do nothing
-    if (initialRouteHandled) {
-      console.log("[Router Check] Skipping: initialRouteHandled is true");
-      return;
-    }
-
-    // ---- Core Routing Logic ----
-    // This block now only runs once after isLoading becomes false
-
-    const inAuthGroup = segments[0] === "(auth)";
-    const isCompanyAdmin = session?.user?.user_metadata?.role === "company_admin";
-    const inMemberAssociation = segments[0] === "(auth)" && segments[1] === "member-association";
-    const isPasswordReset = segments[0] === "(auth)" && segments[1] === "change-password";
-    const isProcessingReset = typeof window !== "undefined" && window.__passwordResetInProgress;
-    const comingFromReset = isPasswordReset || isProcessingReset;
-
-    console.log("[Router Logic] Executing", {
-      segments,
-      isCompanyAdmin,
-      hasSession: !!session,
-      hasMember: !!member,
-      comingFromReset,
-    });
-
-    // 1. No Session Check (Password reset exempt)
-    if (!session && !inAuthGroup && !comingFromReset) {
-      console.log("[Router Logic] No session, redirecting to sign-in");
-      router.replace("/(auth)/sign-in");
-      setInitialRouteHandled(true); // Mark as handled
-      return;
-    }
-
-    // 2. Company Admin Check
-    if (session && isCompanyAdmin) {
-      if (segments[0] !== "company-admin") {
-        console.log("[Router Logic] Company admin not on admin page, redirecting");
-        router.replace("/company-admin");
-      } else {
-        console.log("[Router Logic] Company admin already on correct page");
-      }
-      setInitialRouteHandled(true); // Mark as handled
-      return;
-    }
-
-    // 3. Handle non-admin users (Password reset needs special check)
-    if (session && !isCompanyAdmin) {
-      // Special case: If on password reset page, allow it, unless member data exists
-      if (comingFromReset && !member) {
-        console.log("[Router Logic] On password reset without member data, staying");
-        setInitialRouteHandled(true); // Consider handled for now
-        return;
-      }
-
-      // Member Association Check
-      if (!member && !inMemberAssociation && !comingFromReset) {
-        console.log("[Router Logic] Non-admin, no member data, redirecting to association");
-        router.replace("/(auth)/member-association");
-        setInitialRouteHandled(true); // Mark as handled
-        return;
-      }
-
-      // Normal Logged-in Member
-      if (member) {
-        if (inAuthGroup && !inMemberAssociation && !comingFromReset) {
-          console.log("[Router Logic] Member in auth group (not assoc/reset), redirecting to tabs");
-          router.replace("/(tabs)");
-        } else if (segments[0] !== "(tabs)" && !inAuthGroup) {
-          // Redirect to tabs if not already there and not in auth
-          console.log("[Router Logic] Member not in tabs or auth, redirecting to tabs");
-          router.replace("/(tabs)");
-        } else {
-          console.log("[Router Logic] Member already in tabs or auth group (assoc/reset)");
-        }
-        setInitialRouteHandled(true); // Mark as handled
-        return;
-      }
-    }
-
-    // If none of the above conditions met (should be rare), mark as handled anyway
-    console.log("[Router Logic] No specific route action taken, marking handled");
-    setInitialRouteHandled(true);
-
-    // Ensure 'user' is included in the dependencies for role check
-  }, [isLoading, session, user, segments, member, router, initialRouteHandled]);
-
-  if (isLoading && !initialRouteHandled) {
-    return (
-      <ThemedView style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-        <ThemedText>Initializing app...</ThemedText>
-      </ThemedView>
-    );
-  }
-
+// Separate loading screen component
+function LoadingScreen() {
   return (
-    <Stack
-      screenOptions={{
-        headerShown: false,
-      }}
-    >
-      <Stack.Screen name="index" />
-      <Stack.Screen name="(tabs)" />
-      <Stack.Screen name="(auth)" />
-      <Stack.Screen name="(admin)" />
-      <Stack.Screen name="(division)" />
-      <Stack.Screen name="(rosters)" />
-      <Stack.Screen name="(agreements)" />
-      <Stack.Screen name="(claims)" />
-      <Stack.Screen name="(gca)" />
-      <Stack.Screen name="(tools)" />
-      <Stack.Screen name="(safety)" />
-      <Stack.Screen name="(training)" />
-      <Stack.Screen
-        name="assign-officer"
-        options={{
-          presentation: "modal",
-          animation: "slide_from_bottom",
-          gestureEnabled: false,
-        }}
-      />
-      <Stack.Screen
-        name="company-admin"
-        options={{
-          headerShown: true,
-          title: "CN/WC BLET PLD/SDV App - CN Admin",
-          headerBackVisible: false,
-          headerTitleStyle: {
-            fontFamily: "Inter",
-            fontSize: 16,
-            color: Colors.light.text,
-          },
-          headerStyle: {
-            backgroundColor: Colors.light.background,
-          },
-          headerShadowVisible: false,
-          headerTitleAlign: "center",
-          headerLeft: () => (
-            <Image
-              source={require("../assets/images/BLETblackgold.png")}
-              style={{
-                width: 50,
-                height: 50,
-                marginLeft: 16,
-                resizeMode: "contain",
-              }}
-            />
-          ),
-          headerRight: undefined,
-        }}
-      />
-    </Stack>
+    <ThemedView style={styles.loadingContainer}>
+      <ThemedText>Initializing app...</ThemedText>
+    </ThemedView>
   );
 }
 
+// Auth-aware route handler component that focuses on initialization
+// We'll let index.tsx handle the actual redirects
+function AuthAwareRouteHandler() {
+  const { session, authStatus, isPasswordRecoveryFlow, clearPasswordRecoveryFlag } = useAuth();
+  const segments = useSegments();
+  const pathname = usePathname();
+  const [isInitialized, setIsInitialized] = useState(false);
+  const [hasSeenAuthResponse, setHasSeenAuthResponse] = useState(false);
+  const [showRecoveryModal, setShowRecoveryModal] = useState(false);
+
+  // Push notification state
+  const { registerDevice, refreshToken, unregisterDevice, init, checkPermissionStatus } = usePushTokenStore();
+
+  // Initialize push token store when component mounts
+  useEffect(() => {
+    // Initialize push token store if available
+    if (init) {
+      console.log("[PushNotification] Starting token store initialization");
+      init()
+        .then(() => {
+          console.log("[PushNotification] Token store initialization successful");
+        })
+        .catch((error) => {
+          console.error("[PushNotification] Error initializing push token store:", error);
+        });
+    } else {
+      console.log("[PushNotification] Token store initialization function not available");
+    }
+  }, [init]);
+
+  // Add navigation container ref to check if router is ready
+  const navigationRef = useNavigationContainerRef();
+
+  // Handle password reset URL detection
+  useEffect(() => {
+    handlePasswordResetURL();
+  }, []);
+
+  // Configure notifications and set up listeners
+  useEffect(() => {
+    if (Platform.OS !== "web") {
+      // Configure platform-specific notification settings
+      configureNotifications();
+
+      // Setup listeners for notification interactions
+      const cleanupListeners = setupNotificationListeners();
+
+      // Check for app opened from notification
+      getInitialNotification().catch((error) => {
+        console.error("[PushNotification] Error checking initial notification:", error);
+      });
+
+      // Check notification permissions
+      checkPermissionStatus().catch((error) => {
+        console.error("[PushNotification] Error checking permission status:", error);
+      });
+
+      console.log("[Notifications] Notification configuration complete");
+
+      return () => {
+        // Clean up listeners when component unmounts
+        cleanupListeners();
+      };
+    }
+  }, [checkPermissionStatus]);
+
+  // Handle push token registration based on auth state
+  useEffect(() => {
+    const isAuthenticated = authStatus === "signedInMember" || authStatus === "signedInAdmin";
+
+    if (isAuthenticated && session?.user?.id && Platform.OS !== "web") {
+      console.log("[PushNotification] Auth initialized, registering token");
+      // Using the centralized token registration
+      registerDevice(session.user.id).catch((error) => {
+        console.error("[PushNotification] Error registering device:", error);
+      });
+
+      // Initialize badge count
+      initializeBadgeCount(session.user.id);
+
+      return () => {
+        // Clean up on auth change or unmount
+        if (authStatus !== "signedInMember" && authStatus !== "signedInAdmin") {
+          unregisterDevice().catch((error) => {
+            console.error("[PushNotification] Error unregistering device:", error);
+          });
+        }
+      };
+    }
+  }, [authStatus, session?.user?.id, registerDevice, unregisterDevice]);
+
+  // Badge syncing using the badge store
+  useEffect(() => {
+    const isAuthenticated = authStatus === "signedInMember" || authStatus === "signedInAdmin";
+    let messageSubscription: RealtimeChannel | null = null;
+
+    const setupBadgeSyncing = async () => {
+      if (isAuthenticated && session?.user?.id) {
+        console.log("[BadgeStore] Setting up badge syncing for user:", session.user.id);
+
+        // Access badge store functions
+        const { fetchUnreadCount } = useBadgeStore.getState();
+
+        // Initial fetch of unread count
+        try {
+          await fetchUnreadCount(session.user.id);
+          console.log("[BadgeStore] Initial badge count fetched");
+        } catch (error) {
+          console.error("[BadgeStore] Error fetching initial badge count:", error);
+        }
+
+        // Only set up realtime subscription on non-web platforms or if explicitly supported
+        if (Platform.OS !== "web" || (Platform.OS === "web" && typeof supabase.channel === "function")) {
+          try {
+            // Subscribe to message changes to keep badge count updated in realtime
+            messageSubscription = supabase
+              .channel("badge_updates")
+              .on(
+                "postgres_changes",
+                {
+                  event: "*",
+                  schema: "public",
+                  table: "messages",
+                  filter: `recipient_id=eq.${session.user.id}`,
+                },
+                async (payload) => {
+                  console.log("[BadgeStore] Message change detected, updating badge count");
+                  try {
+                    // Update badge count when messages change
+                    await fetchUnreadCount(session.user.id);
+                  } catch (error) {
+                    console.error("[BadgeStore] Error updating badge count after change:", error);
+                  }
+                }
+              )
+              .subscribe(
+                createRealtimeCallback(
+                  "BadgeStore",
+                  // onError callback
+                  (status) => {
+                    console.error("[BadgeStore] Realtime subscription error:", status);
+                  },
+                  // onSuccess callback
+                  (status) => {
+                    console.log("[BadgeStore] Realtime subscription status:", status);
+                  }
+                )
+              );
+          } catch (error) {
+            console.error("[BadgeStore] Error setting up realtime subscription:", error);
+          }
+        } else {
+          console.log("[BadgeStore] Skipping realtime subscription on web platform");
+
+          // For web, set up a periodic refresh instead
+          const intervalId = setInterval(() => {
+            fetchUnreadCount(session.user.id).catch((error) =>
+              console.error("[BadgeStore] Error in periodic refresh:", error)
+            );
+          }, 30000); // Refresh every 30 seconds
+
+          return () => clearInterval(intervalId);
+        }
+      }
+    };
+
+    setupBadgeSyncing();
+
+    return () => {
+      // Clean up subscription
+      if (messageSubscription) {
+        console.log("[BadgeStore] Cleaning up badge subscription");
+        try {
+          supabase.removeChannel(messageSubscription);
+        } catch (error) {
+          console.error("[BadgeStore] Error removing channel:", error);
+        }
+      }
+    };
+  }, [authStatus, session?.user?.id]);
+
+  // Handle app state changes (background/foreground)
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+
+    const subscription = AppState.addEventListener("change", (nextAppState) => {
+      const isAuthenticated = authStatus === "signedInMember" || authStatus === "signedInAdmin";
+
+      if (nextAppState === "active" && isAuthenticated && session?.user?.id) {
+        // Refresh token when app comes to foreground using centralized store
+        console.log("[PushNotification] App returned to foreground, refreshing token");
+        refreshToken(session.user.id).catch((error) => {
+          console.error("[PushNotification] Error refreshing token:", error);
+        });
+
+        // Update badge count using our new badge store
+        try {
+          const { fetchUnreadCount } = useBadgeStore.getState();
+          fetchUnreadCount(session.user.id);
+          console.log("[BadgeStore] Badge count refreshed on app foreground");
+        } catch (error) {
+          console.error("[BadgeStore] Error refreshing badge count:", error);
+        }
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [authStatus, session?.user?.id, refreshToken]);
+
+  // Mark initialization complete after a short delay
+  useEffect(() => {
+    const initTimer = setTimeout(() => {
+      setIsInitialized(true);
+      console.log("[Router] Initialization complete");
+    }, 300);
+
+    return () => {
+      clearTimeout(initTimer);
+    };
+  }, []);
+
+  // Track when we receive a meaningful auth response
+  useEffect(() => {
+    if (authStatus !== "loading" && !hasSeenAuthResponse) {
+      setHasSeenAuthResponse(true);
+      console.log(`[Router] First auth response received: ${authStatus}`);
+    }
+  }, [authStatus, hasSeenAuthResponse]);
+
+  // Hide splash screen when app is ready
+  useEffect(() => {
+    const hideSplashScreen = async () => {
+      if (authStatus !== "loading" && isInitialized && hasSeenAuthResponse && navigationRef.current?.isReady()) {
+        try {
+          console.log("[SplashScreen] App is ready, hiding splash screen");
+          await SplashScreen.hideAsync();
+        } catch (error) {
+          console.warn("[SplashScreen] Error hiding splash screen:", error);
+        }
+      }
+    };
+
+    hideSplashScreen();
+  }, [authStatus, isInitialized, hasSeenAuthResponse, navigationRef]);
+
+  // Emergency splash screen hide after timeout
+  useEffect(() => {
+    const emergencyTimer = setTimeout(async () => {
+      try {
+        console.warn("[SplashScreen] Emergency timeout reached, forcing splash screen hide");
+        await SplashScreen.hideAsync();
+      } catch (error) {
+        console.warn("[SplashScreen] Error in emergency hide:", error);
+      }
+    }, 10000); // 10 second timeout
+
+    return () => clearTimeout(emergencyTimer);
+  }, []);
+
+  // Effect to show modal when recovery flag is set
+  useEffect(() => {
+    if (isPasswordRecoveryFlow) {
+      console.log("[RootLayout] Password recovery flag detected, showing modal.");
+      setShowRecoveryModal(true);
+      clearPasswordRecoveryFlag();
+    }
+  }, [isPasswordRecoveryFlow, clearPasswordRecoveryFlag]);
+
+  // Show loading screen if we're not ready
+  if (authStatus === "loading") {
+    console.log("[Router] Auth status is loading...");
+    return <LoadingScreen />;
+  }
+
+  // If authStatus is not loading, assume we are ready to render the rest of the app
+  // Let specific pages handle redirects based on the actual authStatus ('signedOut', 'needsAssociation', etc.)
+  // console.log(`[Router] Auth status is '${authStatus}'. Rendering Slot.`);
+  return (
+    <Suspense fallback={<LoadingScreen />} key="client-only-suspense">
+      <NavigationGuard>
+        <Slot />
+      </NavigationGuard>
+    </Suspense>
+  );
+}
+
+// Export a stable component tree for the root
 export default function RootLayout() {
   return (
-    <GestureHandlerRootView style={styles.container}>
-      <ThemeProvider>
-        <AuthProvider>
-          <RootLayoutContent key="stableRootLayoutContent" />
-          <ThemedToast />
-        </AuthProvider>
-      </ThemeProvider>
-    </GestureHandlerRootView>
+    <SafeAreaProvider>
+      <GestureHandlerRootView style={styles.container}>
+        <ThemeProvider>
+          <AuthProvider>
+            <AuthAwareRouteHandler />
+            <ModalRenderer />
+            <ThemedToast />
+          </AuthProvider>
+        </ThemeProvider>
+      </GestureHandlerRootView>
+    </SafeAreaProvider>
+  );
+}
+
+// New component to access auth context and render modal
+function ModalRenderer() {
+  const { isPasswordRecoveryFlow, clearPasswordRecoveryFlag } = useAuth();
+  const [showRecoveryModal, setShowRecoveryModal] = useState(false);
+
+  useEffect(() => {
+    if (isPasswordRecoveryFlow) {
+      console.log("[ModalRenderer] Password recovery flag detected, showing modal.");
+      setShowRecoveryModal(true);
+      clearPasswordRecoveryFlag();
+    }
+  }, [isPasswordRecoveryFlow, clearPasswordRecoveryFlag]);
+
+  return (
+    <ChangePasswordModal
+      visible={showRecoveryModal}
+      onClose={() => setShowRecoveryModal(false)}
+      signOutOnSuccess={true}
+      showBackButton={false}
+    />
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  loadingContainer: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: Colors.light.background,
+    zIndex: 9999,
   },
 });

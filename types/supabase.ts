@@ -1356,7 +1356,8 @@ export type Database = {
         | "denied"
         | "waitlisted"
         | "cancellation_pending"
-        | "cancelled";
+        | "cancelled"
+        | "transferred";
       role:
         | "user"
         | "division_admin"
@@ -1541,6 +1542,7 @@ export const Constants = {
         "waitlisted",
         "cancellation_pending",
         "cancelled",
+        "transferred",
       ],
       role: [
         "user",

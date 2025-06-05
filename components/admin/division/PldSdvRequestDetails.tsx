@@ -1,5 +1,15 @@
 import React, { useState, useCallback, useEffect } from "react";
-import { StyleSheet, Platform, View, Modal, ScrollView, Pressable, ViewStyle, TextStyle } from "react-native";
+import {
+  StyleSheet,
+  Platform,
+  View,
+  Modal,
+  ScrollView,
+  Pressable,
+  ViewStyle,
+  TextStyle,
+  Dimensions,
+} from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { Button } from "@/components/ui/Button";
@@ -55,6 +65,7 @@ export function PldSdvRequestDetails({
   const [isUpdating, setIsUpdating] = useState(false);
   const [auditTrail, setAuditTrail] = useState<AuditEvent[]>([]);
   const [isLoadingAudit, setIsLoadingAudit] = useState(false);
+  const windowHeight = Dimensions.get("window").height;
 
   // Fetch audit trail when request changes
   useEffect(() => {
@@ -121,8 +132,10 @@ export function PldSdvRequestDetails({
       }
     }
 
-    fetchAuditTrail();
-  }, [request]);
+    if (isVisible && request) {
+      fetchAuditTrail();
+    }
+  }, [request, isVisible]);
 
   // Render audit event
   const renderAuditEvent = (event: AuditEvent) => (
@@ -177,80 +190,94 @@ export function PldSdvRequestDetails({
     [request, adminUserId, onRequestUpdated, onClose]
   );
 
-  if (!request) return null;
+  if (!request || !isVisible) return null;
 
-  return (
-    <Modal visible={isVisible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
-      <View style={styles.modalOverlay}>
-        <ThemedView style={styles.modalContent}>
-          <ScrollView style={styles.scrollView}>
-            <ThemedText style={styles.title}>Request Details</ThemedText>
+  const modalContent = (
+    <View style={styles.modalOverlay}>
+      <ThemedView style={[styles.modalContent, { maxHeight: windowHeight * 0.8 }]}>
+        <ScrollView contentContainerStyle={styles.scrollViewContent}>
+          <ThemedText style={styles.title}>Request Details</ThemedText>
 
-            <View style={styles.section}>
-              <ThemedText style={styles.sectionTitle}>Member Information</ThemedText>
-              <ThemedText>
-                Name: {request.member ? `${request.member.last_name}, ${request.member.first_name}` : "Unknown"}
-              </ThemedText>
-              <ThemedText>PIN: {request.member?.pin_number}</ThemedText>
-            </View>
+          <View style={styles.section}>
+            <ThemedText style={styles.sectionTitle}>Member Information</ThemedText>
+            <ThemedText>
+              Name: {request.member ? `${request.member.last_name}, ${request.member.first_name}` : "Unknown"}
+            </ThemedText>
+            <ThemedText>PIN: {request.member?.pin_number}</ThemedText>
+          </View>
 
-            <View style={styles.section}>
-              <ThemedText style={styles.sectionTitle}>Request Information</ThemedText>
-              <ThemedText>Type: {request.leave_type}</ThemedText>
-              <ThemedText>Date: {format(parseISO(request.request_date), "MMMM d, yyyy")}</ThemedText>
-              <ThemedText>Status: {request.status}</ThemedText>
-              {request.denial_comment && <ThemedText>Denial Comment: {request.denial_comment}</ThemedText>}
-              {request.denial_reason_id && <ThemedText>Denial Reason ID: {request.denial_reason_id}</ThemedText>}
-            </View>
+          <View style={styles.section}>
+            <ThemedText style={styles.sectionTitle}>Request Information</ThemedText>
+            <ThemedText>Type: {request.leave_type}</ThemedText>
+            <ThemedText>Date: {format(parseISO(request.request_date), "MMMM d, yyyy")}</ThemedText>
+            <ThemedText>Status: {request.status}</ThemedText>
+            {request.denial_comment && <ThemedText>Denial Comment: {request.denial_comment}</ThemedText>}
+            {request.denial_reason_id && <ThemedText>Denial Reason ID: {request.denial_reason_id}</ThemedText>}
+          </View>
 
-            <View style={styles.section}>
-              <ThemedText style={styles.sectionTitle}>Audit Trail</ThemedText>
-              {isLoadingAudit ? (
-                <ActivityIndicator size="small" color={Colors[colorScheme].tint} />
-              ) : auditTrail.length > 0 ? (
-                auditTrail.map(renderAuditEvent)
-              ) : (
-                <ThemedText>No audit history available</ThemedText>
+          <View style={styles.section}>
+            <ThemedText style={styles.sectionTitle}>Audit Trail</ThemedText>
+            {isLoadingAudit ? (
+              <ActivityIndicator size="small" color={Colors[colorScheme].tint} />
+            ) : auditTrail.length > 0 ? (
+              auditTrail.map(renderAuditEvent)
+            ) : (
+              <ThemedText>No audit history available</ThemedText>
+            )}
+          </View>
+
+          <View style={styles.section}>
+            <ThemedText style={styles.sectionTitle}>Actions</ThemedText>
+            <View style={styles.actionButtons}>
+              {request.status === "pending" && (
+                <>
+                  <Button
+                    onPress={() => handleStatusUpdate("approved")}
+                    disabled={isUpdating}
+                    style={[styles.actionButton, styles.approveButton]}
+                  >
+                    <ThemedText style={styles.buttonText}>{isUpdating ? "Approving..." : "Approve"}</ThemedText>
+                  </Button>
+                  <Button
+                    onPress={() => handleStatusUpdate("denied")}
+                    disabled={isUpdating}
+                    style={[styles.actionButton, styles.denyButton]}
+                  >
+                    <ThemedText style={styles.buttonText}>{isUpdating ? "Denying..." : "Deny"}</ThemedText>
+                  </Button>
+                  <Button
+                    onPress={() => handleStatusUpdate("waitlisted")}
+                    disabled={isUpdating}
+                    style={[styles.actionButton, styles.waitlistButton]}
+                  >
+                    <ThemedText style={styles.buttonText}>{isUpdating ? "Waitlisting..." : "Waitlist"}</ThemedText>
+                  </Button>
+                </>
               )}
             </View>
+          </View>
+        </ScrollView>
 
-            <View style={styles.section}>
-              <ThemedText style={styles.sectionTitle}>Actions</ThemedText>
-              <View style={styles.actionButtons}>
-                {request.status === "pending" && (
-                  <>
-                    <Button
-                      onPress={() => handleStatusUpdate("approved")}
-                      disabled={isUpdating}
-                      style={[styles.actionButton, styles.approveButton]}
-                    >
-                      <ThemedText style={styles.buttonText}>{isUpdating ? "Approving..." : "Approve"}</ThemedText>
-                    </Button>
-                    <Button
-                      onPress={() => handleStatusUpdate("denied")}
-                      disabled={isUpdating}
-                      style={[styles.actionButton, styles.denyButton]}
-                    >
-                      <ThemedText style={styles.buttonText}>{isUpdating ? "Denying..." : "Deny"}</ThemedText>
-                    </Button>
-                    <Button
-                      onPress={() => handleStatusUpdate("waitlisted")}
-                      disabled={isUpdating}
-                      style={[styles.actionButton, styles.waitlistButton]}
-                    >
-                      <ThemedText style={styles.buttonText}>{isUpdating ? "Waitlisting..." : "Waitlist"}</ThemedText>
-                    </Button>
-                  </>
-                )}
-              </View>
-            </View>
-          </ScrollView>
+        <Pressable style={styles.closeButton} onPress={onClose}>
+          <ThemedText style={styles.closeButtonText}>Close</ThemedText>
+        </Pressable>
+      </ThemedView>
+    </View>
+  );
 
-          <Pressable style={styles.closeButton} onPress={onClose}>
-            <ThemedText style={styles.closeButtonText}>Close</ThemedText>
-          </Pressable>
-        </ThemedView>
-      </View>
+  return Platform.OS === "web" ? (
+    <Modal visible={isVisible} transparent={true} onRequestClose={onClose} animationType="fade">
+      {modalContent}
+    </Modal>
+  ) : (
+    <Modal
+      visible={isVisible}
+      transparent={true}
+      onRequestClose={onClose}
+      animationType="slide"
+      hardwareAccelerated={true}
+    >
+      {modalContent}
     </Modal>
   );
 }
@@ -265,12 +292,12 @@ const styles = StyleSheet.create({
   modalContent: {
     width: Platform.OS === "web" ? "80%" : "90%",
     maxWidth: 600,
-    maxHeight: "80%",
     borderRadius: 10,
     padding: 20,
   },
-  scrollView: {
-    flex: 1,
+  scrollViewContent: {
+    paddingBottom: 20,
+    backgroundColor: Colors.dark.card,
   },
   title: {
     fontSize: 24,
@@ -313,9 +340,12 @@ const styles = StyleSheet.create({
     marginTop: 20,
     padding: 10,
     alignItems: "center",
+    backgroundColor: Colors.dark.buttonBackground,
+    borderRadius: 8,
   },
   closeButtonText: {
     fontSize: 16,
+    color: Colors.dark.buttonText,
   },
   auditEvent: {
     padding: 8,

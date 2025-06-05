@@ -141,11 +141,10 @@ export function useOfficerPositions({ division }: UseOfficerPositionsProps) {
 
         // No need to check for required positions anymore, as positions are allowed but not required
         // Just check if the combination is allowed when relevant
-        const allowedPositions =
-          POSITION_RULES
-            .allowedCombinations[
-              position as keyof typeof POSITION_RULES.allowedCombinations
-            ];
+        const allowedPositions = POSITION_RULES
+          .allowedCombinations[
+            position as keyof typeof POSITION_RULES.allowedCombinations
+          ];
         if (allowedPositions) {
           // If this position has allowed combinations, we don't need to validate anything
           // The member is free to hold this position regardless of other positions

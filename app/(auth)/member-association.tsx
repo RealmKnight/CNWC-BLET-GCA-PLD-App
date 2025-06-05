@@ -6,10 +6,11 @@ import { ThemedText } from "@/components/ThemedText";
 import { Colors } from "@/constants/Colors";
 import { AdminMessageModal } from "@/components/AdminMessageModal";
 import Toast from "react-native-toast-message";
-import { router } from "expo-router";
+import { Redirect, router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Modal } from "@/components/ui/Modal";
 import { supabase } from "@/utils/supabase";
+import { ContactAdminModal } from "@/components/modals/ContactAdminModal";
 
 // Type for member data
 interface MemberData {
@@ -23,28 +24,53 @@ export default function MemberAssociationScreen() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [showAdminModal, setShowAdminModal] = useState(false);
+  const [showContactAdminModal, setShowContactAdminModal] = useState(false);
   const [associationSuccess, setAssociationSuccess] = useState(false);
   const [memberData, setMemberData] = useState<MemberData | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const { associateMemberWithPin, user, member } = useAuth();
+  const [shouldRedirect, setShouldRedirect] = useState(false);
+  const [redirectToSignIn, setRedirectToSignIn] = useState(false);
+  const { associateMemberWithPin, user, member, signOut, authStatus } = useAuth();
+
+  // Monitor auth status changes for sign out redirection
+  useEffect(() => {
+    if (redirectToSignIn && authStatus === "signedOut") {
+      console.log("[MemberAssociation] Auth state is now signedOut, redirecting to sign-in");
+      router.replace("/(auth)/sign-in");
+    }
+  }, [redirectToSignIn, authStatus]);
 
   // Monitor member data and redirect when it's available after successful association
   useEffect(() => {
     // Only redirect if we've had a successful association and member data is present
     if (associationSuccess && member) {
-      console.log("[MemberAssociation] Member data loaded after association, redirecting to tabs:", {
+      console.log("[MemberAssociation] Member data loaded after association, ready to redirect:", {
         memberId: member.id,
         role: member.role,
       });
 
       // Short delay to allow Toast to be visible
       const redirectTimer = setTimeout(() => {
-        router.replace("/(tabs)");
+        setShouldRedirect(true);
       }, 1500);
 
       return () => clearTimeout(redirectTimer);
     }
   }, [associationSuccess, member]);
+
+  // If redirect is triggered for successful association, use the Redirect component
+  if (shouldRedirect) {
+    return <Redirect href="/(tabs)" />;
+  }
+
+  // If redirecting to sign-in after sign-out, show loading state
+  if (redirectToSignIn && isLoading) {
+    return (
+      <ThemedView style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+        <ThemedText>Signing out...</ThemedText>
+      </ThemedView>
+    );
+  }
 
   const handleFetchMember = async () => {
     try {
@@ -114,8 +140,25 @@ export default function MemberAssociationScreen() {
     }
   };
 
-  const goToSignIn = () => {
-    router.replace("/(auth)/sign-in");
+  const goToSignIn = async () => {
+    try {
+      console.log("[MemberAssociation] Starting sign out process");
+      setIsLoading(true);
+      setRedirectToSignIn(true);
+      await signOut(); // Sign out the user
+
+      // The useEffect will handle the redirection once authStatus changes to signedOut
+    } catch (error) {
+      console.error("[MemberAssociation] Error signing out:", error);
+      setIsLoading(false);
+      setRedirectToSignIn(false);
+      // If sign-out fails, manually navigate
+      router.replace("/(auth)/sign-in");
+    }
+  };
+
+  const openContactAdminModal = () => {
+    setShowContactAdminModal(true);
   };
 
   return (
@@ -134,16 +177,18 @@ export default function MemberAssociationScreen() {
       </ThemedView>
 
       <ThemedView style={styles.infoBox}>
-        <ThemedText style={styles.infoText}>
-          Having troubles? Contact your Division Admin (or Local Chairman).
-        </ThemedText>
+        <TouchableOpacity onPress={openContactAdminModal}>
+          <ThemedText style={[styles.infoText, styles.linkText]}>
+            Having troubles? Contact your Division Admin (or Local Chairman).
+          </ThemedText>
+        </TouchableOpacity>
       </ThemedView>
 
       <ThemedView style={styles.form}>
         <TextInput
           style={styles.input}
           placeholder="PIN Number"
-          placeholderTextColor="#666666"
+          placeholderTextColor={Colors.dark.secondary}
           value={pinNumber}
           onChangeText={setPinNumber}
           keyboardType="numeric"
@@ -207,12 +252,16 @@ export default function MemberAssociationScreen() {
         </ThemedView>
       </Modal>
 
+      {/* Admin Message Modal for PIN problems */}
       <AdminMessageModal
         visible={showAdminModal}
         onClose={() => setShowAdminModal(false)}
         pinNumber={pinNumber}
         userEmail={user?.email || ""}
       />
+
+      {/* Contact Admin Modal for general assistance */}
+      <ContactAdminModal visible={showContactAdminModal} onClose={() => setShowContactAdminModal(false)} />
     </ThemedView>
   );
 }
@@ -251,6 +300,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: "center",
   },
+  linkText: {
+    color: Colors.dark.tint,
+    textDecorationLine: "underline",
+  },
   form: {
     width: "100%",
   },
@@ -262,7 +315,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 15,
     marginBottom: 15,
     backgroundColor: Colors.dark.card,
-    color: Colors.dark.secondary,
+    color: Colors.dark.primary,
   },
   button: {
     backgroundColor: Colors.dark.buttonBackground,

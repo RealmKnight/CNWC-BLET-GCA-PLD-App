@@ -3,20 +3,37 @@ import { supabase } from "@/utils/supabase";
 import { addDays, isAfter, isBefore, parseISO, startOfDay } from "date-fns";
 import { format } from "date-fns-tz";
 import { useUserStore } from "@/store/userStore";
-import { useAdminCalendarManagementStore } from "@/store/adminCalendarManagementStore";
+// Remove circular import - replaced with event-based communication
+// import { useTimeStore } from "@/store/timeStore";
+import {
+  PldSdvAllotment,
+  useAdminCalendarManagementStore,
+} from "@/store/adminCalendarManagementStore";
 import { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
-import { Database, TablesInsert } from "@/types/supabase";
+import { Database } from "@/types/supabase";
+// Import store event manager for inter-store communication
+import {
+  emitCalendarDataUpdate,
+  emitRequestCancelled,
+  emitRequestSubmitted,
+  storeEventManager,
+  StoreEventType,
+} from "@/utils/storeManager";
+import { createRealtimeCallback } from "@/utils/realtimeErrorHandler";
 
 type Member = Database["public"]["Tables"]["members"]["Row"];
-type Request = Database["public"]["Tables"]["pld_sdv_requests"]["Row"];
+type BaseRequest = Database["public"]["Tables"]["pld_sdv_requests"]["Row"];
+type RequestStatus = Database["public"]["Enums"]["pld_sdv_status"];
 
-export interface DayRequest extends Request {
+// Extend the base request type to ensure we capture all fields including paid_in_lieu
+export interface DayRequest extends BaseRequest {
   member: {
-    id: string;
+    id: string | null;
     first_name: string | null;
     last_name: string | null;
     pin_number: number;
   };
+  paid_in_lieu: boolean | null; // Explicitly include this to ensure TypeScript tracks it
 }
 
 export interface DayAllotment {
@@ -30,28 +47,29 @@ export interface DayAllotment {
 
 // Add type for member data
 interface RequestMember {
-  id: string;
+  id: string | null;
   first_name: string | null;
   last_name: string | null;
   pin_number: number;
 }
 
-interface FullRequestData {
+// Update FullRequestData to also extend from BaseRequest
+interface FullRequestData extends BaseRequest {
+  member: RequestMember;
+}
+
+// Add interface for six-month requests if it doesn't exist
+export interface SixMonthRequest {
   id: string;
   member_id: string;
-  calendar_id: string;
   request_date: string;
   leave_type: "PLD" | "SDV";
-  status:
-    | "pending"
-    | "approved"
-    | "denied"
-    | "waitlisted"
-    | "cancellation_pending"
-    | "cancelled";
   requested_at: string;
-  waitlist_position?: number;
-  member: RequestMember;
+  processed: boolean;
+  processed_at?: string;
+  final_status?: string;
+  position?: number;
+  calendar_id: string;
 }
 
 interface CalendarState {
@@ -59,6 +77,7 @@ interface CalendarState {
   allotments: Record<string, number>;
   yearlyAllotments: Record<number, number>;
   requests: Record<string, DayRequest[]>;
+  sixMonthRequestDays: Record<string, boolean>;
   isLoading: boolean;
   error: string | null;
   isInitialized: boolean;
@@ -68,6 +87,7 @@ interface CalendarState {
   setAllotments: (allotments: Record<string, number>) => void;
   setYearlyAllotments: (yearlyAllotments: Record<number, number>) => void;
   setRequests: (requests: Record<string, DayRequest[]>) => void;
+  setSixMonthRequestDays: (days: Record<string, boolean>) => void;
   setError: (error: string | null) => void;
   setIsLoading: (isLoading: boolean) => void;
   setIsInitialized: (isInitialized: boolean) => void;
@@ -76,7 +96,7 @@ interface CalendarState {
   isDateSelectable: (date: string) => boolean;
   getDateAvailability: (
     date: string,
-  ) => "available" | "limited" | "full" | "unavailable";
+  ) => "available" | "limited" | "full" | "unavailable" | "userRequested";
 
   // Data fetching
   fetchAllotments: (
@@ -94,7 +114,26 @@ interface CalendarState {
     endDate: string,
     calendarId: string,
   ) => Promise<Record<string, DayRequest[]>>;
-  loadInitialData: (startDate: string, endDate: string) => Promise<void>;
+
+  // New function for fetching user's six-month requests
+  fetchUserSixMonthRequests: (memberId: string) => Promise<SixMonthRequest[]>;
+
+  loadInitialData: (
+    startDate: string,
+    endDate: string,
+    calendarId: string,
+  ) => Promise<void>;
+
+  // Refresh logic
+  refreshData: (
+    startDate: string,
+    endDate: string,
+    calendarId: string,
+    force?: boolean,
+  ) => Promise<void>;
+
+  // New action to refresh requests for a specific date
+  refreshRequestsForDate: (date: string, calendarId: string) => Promise<void>;
 
   cancelRequest: (requestId: string, requestDate: string) => Promise<boolean>;
 
@@ -110,7 +149,11 @@ interface CalendarState {
     type: "PLD" | "SDV",
   ) => Promise<DayRequest>;
 
+  // Expose the six-month request check functionality from the store
   checkSixMonthRequest: (date: string) => Promise<boolean>;
+
+  // Mark previously exposed function as deprecated
+  // checkSixMonthRequest: (date: string) => Promise<boolean>;
 
   cleanupCalendarState: () => void;
 }
@@ -137,6 +180,7 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
   allotments: {},
   yearlyAllotments: {},
   requests: {},
+  sixMonthRequestDays: {},
   isLoading: false,
   error: null,
   isInitialized: false,
@@ -145,6 +189,7 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
   setAllotments: (allotments) => set({ allotments }),
   setYearlyAllotments: (yearlyAllotments) => set({ yearlyAllotments }),
   setRequests: (requests) => set({ requests }),
+  setSixMonthRequestDays: (days) => set({ sixMonthRequestDays: days }),
   setError: (error) => set({ error }),
   setIsLoading: (isLoading) => set({ isLoading }),
   setIsInitialized: (isInitialized) => set({ isInitialized }),
@@ -152,71 +197,44 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
   isDateSelectable: (date: string) => {
     const state = get();
     const now = new Date();
-    const dateObj = parseISO(date);
-    const fortyEightHoursFromNow = addDays(now, 2);
+    const currentYear = now.getFullYear();
+    let dateObj: Date;
+    try {
+      dateObj = parseISO(date);
+      // Ensure the date is valid and within the current year
+      if (isNaN(dateObj.getTime()) || dateObj.getFullYear() !== currentYear) {
+        // console.log("[CalendarStore] Date not selectable - invalid or outside current year:", date);
+        return false;
+      }
+    } catch (e) {
+      // console.log("[CalendarStore] Date not selectable - parsing error:", date, e);
+      return false; // Invalid date format
+    }
+
     const sixMonthsFromNow = getSixMonthDate();
-
-    // First check basic time constraints
-    if (isBefore(dateObj, fortyEightHoursFromNow)) {
-      console.log("[CalendarStore] Date not selectable - before 48h:", date);
-      return false;
-    }
-
-    // Check if date is beyond six months
-    if (isAfter(dateObj, sixMonthsFromNow)) {
-      console.log(
-        "[CalendarStore] Date not selectable - beyond six months:",
-        date,
-      );
-      return false;
-    }
 
     // Check if today is end of month for six month request handling or exact 6-month date
     const isEndOfMonth = isLastDayOfMonth(now);
     const isSixMonthDate = dateObj.getTime() === sixMonthsFromNow.getTime();
-    const isSixMonthRequest = isSixMonthDate || (isEndOfMonth &&
+
+    // CORRECTED: Six month requests are ONLY dates exactly 6 months away OR dates AFTER
+    // the exact 6-month point when it's the end of month and the target month has more days
+    const isSixMonthRequest = isSixMonthDate || (
+      isEndOfMonth &&
       dateObj.getMonth() === sixMonthsFromNow.getMonth() &&
       dateObj.getFullYear() === sixMonthsFromNow.getFullYear() &&
-      !isBefore(dateObj, sixMonthsFromNow));
+      dateObj.getDate() >= sixMonthsFromNow.getDate() // Only dates at or beyond the exact 6-month point
+    );
 
-    // Check allotments
-    const year = dateObj.getFullYear();
-    const dateAllotment = state.allotments[date];
-    const yearlyAllotment = state.yearlyAllotments[year];
-    const maxAllotment = dateAllotment ?? yearlyAllotment ?? 0;
-
-    if (maxAllotment === 0) {
-      console.log("[CalendarStore] Date not selectable - no allotment:", date);
+    // Check if date is beyond six months AND not a special six-month request date
+    if (isAfter(dateObj, sixMonthsFromNow) && !isSixMonthRequest) {
+      // console.log("[CalendarStore] Date not selectable - beyond six months:", date);
       return false;
     }
 
-    // For six-month requests, we allow selection even if the date is full
-    // because they are processed by seniority and waitlisted if needed
-    if (isSixMonthRequest) {
-      console.log("[CalendarStore] Date selectable - six month request:", date);
-      return true;
-    }
-
-    // For regular requests, we allow selection even if the date is full
-    // so users can join the waitlist if needed
-    const dateRequests = state.requests[date] || [];
-    const activeRequests = dateRequests.filter((r) =>
-      r.status === "approved" || r.status === "pending" ||
-      r.status === "waitlisted"
-    );
-
-    // Don't check if the date is full here - allow selection of full dates for waitlisting
-    // Regular requests - anything between 48 hours and six months
-    if (
-      !isBefore(dateObj, fortyEightHoursFromNow) &&
-      !isAfter(dateObj, sixMonthsFromNow)
-    ) {
-      console.log("[CalendarStore] Date selectable - regular request:", date);
-      return true;
-    }
-
-    console.log("[CalendarStore] Date not selectable - general case:", date);
-    return false;
+    // If the date is within the current year and up to 6 months out (or a six-month date),
+    // it is selectable for viewing or requesting.
+    return true;
   },
 
   getDateAvailability: (date: string) => {
@@ -224,37 +242,115 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
     const now = new Date();
     const dateObj = parseISO(date);
     const fortyEightHoursFromNow = addDays(now, 2);
+    const sixMonthsFromNow = getSixMonthDate();
 
-    // Basic time constraint check
+    // Check if user has any type of request first
+    const member = useUserStore.getState().member;
+    const hasSixMonthRequest = state.sixMonthRequestDays[date] === true;
+
+    // Add debug logging for PIL requests in this date
+    if (member?.id && state.requests[date]) {
+      const pilRequests = state.requests[date].filter(
+        (req) =>
+          req.member_id === member.id &&
+          [
+            "approved",
+            "pending",
+            "waitlisted",
+            "cancellation_pending",
+            "transferred",
+          ]
+            .includes(req.status) &&
+          req.paid_in_lieu === true,
+      );
+
+      if (pilRequests.length > 0) {
+        console.log(
+          `[CalendarStore] Found PIL requests for date ${date}:`,
+          pilRequests,
+        );
+      }
+    }
+
+    const hasRegularRequest = member?.id && state.requests[date]?.some(
+      (req) =>
+        req.member_id === member.id &&
+        [
+          "approved",
+          "pending",
+          "waitlisted",
+          "cancellation_pending",
+          "transferred",
+        ].includes(
+          req.status,
+        ),
+    );
+
+    // If user has any type of request, mark as userRequested (overrides other statuses)
+    if (hasSixMonthRequest || hasRegularRequest) {
+      return "userRequested";
+    }
+
+    // Past/Near-Past Check: Mark as unavailable if before 48 hours
     if (isBefore(dateObj, fortyEightHoursFromNow)) {
       return "unavailable";
     }
 
-    // Get allotment info
+    // Six-month check
+    const isEndOfMonth = isLastDayOfMonth(now);
+    const isAfterSixMonths = isAfter(dateObj, sixMonthsFromNow);
+    const isSixMonthDate = dateObj.getTime() === sixMonthsFromNow.getTime();
+
+    const isSameMonthYear =
+      dateObj.getMonth() === sixMonthsFromNow.getMonth() &&
+      dateObj.getFullYear() === sixMonthsFromNow.getFullYear();
+
+    const isSixMonthRequest = isSixMonthDate || (
+      isEndOfMonth && isSameMonthYear &&
+      dateObj.getDate() >= sixMonthsFromNow.getDate()
+    );
+
+    // CRITICAL: If it's a six-month request date, always mark as available regardless of allotment
+    if (isSixMonthRequest) {
+      return "available";
+    }
+
+    if (isAfterSixMonths && !isSixMonthRequest) {
+      return "unavailable";
+    }
+
+    // Get allotment info for normal requests
     const year = dateObj.getFullYear();
     const dateAllotment = state.allotments[date];
     const yearlyAllotment = state.yearlyAllotments[year];
     const maxAllotment = dateAllotment ?? yearlyAllotment ?? 0;
 
+    // For display purposes, if there's no allotment set, still show as available
+    // This matches the behavior in isDateSelectable
     if (maxAllotment === 0) {
-      return "unavailable";
+      // We're within 6 months, so treat as available even with no allotment
+      return "available";
     }
 
-    // Check if date is selectable using our six-month logic
-    if (!state.isDateSelectable(date)) {
-      return "unavailable";
+    // Check current requests against allotment
+    const currentRequests = state.requests[date] || [];
+    const approvedOrPendingCount = currentRequests.filter(
+      (req) =>
+        req.status === "approved" ||
+        req.status === "pending" ||
+        req.status === "waitlisted" ||
+        req.status === "cancellation_pending" ||
+        req.status === "transferred",
+    ).length;
+
+    const ratio = approvedOrPendingCount / maxAllotment;
+    if (ratio >= 1) {
+      return "full";
+    } else if (ratio >= 0.7) {
+      return "limited";
+    } else {
+      return "available";
     }
-
-    // If we get here, the date is selectable, check capacity
-    const dateRequests = state.requests[date] || [];
-    const activeRequests = dateRequests.filter((r) =>
-      r.status === "approved" || r.status === "pending" ||
-      r.status === "waitlisted"
-    );
-
-    if (activeRequests.length >= maxAllotment) return "full";
-    if (activeRequests.length >= maxAllotment * 0.7) return "limited";
-    return "available";
   },
 
   fetchAllotments: async (
@@ -262,264 +358,550 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
     endDate: string,
     calendarId: string,
   ) => {
-    if (!calendarId) {
-      console.warn("[CalendarStore] fetchAllotments: No calendarId provided.");
-      return { allotments: {}, yearlyAllotments: {} };
-    }
+    console.log("[CalendarStore] Fetching allotments", {
+      startDate,
+      endDate,
+      calendarId,
+    });
 
     try {
-      const currentYear = new Date(startDate).getFullYear();
-      const nextYear = currentYear + 1;
+      // Determine the years we need to query for
+      const startYear = new Date(startDate).getFullYear();
+      const endYear = new Date(endDate).getFullYear();
 
-      const { data: allotmentsData, error } = await supabase
-        .from("pld_sdv_allotments")
-        .select("date, max_allotment, year")
-        .eq("calendar_id", calendarId!)
-        .or(
-          `year.eq.${currentYear},year.eq.${nextYear},date.gte.${startDate},date.lte.${endDate}`,
-        );
-
-      if (error) throw error;
-
-      const allotmentsByDate: Record<string, number> = {};
-      const yearlyAllotmentsByYear: Record<number, number> = {};
-
-      allotmentsData?.forEach((allotment) => {
-        const allotmentYear = allotment.year ??
-          new Date(allotment.date).getFullYear();
-        const dateKey = allotment.date;
-        const yearKey = allotmentYear;
-
-        if (
-          allotment.year !== null || allotment.date === `${allotmentYear}-01-01`
-        ) {
-          yearlyAllotmentsByYear[yearKey] = allotment.max_allotment;
-        }
-        allotmentsByDate[dateKey] = allotment.max_allotment;
-      });
-
-      const startDateObj = parseISO(startDate);
-      const endDateObj = parseISO(endDate);
-      for (
-        let date = startDateObj;
-        isBefore(date, endDateObj) || date.getTime() === endDateObj.getTime();
-        date = addDays(date, 1)
-      ) {
-        const dateStr = format(date, "yyyy-MM-dd");
-        const currentYearLoop = date.getFullYear();
-        if (
-          allotmentsByDate[dateStr] === undefined &&
-          yearlyAllotmentsByYear[currentYearLoop] !== undefined
-        ) {
-          allotmentsByDate[dateStr] = yearlyAllotmentsByYear[currentYearLoop];
-        }
+      // Create an array of years to query
+      const yearsToQuery = [];
+      for (let year = startYear; year <= endYear; year++) {
+        yearsToQuery.push(year);
       }
 
-      return {
-        allotments: allotmentsByDate,
-        yearlyAllotments: yearlyAllotmentsByYear,
-      };
-    } catch (error) {
-      console.error("[CalendarStore] Error fetching allotments:", error);
-      throw error;
-    }
-  },
+      console.log(
+        "[CalendarStore] Years to query for allotments:",
+        yearsToQuery,
+      );
 
-  fetchRequests: async (
-    startDate: string,
-    endDate: string,
-    calendarId: string,
-  ) => {
-    if (!calendarId) {
-      console.warn("[CalendarStore] fetchRequests: No calendarId provided.");
-      return {};
-    }
-
-    try {
-      // Only fetch regular requests, not six month requests
-      // Six month requests are stored in a separate table and should not be
-      // displayed on the calendar or count against daily allotments
-      const { data: requestsData, error } = await supabase
-        .from("pld_sdv_requests")
-        .select(`
-          id, member_id, calendar_id, request_date, leave_type, status,
-          requested_at, waitlist_position, responded_at, responded_by, paid_in_lieu,
-          denial_reason_id, denial_comment, actioned_by, actioned_at, created_at, updated_at, metadata,
-          member:members!inner ( id, first_name, last_name, pin_number )
-        `)
-        .eq("calendar_id", calendarId!)
-        .gte("request_date", startDate)
-        .lte("request_date", endDate);
+      // Fetch day-specific allotments AND yearly allotments
+      // Note: We specifically query for both date-specific and year records
+      const { data: allotmentsData, error } = await supabase
+        .from("pld_sdv_allotments")
+        .select("id, date, max_allotment, current_requests, year, calendar_id")
+        .eq("calendar_id", calendarId)
+        .or(
+          `date.gte.${startDate},date.lte.${endDate},year.in.(${
+            yearsToQuery.join(",")
+          })`,
+        );
 
       if (error) {
-        console.error("[CalendarStore] Error fetching requests:", error);
+        console.error(
+          "[CalendarStore] Error fetching allotments:",
+          error,
+        );
         throw error;
       }
 
-      const requestsByDate: Record<string, DayRequest[]> = {};
+      // Transform allotments into maps
+      const allotments: Record<string, number> = {};
+      const yearlyAllotments: Record<number, number> = {};
 
-      if (requestsData) {
-        for (const rawRequest of requestsData) {
-          const dateKey = rawRequest.request_date;
+      // First pass: Extract yearly defaults
+      allotmentsData?.forEach((allotment) => {
+        // Store yearly defaults
+        if (allotment.year !== null) {
+          yearlyAllotments[allotment.year] = allotment.max_allotment;
+        }
+        // Store date-specific allotments
+        if (allotment.date) {
+          allotments[allotment.date] = allotment.max_allotment;
+        }
+      });
 
-          if (!requestsByDate[dateKey]) {
-            requestsByDate[dateKey] = [];
-          }
+      console.log("[CalendarStore] Fetched allotments:", {
+        dateCount: Object.keys(allotments).length,
+        yearCount: Object.keys(yearlyAllotments).length,
+        years: Object.keys(yearlyAllotments),
+      });
 
-          const memberInfo = (rawRequest as any).member;
-          const memberData = memberInfo && typeof memberInfo === "object"
-            ? {
-              id: memberInfo.id as string ?? "",
-              first_name: memberInfo.first_name as string | null,
-              last_name: memberInfo.last_name as string | null,
-              pin_number: memberInfo.pin_number as number ?? 0,
-            }
-            : {
-              id: "",
-              first_name: "Unknown",
-              last_name: "Member",
-              pin_number: 0,
-            };
+      // Apply yearly defaults to all dates in the range
+      // where specific allotments don't already exist
+      const startDateObj = parseISO(startDate);
+      const endDateObj = parseISO(endDate);
 
-          const dayRequest: DayRequest = {
-            id: rawRequest.id,
-            member_id: rawRequest.member_id,
-            calendar_id: rawRequest.calendar_id,
-            request_date: rawRequest.request_date,
-            leave_type: rawRequest.leave_type,
-            status: rawRequest.status,
-            requested_at: rawRequest.requested_at,
-            waitlist_position: rawRequest.waitlist_position,
-            responded_at: rawRequest.responded_at,
-            responded_by: rawRequest.responded_by,
-            paid_in_lieu: rawRequest.paid_in_lieu,
-            denial_reason_id: rawRequest.denial_reason_id,
-            denial_comment: rawRequest.denial_comment,
-            actioned_by: rawRequest.actioned_by,
-            actioned_at: rawRequest.actioned_at,
-            created_at: rawRequest.created_at,
-            updated_at: rawRequest.updated_at,
-            metadata: rawRequest.metadata,
-            member: memberData,
-          } as DayRequest;
-          requestsByDate[dateKey].push(dayRequest);
+      // Iterate through each day in the date range
+      for (
+        let date = startDateObj;
+        date <= endDateObj;
+        date = addDays(date, 1)
+      ) {
+        const dateStr = format(date, "yyyy-MM-dd");
+        const year = date.getFullYear();
+
+        // If no specific allotment exists for this date and we have a yearly default,
+        // apply the yearly default
+        if (
+          allotments[dateStr] === undefined &&
+          yearlyAllotments[year] !== undefined
+        ) {
+          allotments[dateStr] = yearlyAllotments[year];
         }
       }
+
+      return { allotments, yearlyAllotments };
+    } catch (error) {
+      console.error("[CalendarStore] Error fetching allotments:", error);
+      // Return empty data instead of throwing
+      return { allotments: {}, yearlyAllotments: {} };
+    }
+  },
+
+  fetchRequests: async (startDate, endDate, calendarId) => {
+    console.log("[CalendarStore] Fetching requests", {
+      startDate,
+      endDate,
+      calendarId,
+    });
+    try {
+      // Query with join to members table using the member_id foreign key OR pin_number
+      const { data, error } = await supabase
+        .from("pld_sdv_requests")
+        .select(`
+          id, member_id, pin_number, calendar_id, request_date, leave_type, status, requested_at, waitlist_position, paid_in_lieu, import_source, imported_at,
+          member:members(id, first_name, last_name, pin_number)
+        `)
+        .eq("calendar_id", calendarId)
+        .not("status", "in", '("cancelled","denied")')
+        .gte("request_date", startDate)
+        .lte("request_date", endDate)
+        .order("request_date");
+
+      if (error) {
+        console.error("[CalendarStore] Error fetching requests:", error);
+        return {};
+      }
+
+      // Check for PIL requests in the fetched data
+      const pilRequests = data?.filter((req) => req.paid_in_lieu === true) ||
+        [];
+      if (pilRequests.length > 0) {
+        console.log(
+          `[CalendarStore] Found ${pilRequests.length} PIL requests in fetch:`,
+          pilRequests.map((r) => ({
+            date: r.request_date,
+            status: r.status,
+            member_id: r.member_id,
+            pin_number: r.pin_number,
+          })),
+        );
+      }
+
+      // Group requests by date
+      const requestsByDate: Record<string, DayRequest[]> = {};
+      data?.forEach((request: any) => {
+        if (!requestsByDate[request.request_date]) {
+          requestsByDate[request.request_date] = [];
+        }
+
+        // Special handling for null member data (pin_number only cases)
+        if (request.pin_number && (!request.member || !request.member.id)) {
+          // Create a default member object using the pin_number for display
+          request.member = {
+            id: null,
+            pin_number: request.pin_number,
+            first_name: `PIN: ${request.pin_number}`,
+            last_name: "",
+          };
+        }
+
+        requestsByDate[request.request_date].push(request as DayRequest);
+      });
+
       return requestsByDate;
     } catch (error) {
       console.error("[CalendarStore] Error fetching requests:", error);
-      throw error;
+      // Return empty data instead of throwing
+      return {};
     }
   },
 
-  loadInitialData: async (startDate: string, endDate: string) => {
-    const { member } = useUserStore.getState();
-    const calendarId = member?.calendar_id;
+  // Function to fetch user's six-month requests
+  fetchUserSixMonthRequests: async (memberId) => {
+    console.log(
+      "[CalendarStore] Fetching user's six-month requests for member:",
+      memberId,
+    );
 
-    if (!member || !calendarId) {
+    try {
+      const { data, error } = await supabase
+        .from("six_month_requests")
+        .select("*")
+        .eq("member_id", memberId)
+        .order("request_date");
+
+      if (error) {
+        console.error(
+          "[CalendarStore] Error fetching six-month requests:",
+          error,
+        );
+        return [];
+      }
+
       console.log(
-        "[CalendarStore] No member or calendar_id found for initialization",
+        `[CalendarStore] Found ${
+          data?.length || 0
+        } six-month requests for member`,
       );
-      set({
-        error: "User or assigned calendar not found",
-        isLoading: false,
-        isInitialized: true,
-      });
+      return data || [];
+    } catch (error) {
+      console.error(
+        "[CalendarStore] Error fetching user six-month requests:",
+        error,
+      );
+      return [];
+    }
+  },
+
+  loadInitialData: async (startDate, endDate, calendarId) => {
+    console.log("[CalendarStore] Loading initial data", {
+      startDate,
+      endDate,
+      calendarId,
+    });
+    const state = get();
+
+    try {
+      state.setIsLoading(true);
+      state.setError(null);
+
+      // Fetch allotments and requests concurrently
+      const [{ allotments, yearlyAllotments }, requests] = await Promise.all([
+        state.fetchAllotments(startDate, endDate, calendarId),
+        state.fetchRequests(startDate, endDate, calendarId),
+      ]);
+
+      // Set state
+      state.setAllotments(allotments);
+      state.setYearlyAllotments(yearlyAllotments);
+      state.setRequests(requests);
+
+      // Fetch user's six-month requests if we have a member ID
+      const member = useUserStore.getState().member;
+      if (member?.id) {
+        const sixMonthRequests = await state.fetchUserSixMonthRequests(
+          member.id,
+        );
+
+        // Create a Record<string, boolean> from the six-month requests
+        const sixMonthDays: Record<string, boolean> = {};
+        sixMonthRequests.forEach((req) => {
+          sixMonthDays[req.request_date] = true;
+        });
+
+        state.setSixMonthRequestDays(sixMonthDays);
+      }
+
+      state.setIsInitialized(true);
+      console.log("[CalendarStore] Initial data loaded successfully");
+    } catch (error) {
+      console.error("[CalendarStore] Error loading initial data:", error);
+      state.setError("Failed to load calendar data");
+    } finally {
+      state.setIsLoading(false);
+    }
+  },
+
+  // Add a refresh function that can be called to update the calendar data
+  refreshData: async (startDate, endDate, calendarId, force = false) => {
+    console.log("[CalendarStore] Refreshing data", {
+      startDate,
+      endDate,
+      calendarId,
+      force,
+    });
+
+    const state = get();
+
+    // If not forcing and already initialized, use realtime updates instead
+    if (!force && state.isInitialized) {
+      console.log(
+        "[CalendarStore] Already initialized and not forcing, relying on realtime updates",
+      );
       return;
     }
 
-    set({ error: null, isLoading: true });
-
     try {
-      console.log(
-        `[CalendarStore] Fetching data for calendarId: ${calendarId}`,
-      );
-      const [allotmentsResult, requestsResult] = await Promise.all([
-        get().fetchAllotments(startDate, endDate, calendarId),
-        get().fetchRequests(startDate, endDate, calendarId),
+      // Only set loading if forcing a refresh
+      if (force) {
+        state.setIsLoading(true);
+      }
+
+      state.setError(null);
+
+      // Fetch allotments and requests concurrently
+      const [{ allotments, yearlyAllotments }, requests] = await Promise.all([
+        state.fetchAllotments(startDate, endDate, calendarId),
+        state.fetchRequests(startDate, endDate, calendarId),
       ]);
 
-      set({
-        isLoading: false,
-        isInitialized: true,
-        error: null,
-        allotments: allotmentsResult.allotments,
-        yearlyAllotments: allotmentsResult.yearlyAllotments,
-        requests: requestsResult,
-      });
-      console.log("[CalendarStore] Data load complete and state updated.");
+      // Set state
+      state.setAllotments(allotments);
+      state.setYearlyAllotments(yearlyAllotments);
+      state.setRequests(requests);
+
+      // Fetch user's six-month requests if we have a member ID
+      const member = useUserStore.getState().member;
+      if (member?.id) {
+        const sixMonthRequests = await state.fetchUserSixMonthRequests(
+          member.id,
+        );
+
+        // Create a Record<string, boolean> from the six-month requests
+        const sixMonthDays: Record<string, boolean> = {};
+        sixMonthRequests.forEach((req) => {
+          sixMonthDays[req.request_date] = true;
+        });
+
+        state.setSixMonthRequestDays(sixMonthDays);
+      }
+
+      console.log("[CalendarStore] Data refreshed successfully");
     } catch (error) {
-      console.error("[CalendarStore] Error loading data:", error);
-      set({
-        isLoading: false,
-        error: error instanceof Error
-          ? error.message
-          : "Failed to load calendar data",
-        isInitialized: true,
-        allotments: {},
-        yearlyAllotments: {},
-        requests: {},
-      });
+      console.error("[CalendarStore] Error refreshing data:", error);
+      state.setError("Failed to refresh calendar data");
+    } finally {
+      if (force) {
+        state.setIsLoading(false);
+      }
     }
   },
 
-  cancelRequest: async (requestId: string, requestDate: string) => {
+  refreshRequestsForDate: async (date, calendarId) => {
+    console.log("[CalendarStore] Refreshing requests for date", date);
     const state = get();
-    const member = useUserStore.getState().member;
+    try {
+      const { data, error } = await supabase
+        .from("pld_sdv_requests")
+        .select(`
+          id, member_id, pin_number, calendar_id, request_date, leave_type, status, requested_at, waitlist_position, paid_in_lieu, import_source, imported_at,
+          member:members(id, first_name, last_name, pin_number)
+        `)
+        .eq("calendar_id", calendarId)
+        .eq("request_date", date)
+        .not("status", "in", '("cancelled","denied")')
+        .order("request_date");
 
-    if (!member) {
-      set({ error: "No member information found" });
+      if (error) {
+        console.error(
+          "[CalendarStore] Error refreshing requests for date:",
+          date,
+          error,
+        );
+        return;
+      }
+
+      // Process the data and create a new requests object
+      const processedData = data?.map((request: any) => {
+        // Handle PIN-only entries
+        if (request.pin_number && (!request.member || !request.member.id)) {
+          // Create a default member object using the pin_number for display
+          request.member = {
+            id: null,
+            pin_number: request.pin_number,
+            first_name: `PIN: ${request.pin_number}`,
+            last_name: "",
+          };
+        }
+        return request as DayRequest;
+      }) || [];
+
+      const newRequests = { ...state.requests };
+      newRequests[date] = processedData;
+      state.setRequests(newRequests);
+    } catch (error) {
+      console.error(
+        "[CalendarStore] Error refreshing requests for date:",
+        date,
+        error,
+      );
+      state.setError(`Failed to refresh requests for ${date}`);
+    }
+  },
+
+  getActiveRequests: (date: string) => {
+    const state = get();
+    return (
+      state.requests[date]?.filter(
+        (request) =>
+          // Status filter - must be active status
+          (request.status === "approved" ||
+            request.status === "pending" ||
+            request.status === "waitlisted" ||
+            request.status === "cancellation_pending" ||
+            request.status === "transferred") &&
+          // Exclude paid in lieu requests
+          request.paid_in_lieu !== true,
+      ) || []
+    );
+  },
+
+  cancelRequest: async (requestId, requestDate) => {
+    const member = useUserStore.getState().member;
+    if (!member?.id) {
+      console.error("[CalendarStore] No member ID found");
       return false;
     }
 
+    console.log("[CalendarStore] Cancelling request", requestId);
+    const state = get();
     try {
-      set({ isLoading: true });
-
-      const requestsForDate = state.requests[requestDate] || [];
-      const foundRequest = requestsForDate.find((r) => r.id === requestId);
-
-      if (!foundRequest) {
-        throw new Error("Request not found for the specified date");
+      // Optimistically update the UI by updating the status
+      const newRequests = { ...state.requests };
+      if (newRequests[requestDate]) {
+        newRequests[requestDate] = newRequests[requestDate].map((req) =>
+          req.id === requestId
+            ? { ...req, status: "cancellation_pending" as const }
+            : req
+        );
+        state.setRequests(newRequests);
       }
 
-      const newStatus: DayRequest["status"] =
-        foundRequest.status === "approved" ||
-          foundRequest.status === "cancellation_pending"
-          ? "cancellation_pending"
-          : "cancelled";
-
-      const { error } = await supabase
-        .from("pld_sdv_requests")
-        .update({
-          status: newStatus,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", requestId);
+      // Call the database function to handle cancellation logic
+      const { data, error } = await supabase.rpc("cancel_leave_request", {
+        p_request_id: requestId,
+        p_member_id: member.id,
+      });
 
       if (error) throw error;
 
-      const updatedRequests: DayRequest[] = requestsForDate.map((request) =>
-        request.id === requestId ? { ...request, status: newStatus } : request
-      );
+      // If cancellation was successful, send email notification
+      if (data === true) {
+        try {
+          console.log(
+            "[CalendarStore] Sending cancellation email notification...",
+          );
+          const { error: emailError } = await supabase.functions.invoke(
+            "send-cancellation-email",
+            {
+              body: {
+                requestId: requestId,
+              },
+            },
+          );
 
-      set((prevState) => ({
-        requests: {
-          ...prevState.requests,
-          [requestDate]: updatedRequests,
-        },
-      }));
+          if (emailError) {
+            console.error(
+              "[CalendarStore] Cancellation email notification failed:",
+              emailError,
+            );
+            // Don't fail the cancellation if email fails - the cancellation was successful
+          } else {
+            console.log(
+              "[CalendarStore] Cancellation email notification sent successfully",
+            );
+          }
+        } catch (emailError) {
+          console.error(
+            "[CalendarStore] Error sending cancellation email notification:",
+            emailError,
+          );
+          // Continue - cancellation was successful even if email failed
+        }
+      }
 
+      // If immediate cancellation (data is true), update the UI again
+      if (data && member.calendar_id) {
+        await state.refreshRequestsForDate(requestDate, member.calendar_id);
+      }
       return true;
     } catch (error) {
-      console.error("Error cancelling request:", error);
-      set({
-        error: error instanceof Error
-          ? error.message
-          : "Failed to cancel request",
-      });
+      console.error("[CalendarStore] Error cancelling request:", error);
+      // Revert optimistic update
+      if (member.calendar_id) {
+        await state.refreshRequestsForDate(requestDate, member.calendar_id);
+      }
       return false;
-    } finally {
-      set({ isLoading: false });
+    }
+  },
+
+  userSubmitRequest: async (date, type) => {
+    // Get the member ID from the user store
+    const member = useUserStore.getState().member;
+    if (!member) {
+      throw new Error("No member found");
+    }
+
+    console.log("[CalendarStore] Submitting request", {
+      date,
+      type,
+      memberId: member.id,
+      calendarId: member.calendar_id,
+    });
+
+    const state = get();
+    try {
+      // Check if date is selectable
+      if (!state.isDateSelectable(date)) {
+        throw new Error("Date is not available for selection");
+      }
+
+      // Submit request
+      const { data, error } = await supabase
+        .from("pld_sdv_requests")
+        .insert({
+          member_id: member.id,
+          calendar_id: member.calendar_id,
+          request_date: date,
+          leave_type: type,
+          status: "pending",
+        })
+        .select(
+          "*, member:members(id, first_name, last_name, pin_number)",
+        )
+        .single();
+
+      if (error) throw error;
+
+      // Send email notification for the new request
+      try {
+        console.log("[CalendarStore] Sending request email notification...");
+        const { error: emailError } = await supabase.functions.invoke(
+          "send-request-email",
+          {
+            body: {
+              requestId: data.id,
+            },
+          },
+        );
+
+        if (emailError) {
+          console.error(
+            "[CalendarStore] Email notification failed:",
+            emailError,
+          );
+          // Don't fail the entire request submission if email fails
+          // The request is already in the database successfully
+        } else {
+          console.log("[CalendarStore] Email notification sent successfully");
+        }
+      } catch (emailError) {
+        console.error(
+          "[CalendarStore] Error sending email notification:",
+          emailError,
+        );
+        // Continue - request was successful even if email failed
+      }
+
+      // Update local state optimistically
+      const newRequests = { ...state.requests };
+      if (!newRequests[date]) {
+        newRequests[date] = [];
+      }
+      newRequests[date].push(data as DayRequest);
+      state.setRequests(newRequests);
+
+      return data as DayRequest;
+    } catch (error) {
+      console.error("[CalendarStore] Error submitting request:", error);
+      throw error;
     }
   },
 
@@ -527,419 +909,127 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
     date: string,
     type: "PLD" | "SDV",
   ): Promise<DayRequest | null> => {
+    // Get the member ID from the user store
     const member = useUserStore.getState().member;
-
     if (!member) {
-      throw new Error("Member information not found");
+      console.error("[CalendarStore] submitSixMonthRequest: No member found");
+      return null;
     }
 
-    if (!member.id) {
-      throw new Error("Member ID is missing");
-    }
+    console.log("[CalendarStore] Submitting six-month request", {
+      date,
+      type,
+      memberId: member.id,
+      calendarId: member.calendar_id,
+    });
 
-    if (!member.calendar_id) {
-      throw new Error("No calendar assigned to member");
-    }
-
+    const state = get();
     try {
-      console.log("[CalendarStore] Submitting six-month request:", {
-        date,
-        type,
-        memberId: member.id,
-        calendarId: member.calendar_id,
-      });
+      // Check if date is selectable for six-month request
+      // First, validate date is in the six-month range
+      const now = new Date();
+      const dateObj = parseISO(date);
+      const sixMonthsFromNow = getSixMonthDate();
+      const isEndOfMonth = isLastDayOfMonth(now);
+      const isSixMonthDate = dateObj.getTime() === sixMonthsFromNow.getTime();
 
-      // Check if user has available days for the requested type
-      const currentYear = new Date().getFullYear();
-      const { data: memberEntitlements, error: memberError } = await supabase
-        .from("members")
-        .select("max_plds, sdv_entitlement, pld_rolled_over")
-        .eq("id", member.id)
-        .single();
+      const isSixMonthRequestValid = isSixMonthDate || (
+        isEndOfMonth &&
+        dateObj.getMonth() === sixMonthsFromNow.getMonth() &&
+        dateObj.getFullYear() === sixMonthsFromNow.getFullYear() &&
+        dateObj.getDate() >= sixMonthsFromNow.getDate()
+      );
 
-      if (memberError) {
-        throw new Error(
-          "Unable to determine available days. Please try again.",
+      if (!isSixMonthRequestValid) {
+        console.error(
+          "[CalendarStore] submitSixMonthRequest: Selected date is not valid for a six-month request.",
         );
+        return null;
       }
 
-      // Get existing requests to determine how many days are already used
-      const { data: existingRequests, error: requestsError } = await supabase
-        .from("pld_sdv_requests")
-        .select("leave_type, status, paid_in_lieu")
-        .eq("member_id", member.id)
-        .gte("request_date", `${currentYear}-01-01`)
-        .lte("request_date", `${currentYear}-12-31`);
-
-      if (requestsError) {
-        throw new Error("Unable to check existing requests. Please try again.");
-      }
-
-      // Get existing six-month requests to also count against available days
-      const { data: existingSixMonthRequests, error: sixMonthRequestsError } =
-        await supabase
-          .from("six_month_requests")
-          .select("leave_type")
-          .eq("member_id", member.id)
-          .eq("processed", false)
-          .gte("request_date", `${currentYear}-01-01`)
-          .lte("request_date", `${currentYear}-12-31`);
-
-      if (sixMonthRequestsError) {
-        throw new Error(
-          "Unable to check six-month requests. Please try again.",
+      // Check if we already have a six-month request for this date
+      if (state.sixMonthRequestDays[date] === true) {
+        console.error(
+          "[CalendarStore] submitSixMonthRequest: You already have a six-month request for this date.",
         );
+        return null;
       }
 
-      // Calculate used days
-      let usedPlds = 0;
-      let usedSdvs = 0;
-
-      existingRequests?.forEach((request) => {
-        // Only count requests that are consuming days (approved, pending, or waitlisted but not paid in lieu)
-        if (
-          (request.status === "approved" ||
-            request.status === "pending" ||
-            request.status === "waitlisted" ||
-            request.status === "cancellation_pending") &&
-          !request.paid_in_lieu
-        ) {
-          if (request.leave_type === "PLD") {
-            usedPlds++;
-          } else if (request.leave_type === "SDV") {
-            usedSdvs++;
-          }
-        }
-      });
-
-      // Count pending six-month requests against available days
-      existingSixMonthRequests?.forEach((request) => {
-        if (request.leave_type === "PLD") {
-          usedPlds++;
-        } else if (request.leave_type === "SDV") {
-          usedSdvs++;
-        }
-      });
-
-      // Calculate available days
-      const totalPlds = (memberEntitlements?.max_plds || 0) +
-        (memberEntitlements?.pld_rolled_over || 0);
-      const totalSdvs = memberEntitlements?.sdv_entitlement || 0;
-
-      const availablePlds = totalPlds - usedPlds;
-      const availableSdvs = totalSdvs - usedSdvs;
-
-      console.log("[CalendarStore] Available days for six-month request:", {
-        pld: availablePlds,
-        sdv: availableSdvs,
-      });
-
-      // Check if user has available days for the requested type
-      const availableDays = type === "PLD" ? availablePlds : availableSdvs;
-
-      if (availableDays <= 0) {
-        throw new Error(
-          `No available ${type} days left. Cannot submit six-month request.`,
-        );
-      }
-
-      // Create the six-month request
-      const insertPayload = {
-        member_id: member.id,
-        calendar_id: member.calendar_id,
-        request_date: date,
-        leave_type: type,
-        processed: false,
-        requested_at: new Date().toISOString(),
-      };
-
-      // Insert the request without using .select() to avoid metadata field error
-      const { data: insertedData, error: insertError } = await supabase
+      // Submit six-month request
+      const { data, error } = await supabase
         .from("six_month_requests")
-        .insert(insertPayload)
-        .select("id")
+        .insert({
+          member_id: member.id,
+          calendar_id: member.calendar_id,
+          request_date: date,
+          leave_type: type,
+        })
+        .select()
         .single();
 
-      if (insertError) throw insertError;
-      if (!insertedData) throw new Error("Failed to create six-month request");
+      if (error) throw error;
 
-      // Create a request object for the UI state
-      const request: DayRequest = {
-        id: insertedData.id,
-        member_id: member.id,
-        calendar_id: member.calendar_id,
-        request_date: date,
-        leave_type: type,
+      // Update the sixMonthRequestDays object
+      const newSixMonthDays = { ...state.sixMonthRequestDays, [date]: true };
+      state.setSixMonthRequestDays(newSixMonthDays);
+
+      // Format the response to match DayRequest interface for compatibility
+      // This is a temporary representation for the UI
+      const formattedRequest = {
+        id: data.id,
+        member_id: data.member_id,
+        calendar_id: data.calendar_id,
+        request_date: data.request_date,
+        leave_type: data.leave_type,
         status: "pending",
-        requested_at: new Date().toISOString(),
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        responded_at: null,
-        responded_by: null,
-        paid_in_lieu: false,
-        denial_reason_id: null,
-        denial_comment: null,
-        actioned_by: null,
-        actioned_at: null,
-        metadata: null,
-        waitlist_position: null,
-        is_rollover_pld: false,
-        override_by: null,
+        requested_at: data.requested_at,
         member: {
-          id: member.id,
-          first_name: member.first_name || null,
-          last_name: member.last_name || null,
-          pin_number: member.pin_number || 0,
+          id: member.id ?? "",
+          first_name: member.first_name,
+          last_name: member.last_name,
+          pin_number: member.pin_number,
         },
+        actioned_at: null,
+        actioned_by: null,
+        created_at: data.requested_at,
+        denial_comment: null,
+        paid_in_lieu: false,
+        updated_at: data.requested_at,
+        waitlist_position: null,
+        cancellation_reason: null,
+        is_absence: false,
+        absence_type: null,
+        notes: null,
       };
 
-      // Add the request to the local state
-      const currentRequests = get().requests[date] || [];
-      set((state) => ({
-        requests: {
-          ...state.requests,
-          [date]: [...currentRequests, request],
-        },
-      }));
-
-      return request;
+      return formattedRequest as unknown as DayRequest;
     } catch (error) {
       console.error(
         "[CalendarStore] Error submitting six-month request:",
         error,
       );
-      throw error;
+      return null;
     }
   },
 
-  getActiveRequests: (date: string) => {
-    const state = get();
-    const dateRequests = state.requests[date] || [];
-    return dateRequests.filter((r) =>
-      r.status === "approved" || r.status === "pending" ||
-      r.status === "waitlisted"
-    );
-  },
-
-  userSubmitRequest: async (
-    date: string,
-    type: "PLD" | "SDV",
-  ): Promise<DayRequest> => {
-    const member = useUserStore.getState().member;
-    const calendarId = member?.calendar_id;
-
-    if (!member || !calendarId) {
-      throw new Error("Member or assigned calendar not found");
-    }
-
-    if (!member.id) {
-      throw new Error("Member ID is missing");
-    }
-
-    try {
-      console.log("[CalendarStore] User submitting request:", {
-        date,
-        type,
-        calendarId,
-      });
-
-      // Get member's PLD and SDV entitlements and current requests from the database
-      const currentYear = new Date().getFullYear();
-      const { data: memberEntitlements, error: memberError } = await supabase
-        .from("members")
-        .select("max_plds, sdv_entitlement, pld_rolled_over")
-        .eq("id", member.id)
-        .single();
-
-      if (memberError) {
-        throw new Error(
-          "Unable to determine available days. Please try again.",
-        );
-      }
-
-      // Get existing requests to determine how many days are already used
-      const { data: existingRequests, error: requestsError } = await supabase
-        .from("pld_sdv_requests")
-        .select("leave_type, status, paid_in_lieu")
-        .eq("member_id", member.id)
-        .gte("request_date", `${currentYear}-01-01`)
-        .lte("request_date", `${currentYear}-12-31`);
-
-      if (requestsError) {
-        throw new Error("Unable to check existing requests. Please try again.");
-      }
-
-      // Get existing six-month requests to also count against available days
-      const { data: sixMonthRequests, error: sixMonthRequestsError } =
-        await supabase
-          .from("six_month_requests")
-          .select("leave_type")
-          .eq("member_id", member.id)
-          .eq("processed", false)
-          .gte("request_date", `${currentYear}-01-01`)
-          .lte("request_date", `${currentYear}-12-31`);
-
-      if (sixMonthRequestsError) {
-        throw new Error(
-          "Unable to check six-month requests. Please try again.",
-        );
-      }
-
-      // Calculate used days
-      let usedPlds = 0;
-      let usedSdvs = 0;
-
-      existingRequests?.forEach((request) => {
-        // Only count requests that are consuming days (approved, pending, or waitlisted but not paid in lieu)
-        if (
-          (request.status === "approved" ||
-            request.status === "pending" ||
-            request.status === "waitlisted" ||
-            request.status === "cancellation_pending") &&
-          !request.paid_in_lieu
-        ) {
-          if (request.leave_type === "PLD") {
-            usedPlds++;
-          } else if (request.leave_type === "SDV") {
-            usedSdvs++;
-          }
-        }
-      });
-
-      // Count pending six-month requests against available days
-      sixMonthRequests?.forEach((request) => {
-        if (request.leave_type === "PLD") {
-          usedPlds++;
-        } else if (request.leave_type === "SDV") {
-          usedSdvs++;
-        }
-      });
-
-      // Calculate available days
-      const totalPlds = (memberEntitlements?.max_plds || 0) +
-        (memberEntitlements?.pld_rolled_over || 0);
-      const totalSdvs = memberEntitlements?.sdv_entitlement || 0;
-
-      const availablePlds = totalPlds - usedPlds;
-      const availableSdvs = totalSdvs - usedSdvs;
-
-      console.log("[CalendarStore] Available days:", {
-        pld: availablePlds,
-        sdv: availableSdvs,
-      });
-
-      // Check if user has available days for the requested type
-      const availableDays = type === "PLD" ? availablePlds : availableSdvs;
-
-      if (availableDays <= 0) {
-        throw new Error(
-          `No available ${type} days left. Cannot submit request.`,
-        );
-      }
-
-      const year = new Date(date).getFullYear();
-      const maxAllotment = get().allotments[date] ??
-        get().yearlyAllotments[year] ?? 0;
-
-      if (maxAllotment === 0) {
-        throw new Error("No allotments available for this date");
-      }
-
-      // Check if the day is full and determine status
-      const dateRequests = get().requests[date] || [];
-      const activeRequests = dateRequests.filter((r: DayRequest) =>
-        r.status === "approved" || r.status === "pending"
-      );
-      const waitlistedRequests = dateRequests.filter((r: DayRequest) =>
-        r.status === "waitlisted"
-      );
-
-      // Use explicit string literal type
-      let status:
-        | "pending"
-        | "waitlisted"
-        | "approved"
-        | "denied"
-        | "cancelled"
-        | "cancellation_pending" = "pending";
-      let waitlist_position: number | null = null;
-
-      // If the allotment is already full, add to waitlist
-      if (activeRequests.length >= maxAllotment) {
-        status = "waitlisted";
-        // Calculate waitlist position (next position after current waitlisted requests)
-        const currentMaxPosition = waitlistedRequests.length > 0
-          ? Math.max(
-            ...waitlistedRequests.map((r: DayRequest) =>
-              r.waitlist_position || 0
-            ),
-          )
-          : 0;
-        waitlist_position = currentMaxPosition + 1;
-        console.log(
-          "[CalendarStore] Adding to waitlist with position:",
-          waitlist_position,
-        );
-      }
-
-      const insertPayload: TablesInsert<"pld_sdv_requests"> = {
-        member_id: member.id,
-        calendar_id: calendarId,
-        request_date: date,
-        leave_type: type,
-        status,
-        waitlist_position,
-      };
-
-      const { data: insertedRequest, error: insertError } = await supabase
-        .from("pld_sdv_requests")
-        .insert(insertPayload)
-        .select(
-          `*, member:members!inner(id, first_name, last_name, pin_number)`,
-        )
-        .single();
-
-      if (insertError) throw insertError;
-      if (!insertedRequest) throw new Error("Request insertion failed");
-
-      const memberInfo = (insertedRequest as any).member;
-      const memberData = {
-        id: memberInfo.id as string ?? "",
-        first_name: memberInfo.first_name as string | null,
-        last_name: memberInfo.last_name as string | null,
-        pin_number: memberInfo.pin_number as number ?? 0,
-      };
-      const request: DayRequest = {
-        ...insertedRequest,
-        member: memberData,
-      } as DayRequest;
-
-      const currentRequests = get().requests[date] || [];
-      set((state: CalendarState) => ({
-        requests: {
-          ...state.requests,
-          [date]: [...currentRequests, request],
-        },
-      }));
-
-      return request;
-    } catch (error) {
-      console.error("[CalendarStore] Error submitting request:", error);
-      throw error;
-    }
-  },
-
+  // Replace the synchronous checkSixMonthRequest with the asynchronous version
   checkSixMonthRequest: async (date: string) => {
     const member = useUserStore.getState().member;
 
     if (!member?.id) {
+      console.log(
+        "[CalendarStore] checkSixMonthRequest: No member ID available",
+      );
       return false;
     }
 
     try {
+      console.log(`[CalendarStore] Checking for six-month request for ${date}`);
+
+      // CRITICAL FIX: Explicitly query the six_month_requests table for the given date and member
       const { data, error } = await supabase
         .from("six_month_requests")
-        .select("id")
+        .select("id, request_date, leave_type, processed")
         .eq("member_id", member.id)
         .eq("request_date", date)
         .eq("processed", false)
@@ -947,13 +1037,22 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
 
       if (error) {
         console.error(
-          "[CalendarStore] Error checking six month request:",
+          `[CalendarStore] Error checking six month request for ${date}:`,
           error,
         );
         return false;
       }
 
-      return !!data; // Return true if a request exists, false otherwise
+      const exists = !!data;
+
+      if (exists) {
+        console.log(
+          `[CalendarStore] Found existing six-month request for ${date}:`,
+          data,
+        );
+      }
+
+      return exists;
     } catch (error) {
       console.error("[CalendarStore] Error checking six month request:", error);
       return false;
@@ -962,99 +1061,125 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
 
   cleanupCalendarState: () => {
     console.log("[CalendarStore] Cleaning up calendar state");
-    set({
-      allotments: {},
-      yearlyAllotments: {},
-      requests: {},
-      selectedDate: null,
-      error: null,
-      isInitialized: false,
-    });
+    const state = get();
+    state.setAllotments({});
+    state.setYearlyAllotments({});
+    state.setRequests({});
+    state.setSixMonthRequestDays({});
+    state.setSelectedDate(null);
+    state.setIsInitialized(false);
+    state.setIsLoading(false);
+    state.setError(null);
   },
 }));
 
+// Setup the realtime subscriptions
 export function setupCalendarSubscriptions() {
-  const { member } = useUserStore.getState();
-  const calendarId = member?.calendar_id;
+  console.log("[CalendarStore] Setting up calendar subscriptions");
 
-  if (!calendarId) {
-    console.log("[CalendarStore] No calendar_id found, skipping subscriptions");
-    return { unsubscribe: () => {} };
+  const member = useUserStore.getState().member;
+  if (!member?.id || !member.calendar_id) {
+    console.log(
+      "[CalendarStore] No member ID or calendar ID found, returning empty cleanup function",
+    );
+    return () => {
+      console.log(
+        "[CalendarStore] Empty cleanup function called - no subscriptions were set up",
+      );
+    }; // Return empty function with log
   }
 
+  // Setup subscriptions
+  const calendarId = member.calendar_id;
+  const memberId = member.id;
+
   console.log(
-    "[CalendarStore] Setting up subscriptions for calendar:",
+    "[CalendarStore] Setting up subscriptions for memberId:",
+    memberId,
+    "calendarId:",
     calendarId,
   );
 
-  let isSubscribed = true;
-  let reconnectAttempts = 0;
-  const MAX_RECONNECT_ATTEMPTS = 3;
-  const RECONNECT_DELAY = 5000;
+  // Create channels for different tables
+  const pldSdvAllotmentsChannel = supabase.channel(
+    "pld-sdv-allotments-changes",
+  );
+  const requestsChannel = supabase.channel("requests-changes");
+  const sixMonthRequestsChannel = supabase.channel(
+    "six-month-requests-changes",
+  );
 
-  const allotmentsChannel = supabase.channel(`allotments-${calendarId}`);
-  const requestsChannel = supabase.channel(`requests-${calendarId}`);
-
-  const handleSubscriptionError = async (error: any, channelName: string) => {
-    console.error(`[CalendarStore] ${channelName} subscription error:`, error);
-    reconnectAttempts++;
-
-    if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS && isSubscribed) {
-      console.log(
-        `[CalendarStore] Attempting to reconnect ${channelName} (attempt ${reconnectAttempts})`,
-      );
-      await new Promise((resolve) => setTimeout(resolve, RECONNECT_DELAY));
-      return true;
-    }
-
-    console.log(
-      `[CalendarStore] Max reconnection attempts reached for ${channelName}`,
-    );
-    return false;
-  };
-
-  allotmentsChannel
+  // Subscribe to PLD/SDV allotments changes
+  pldSdvAllotmentsChannel
     .on(
       "postgres_changes",
       {
         event: "*",
         schema: "public",
         table: "pld_sdv_allotments",
-        filter: `calendar_id=eq.${calendarId!}`,
+        filter: `calendar_id=eq.${calendarId}`,
       },
-      async (payload) => {
-        try {
-          const newRecord = payload.new as any;
-          if (
-            newRecord && typeof newRecord === "object" && "date" in newRecord
-          ) {
-            console.log("[CalendarStore] Processing allotment change:", {
-              date: newRecord.date,
-              max_allotment: newRecord.max_allotment,
-            });
+      async (payload: RealtimePostgresChangesPayload<any>) => {
+        console.log(
+          "[CalendarStore Realtime] PLD/SDV allotment change:",
+          payload,
+        );
 
-            const store = useCalendarStore.getState();
-            if (newRecord.date === `${newRecord.year}-01-01`) {
-              store.setAllotments({
-                ...newRecord,
-                current_requests: newRecord.current_requests || 0,
-              });
-            } else {
-              store.setAllotments({
-                ...newRecord,
-                current_requests: newRecord.current_requests || 0,
-              });
+        try {
+          // Get the current state
+          const state = useCalendarStore.getState();
+          const newAllotments = { ...state.allotments };
+          const newYearlyAllotments = { ...state.yearlyAllotments };
+
+          // Handle different event types
+          if (
+            payload.eventType === "INSERT" || payload.eventType === "UPDATE"
+          ) {
+            // Update the allotment for the specific date
+            newAllotments[payload.new.date] = payload.new.max_allotment;
+
+            // If it has a year, update yearly allotments too
+            if (payload.new.year) {
+              newYearlyAllotments[payload.new.year] = payload.new.max_allotment;
             }
+
+            state.setAllotments(newAllotments);
+            state.setYearlyAllotments(newYearlyAllotments);
+          } else if (payload.eventType === "DELETE") {
+            // Remove the allotment for the specific date
+            delete newAllotments[payload.old.date];
+            state.setAllotments(newAllotments);
+
+            // We don't delete from yearly allotments as there might be other dates with the same year
           }
         } catch (error) {
-          if (await handleSubscriptionError(error, "allotments")) {
-            allotmentsChannel.subscribe();
-          }
+          console.error(
+            "[CalendarStore Realtime] Error handling PLD/SDV allotment change:",
+            error,
+          );
         }
       },
     )
-    .subscribe();
+    .subscribe(createRealtimeCallback(
+      "CalendarStore-Allotments",
+      // onError callback
+      (status, err) => {
+        console.error(
+          "[CalendarStore Realtime] PLD/SDV allotments subscription error:",
+          status,
+          err,
+        );
+      },
+      // onSuccess callback
+      (status) => {
+        console.log(
+          "[CalendarStore Realtime] PLD/SDV allotments subscription status:",
+          status,
+        );
+      },
+    ));
 
+  // Subscribe to requests changes
   requestsChannel
     .on(
       "postgres_changes",
@@ -1062,113 +1187,267 @@ export function setupCalendarSubscriptions() {
         event: "*",
         schema: "public",
         table: "pld_sdv_requests",
-        filter: `calendar_id=eq.${calendarId!}`,
+        filter: `calendar_id=eq.${calendarId}`,
       },
-      async (payload) => {
+      async (payload: RealtimePostgresChangesPayload<any>) => {
+        console.log("[CalendarStore Realtime] Request change:", payload);
+
         try {
-          const newRecord = payload.new as any;
-          const oldRecord = payload.old as any;
-          const eventType = payload.eventType;
+          // Get the current state and refresh the requests for the affected date
+          const state = useCalendarStore.getState();
+          const member = useUserStore.getState().member;
 
-          const requestDate = newRecord?.request_date ||
-            oldRecord?.request_date;
-
-          if (requestDate) {
-            console.log("[CalendarStore] Processing request change:", {
-              eventType,
-              requestDate,
-              newStatus: newRecord?.status,
-              oldStatus: oldRecord?.status,
-              requestId: newRecord?.id || oldRecord?.id,
-            });
-
-            const store = useCalendarStore.getState();
-            const currentRequests = store.requests[requestDate] || [];
-
-            if (eventType === "INSERT" && newRecord) {
-              try {
-                const { data: memberData, error: memberError } = await supabase
-                  .from("members")
-                  .select("id, first_name, last_name, pin_number")
-                  .eq("id", newRecord.member_id)
-                  .single();
-
-                if (!memberError && memberData) {
-                  const requestWithMember = {
-                    ...newRecord,
-                    member: {
-                      id: memberData.id,
-                      first_name: memberData.first_name || null,
-                      last_name: memberData.last_name || null,
-                      pin_number: memberData.pin_number,
-                    },
-                  };
-                  store.setRequests({
-                    ...store.requests,
-                    [requestDate]: [...currentRequests, requestWithMember],
-                  });
-                }
-              } catch (error) {
-                console.error(
-                  "[CalendarStore] Error processing INSERT:",
-                  error,
-                );
-              }
-            } else if (eventType === "UPDATE" && newRecord) {
-              const updatedRequests = currentRequests.map((req) =>
-                req.id === newRecord.id
-                  ? { ...newRecord, member: req.member }
-                  : req
-              );
-              store.setRequests({
-                ...store.requests,
-                [requestDate]: updatedRequests,
-              });
-            } else if (eventType === "DELETE" && oldRecord) {
-              const filteredRequests = currentRequests.filter((req) =>
-                req.id !== oldRecord.id
-              );
-              store.setRequests({
-                ...store.requests,
-                [requestDate]: filteredRequests,
-              });
-            }
-
-            try {
-              const dateRange = {
-                start: requestDate,
-                end: requestDate,
-              };
-              await store.fetchAllotments(
-                dateRange.start,
-                dateRange.end,
-                calendarId,
-              );
-            } catch (error) {
-              console.error(
-                "[CalendarStore] Error refreshing allotments:",
-                error,
-              );
-            }
+          let date: string;
+          if (
+            payload.eventType === "INSERT" || payload.eventType === "UPDATE"
+          ) {
+            date = payload.new.request_date;
+          } else {
+            date = payload.old.request_date;
           }
+
+          if (member?.calendar_id) {
+            await state.refreshRequestsForDate(date, member.calendar_id);
+          } else {
+            console.warn(
+              "[CalendarStore Realtime] Cannot refreshRequestsForDate, missing member.calendar_id",
+            );
+          }
+
+          // !!! DIAGNOSTIC HACK !!!
+          console.log(
+            "[CalendarStore Realtime] Attempting to trigger TimeStore refresh for PLD/SDV change.",
+          );
+
+          // Replace direct timeStore call with event emission
+          storeEventManager.emitEvent(
+            StoreEventType.CALENDAR_REQUESTS_UPDATED,
+            {
+              source: "calendarStore",
+              payload: {
+                requestDate: date,
+                calendarId: member?.calendar_id || undefined,
+                updateType: "realtime_update",
+                shouldRefreshTimeStore: true,
+                triggerSource: "realtime",
+                realtimeEventType: payload.eventType as
+                  | "INSERT"
+                  | "UPDATE"
+                  | "DELETE",
+                realtimeTable: "pld_sdv_requests",
+              },
+            },
+          );
+
+          console.log(
+            "[CalendarStore Realtime] Emitted CALENDAR_REQUESTS_UPDATED event for TimeStore",
+          );
+          // !!! END DIAGNOSTIC HACK !!!
         } catch (error) {
-          if (await handleSubscriptionError(error, "requests")) {
-            requestsChannel.subscribe();
-          }
+          console.error(
+            "[CalendarStore Realtime] Error handling request change:",
+            error,
+          );
         }
       },
     )
-    .subscribe();
+    .subscribe(createRealtimeCallback(
+      "CalendarStore-Requests",
+      // onError callback
+      (status, err) => {
+        console.error(
+          "[CalendarStore Realtime] Requests subscription error:",
+          status,
+          err,
+        );
+      },
+      // onSuccess callback
+      (status) => {
+        console.log(
+          "[CalendarStore Realtime] Requests subscription status:",
+          status,
+        );
+      },
+    ));
 
-  return {
-    unsubscribe: () => {
-      console.log(
-        "[CalendarStore] Unsubscribing from realtime updates for calendar:",
-        calendarId,
-      );
-      isSubscribed = false;
-      allotmentsChannel.unsubscribe();
-      requestsChannel.unsubscribe();
-    },
+  // Subscribe to six-month requests changes for the current member
+  sixMonthRequestsChannel
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "six_month_requests",
+        filter: `member_id=eq.${memberId}`,
+      },
+      async (payload: RealtimePostgresChangesPayload<any>) => {
+        console.log(
+          "[CalendarStore Realtime] Six-month request change detected:",
+          {
+            eventType: payload.eventType,
+            table: payload.table,
+            schema: payload.schema,
+            memberId: memberId,
+            requestDate: payload.eventType === "INSERT"
+              ? payload.new.request_date
+              : payload.old?.request_date,
+            requestId: payload.eventType === "INSERT"
+              ? payload.new.id
+              : payload.old?.id,
+          },
+        );
+
+        try {
+          // Get the current state and update sixMonthRequestDays
+          const state = useCalendarStore.getState();
+
+          // Handle different event types
+          if (payload.eventType === "INSERT") {
+            // Add the date to sixMonthRequestDays
+            const updatedDays = {
+              ...state.sixMonthRequestDays,
+              [payload.new.request_date]: true,
+            };
+            console.log(
+              "[CalendarStore Realtime] Adding six-month request date to state:",
+              payload.new.request_date,
+              "Updated days:",
+              Object.keys(updatedDays),
+            );
+            state.setSixMonthRequestDays(updatedDays);
+          } else if (payload.eventType === "DELETE") {
+            // Remove the date from sixMonthRequestDays
+            const newSixMonthRequestDays = { ...state.sixMonthRequestDays };
+
+            console.log(
+              "[CalendarStore Realtime] DELETE event received for six-month request. Request date:",
+              payload.old.request_date,
+              "RequestId:",
+              payload.old.id,
+              "Current sixMonthRequestDays:",
+              Object.keys(newSixMonthRequestDays),
+            );
+
+            if (payload.old && payload.old.request_date) {
+              delete newSixMonthRequestDays[payload.old.request_date];
+              console.log(
+                "[CalendarStore Realtime] Removing six-month request date from state:",
+                payload.old.request_date,
+                "Updated days:",
+                Object.keys(newSixMonthRequestDays),
+              );
+
+              // Force a state update with the new object
+              state.setSixMonthRequestDays({ ...newSixMonthRequestDays });
+
+              // Force a refresh of the timeStore data as well
+              try {
+                console.log(
+                  "[CalendarStore Realtime] Triggering timeStore refresh after six-month cancellation",
+                );
+
+                // Replace direct timeStore call with event emission
+                storeEventManager.emitEvent(
+                  StoreEventType.SIX_MONTH_REQUESTS_UPDATED,
+                  {
+                    source: "calendarStore",
+                    payload: {
+                      requestDate: payload.old.request_date,
+                      memberId: memberId,
+                      updateType: "realtime_update",
+                      shouldRefreshTimeStore: true,
+                      triggerSource: "realtime",
+                      realtimeEventType: "DELETE",
+                      realtimeTable: "six_month_requests",
+                      isSixMonthRequest: true,
+                    },
+                  },
+                );
+
+                console.log(
+                  "[CalendarStore Realtime] Emitted SIX_MONTH_REQUESTS_UPDATED event for TimeStore",
+                );
+              } catch (refreshError: any) {
+                console.error(
+                  "[CalendarStore Realtime] Error emitting timeStore refresh event:",
+                  refreshError,
+                );
+              }
+            } else {
+              console.error(
+                "[CalendarStore Realtime] DELETE event missing payload.old.request_date:",
+                payload,
+              );
+            }
+          } else if (payload.eventType === "UPDATE") {
+            console.log(
+              "[CalendarStore Realtime] Detected UPDATE for six-month request:",
+              payload.old.request_date,
+              "->",
+              payload.new.request_date,
+            );
+            // Handle updates if needed
+            if (payload.old.request_date !== payload.new.request_date) {
+              const updatedDays = { ...state.sixMonthRequestDays };
+              delete updatedDays[payload.old.request_date];
+              updatedDays[payload.new.request_date] = true;
+              state.setSixMonthRequestDays(updatedDays);
+            }
+          }
+
+          // Verify state update was successful
+          console.log(
+            "[CalendarStore Realtime] Six-month days after update:",
+            Object.keys(useCalendarStore.getState().sixMonthRequestDays),
+          );
+        } catch (error) {
+          console.error(
+            "[CalendarStore Realtime] Error handling six-month request change:",
+            error,
+          );
+        }
+      },
+    )
+    .subscribe(createRealtimeCallback(
+      "CalendarStore-SixMonth",
+      // onError callback
+      (status, err) => {
+        console.warn(
+          "[CalendarStore Realtime] Six-month subscription issue detected:",
+          status,
+          "This may prevent six-month request updates from being received.",
+          err,
+        );
+      },
+      // onSuccess callback
+      (status) => {
+        console.log(
+          "[CalendarStore Realtime] Six-month subscription status:",
+          status,
+        );
+
+        // Log detailed subscription info
+        if (status === "SUBSCRIBED") {
+          console.log(
+            "[CalendarStore Realtime] Six-month subscription active. Channel details:",
+            {
+              channelName: "six-month-requests-changes",
+              topic: "six-month-requests",
+              isJoined: true,
+            },
+          );
+        }
+      },
+    ));
+
+  console.log("[CalendarStore] All subscriptions setup complete");
+
+  // Return a cleanup function directly
+  return () => {
+    console.log("[CalendarStore] Cleaning up calendar subscriptions");
+    pldSdvAllotmentsChannel.unsubscribe();
+    requestsChannel.unsubscribe();
+    sixMonthRequestsChannel.unsubscribe();
+    console.log("[CalendarStore] All subscriptions unsubscribed");
   };
 }

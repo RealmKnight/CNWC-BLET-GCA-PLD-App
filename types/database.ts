@@ -33,7 +33,8 @@ export interface Database {
                         | "denied"
                         | "waitlisted"
                         | "cancellation_pending"
-                        | "cancelled";
+                        | "cancelled"
+                        | "transferred";
                     requested_at: string;
                     waitlist_position?: number;
                     responded_at?: string;

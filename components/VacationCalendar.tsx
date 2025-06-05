@@ -151,13 +151,27 @@ export function VacationCalendar({ current }: VacationCalendarProps) {
     console.log("[VacationCalendar] Generating marks with state:", {
       allotmentCount: Object.keys(currentAllotments).length,
       requestCount: Object.keys(currentRequests).length,
+      hasNextYearAllotments,
     });
 
     const dates: any = {};
     const currentYear = new Date().getFullYear();
-    const startDate = new Date(currentYear, 0, 1);
-    const endDate = new Date(currentYear + (hasNextYearAllotments ? 1 : 0), 11, 31);
-    console.log("[VacationCalendar] Date Range Check:", { startDate, endDate, hasNextYearAllotments });
+    // Get first day of the year
+    const yearStart = new Date(currentYear, 0, 1);
+    // Find the first Monday
+    const startDate = startOfWeek(yearStart, { weekStartsOn: 1 });
+    // Get last day of the year (or next year if we have next year allotments)
+    const yearEnd = new Date(currentYear + (hasNextYearAllotments ? 1 : 0), 11, 31);
+    // Find the last Sunday
+    const endDate = endOfWeek(yearEnd, { weekStartsOn: 1 });
+
+    console.log("[VacationCalendar] Date Range for Marking:", {
+      startDate,
+      endDate,
+      hasNextYearAllotments,
+      isFirstDayMonday: format(startDate, "EEEE") === "Monday",
+      isLastDaySunday: format(endDate, "EEEE") === "Sunday",
+    });
 
     let currentDate = startDate;
     while (currentDate <= endDate) {
@@ -165,35 +179,36 @@ export function VacationCalendar({ current }: VacationCalendarProps) {
       const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
       const weekStartStr = format(weekStart, "yyyy-MM-dd");
 
-      console.log("[VacationCalendar] Processing week:", {
-        weekStartStr,
-        hasAllotment: !!currentAllotments[weekStartStr],
-      });
+      if (weekStart > endDate) {
+        currentDate.setDate(currentDate.getDate() + 7);
+        continue;
+      }
 
       const allotmentData = currentAllotments[weekStartStr];
 
+      let availability = "unallocated";
       if (allotmentData) {
-        const availability = getWeekAvailability(weekStartStr);
-        const colors = AVAILABILITY_COLORS[availability];
+        availability = getWeekAvailability(weekStartStr);
+      }
+      const colors = AVAILABILITY_COLORS[availability as keyof typeof AVAILABILITY_COLORS];
 
-        // Mark the start of the week
-        dates[weekStartStr] = {
-          startingDay: true,
-          color: colors.color,
-          textColor: colors.text,
-          customStyles: {
-            text: {
-              fontWeight: "700",
-              fontSize: 18,
-            },
+      dates[weekStartStr] = {
+        startingDay: true,
+        color: colors.color,
+        textColor: colors.text,
+        customStyles: {
+          text: {
+            fontWeight: "700",
+            fontSize: 18,
           },
-        };
+        },
+      };
 
-        // Mark days in between
-        let dayInWeek = new Date(weekStart);
-        dayInWeek.setDate(dayInWeek.getDate() + 1);
-        while (format(dayInWeek, "yyyy-MM-dd") !== format(weekEnd, "yyyy-MM-dd")) {
-          const dayStr = format(dayInWeek, "yyyy-MM-dd");
+      let dayInWeek = new Date(weekStart);
+      dayInWeek.setDate(dayInWeek.getDate() + 1);
+      while (format(dayInWeek, "yyyy-MM-dd") !== format(weekEnd, "yyyy-MM-dd")) {
+        const dayStr = format(dayInWeek, "yyyy-MM-dd");
+        if (dayInWeek <= endDate) {
           dates[dayStr] = {
             color: colors.color,
             textColor: colors.text,
@@ -204,10 +219,11 @@ export function VacationCalendar({ current }: VacationCalendarProps) {
               },
             },
           };
-          dayInWeek.setDate(dayInWeek.getDate() + 1);
         }
+        dayInWeek.setDate(dayInWeek.getDate() + 1);
+      }
 
-        // Mark the end of the week
+      if (weekEnd <= endDate) {
         const weekEndStr = format(weekEnd, "yyyy-MM-dd");
         dates[weekEndStr] = {
           endingDay: true,
@@ -222,31 +238,29 @@ export function VacationCalendar({ current }: VacationCalendarProps) {
         };
       }
 
-      // Move to next week
-      currentDate.setDate(currentDate.getDate() + 7);
+      currentDate = new Date(weekEnd);
+      currentDate.setDate(currentDate.getDate() + 1);
     }
 
-    // Selection Highlighting Logic (should still work with customStyles)
     if (selectedWeek) {
       const weekStart = parseISO(selectedWeek);
       const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
       let selectionDate = new Date(weekStart);
       while (selectionDate <= weekEnd) {
         const dateStr = format(selectionDate, "yyyy-MM-dd");
-        const existingMarking = dates[dateStr] || {}; // Get existing period marking if present
+        const existingMarking = dates[dateStr] || {};
         dates[dateStr] = {
-          ...existingMarking, // Keep startingDay/endingDay/color/textColor
+          ...existingMarking,
           customStyles: {
-            // Apply selection border via customStyles
             container: {
               ...existingMarking.customStyles?.container,
               borderWidth: 2,
               borderColor: Colors[theme].tint,
-              backgroundColor: existingMarking.color, // Keep the period color as background
+              backgroundColor: existingMarking.color,
             },
             text: {
               ...existingMarking.customStyles?.text,
-              color: existingMarking.textColor || Colors[theme].text, // Keep original text color
+              color: existingMarking.textColor || Colors[theme].text,
               fontWeight: "bold",
             },
           },
@@ -256,11 +270,9 @@ export function VacationCalendar({ current }: VacationCalendarProps) {
     }
 
     return dates;
-    // Dependencies remain the same
-  }, [isInitialized, allotments, requests, selectedWeek, theme, hasNextYearAllotments, getWeekAvailability]); // Added getWeekAvailability back as it's used inside
+  }, [isInitialized, allotments, requests, selectedWeek, theme, hasNextYearAllotments, getWeekAvailability]);
 
   const handleDayPress = (day: DateData) => {
-    // Calculate week start using standard date handling
     const weekStart = startOfWeek(parseISO(day.dateString), { weekStartsOn: 1 });
     const weekStartStr = format(weekStart, "yyyy-MM-dd");
 
@@ -271,11 +283,9 @@ export function VacationCalendar({ current }: VacationCalendarProps) {
 
     const allotmentForWeek = allotments[weekStartStr];
 
-    // Only allow selection/dialog opening if the week has an allotment
     if (allotmentForWeek) {
-      setSelectedWeek(weekStartStr); // Highlight the selected week
+      setSelectedWeek(weekStartStr);
 
-      // Prepare data for the dialog
       const requestsForWeek = getActiveRequests(weekStartStr);
 
       console.log("[VacationCalendar] Opening dialog:", {
@@ -292,15 +302,13 @@ export function VacationCalendar({ current }: VacationCalendarProps) {
         allotment: allotmentForWeek,
         requests: requestsForWeek,
       });
-      setIsDialogVisible(true); // Show the dialog
+      setIsDialogVisible(true);
     } else {
-      // Optionally clear selection if clicking an unallocated week
       setSelectedWeek(null);
       console.log("[VacationCalendar] No allotment for week:", weekStartStr);
     }
   };
 
-  // Keep dialog handling simple, don't modify other state
   const handleCloseDialog = () => {
     setIsDialogVisible(false);
   };
@@ -348,15 +356,9 @@ export function VacationCalendar({ current }: VacationCalendarProps) {
             <ThemedView style={[styles.legendColor, { backgroundColor: AVAILABILITY_COLORS.full.color }]} />
             <ThemedText>Full</ThemedText>
           </ThemedView>
-          {/* Remove unallocated from legend if unallocated weeks are not marked */}
-          {/* <ThemedView style={styles.legendItem}>
-            <ThemedView style={[styles.legendColor, { backgroundColor: AVAILABILITY_COLORS.unallocated.color }]} />
-            <ThemedText>No Allocation Set</ThemedText>
-          </ThemedView> */}
         </ThemedView>
       </ThemedView>
 
-      {/* Render the Dialog Conditionally */}
       {dialogWeekData && (
         <VacationWeekDialog
           isVisible={isDialogVisible}

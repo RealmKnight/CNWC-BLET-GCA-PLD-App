@@ -23,7 +23,7 @@ import { format, parseISO } from "date-fns";
 import { Tooltip } from "../../../components/Tooltip";
 import { useAdminCalendarManagementStore } from "@/store/adminCalendarManagementStore";
 import Toast from "react-native-toast-message";
-import { DatePicker } from "@/components/DatePicker";
+import { ClientOnlyDatePicker } from "@/components/ClientOnlyDatePicker";
 import { Accordion } from "@/components/Accordion";
 
 type AllotmentType = "pld_sdv" | "vacation";
@@ -234,7 +234,8 @@ export function CalendarAllotments({ calendarId, selectedDivision }: CalendarAll
     }
 
     try {
-      const currentType = selectedType;
+      // Use activeTab instead of selectedType to determine the correct type
+      const currentType = activeTab;
       // Get the calendar name from the store
       const calendarName =
         Object.values(adminCalendarStore.calendars)
@@ -659,14 +660,14 @@ export function CalendarAllotments({ calendarId, selectedDivision }: CalendarAll
             {activeTab === "vacation" ? "Weekly Vacation Override" : "Daily Override"}
           </ThemedText>
           <ThemedView style={styles.dateRangeContainer}>
-            <DatePicker
+            <ClientOnlyDatePicker
               date={startDate}
               onDateChange={setStartDate}
               mode="date"
               placeholder="Start Date"
               style={styles.datePicker}
             />
-            <DatePicker
+            <ClientOnlyDatePicker
               date={endDate}
               onDateChange={setEndDate}
               mode="date"
@@ -774,12 +775,13 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderRadius: 8,
     overflow: "hidden",
+    backgroundColor: Colors.dark.card,
   },
   tab: {
     flex: 1,
     padding: 12,
     alignItems: "center",
-    backgroundColor: Colors.dark.background,
+    backgroundColor: Colors.dark.card,
   },
   activeTab: {
     backgroundColor: Colors.dark.tint,
@@ -795,7 +797,9 @@ const styles = StyleSheet.create({
     marginBottom: 24,
     padding: 16,
     borderRadius: 8,
-    backgroundColor: Colors.dark.background,
+    backgroundColor: Colors.dark.card,
+    borderColor: Colors.dark.border,
+    borderWidth: 1,
   },
   sectionTitle: {
     fontSize: 18,
@@ -811,8 +815,10 @@ const styles = StyleSheet.create({
   },
   yearContainer: {
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
     marginBottom: 12,
+    backgroundColor: Colors.dark.card,
   },
   yearText: {
     fontSize: 16,
@@ -831,6 +837,7 @@ const styles = StyleSheet.create({
         fontSize: 16,
         paddingVertical: 8,
         marginRight: 8,
+        placeholderTextColor: Colors.dark.textDim,
       },
       ios: {
         flex: 0.15,
@@ -866,6 +873,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     flexWrap: "wrap",
     gap: 8,
+    backgroundColor: Colors.dark.card,
   },
   datePicker: {
     flex: 1,
@@ -964,6 +972,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderBottomWidth: 1,
     borderBottomColor: Colors.dark.border,
+    backgroundColor: Colors.dark.card,
   },
   noDataText: {
     color: Colors.dark.textDim,
@@ -973,8 +982,6 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 8,
     backgroundColor: Colors.dark.card,
-    borderWidth: 1,
-    borderColor: Colors.dark.border,
   },
   allotmentSummaryText: {
     fontSize: 14,

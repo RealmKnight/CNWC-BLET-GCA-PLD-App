@@ -202,12 +202,22 @@ export function RequestEntry({ selectedDivision, selectedCalendarId: propSelecte
         }
       : {};
 
-  const nativePickerSpecificStyle =
-    Platform.OS !== "web"
-      ? {
-          // Add specific native styling if needed
-        }
-      : {};
+  // Define OS-specific styles for native Picker
+  const iosPickerSpecificStyle = {
+    // iOS often looks better using native defaults, so we might override the background
+    // Let's try removing the explicit background to see if the native feel is better
+    // backgroundColor: undefined, // Or set to a specific iOS-like color if needed
+    // Height might also be better handled by the native component
+    height: undefined,
+    // Add padding if necessary
+    // paddingVertical: 12,
+  };
+
+  const androidPickerSpecificStyle = {
+    // Android might need minor adjustments, e.g., padding
+    paddingHorizontal: 8,
+    height: undefined,
+  };
 
   const styles = StyleSheet.create({
     container: {
@@ -226,9 +236,11 @@ export function RequestEntry({ selectedDivision, selectedCalendarId: propSelecte
       marginBottom: 8,
       fontWeight: "500",
     },
+    // Updated nativePicker style
     nativePicker: {
-      ...pickerBaseStyle,
-      ...nativePickerSpecificStyle,
+      ...pickerBaseStyle, // Apply base styles first
+      ...(Platform.OS === "ios" ? iosPickerSpecificStyle : {}), // Apply iOS specific overrides
+      ...(Platform.OS === "android" ? androidPickerSpecificStyle : {}), // Apply Android specific adjustments
     },
     submitButton: {
       marginTop: 20,
