@@ -38,6 +38,7 @@ export type ImportStage =
     | "unmatched"
     | "duplicates"
     | "over_allotment"
+    | "db_reconciliation"
     | "final_review";
 
 /**
@@ -48,8 +49,9 @@ export interface ImportProgressState {
     completedStages: ImportStage[];
     stageData: {
         unmatched: UnmatchedStageData;
-        over_allotment: OverAllotmentStageData;
         duplicates: DuplicateStageData;
+        over_allotment: OverAllotmentStageData;
+        db_reconciliation: DbReconciliationStageData;
         final_review: FinalReviewStageData;
     };
     canProgress: boolean;
@@ -86,6 +88,48 @@ export interface DuplicateStageData {
     skipDuplicates: Set<number>; // originalIndex of duplicates to skip
     overrideDuplicates: Set<number>; // originalIndex of duplicates to import anyway
     isComplete: boolean;
+}
+
+/**
+ * Interface for database reconciliation conflict
+ */
+export interface DbConflict {
+    id: string; // Unique conflict identifier
+    type: "missing_from_ical" | "status_mismatch" | "leave_type_conflict";
+    dbRequest: any; // The existing DB request (PldSdvRequest)
+    icalRequest?: ParsedPldSdvRequest; // The matching iCal request (if exists)
+    memberId?: string; // For grouping
+    memberName: string; // For display
+    requestDate: string; // For grouping
+    severity: "low" | "medium" | "high"; // Impact level
+    description: string; // Human-readable description
+    suggestedAction?: string; // Recommended action
+}
+
+/**
+ * Interface for queued database changes
+ */
+export interface QueuedDbChange {
+    requestId: string; // pld_sdv_requests.id
+    currentStatus: string; // Current status in DB
+    newStatus: string; // Admin's chosen new status
+    memberId?: string; // For audit trail
+    pinNumber?: number; // For audit trail
+    requestDate: string; // For impact calculations
+    leaveType: string; // For impact calculations
+    adminReason?: string; // Optional admin note
+    timestamp: Date; // When change was queued
+}
+
+/**
+ * Interface for database reconciliation stage data
+ */
+export interface DbReconciliationStageData {
+    conflicts: DbConflict[]; // All detected conflicts
+    queuedChanges: QueuedDbChange[]; // Admin's queued decisions
+    reviewedConflicts: Set<string>; // requestId of reviewed conflicts
+    isComplete: boolean; // All conflicts reviewed
+    cacheTimestamp?: Date; // For cache invalidation
 }
 
 /**
@@ -783,18 +827,25 @@ async function initializeProgressState(
                 skippedItems: new Set(),
                 isComplete: unmatchedItems.length === 0,
             },
-            over_allotment: {
-                overAllottedDates: [],
-                allotmentAdjustments: {},
-                requestOrdering: {},
-                isComplete: false,
-            },
             duplicates: {
                 duplicateItems: [],
                 duplicateOriginalIndices: [],
                 skipDuplicates: new Set(),
                 overrideDuplicates: new Set(),
                 isComplete: false,
+            },
+            over_allotment: {
+                overAllottedDates: [],
+                allotmentAdjustments: {},
+                requestOrdering: {},
+                isComplete: false,
+            },
+            db_reconciliation: {
+                conflicts: [],
+                queuedChanges: [],
+                reviewedConflicts: new Set(),
+                isComplete: false,
+                cacheTimestamp: undefined,
             },
             final_review: {
                 approvedItems: [],
@@ -868,6 +919,11 @@ export async function advanceToNextStage(
             await analyzeOverAllotmentStage(stagedPreview);
             break;
         case "over_allotment":
+            nextStage = "db_reconciliation";
+            console.log(`[StagedImport] Analyzing database reconciliation...`);
+            await analyzeDbReconciliationStage(stagedPreview);
+            break;
+        case "db_reconciliation":
             nextStage = "final_review";
             console.log(`[StagedImport] Preparing final review summary...`);
             await analyzeFinalReviewStage(stagedPreview);
@@ -1021,7 +1077,7 @@ async function analyzeDuplicateStage(
 }
 
 /**
- * Analyze final review stage (Stage 4)
+ * Analyze final review stage (Stage 5)
  *
  * @param stagedPreview - Current staged import preview
  */
@@ -1128,9 +1184,412 @@ async function analyzeFinalReviewStage(
         isComplete: true, // Final stage is always complete when reached
     };
 
+    // PHASE 8.6: Update final review with database changes impact
+    updateFinalReviewWithDbChanges(stagedPreview);
+
     console.log(
         `[StagedImport] Final review complete - ${approvedItems.length} approved, ${waitlistedItems.length} waitlisted, ${skippedItems.length} skipped`,
     );
+}
+
+/**
+ * Analyze database reconciliation stage (Stage 4 - between over_allotment and final_review)
+ *
+ * @param stagedPreview - Current staged import preview
+ */
+async function analyzeDbReconciliationStage(
+    stagedPreview: StagedImportPreview,
+): Promise<void> {
+    console.log(`[DbReconciliation] Analyzing database reconciliation stage`);
+
+    const { calendarId, year, progressState, originalItems } = stagedPreview;
+    const { unmatched, duplicates, over_allotment } = progressState.stageData;
+
+    try {
+        // Query existing requests from database for comparison
+        const existingRequests = await queryExistingRequests(calendarId, year);
+        console.log(
+            `[DbReconciliation] Found ${existingRequests.length} existing requests in database`,
+        );
+
+        // IMPORTANT: Compare against ORIGINAL import items, not filtered ones
+        // The filtering stages (duplicates, unmatched) should not affect conflict detection
+        // We need to see ALL potential matches, including duplicates that were identified earlier
+        const originalItemsWithIndex = originalItems.map((item, index) => ({
+            ...item,
+            originalIndex: index,
+        }));
+
+        console.log(
+            `[DbReconciliation] Analyzing ${originalItemsWithIndex.length} ORIGINAL items for database conflicts`,
+        );
+
+        // Detect conflicts between existing DB requests and ALL original import items
+        const conflicts = await detectDatabaseConflicts(
+            existingRequests,
+            originalItemsWithIndex,
+            originalItems,
+        );
+        console.log(
+            `[DbReconciliation] Found ${conflicts.length} conflicts requiring review`,
+        );
+
+        // Update reconciliation stage data
+        progressState.stageData.db_reconciliation = {
+            conflicts,
+            queuedChanges: [],
+            reviewedConflicts: new Set(),
+            isComplete: conflicts.length === 0, // Auto-complete if no conflicts
+            cacheTimestamp: new Date(),
+        };
+
+        console.log(
+            `[DbReconciliation] Analysis complete - ${conflicts.length} conflicts ${
+                conflicts.length === 0
+                    ? "(auto-advancing)"
+                    : "requiring admin review"
+            }`,
+        );
+    } catch (error) {
+        console.error("[DbReconciliation] Error during analysis:", error);
+        // Initialize with empty state on error
+        progressState.stageData.db_reconciliation = {
+            conflicts: [],
+            queuedChanges: [],
+            reviewedConflicts: new Set(),
+            isComplete: true, // Skip stage on error
+            cacheTimestamp: new Date(),
+        };
+    }
+}
+
+/**
+ * Query existing PLD/SDV requests from the database for a specific calendar and year
+ * Filters OUT cancelled, transferred, and cancellation_pending requests
+ *
+ * @param calendarId - Calendar ID to query
+ * @param year - Year to filter requests
+ * @returns Promise resolving to array of existing requests
+ */
+async function queryExistingRequests(
+    calendarId: string,
+    year: number,
+): Promise<any[]> {
+    try {
+        console.log(
+            `[queryExistingRequests] Querying existing requests for calendar ${calendarId}, year ${year}`,
+        );
+
+        const { data, error } = await supabase
+            .from("pld_sdv_requests")
+            .select(`
+                id,
+                member_id,
+                pin_number,
+                request_date,
+                leave_type,
+                status,
+                requested_at,
+                waitlist_position,
+                created_at,
+                updated_at,
+                actioned_at,
+                actioned_by,
+                members:member_id (
+                    id,
+                    first_name,
+                    last_name,
+                    pin_number
+                )
+            `)
+            .eq("calendar_id", calendarId)
+            .gte("request_date", `${year}-01-01`)
+            .lte("request_date", `${year}-12-31`)
+            .in("status", ["pending", "approved", "denied", "waitlisted"]) // Exclude cancelled, transferred, cancellation_pending
+            .order("request_date", { ascending: true });
+
+        if (error) {
+            console.error("[queryExistingRequests] Database error:", error);
+            throw new Error(
+                `Failed to query existing requests: ${error.message}`,
+            );
+        }
+
+        console.log(
+            `[queryExistingRequests] Found ${
+                data?.length || 0
+            } existing requests`,
+        );
+        return data || [];
+    } catch (error) {
+        console.error("[queryExistingRequests] Error:", error);
+        throw error;
+    }
+}
+
+/**
+ * Get items that will proceed to import after filtering through previous stages
+ *
+ * @param originalItems - All original import items
+ * @param unmatchedStageData - Unmatched stage data with resolutions
+ * @param duplicateStageData - Duplicate stage data with skip decisions
+ * @returns Array of items that will be imported
+ */
+function getItemsToImport(
+    originalItems: ImportPreviewItem[],
+    unmatchedStageData: UnmatchedStageData,
+    duplicateStageData: DuplicateStageData,
+): Array<ImportPreviewItem & { originalIndex: number }> {
+    const itemsToImport: Array<ImportPreviewItem & { originalIndex: number }> =
+        [];
+
+    originalItems.forEach((item, index) => {
+        // Skip items marked to skip in unmatched stage
+        if (unmatchedStageData.skippedItems.has(index)) return;
+
+        // Skip items marked as duplicates to skip
+        if (duplicateStageData.skipDuplicates.has(index)) return;
+
+        // Include items that are matched or have resolved assignments
+        const hasAssignment = item.matchedMember.status === "matched" ||
+            unmatchedStageData.resolvedAssignments[index];
+
+        if (hasAssignment) {
+            itemsToImport.push({ ...item, originalIndex: index });
+        }
+    });
+
+    return itemsToImport;
+}
+
+/**
+ * Detect conflicts between existing database requests and iCal import items
+ *
+ * @param existingRequests - Existing requests from database
+ * @param itemsToImport - Items that will be imported
+ * @param originalItems - Original import items for context
+ * @returns Promise resolving to array of detected conflicts
+ */
+async function detectDatabaseConflicts(
+    existingRequests: any[],
+    itemsToImport: Array<ImportPreviewItem & { originalIndex: number }>,
+    originalItems: ImportPreviewItem[],
+): Promise<DbConflict[]> {
+    console.log(
+        `[detectDatabaseConflicts] Analyzing ${existingRequests.length} existing vs ${itemsToImport.length} import items`,
+    );
+
+    const conflicts: DbConflict[] = [];
+
+    // Create lookup maps for efficient matching
+    const importItemsByMemberAndDate = new Map<
+        string,
+        ImportPreviewItem & { originalIndex: number }
+    >();
+    const importItemsByPinAndDate = new Map<
+        string,
+        ImportPreviewItem & { originalIndex: number }
+    >();
+
+    // Build lookup maps for import items
+    itemsToImport.forEach((item) => {
+        const dateStr = item.requestDate.toISOString().split("T")[0];
+
+        // Try to get member info from matched member or resolved assignment
+        let memberId: string | null = null;
+        let pinNumber: number | null = null;
+
+        if (
+            item.matchedMember.status === "matched" && item.matchedMember.member
+        ) {
+            memberId = item.matchedMember.member.id || null;
+            pinNumber = item.matchedMember.member.pin_number || null;
+        }
+        // Note: Could also check resolved assignments here if needed
+
+        if (memberId) {
+            const key = `${memberId}_${dateStr}_${item.leaveType}`;
+            importItemsByMemberAndDate.set(key, item);
+        }
+
+        if (pinNumber) {
+            const key = `${pinNumber}_${dateStr}_${item.leaveType}`;
+            importItemsByPinAndDate.set(key, item);
+        }
+    });
+
+    // Check each existing request against import items
+    for (const existingRequest of existingRequests) {
+        const dateStr = existingRequest.request_date;
+        const conflicts_for_request = await detectConflictsForRequest(
+            existingRequest,
+            importItemsByMemberAndDate,
+            importItemsByPinAndDate,
+            dateStr,
+        );
+        conflicts.push(...conflicts_for_request);
+    }
+
+    console.log(
+        `[detectDatabaseConflicts] Detected ${conflicts.length} conflicts`,
+    );
+    return conflicts;
+}
+
+/**
+ * Helper function to get member name from database request
+ */
+function getMemberNameFromDbRequest(dbRequest: any): string {
+    // Try to get name from joined member data
+    if (dbRequest.members && dbRequest.members.first_name) {
+        const firstName = dbRequest.members.first_name || "";
+        const lastName = dbRequest.members.last_name || "";
+        return `${firstName} ${lastName}`.trim();
+    }
+
+    // Fallback to PIN number or member ID
+    if (dbRequest.pin_number) {
+        return `Member PIN ${dbRequest.pin_number}`;
+    }
+
+    if (dbRequest.member_id) {
+        return `Member ID ${dbRequest.member_id.substring(0, 8)}...`;
+    }
+
+    return `Unknown Member`;
+}
+
+/**
+ * Detect conflicts for a specific existing database request
+ */
+async function detectConflictsForRequest(
+    existingRequest: any,
+    importItemsByMemberAndDate: Map<
+        string,
+        ImportPreviewItem & { originalIndex: number }
+    >,
+    importItemsByPinAndDate: Map<
+        string,
+        ImportPreviewItem & { originalIndex: number }
+    >,
+    dateStr: string,
+): Promise<DbConflict[]> {
+    const conflicts: DbConflict[] = [];
+
+    // Primary matching: member_id + request_date + leave_type
+    let matchingImportItem:
+        | (ImportPreviewItem & { originalIndex: number })
+        | undefined;
+
+    if (existingRequest.member_id) {
+        const memberKey =
+            `${existingRequest.member_id}_${dateStr}_${existingRequest.leave_type}`;
+        matchingImportItem = importItemsByMemberAndDate.get(memberKey);
+    }
+
+    // Fallback matching: pin_number + request_date + leave_type
+    if (!matchingImportItem && existingRequest.pin_number) {
+        const pinKey =
+            `${existingRequest.pin_number}_${dateStr}_${existingRequest.leave_type}`;
+        matchingImportItem = importItemsByPinAndDate.get(pinKey);
+    }
+
+    if (matchingImportItem) {
+        // Found matching import item - check for status conflicts
+        const existingStatus = existingRequest.status;
+        const importStatus = matchingImportItem.status;
+
+        if (existingStatus !== importStatus) {
+            conflicts.push({
+                id: `conflict_${existingRequest.id}_${matchingImportItem.originalIndex}`,
+                type: "status_mismatch",
+                dbRequest: existingRequest,
+                icalRequest: matchingImportItem.originalICalData,
+                memberId: existingRequest.member_id,
+                memberName: getMemberNameFromDbRequest(existingRequest),
+                requestDate: dateStr,
+                severity: determineConflictSeverity(
+                    existingStatus,
+                    importStatus,
+                ),
+                description:
+                    `Request exists in both DB (${existingStatus}) and iCal import (${importStatus}) with different statuses`,
+                suggestedAction:
+                    `Review and choose correct status: keep DB (${existingStatus}) or update to iCal (${importStatus})`,
+            });
+        }
+    } else {
+        // No matching import item found - this DB request is missing from iCal
+        // IMPORTANT: Only flag as conflict if this seems problematic
+        // Most existing requests SHOULD be missing from new imports
+
+        // Only create conflicts for recent requests (within last 30 days) that might be missing
+        const requestDate = new Date(existingRequest.request_date);
+        const now = new Date();
+        const daysDiff = Math.floor(
+            (now.getTime() - requestDate.getTime()) / (1000 * 60 * 60 * 24),
+        );
+
+        // Only flag as conflict if:
+        // 1. Request is for future dates (should potentially be in calendar)
+        // 2. OR request was created/modified recently (within 30 days)
+        const isForFutureDate = requestDate > now;
+        const isRecentlyCreated = daysDiff <= 30;
+
+        if (isForFutureDate || isRecentlyCreated) {
+            conflicts.push({
+                id: `missing_${existingRequest.id}`,
+                type: "missing_from_ical",
+                dbRequest: existingRequest,
+                memberId: existingRequest.member_id,
+                memberName: getMemberNameFromDbRequest(existingRequest),
+                requestDate: dateStr,
+                severity: "low", // Most missing requests are not high priority
+                description:
+                    `Request exists in database but not found in iCal import`,
+                suggestedAction:
+                    `Review if this request should be cancelled or if it's missing from the calendar`,
+            });
+        }
+        // Note: We intentionally skip creating conflicts for old requests that are expected to be missing
+    }
+
+    return conflicts;
+}
+
+/**
+ * Determine the severity of a status conflict
+ */
+function determineConflictSeverity(
+    dbStatus: string,
+    icalStatus: string,
+): "low" | "medium" | "high" {
+    // High severity: approved to waitlisted or denied
+    if (
+        dbStatus === "approved" &&
+        (icalStatus === "waitlisted" || icalStatus === "denied")
+    ) {
+        return "high";
+    }
+
+    // High severity: waitlisted/denied to approved
+    if (
+        (dbStatus === "waitlisted" || dbStatus === "denied") &&
+        icalStatus === "approved"
+    ) {
+        return "high";
+    }
+
+    // Medium severity: waitlisted to denied or vice versa
+    if (
+        (dbStatus === "waitlisted" && icalStatus === "denied") ||
+        (dbStatus === "denied" && icalStatus === "waitlisted")
+    ) {
+        return "medium";
+    }
+
+    // Low severity: other status changes
+    return "low";
 }
 
 /**
@@ -1919,6 +2378,17 @@ export function validateStageTransition(
                 validation.errors.push(...overAllotmentValidation.errors);
                 validation.warnings.push(...overAllotmentValidation.warnings);
                 break;
+
+            case "db_reconciliation":
+                const dbReconciliationValidation =
+                    validateDbReconciliationStageCompletion(
+                        stageData.db_reconciliation,
+                    );
+                validation.errors.push(...dbReconciliationValidation.errors);
+                validation.warnings.push(
+                    ...dbReconciliationValidation.warnings,
+                );
+                break;
         }
     }
 
@@ -2068,6 +2538,50 @@ function validateDuplicateStageCompletion(
     if (stageData.overrideDuplicates.size > 0) {
         warnings.push(
             `${stageData.overrideDuplicates.size} duplicate requests will be imported anyway`,
+        );
+    }
+
+    return { errors, warnings };
+}
+
+/**
+ * Validate database reconciliation stage completion requirements
+ */
+function validateDbReconciliationStageCompletion(
+    stageData: DbReconciliationStageData,
+): { errors: string[]; warnings: string[] } {
+    const errors: string[] = [];
+    const warnings: string[] = [];
+
+    // Check that all conflicts have been reviewed
+    const totalConflicts = stageData.conflicts.length;
+    const reviewedConflicts = stageData.reviewedConflicts.size;
+
+    if (totalConflicts > 0 && reviewedConflicts < totalConflicts) {
+        const remaining = totalConflicts - reviewedConflicts;
+        errors.push(
+            `${remaining} database conflicts still need review`,
+        );
+    }
+
+    // Warn about queued database changes
+    if (stageData.queuedChanges.length > 0) {
+        warnings.push(
+            `${stageData.queuedChanges.length} database requests will be modified during import`,
+        );
+    }
+
+    // Warn about high-severity conflicts that are resolved but have significant impact
+    const highSeverityChanges = stageData.queuedChanges.filter((change) => {
+        const conflict = stageData.conflicts.find((c) =>
+            c.dbRequest.id === change.requestId
+        );
+        return conflict?.severity === "high";
+    });
+
+    if (highSeverityChanges.length > 0) {
+        warnings.push(
+            `${highSeverityChanges.length} high-impact database changes queued`,
         );
     }
 
@@ -2227,6 +2741,13 @@ function resetStageData(
             stageData.over_allotment.isComplete = false;
             break;
 
+        case "db_reconciliation":
+            stageData.db_reconciliation.queuedChanges = [];
+            stageData.db_reconciliation.reviewedConflicts.clear();
+            stageData.db_reconciliation.isComplete = false;
+            stageData.db_reconciliation.cacheTimestamp = undefined;
+            break;
+
         case "final_review":
             stageData.final_review.approvedItems = [];
             stageData.final_review.waitlistedItems = [];
@@ -2262,6 +2783,7 @@ export async function triggerStageReAnalysis(
         "unmatched",
         "duplicates",
         "over_allotment",
+        "db_reconciliation",
         "final_review",
     ];
     const fromIndex = stageOrder.indexOf(fromStage);
@@ -2282,6 +2804,10 @@ export async function triggerStageReAnalysis(
 
                 case "over_allotment":
                     await analyzeOverAllotmentStage(stagedPreview);
+                    break;
+
+                case "db_reconciliation":
+                    await analyzeDbReconciliationStage(stagedPreview);
                     break;
 
                 case "final_review":
@@ -2321,6 +2847,7 @@ export function calculateProgressMetrics(
         "unmatched",
         "duplicates",
         "over_allotment",
+        "db_reconciliation",
         "final_review",
     ];
 
@@ -2382,6 +2909,17 @@ export function calculateProgressMetrics(
                     : 100;
                 break;
 
+            case "db_reconciliation":
+                const totalConflicts =
+                    progressState.stageData.db_reconciliation.conflicts.length;
+                const reviewedConflicts =
+                    progressState.stageData.db_reconciliation.reviewedConflicts
+                        .size;
+                currentStageProgress = totalConflicts > 0
+                    ? (reviewedConflicts / totalConflicts) * 100
+                    : 100;
+                break;
+
             case "final_review":
                 currentStageProgress =
                     progressState.stageData.final_review.isComplete ? 100 : 50;
@@ -2412,6 +2950,7 @@ export function calculateProgressMetrics(
             unmatched: 0,
             duplicates: 0,
             over_allotment: 0,
+            db_reconciliation: 0,
             final_review: 0,
         }, // Would be populated with actual timing data
         dataIntegrityScore: Math.round(dataIntegrityScore),
@@ -2485,6 +3024,7 @@ export function createRollbackConfig(
         unmatched: "Unmatched Members",
         duplicates: "Duplicate Detection",
         over_allotment: "Over-Allotment Review",
+        db_reconciliation: "Database Reconciliation",
         final_review: "Final Review",
     };
 
@@ -2841,4 +3381,671 @@ export async function updateDuplicateFlagsForResolvedAssignments(
     } else {
         console.log(`[DuplicateUpdate] No duplicate flags needed updating`);
     }
+}
+
+// ============================================================================
+// PHASE 8.4: Database State Management & Re-Analysis Functions
+// ============================================================================
+
+/**
+ * Interface for allotment impact analysis result
+ */
+export interface AllotmentImpactAnalysis {
+    affectedDates: string[];
+    impactsByDate: Record<string, {
+        date: string;
+        currentAllotment: number;
+        currentRequests: number;
+        queuedCancellations: number;
+        queuedStatusChanges: number;
+        newAvailableSlots: number;
+        requiresOverAllotmentReAnalysis: boolean;
+    }>;
+    requiresOverAllotmentReturn: boolean;
+    preservedOrderings: Record<string, number[]>;
+    modifiedOrderings: Record<string, {
+        originalOrdering: number[];
+        newOrdering: number[];
+        removedIndices: number[];
+        movedIndices: Array<{ index: number; from: string; to: string }>;
+    }>;
+}
+
+/**
+ * Analyze the impact of queued database changes on allotment calculations
+ *
+ * @param stagedPreview - Current staged import preview
+ * @returns Promise resolving to impact analysis result
+ */
+export async function analyzeQueuedDbChangesImpact(
+    stagedPreview: StagedImportPreview,
+): Promise<AllotmentImpactAnalysis> {
+    console.log(
+        `[DbImpactAnalysis] Analyzing impact of queued database changes`,
+    );
+
+    const { progressState } = stagedPreview;
+    const { db_reconciliation, over_allotment } = progressState.stageData;
+
+    const impactAnalysis: AllotmentImpactAnalysis = {
+        affectedDates: [],
+        impactsByDate: {},
+        requiresOverAllotmentReturn: false,
+        preservedOrderings: {},
+        modifiedOrderings: {},
+    };
+
+    // Group queued changes by date
+    const changesByDate = groupQueuedChangesByDate(
+        db_reconciliation.queuedChanges,
+    );
+
+    // Analyze impact for each affected date
+    for (const [dateStr, changes] of Object.entries(changesByDate)) {
+        const impact = await analyzeQueuedChangesForDate(
+            dateStr,
+            changes,
+            stagedPreview.calendarId,
+            over_allotment.requestOrdering[dateStr] || [],
+            over_allotment.allotmentAdjustments[dateStr],
+        );
+
+        if (impact.requiresOverAllotmentReAnalysis) {
+            impactAnalysis.requiresOverAllotmentReturn = true;
+            impactAnalysis.affectedDates.push(dateStr);
+            impactAnalysis.impactsByDate[dateStr] = impact;
+
+            // Calculate modified orderings if admin had previously set them
+            const existingOrdering = over_allotment.requestOrdering[dateStr];
+            if (existingOrdering && existingOrdering.length > 0) {
+                const orderingChanges = calculateOrderingChanges(
+                    existingOrdering,
+                    changes,
+                    stagedPreview.originalItems,
+                );
+
+                if (orderingChanges.hasChanges) {
+                    impactAnalysis.modifiedOrderings[dateStr] = orderingChanges;
+                } else {
+                    impactAnalysis.preservedOrderings[dateStr] =
+                        existingOrdering;
+                }
+            }
+        }
+    }
+
+    console.log(
+        `[DbImpactAnalysis] Analysis complete - ${impactAnalysis.affectedDates.length} dates affected, ` +
+            `requires over-allotment return: ${impactAnalysis.requiresOverAllotmentReturn}`,
+    );
+
+    return impactAnalysis;
+}
+
+/**
+ * Group queued database changes by date
+ */
+function groupQueuedChangesByDate(
+    queuedChanges: QueuedDbChange[],
+): Record<string, QueuedDbChange[]> {
+    return queuedChanges.reduce((groups, change) => {
+        const dateStr = change.requestDate;
+        if (!groups[dateStr]) {
+            groups[dateStr] = [];
+        }
+        groups[dateStr].push(change);
+        return groups;
+    }, {} as Record<string, QueuedDbChange[]>);
+}
+
+/**
+ * Analyze queued changes impact for a specific date
+ */
+async function analyzeQueuedChangesForDate(
+    dateStr: string,
+    changes: QueuedDbChange[],
+    calendarId: string,
+    existingOrdering: number[],
+    currentAllotmentAdjustment?: number,
+): Promise<{
+    date: string;
+    currentAllotment: number;
+    currentRequests: number;
+    queuedCancellations: number;
+    queuedStatusChanges: number;
+    newAvailableSlots: number;
+    requiresOverAllotmentReAnalysis: boolean;
+}> {
+    // Get current allotment info for this date
+    const allotmentInfo = await getDateAllotmentInfo(dateStr, calendarId);
+    const effectiveAllotment = currentAllotmentAdjustment ||
+        allotmentInfo.currentAllotment;
+
+    // Count different types of changes
+    let queuedCancellations = 0;
+    let queuedStatusChanges = 0;
+
+    changes.forEach((change) => {
+        if (change.newStatus === "cancelled") {
+            queuedCancellations++;
+        } else if (change.currentStatus !== change.newStatus) {
+            queuedStatusChanges++;
+        }
+    });
+
+    // Calculate new available slots after queued changes
+    const newAvailableSlots = effectiveAllotment -
+        (allotmentInfo.existingRequests - queuedCancellations);
+
+    // Check if this affects over-allotment calculations
+    const requiresOverAllotmentReAnalysis = queuedCancellations > 0 || // Cancelled requests free up slots
+        queuedStatusChanges > 0 || // Status changes might affect approval/waitlist counts
+        existingOrdering.length > 0; // Admin had set custom ordering
+
+    return {
+        date: dateStr,
+        currentAllotment: effectiveAllotment,
+        currentRequests: allotmentInfo.existingRequests,
+        queuedCancellations,
+        queuedStatusChanges,
+        newAvailableSlots,
+        requiresOverAllotmentReAnalysis,
+    };
+}
+
+/**
+ * Calculate how admin's previous ordering will be affected by queued changes
+ */
+function calculateOrderingChanges(
+    existingOrdering: number[],
+    queuedChanges: QueuedDbChange[],
+    originalItems: ImportPreviewItem[],
+): {
+    hasChanges: boolean;
+    originalOrdering: number[];
+    newOrdering: number[];
+    removedIndices: number[];
+    movedIndices: Array<{ index: number; from: string; to: string }>;
+} {
+    // For now, we'll assume that database changes don't directly affect import ordering
+    // since they apply to existing requests, not import items
+    // The main impact is on available slots which affects how many can be approved vs waitlisted
+
+    return {
+        hasChanges: false,
+        originalOrdering: [...existingOrdering],
+        newOrdering: [...existingOrdering],
+        removedIndices: [],
+        movedIndices: [],
+    };
+}
+
+/**
+ * Create warning message for returning to over-allotment stage due to DB changes
+ *
+ * @param impactAnalysis - Result from analyzeQueuedDbChangesImpact
+ * @returns Warning message object with summary and details
+ */
+export function createDbChangesWarningMessage(
+    impactAnalysis: AllotmentImpactAnalysis,
+): {
+    title: string;
+    summary: string;
+    details: string[];
+    affectedDates: string[];
+    preservedOrderingCount: number;
+    modifiedOrderingCount: number;
+} {
+    const affectedDatesCount = impactAnalysis.affectedDates.length;
+    const preservedOrderingCount =
+        Object.keys(impactAnalysis.preservedOrderings).length;
+    const modifiedOrderingCount =
+        Object.keys(impactAnalysis.modifiedOrderings).length;
+
+    const title = "Database Changes Affect Allotment Calculations";
+
+    const summary =
+        `Your queued database changes affect ${affectedDatesCount} date(s) with over-allotment situations. ` +
+        `You'll need to review the over-allotment stage to ensure your import decisions are still valid.`;
+
+    const details: string[] = [];
+
+    // Add details for each affected date
+    impactAnalysis.affectedDates.forEach((dateStr) => {
+        const impact = impactAnalysis.impactsByDate[dateStr];
+        if (impact.queuedCancellations > 0) {
+            details.push(
+                `${dateStr}: ${impact.queuedCancellations} cancelled request(s) will free up ${impact.queuedCancellations} slot(s)`,
+            );
+        }
+        if (impact.queuedStatusChanges > 0) {
+            details.push(
+                `${dateStr}: ${impact.queuedStatusChanges} status change(s) may affect approval/waitlist calculations`,
+            );
+        }
+    });
+
+    // Add ordering preservation info
+    if (preservedOrderingCount > 0) {
+        details.push(
+            `Your previous drag-and-drop ordering will be preserved for ${preservedOrderingCount} date(s)`,
+        );
+    }
+
+    if (modifiedOrderingCount > 0) {
+        details.push(
+            `Your previous drag-and-drop ordering needs adjustment for ${modifiedOrderingCount} date(s) due to database changes`,
+        );
+    }
+
+    return {
+        title,
+        summary,
+        details,
+        affectedDates: impactAnalysis.affectedDates,
+        preservedOrderingCount,
+        modifiedOrderingCount,
+    };
+}
+
+/**
+ * Apply queued database changes impact to over-allotment stage data
+ * This updates the over-allotment calculations to reflect the impact of pending DB changes
+ *
+ * @param stagedPreview - Current staged import preview
+ * @param impactAnalysis - Result from analyzeQueuedDbChangesImpact
+ */
+export async function applyDbChangesImpactToOverAllotment(
+    stagedPreview: StagedImportPreview,
+    impactAnalysis: AllotmentImpactAnalysis,
+): Promise<void> {
+    console.log(
+        `[ApplyDbImpact] Applying database changes impact to over-allotment stage`,
+    );
+
+    const { progressState } = stagedPreview;
+    const { over_allotment } = progressState.stageData;
+
+    // Re-analyze over-allotment considering queued DB changes
+    for (const dateStr of impactAnalysis.affectedDates) {
+        const impact = impactAnalysis.impactsByDate[dateStr];
+
+        // Find the corresponding over-allotted date
+        const overAllottedDate = over_allotment.overAllottedDates.find((d) =>
+            d.date === dateStr
+        );
+
+        if (overAllottedDate) {
+            // Update existing requests count to reflect queued cancellations
+            overAllottedDate.existingRequests = impact.currentRequests -
+                impact.queuedCancellations;
+
+            // Recalculate total requests and over-allotment
+            overAllottedDate.totalRequests = overAllottedDate.existingRequests +
+                overAllottedDate.importRequests.length;
+            overAllottedDate.overAllotmentCount = Math.max(
+                0,
+                overAllottedDate.totalRequests - impact.currentAllotment,
+            );
+
+            // Update suggested allotment
+            overAllottedDate.suggestedAllotment = impact.currentAllotment +
+                overAllottedDate.overAllotmentCount;
+
+            console.log(
+                `[ApplyDbImpact] Updated ${dateStr}: existing requests ${impact.currentRequests} -> ${overAllottedDate.existingRequests}, ` +
+                    `over-allotment ${overAllottedDate.overAllotmentCount}`,
+            );
+        }
+
+        // Preserve or update ordering based on impact analysis
+        if (impactAnalysis.preservedOrderings[dateStr]) {
+            // Keep existing ordering
+            console.log(
+                `[ApplyDbImpact] Preserving existing ordering for ${dateStr}`,
+            );
+        } else if (impactAnalysis.modifiedOrderings[dateStr]) {
+            // Apply modified ordering
+            const modification = impactAnalysis.modifiedOrderings[dateStr];
+            over_allotment.requestOrdering[dateStr] = modification.newOrdering;
+            console.log(
+                `[ApplyDbImpact] Applied modified ordering for ${dateStr}`,
+            );
+        }
+    }
+
+    // Update stage completion status
+    const hasUnresolvedOverAllotments = over_allotment.overAllottedDates.some(
+        (dateInfo) =>
+            dateInfo.overAllotmentCount > 0 &&
+            !over_allotment.requestOrdering[dateInfo.date],
+    );
+
+    over_allotment.isComplete = !hasUnresolvedOverAllotments;
+
+    stagedPreview.lastUpdated = new Date();
+
+    console.log(
+        `[ApplyDbImpact] Impact applied - over-allotment stage complete: ${over_allotment.isComplete}`,
+    );
+}
+
+/**
+ * Implement rollback mechanism for queued changes when admin returns to earlier stages
+ *
+ * @param stagedPreview - Current staged import preview
+ * @param targetStage - Stage being rolled back to
+ * @param preserveQueuedChanges - Whether to preserve queued changes or clear them
+ */
+export function rollbackQueuedDbChanges(
+    stagedPreview: StagedImportPreview,
+    targetStage: ImportStage,
+    preserveQueuedChanges: boolean = false,
+): void {
+    console.log(
+        `[DbRollback] Rolling back queued changes for transition to ${targetStage}, ` +
+            `preserve: ${preserveQueuedChanges}`,
+    );
+
+    const { db_reconciliation } = stagedPreview.progressState.stageData;
+
+    if (!preserveQueuedChanges) {
+        // Clear all queued changes
+        const originalQueuedCount = db_reconciliation.queuedChanges.length;
+        db_reconciliation.queuedChanges = [];
+
+        // Reset reviewed conflicts to allow re-review
+        db_reconciliation.reviewedConflicts.clear();
+
+        // Mark stage as incomplete
+        db_reconciliation.isComplete = false;
+
+        // Invalidate cache to force fresh analysis
+        db_reconciliation.cacheTimestamp = undefined;
+
+        console.log(
+            `[DbRollback] Cleared ${originalQueuedCount} queued changes and reset reconciliation stage`,
+        );
+    } else {
+        // Keep queued changes but mark stage as incomplete for re-review
+        db_reconciliation.isComplete = false;
+
+        console.log(
+            `[DbRollback] Preserved ${db_reconciliation.queuedChanges.length} queued changes but marked stage incomplete`,
+        );
+    }
+
+    stagedPreview.lastUpdated = new Date();
+}
+
+// ============================================================================
+// PHASE 8.6: Final Review Integration Functions
+// ============================================================================
+
+/**
+ * Interface for database changes summary in final review
+ */
+export interface DbChangesSummary {
+    totalChanges: number;
+    changesByType: {
+        cancelled: number;
+        approved: number;
+        waitlisted: number;
+        transferred: number;
+    };
+    changesByDate: Record<string, {
+        date: string;
+        changes: Array<{
+            memberName: string;
+            currentStatus: string;
+            newStatus: string;
+            severity: "low" | "medium" | "high";
+        }>;
+    }>;
+    highImpactChanges: QueuedDbChange[];
+    affectedMembers: Set<string>;
+}
+
+/**
+ * Generate summary of queued database changes for final review display
+ *
+ * @param stagedPreview - Current staged import preview
+ * @returns Database changes summary for final review
+ */
+export function generateDbChangesSummary(
+    stagedPreview: StagedImportPreview,
+): DbChangesSummary {
+    console.log(
+        `[DbSummary] Generating database changes summary for final review`,
+    );
+
+    const { db_reconciliation } = stagedPreview.progressState.stageData;
+    const queuedChanges = db_reconciliation.queuedChanges;
+
+    const summary: DbChangesSummary = {
+        totalChanges: queuedChanges.length,
+        changesByType: {
+            cancelled: 0,
+            approved: 0,
+            waitlisted: 0,
+            transferred: 0,
+        },
+        changesByDate: {},
+        highImpactChanges: [],
+        affectedMembers: new Set(),
+    };
+
+    // Process each queued change
+    queuedChanges.forEach((change) => {
+        // Count by type
+        if (
+            summary
+                .changesByType[
+                    change.newStatus as keyof typeof summary.changesByType
+                ] !== undefined
+        ) {
+            summary
+                .changesByType[
+                    change.newStatus as keyof typeof summary.changesByType
+                ]++;
+        }
+
+        // Add to affected members
+        if (change.memberId) {
+            summary.affectedMembers.add(change.memberId);
+        }
+
+        // Group by date
+        const dateStr = change.requestDate;
+        if (!summary.changesByDate[dateStr]) {
+            summary.changesByDate[dateStr] = {
+                date: dateStr,
+                changes: [],
+            };
+        }
+
+        // Find the corresponding conflict to get member name and severity
+        const conflict = db_reconciliation.conflicts.find((c) =>
+            c.dbRequest.id === change.requestId
+        );
+        const memberName = conflict?.memberName ||
+            `Member ${change.memberId || change.pinNumber}`;
+        const severity = conflict?.severity || "low";
+
+        summary.changesByDate[dateStr].changes.push({
+            memberName,
+            currentStatus: change.currentStatus,
+            newStatus: change.newStatus,
+            severity,
+        });
+
+        // Track high impact changes
+        if (severity === "high") {
+            summary.highImpactChanges.push(change);
+        }
+    });
+
+    console.log(
+        `[DbSummary] Summary generated - ${summary.totalChanges} total changes, ` +
+            `${summary.highImpactChanges.length} high impact, ${summary.affectedMembers.size} members affected`,
+    );
+
+    return summary;
+}
+
+/**
+ * Execute queued database changes with audit trail
+ * This is called during the final import process
+ *
+ * @param queuedChanges - Array of queued database changes to execute
+ * @param adminUserId - ID of admin performing the import
+ * @returns Promise resolving to execution result
+ */
+export async function executeQueuedDbChanges(
+    queuedChanges: QueuedDbChange[],
+    adminUserId: string,
+): Promise<{
+    success: boolean;
+    executedCount: number;
+    failedCount: number;
+    errors: string[];
+    auditTrailEntries: number;
+}> {
+    console.log(
+        `[ExecuteDbChanges] Executing ${queuedChanges.length} queued database changes for admin ${adminUserId}`,
+    );
+
+    const result = {
+        success: true,
+        executedCount: 0,
+        failedCount: 0,
+        errors: [] as string[],
+        auditTrailEntries: 0,
+    };
+
+    // Execute changes in a transaction
+    try {
+        for (const change of queuedChanges) {
+            try {
+                // Update the request status
+                const { error: updateError } = await supabase
+                    .from("pld_sdv_requests")
+                    .update({
+                        status: change.newStatus,
+                        actioned_by: adminUserId,
+                        actioned_at: new Date().toISOString(),
+                    })
+                    .eq("id", change.requestId);
+
+                if (updateError) {
+                    throw new Error(
+                        `Failed to update request ${change.requestId}: ${updateError.message}`,
+                    );
+                }
+
+                // Create audit trail entry
+                const { error: auditError } = await supabase
+                    .from("calendar_audit_trail")
+                    .insert({
+                        action_type: "status_change_via_import_reconciliation",
+                        table_name: "pld_sdv_requests",
+                        record_id: change.requestId,
+                        old_values: { status: change.currentStatus },
+                        new_values: {
+                            status: change.newStatus,
+                            actioned_by: adminUserId,
+                            actioned_at: new Date().toISOString(),
+                        },
+                        changed_by: adminUserId,
+                        metadata: {
+                            import_reconciliation: true,
+                            admin_reason: change.adminReason,
+                            original_calendar_missing: true,
+                            member_id: change.memberId,
+                            pin_number: change.pinNumber,
+                            request_date: change.requestDate,
+                            leave_type: change.leaveType,
+                        },
+                    });
+
+                if (auditError) {
+                    console.warn(
+                        `Failed to create audit trail for request ${change.requestId}:`,
+                        auditError,
+                    );
+                    // Don't fail the entire operation for audit trail issues
+                }
+
+                result.executedCount++;
+                result.auditTrailEntries++;
+
+                console.log(
+                    `[ExecuteDbChanges] Updated request ${change.requestId}: ${change.currentStatus} -> ${change.newStatus}`,
+                );
+            } catch (error) {
+                result.failedCount++;
+                result.success = false;
+                const errorMessage = error instanceof Error
+                    ? error.message
+                    : "Unknown error";
+                result.errors.push(
+                    `Request ${change.requestId}: ${errorMessage}`,
+                );
+
+                console.error(
+                    `[ExecuteDbChanges] Failed to update request ${change.requestId}:`,
+                    error,
+                );
+            }
+        }
+    } catch (error) {
+        result.success = false;
+        result.errors.push(
+            `Transaction failed: ${
+                error instanceof Error ? error.message : "Unknown error"
+            }`,
+        );
+        console.error(`[ExecuteDbChanges] Transaction failed:`, error);
+    }
+
+    console.log(
+        `[ExecuteDbChanges] Execution complete - ${result.executedCount} succeeded, ${result.failedCount} failed`,
+    );
+
+    return result;
+}
+
+/**
+ * Update final review stage data to include database changes impact
+ *
+ * @param stagedPreview - Current staged import preview
+ */
+export function updateFinalReviewWithDbChanges(
+    stagedPreview: StagedImportPreview,
+): void {
+    console.log(
+        `[FinalReviewUpdate] Updating final review with database changes`,
+    );
+
+    const { progressState } = stagedPreview;
+    const { final_review, db_reconciliation } = progressState.stageData;
+
+    // Generate database changes summary
+    const dbChangesSummary = generateDbChangesSummary(stagedPreview);
+
+    // Update the final review summary to include DB changes
+    final_review.summary = {
+        ...final_review.summary,
+        // Add new fields for database changes tracking
+        dbChangesCount: dbChangesSummary.totalChanges,
+        affectedMembersCount: dbChangesSummary.affectedMembers.size,
+        highImpactDbChanges: dbChangesSummary.highImpactChanges.length,
+    } as any; // Type assertion since we're extending the interface
+
+    console.log(
+        `[FinalReviewUpdate] Updated final review with ${dbChangesSummary.totalChanges} database changes, ` +
+            `${dbChangesSummary.affectedMembers.size} affected members`,
+    );
+
+    stagedPreview.lastUpdated = new Date();
 }

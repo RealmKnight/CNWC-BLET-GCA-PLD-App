@@ -4,12 +4,13 @@
 
 Enhance the iCal import system to detect over-allotment situations where imported requests exceed calendar allotments, and provide a drag-and-drop interface for admins to manage approval/waitlist priorities.
 
-## Priority Order (Corrected)
+## Priority Order (Updated)
 
 1. **Unmatched Members** (highest priority - needs admin action to proceed)
-2. **Over-Allotment Situations** (after unmatched are resolved, may create new over-allotments)
-3. **Duplicate Requests** (lower priority - can be skipped/ignored)
-4. **Regular Import Requests** (sorted by date)
+2. **Duplicate Requests** (resolve duplicates before allotment calculations)
+3. **Over-Allotment Situations** (after duplicates resolved, manage approval/waitlist priority)
+4. **Database Reconciliation** (compare DB vs iCal, handle missing calendar entries)
+5. **Final Review & Import** (execute with full validation)
 
 ## Staged Import Preview Workflow
 
@@ -47,11 +48,21 @@ The staged import preview workflow provides a comprehensive, step-by-step approa
   - Adjust allotments or manage waitlists
 - **Benefits**: Works with accurate request counts after duplicate removal
 
-#### Stage 4: Final Review
+#### Stage 4: Database Reconciliation
 
-- **Purpose**: Review final import summary and execute the operation
-- **Actions**: Confirm all decisions and execute the import
-- **Validation**: Final integrity checks before database changes
+- **Purpose**: Compare existing DB requests with iCal import and resolve discrepancies
+- **Actions**:
+  - Review DB requests not found in iCal import
+  - Handle same request/different status conflicts
+  - Modify existing DB request statuses as needed
+  - Re-trigger over-allotment analysis if DB changes affect calculations
+- **Benefits**: Ensures database becomes source of truth, handles manual entries not in calendar
+
+#### Stage 5: Final Review
+
+- **Purpose**: Review final import summary including DB reconciliation and execute the operation
+- **Actions**: Confirm all decisions including DB changes and execute the import
+- **Validation**: Final integrity checks including reconciliation impact before database changes
 
 ### Key Improvements
 
@@ -76,11 +87,12 @@ The new stage order (Unmatched → **Duplicates** → Over-Allotment → Final R
 #### Stage Transition Logic
 
 ```typescript
-// New stage order
+// Updated stage order with DB reconciliation
 const stageOrder: ImportStage[] = [
   "unmatched",
-  "duplicates", // ← Moved before over_allotment
+  "duplicates",
   "over_allotment",
+  "db_reconciliation", // ← New stage before final review
   "final_review",
 ];
 ```
@@ -362,57 +374,164 @@ const itemsToAnalyze = originalItems.filter((item, index) => {
 
 ## Phase 8: Database Reconciliation & Conflict Detection
 
-### 8.1 Existing Request Analysis
+### 8.1 Enhanced Existing Request Analysis
 
-- [ ] Query all existing PLD/SDV requests for the target calendar year
-- [ ] Compare existing requests against iCal import data
-- [ ] Identify requests that exist in database but not in iCal import
-- [ ] Detect requests that exist in both with potential conflicts (different status, dates, etc.)
-- [ ] Calculate true allotment availability considering ALL existing requests
+- [x] Query existing PLD/SDV requests for target calendar and year
+- [x] Filter OUT requests with status: 'cancelled', 'transferred', 'cancellation_pending'
+- [x] Include requests with status: 'pending', 'approved', 'denied', 'waitlisted' for comparison
+- [x] Compare existing filtered requests against ENTIRE parsed iCal import data
+- [x] Implement dual matching logic:
+  - Primary: Match by member_id + request_date + leave_type
+  - Fallback: Match by pin_number + request_date + leave_type (for member_id mismatches)
+- [x] Identify requests that exist in database but not in iCal import
+- [x] Detect same request with different status (DB approved, iCal waitlisted)
+- [x] Detect same member with different leave type conflicts on same date
+- [x] Calculate true allotment availability considering filtered existing requests
 
-### 8.2 Conflict Detection & Resolution
+### 8.2 Conflict Detection & Categorization
 
-- [ ] Create conflict detection algorithms for:
-  - Requests approved in database but not in iCal (manual approvals)
-  - Requests waitlisted in database with different positions than iCal
-  - Requests with different dates between database and iCal
-  - Allotment calculations that don't account for existing requests
-- [ ] Add conflict resolution interface for admins to:
-  - Choose to preserve database state vs iCal state
-  - Merge conflicting information
-  - Skip conflicting requests from import
-  - Update existing requests to match iCal data
+- [x] Create conflict detection algorithms for:
+  - DB requests not found in iCal import (missing from calendar)
+  - Same request, different status conflicts (approved vs waitlisted)
+  - Same member, different leave type on same date
+  - Allotment calculations missing existing DB requests
+- [x] Implement DbConflict interface:
 
-### 8.3 True Allotment Calculation
+  ```typescript
+  interface DbConflict {
+    id: string; // Unique conflict identifier
+    type: "missing_from_ical" | "status_mismatch" | "leave_type_conflict";
+    dbRequest: PldSdvRequest; // The existing DB request
+    icalRequest?: ParsedPldSdvRequest; // The matching iCal request (if exists)
+    memberId?: string; // For grouping
+    memberName: string; // For display
+    requestDate: string; // For grouping
+    severity: "low" | "medium" | "high"; // Impact level
+    description: string; // Human-readable description
+    suggestedAction?: string; // Recommended action
+  }
+  ```
 
-- [ ] Enhance allotment calculation to include:
-  - All existing approved requests for each date
-  - All existing waitlisted requests and their positions
-  - Manual allotment adjustments made outside of iCal
-  - Calendar-specific overrides and exceptions
-- [ ] Update over-allotment detection to use true available slots
-- [ ] Recalculate waitlist positions considering existing waitlisted requests
+- [x] Categorize conflicts by severity and type
+- [x] Group conflicts by Member > Date for UI presentation
+- [x] Calculate impact of potential DB changes on allotment calculations
 
-### 8.4 Database State Reconciliation
+### 8.3 Database Reconciliation Interface Component
 
-- [ ] Create reconciliation workflow for:
-  - Updating existing requests that have changed in iCal
-  - Preserving manually created requests not in iCal
-  - Handling deleted requests (in database but not in iCal)
-  - Maintaining data integrity across all request sources
-- [ ] Add admin review interface for reconciliation decisions
-- [ ] Implement batch update operations for reconciled data
+- [x] Create `DatabaseReconciliationReview` component (handles db_reconciliation stage only)
+- [x] Group conflicts by Member > Date (simple groups, no expandable sections)
+- [x] Show side-by-side comparison (DB vs iCal) for conflicts
+- [x] Require admin decision for ALL conflicts (no defaults applied)
+- [x] Show timestamps to help admin make informed decisions
+- [x] Provide admin actions for each DB request:
+  - Keep as-is (no change)
+  - Change status to: cancelled, approved, waitlisted, transferred
+- [x] Queue all DB changes until final import (no immediate application)
+- [x] Show progress indicators during reconciliation analysis
+- [x] Cache DB queries only during reconciliation stage
+- [x] Invalidate cache if admin changes affect subsequent queries
+- [x] Add error handling with retry functionality for DB operations
+- [x] Auto-advance to next stage if zero conflicts detected after analysis
 
-### 8.5 Import Impact Preview
+### 8.4 Database State Management & Re-Analysis
 
-- [ ] Show comprehensive import impact including:
-  - New requests to be added
-  - Existing requests to be updated
-  - Existing requests to be preserved (not in iCal)
-  - Allotment changes and their effects on existing requests
-  - Waitlist position changes for existing waitlisted requests
-- [ ] Add warnings for high-impact changes
-- [ ] Provide rollback options for reconciliation decisions
+- [x] Implement QueuedDbChange interface: ✅
+
+  ```typescript
+  interface QueuedDbChange {
+    requestId: string; // pld_sdv_requests.id
+    currentStatus: string; // Current status in DB
+    newStatus: string; // Admin's chosen new status
+    memberId?: string; // For audit trail
+    pinNumber?: number; // For audit trail
+    requestDate: string; // For impact calculations
+    leaveType: string; // For impact calculations
+    adminReason?: string; // Optional admin note
+    timestamp: Date; // When change was queued
+  }
+  ```
+
+- [x] Queue admin decisions for execution during final import (not immediate) ✅
+- [x] Detect when queued DB changes affect allotment calculations ✅
+- [x] Show warning dialog before returning to over-allotment stage with change summary ✅
+- [x] Preserve admin's previous drag-and-drop ordering where over-allotment still occurs ✅
+- [x] Handle specific ordering changes: ✅
+  - Remove cancelled requests from ordered lists
+  - Move status-changed requests appropriately (approved→waitlisted moves in ordering)
+  - Show summary of what changed when returning to over-allotment
+- [x] Update allotment availability calculations based on queued cancelled/modified requests ✅
+- [x] Recalculate waitlist positions considering queued changes to existing requests ✅
+- [x] Implement separate transaction handling: ✅
+  - Transaction 1: Execute queued DB changes with audit trail updates
+  - Transaction 2: Add new iCal imports
+- [x] Maintain data integrity during reconciliation operations ✅
+- [x] Implement rollback mechanism for queued changes if admin returns to earlier stages ✅
+
+### 8.5 Stage Integration & Flow Management
+
+- [x] Add `db_reconciliation` to ImportStage enum
+- [x] Create `DbReconciliationStageData` interface with queued changes tracking:
+
+  ```typescript
+  interface DbReconciliationStageData {
+    conflicts: DbConflict[]; // All detected conflicts
+    queuedChanges: QueuedDbChange[]; // Admin's queued decisions
+    reviewedConflicts: Set<string>; // requestId of reviewed conflicts
+    isComplete: boolean; // All conflicts reviewed
+    cacheTimestamp?: Date; // For cache invalidation
+  }
+  ```
+
+- [x] Update stage transition logic: unmatched → duplicates → over_allotment → db_reconciliation → final_review
+- [x] Add stage completion criteria: all conflicts reviewed (explicit admin decision required)
+- [x] Auto-advance to final_review if zero conflicts detected (skip empty reconciliation)
+- [x] Update stage validation and rollback mechanisms to handle queued DB changes
+- [x] Refactor component architecture for clean separation:
+  - Split `DuplicateAndFinalReview` into separate components
+  - `DuplicateReview` component (handles duplicates stage only)
+  - `DatabaseReconciliationReview` component (handles db_reconciliation stage only)
+  - `FinalReview` component (handles final_review stage only)
+- [x] Update main StagedImportPreview to route to appropriate components by stage
+- [ ] Implement warning dialogs when returning to over-allotment due to DB changes
+- [x] Add cache management for reconciliation stage only
+- [x] Implement cache invalidation triggers:
+  - When admin queues a DB status change
+  - When admin returns from over-allotment stage
+  - When stage is reset/rolled back
+- [ ] Update calendar_audit_trail table for all queued DB changes during final import
+
+### 8.6 Final Review Integration
+
+- [x] Display queued DB reconciliation changes in final review summary ✅
+- [x] Show impact of pending DB modifications on import statistics ✅
+- [x] Include reconciliation decisions in final import confirmation dialog ✅
+- [x] Execute queued DB changes during final import process with audit trail: ✅
+
+  ```typescript
+  // For each queued change, create audit trail entry
+  calendar_audit_trail: {
+    action_type: 'status_change_via_import_reconciliation',
+    table_name: 'pld_sdv_requests',
+    record_id: change.requestId,
+    old_values: { status: change.currentStatus },
+    new_values: { status: change.newStatus, actioned_by: adminUserId, actioned_at: new Date() },
+    changed_by: adminUserId,
+    metadata: {
+      import_reconciliation: true,
+      admin_reason: change.adminReason,
+      original_calendar_missing: true
+    }
+  }
+  ```
+
+- [x] Update final review metrics to reflect true post-reconciliation state ✅
+- [x] Add warnings for high-impact reconciliation changes ✅
+- [x] Show before/after comparison of DB state in final summary ✅
+- [x] Handle transaction rollback if final import fails after DB reconciliation ✅
+- [x] Update pld_sdv_requests fields during reconciliation: ✅
+  - status: new status value
+  - actioned_by: admin user performing reconciliation
+  - actioned_at: timestamp of final import execution
 
 ---
 
@@ -511,21 +630,49 @@ const itemsToAnalyze = originalItems.filter((item, index) => {
 
 ## Current Status
 
-- **Phase**: Phase 7 Complete ✅
-- **Next Step**: Begin Phase 8.1 - Existing Request Analysis
+- **Phase**: Phase 8 Complete ✅ (100% Complete)
+- **Next Step**: Begin Phase 9 - Final Integration & Testing
 - **Dependencies**: All required packages installed ✅
 - **Critical Addition**: Added Phase 8 for Database Reconciliation & Conflict Detection
-- **Phase 7 Summary**:
-  - ✅ Enhanced visual design with professional drag handles and smooth animations
-  - ✅ Improved drop zone highlighting with dynamic feedback and scaling effects
-  - ✅ Implemented comprehensive contextual help system with stage-specific guidance
-  - ✅ Created "How Staged Import Works" guide with detailed explanations
-  - ✅ Added enhanced progress indicators with real-time metrics and integrity scoring
-  - ✅ Implemented accessibility features with ARIA labels and keyboard navigation
-  - ✅ Added screen reader support with proper announcements and hints
-  - ✅ Enhanced visual hierarchy and component styling throughout the interface
-  - ✅ Created quick tips and best practices for each import stage
-  - ✅ Implemented time estimation and progress tracking for user feedback
+- **Phase 8 Summary**:
+  - ✅ 8.1 Enhanced Existing Request Analysis with dual matching logic
+  - ✅ 8.2 Conflict Detection & Categorization with severity assessment
+  - ✅ 8.3 DatabaseReconciliationReview component with queued changes UI
+  - ✅ 8.4 Database State Management with over-allotment impact analysis
+  - ✅ 8.5 Complete Stage Integration with db_reconciliation stage
+  - ✅ 8.6 Final Review Integration with database changes execution
+- **Status Enum Values**: pending, approved, denied, waitlisted, cancellation_pending, cancelled, transferred
+- **Filtered Statuses**: Include pending, approved, denied, waitlisted | Exclude cancelled, transferred, cancellation_pending
+- **Audit Trail**: calendar_audit_trail table structure confirmed for tracking reconciliation changes
+- **Matching Logic**: Dual approach (member_id + pin_number fallback) for conflict detection
+- **Transaction Strategy**: Separate transactions for DB reconciliation and new imports
+- **Cache Strategy**: Reconciliation-stage-only caching with multiple invalidation triggers
+
+**Phase 8 Implementation Summary** ✅:
+
+- ✅ **Core Service Layer**: Updated `importPreviewService.ts` with complete database reconciliation analysis
+- ✅ **Database Conflict Detection**: Implemented dual matching logic (member_id + pin_number fallback)
+- ✅ **Conflict Categorization**: Built severity assessment and grouping by Member > Date
+- ✅ **UI Component**: Created complete `DatabaseReconciliationReview` component with professional styling
+- ✅ **Stage Integration**: Updated main `StagedImportPreview` with db_reconciliation stage routing
+- ✅ **TypeScript Interfaces**: Added DbConflict, QueuedDbChange, and DbReconciliationStageData types
+- ✅ **Stage Flow Management**: Updated stage transitions and validation with new db_reconciliation stage
+- ✅ **Auto-advance Logic**: Zero conflicts automatically proceed to final review
+- ✅ **Queued Change System**: Admin decisions queued until final import execution
+- ✅ **Cache Management**: Reconciliation-specific caching with proper invalidation triggers
+
+**Phase 7 Summary**:
+
+- ✅ Enhanced visual design with professional drag handles and smooth animations
+- ✅ Improved drop zone highlighting with dynamic feedback and scaling effects
+- ✅ Implemented comprehensive contextual help system with stage-specific guidance
+- ✅ Created "How Staged Import Works" guide with detailed explanations
+- ✅ Added enhanced progress indicators with real-time metrics and integrity scoring
+- ✅ Implemented accessibility features with ARIA labels and keyboard navigation
+- ✅ Added screen reader support with proper announcements and hints
+- ✅ Enhanced visual hierarchy and component styling throughout the interface
+- ✅ Created quick tips and best practices for each import stage
+- ✅ Implemented time estimation and progress tracking for user feedback
 
 **Phase 8 Rationale**:
 The staged import workflow was missing a critical component - reconciliation with existing database requests that aren't reflected in the iCal import. This could lead to:

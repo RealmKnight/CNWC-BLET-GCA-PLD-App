@@ -21,6 +21,7 @@ import {
 import { UnmatchedMemberResolution } from "@/components/admin/division/UnmatchedMemberResolution";
 import { OverAllotmentReview } from "@/components/admin/division/OverAllotmentReview";
 import { DuplicateAndFinalReview } from "@/components/admin/division/DuplicateAndFinalReview";
+import { DatabaseReconciliationReview } from "@/components/admin/division/DatabaseReconciliationReview";
 
 interface StagedImportPreviewProps {
   stagedPreview: StagedImportPreviewData;
@@ -94,6 +95,24 @@ const STAGE_HELP_CONTENT: Record<ImportStage, StageHelpContent> = {
     ],
     warnings: ["Importing duplicates may cause data conflicts", "Skipped duplicates cannot be recovered later"],
   },
+  db_reconciliation: {
+    title: "Database Reconciliation",
+    description: "Review conflicts between existing database requests and iCal import data.",
+    steps: [
+      "Review each conflict detected",
+      "Compare database status vs iCal status",
+      "Choose appropriate action for each conflict",
+      "Keep as-is or change status (cancelled, approved, waitlisted, transferred)",
+      "All conflicts must be reviewed to continue",
+    ],
+    tips: [
+      "Use timestamps to determine which is more recent",
+      "Consider if manual changes were made outside the calendar",
+      "Check for legitimate reasons for discrepancies",
+      "When uncertain, keep existing database state",
+    ],
+    warnings: ["Changes will be queued until final import", "Review all conflicts carefully before proceeding"],
+  },
   final_review: {
     title: "Final Review & Import",
     description: "Review the final import summary and execute the import operation.",
@@ -101,12 +120,14 @@ const STAGE_HELP_CONTENT: Record<ImportStage, StageHelpContent> = {
       "Review the import summary statistics",
       "Check approved vs waitlisted counts",
       "Verify allotment adjustments",
+      "Review queued database changes",
       "Confirm the import operation",
       "Monitor import progress",
     ],
     tips: [
       "Double-check all numbers before importing",
       "Ensure allotment changes are acceptable",
+      "Review database reconciliation changes",
       "Have a backup plan if import fails",
       "Notify affected members after import",
     ],
@@ -144,6 +165,11 @@ export function StagedImportPreview({
       title: "Duplicate Detection",
       description: "Review and resolve duplicate requests",
       icon: "copy-outline" as const,
+    },
+    db_reconciliation: {
+      title: "Database Reconciliation",
+      description: "Review conflicts between database and import data",
+      icon: "sync-outline" as const,
     },
     final_review: {
       title: "Final Review",
@@ -271,7 +297,7 @@ export function StagedImportPreview({
   // Render enhanced progress bar with metrics
   const renderProgressBar = () => {
     const { currentStage, completedStages } = stagedPreview.progressState;
-    const stages: ImportStage[] = ["unmatched", "duplicates", "over_allotment", "final_review"];
+    const stages: ImportStage[] = ["unmatched", "duplicates", "over_allotment", "db_reconciliation", "final_review"];
     const currentIndex = stages.indexOf(currentStage);
 
     // Safe access to progressMetrics
@@ -283,6 +309,7 @@ export function StagedImportPreview({
       unmatched: "Unmatched Members",
       duplicates: "Duplicate Detection",
       over_allotment: "Over-Allotment Review",
+      db_reconciliation: "Database Reconciliation",
       final_review: "Final Review",
     };
 
@@ -422,6 +449,14 @@ export function StagedImportPreview({
             onDataUpdate={handleDataUpdate}
           />
         );
+      case "db_reconciliation":
+        return (
+          <DatabaseReconciliationReview
+            stagedPreview={stagedPreview}
+            onStagedPreviewUpdate={handleDataUpdate}
+            onAdvanceStage={handleAdvanceStage}
+          />
+        );
       case "final_review":
         return (
           <DuplicateAndFinalReview
@@ -450,7 +485,13 @@ export function StagedImportPreview({
     let validationWarnings: string[] = [];
 
     if (canProgress && !isLastStage) {
-      const stageOrder: ImportStage[] = ["unmatched", "duplicates", "over_allotment", "final_review"];
+      const stageOrder: ImportStage[] = [
+        "unmatched",
+        "duplicates",
+        "over_allotment",
+        "db_reconciliation",
+        "final_review",
+      ];
       const currentIndex = stageOrder.indexOf(currentStage);
       const nextStage = stageOrder[currentIndex + 1];
 

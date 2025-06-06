@@ -13,8 +13,10 @@ import {
   ImportStage,
   ImportPreviewItem,
   triggerStageReAnalysis,
+  executeQueuedDbChanges,
 } from "@/utils/importPreviewService";
 import { insertBatchPldSdvRequests } from "@/utils/databaseApiLayer";
+import { useUserStore } from "@/store/userStore";
 
 interface DuplicateAndFinalReviewProps {
   stagedPreview: StagedImportPreview;
@@ -30,6 +32,7 @@ export function DuplicateAndFinalReview({
   onImportComplete,
 }: DuplicateAndFinalReviewProps) {
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
+  const { member: adminUser } = useUserStore();
   const [isImporting, setIsImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
 
@@ -177,43 +180,81 @@ export function DuplicateAndFinalReview({
       setIsImporting(true);
       setImportError(null);
 
-      // Prepare import data from final review
+      const { db_reconciliation } = stagedPreview.progressState.stageData;
       const { approvedItems, waitlistedItems } = final_review;
       const allItemsToImport = [...approvedItems, ...waitlistedItems];
 
-      // Create import preview items with resolved member assignments
-      const importPreviewItems = allItemsToImport.map((item) => {
-        const originalIndex = stagedPreview.originalItems.findIndex((orig) => orig === item);
-        const resolvedMember = stagedPreview.progressState.stageData.unmatched.resolvedAssignments[originalIndex];
+      let totalProcessed = 0;
+      let dbChangesResult = null;
 
-        if (resolvedMember) {
-          return {
-            ...item,
-            matchedMember: {
-              status: "matched" as const,
-              member: resolvedMember,
-            },
-          };
+      // STEP 1: Execute queued database changes first (if any)
+      if (db_reconciliation.queuedChanges.length > 0) {
+        console.log(`[FinalReview] Executing ${db_reconciliation.queuedChanges.length} database changes...`);
+
+        // Get admin user ID from auth context
+        const adminUserId = adminUser?.id;
+
+        if (!adminUserId) {
+          setImportError("Admin user not authenticated. Please log in again.");
+          return;
         }
-        return item;
-      });
 
-      // Get indices for import
-      const selectedIndices = allItemsToImport.map((_, index) => index);
+        dbChangesResult = await executeQueuedDbChanges(db_reconciliation.queuedChanges, adminUserId);
 
-      // Execute the batch import
-      const result = await insertBatchPldSdvRequests(importPreviewItems, selectedIndices);
+        if (!dbChangesResult.success) {
+          setImportError(`Database changes failed: ${dbChangesResult.errors.join(", ")}`);
+          return;
+        }
 
-      if (result.success) {
-        onImportComplete({
-          success: true,
-          count: result.insertedCount,
-        });
-      } else {
-        setImportError(`Import failed: ${result.errorMessages.join(", ")}`);
+        totalProcessed += dbChangesResult.executedCount;
+        console.log(`[FinalReview] Successfully executed ${dbChangesResult.executedCount} database changes`);
       }
+
+      // STEP 2: Execute new imports (if any)
+      let importResult = null;
+      if (allItemsToImport.length > 0) {
+        console.log(`[FinalReview] Importing ${allItemsToImport.length} new requests...`);
+
+        // Create import preview items with resolved member assignments
+        const importPreviewItems = allItemsToImport.map((item) => {
+          const originalIndex = stagedPreview.originalItems.findIndex((orig) => orig === item);
+          const resolvedMember = stagedPreview.progressState.stageData.unmatched.resolvedAssignments[originalIndex];
+
+          if (resolvedMember) {
+            return {
+              ...item,
+              matchedMember: {
+                status: "matched" as const,
+                member: resolvedMember,
+              },
+            };
+          }
+          return item;
+        });
+
+        // Get indices for import
+        const selectedIndices = allItemsToImport.map((_, index) => index);
+
+        // Execute the batch import
+        importResult = await insertBatchPldSdvRequests(importPreviewItems, selectedIndices);
+
+        if (!importResult.success) {
+          setImportError(`Import failed: ${importResult.errorMessages.join(", ")}`);
+          return;
+        }
+
+        totalProcessed += importResult.insertedCount;
+        console.log(`[FinalReview] Successfully imported ${importResult.insertedCount} new requests`);
+      }
+
+      // STEP 3: Report overall success
+      onImportComplete({
+        success: true,
+        count: totalProcessed,
+      });
     } catch (err: any) {
-      setImportError(err.message || "An error occurred during import");
+      console.error("[FinalReview] Error during execution:", err);
+      setImportError(err.message || "An error occurred during processing");
     } finally {
       setIsImporting(false);
     }
@@ -291,6 +332,8 @@ export function DuplicateAndFinalReview({
   // Render final review summary
   const renderFinalReviewSummary = () => {
     const { summary, approvedItems, waitlistedItems, skippedItems, allotmentChanges } = final_review;
+    const { db_reconciliation } = stagedPreview.progressState.stageData;
+    const hasDbChanges = db_reconciliation.queuedChanges.length > 0;
 
     return (
       <View style={styles.finalSummaryContainer}>
@@ -325,6 +368,27 @@ export function DuplicateAndFinalReview({
                 </ThemedText>
               </View>
             ))}
+          </View>
+        )}
+
+        {hasDbChanges && (
+          <View style={styles.allotmentChangesSection}>
+            <ThemedText style={styles.sectionTitle}>Database Changes</ThemedText>
+            <ThemedText style={styles.dbChangesSubtitle}>
+              {db_reconciliation.queuedChanges.length} existing request(s) will be updated:
+            </ThemedText>
+            {db_reconciliation.queuedChanges.slice(0, 5).map((change, index) => (
+              <View key={index} style={styles.dbChangeItem}>
+                <ThemedText style={styles.dbChangeText}>
+                  • {change.currentStatus} → {change.newStatus} ({format(new Date(change.requestDate), "MMM d")})
+                </ThemedText>
+              </View>
+            ))}
+            {db_reconciliation.queuedChanges.length > 5 && (
+              <ThemedText style={styles.moreItems}>
+                ... and {db_reconciliation.queuedChanges.length - 5} more
+              </ThemedText>
+            )}
           </View>
         )}
 
@@ -369,11 +433,17 @@ export function DuplicateAndFinalReview({
         <View style={styles.importButtonContainer}>
           <Button
             onPress={handleExecuteImport}
-            disabled={isImporting || summary.totalToImport === 0}
+            disabled={isImporting || (summary.totalToImport === 0 && !hasDbChanges)}
             variant="primary"
             style={styles.importButton}
           >
-            {isImporting ? "Importing..." : `Import ${summary.totalToImport} Requests`}
+            {isImporting
+              ? "Processing..."
+              : hasDbChanges && summary.totalToImport === 0
+              ? `Apply ${db_reconciliation.queuedChanges.length} Database Changes`
+              : `Import ${summary.totalToImport} Requests${
+                  hasDbChanges ? ` + ${db_reconciliation.queuedChanges.length} DB Changes` : ""
+                }`}
           </Button>
         </View>
 
@@ -741,5 +811,18 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     color: Colors.dark.text,
     fontWeight: "500",
+  },
+  dbChangesSubtitle: {
+    fontSize: 14,
+    color: Colors.dark.textDim,
+    marginBottom: 8,
+  },
+  dbChangeItem: {
+    padding: 4,
+    marginLeft: 8,
+  },
+  dbChangeText: {
+    fontSize: 14,
+    color: Colors.dark.textDim,
   },
 });

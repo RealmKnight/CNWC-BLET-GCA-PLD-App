@@ -48,7 +48,7 @@ export const Colors = {
     buttonText: black,
     buttonBorder: goldSecondary,
     // Secondary button variant
-    buttonBackgroundSecondary: black,
+    buttonBackgroundSecondary: "#252424",
     buttonTextSecondary: goldPrimary,
     buttonBorderSecondary: goldSecondary,
     error: "#ff4d4d",
