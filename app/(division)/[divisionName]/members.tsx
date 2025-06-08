@@ -252,18 +252,20 @@ export default function DivisionMembersScreen() {
             <ThemedText style={styles.subtitle}>
               Sorted by {getSortOrderDisplayName(sortOrder)}, Separated by Zone
             </ThemedText>
-            {canModifyDivisionSettings() && (
-              <TouchableOpacity
-                style={styles.sortButton}
-                onPress={() => setShowSortSelector(!showSortSelector)}
-                disabled={isUpdatingSortOrder}
-              >
-                <Ionicons name="swap-vertical" size={20} color={Colors[colorScheme as keyof typeof Colors].tint} />
-                <ThemedText style={styles.sortButtonText}>Change Sort</ThemedText>
-              </TouchableOpacity>
-            )}
           </ThemedView>
         </ThemedView>
+        {canModifyDivisionSettings() && (
+          <ThemedView style={styles.viewSortButton}>
+            <TouchableOpacity
+              style={styles.sortButton}
+              onPress={() => setShowSortSelector(!showSortSelector)}
+              disabled={isUpdatingSortOrder}
+            >
+              <Ionicons name="swap-vertical" size={20} color={Colors[colorScheme as keyof typeof Colors].tint} />
+              <ThemedText style={styles.sortButtonText}>Change Sort</ThemedText>
+            </TouchableOpacity>
+          </ThemedView>
+        )}
 
         {showSortSelector && canModifyDivisionSettings() && (
           <ThemedView style={styles.sortSelectorContainer}>
@@ -360,6 +362,7 @@ const styles = StyleSheet.create({
   },
   titleContainer: {
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
     borderRadius: 8,
     padding: 8,
@@ -370,6 +373,7 @@ const styles = StyleSheet.create({
   },
   subtitleContainer: {
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
   },
   subtitle: {
@@ -377,11 +381,16 @@ const styles = StyleSheet.create({
     opacity: 0.7,
     marginLeft: 8,
   },
+  viewSortButton: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    borderRadius: 8,
+  },
   sortButton: {
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
     padding: 8,
-    marginLeft: 12,
   },
   sortButtonText: {
     fontSize: 14,
