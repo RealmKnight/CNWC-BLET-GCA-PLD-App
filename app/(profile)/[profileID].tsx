@@ -422,7 +422,7 @@ function DateOfBirthModal({
         .schema("public")
         .from("members")
         .update({ date_of_birth: formattedDate })
-        .eq("user_id", session.user.id);
+        .eq("id", session.user.id);
 
       if (updateError) throw updateError;
 
