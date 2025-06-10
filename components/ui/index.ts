@@ -5,3 +5,7 @@ export { Text } from "./Text";
 export { SmsOptInModal } from "./SmsOptInModal";
 export { default as TabBarBackground } from "./TabBarBackground";
 export { IconSymbol } from "./IconSymbol";
+export { Input } from "./Input";
+export { OtpVerificationModal } from "./OtpVerificationModal";
+export { PhoneVerificationBanner } from "./PhoneVerificationBanner";
+export { VerificationRevertWarningModal } from "./VerificationRevertWarningModal";

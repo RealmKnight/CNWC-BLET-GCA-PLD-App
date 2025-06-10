@@ -107,7 +107,7 @@ export function SmsOptInModal({ visible, onClose, onOptIn, currentPhoneNumber = 
     try {
       const formattedPhone = formatPhoneForSubmission(phoneNumber);
       await onOptIn(formattedPhone);
-      onClose();
+      // Don't call onClose() here - let the parent component handle modal transitions
     } catch (error) {
       console.error("Error opting in to SMS:", error);
       Alert.alert("Error", "Failed to enable SMS notifications. Please try again.");

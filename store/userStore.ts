@@ -5,15 +5,37 @@ import { supabase } from "@/utils/supabase"; // Import supabase
 
 type Member = Database["public"]["Tables"]["members"]["Row"];
 
+// Phone verification types
+type PhoneVerificationStatus =
+  | "not_started"
+  | "pending"
+  | "verified"
+  | "locked_out";
+
+interface PhoneVerificationState {
+  phoneNumber: string | null;
+  isPhoneVerified: boolean;
+  phoneVerificationStatus: PhoneVerificationStatus;
+  smsOptOut: boolean;
+  smsLockoutUntil: string | null;
+  lastVerificationAttempt: string | null;
+}
+
 interface UserState {
   member: Member | null;
   userRole: UserRole | null;
   division: string | null;
   calendar_id: string | null;
+  phoneVerification: PhoneVerificationState;
   setMember: (member: Member | null) => Promise<void>;
   setUserRole: (role: UserRole | null) => void;
   setDivision: (division: string | null) => void;
-  setCalendarId: (calendarId: string | null) => void; // New method to directly set calendar_id
+  setCalendarId: (calendarId: string | null) => void;
+  updatePhoneVerification: (updates: Partial<PhoneVerificationState>) => void;
+  setPhoneNumber: (phoneNumber: string | null) => void;
+  setVerificationStatus: (status: PhoneVerificationStatus) => void;
+  setSmsOptOut: (optOut: boolean) => void;
+  setSmsLockout: (lockoutUntil: string | null) => void;
   reset: () => void;
 }
 
@@ -41,6 +63,14 @@ export const useUserStore = create<UserState>((set, get) => ({
   userRole: null,
   division: null,
   calendar_id: null,
+  phoneVerification: {
+    phoneNumber: null,
+    isPhoneVerified: false,
+    phoneVerificationStatus: "not_started",
+    smsOptOut: false,
+    smsLockoutUntil: null,
+    lastVerificationAttempt: null,
+  },
   setMember: async (member) => {
     console.log(
       "[UserStore] Setting member:",
@@ -82,8 +112,64 @@ export const useUserStore = create<UserState>((set, get) => ({
     console.log("[UserStore] Setting calendar_id:", calendarId);
     set({ calendar_id: calendarId });
   },
+  updatePhoneVerification: (updates) => {
+    console.log("[UserStore] Updating phone verification:", updates);
+    set((state) => ({
+      phoneVerification: { ...state.phoneVerification, ...updates },
+    }));
+  },
+  setPhoneNumber: (phoneNumber) => {
+    console.log(
+      "[UserStore] Setting phone number:",
+      phoneNumber ? "***masked***" : null,
+    );
+    set((state) => ({
+      phoneVerification: { ...state.phoneVerification, phoneNumber },
+    }));
+  },
+  setVerificationStatus: (status) => {
+    console.log("[UserStore] Setting verification status:", status);
+    set((state) => ({
+      phoneVerification: {
+        ...state.phoneVerification,
+        phoneVerificationStatus: status,
+        isPhoneVerified: status === "verified",
+      },
+    }));
+  },
+  setSmsOptOut: (optOut) => {
+    console.log("[UserStore] Setting SMS opt-out:", optOut);
+    set((state) => ({
+      phoneVerification: { ...state.phoneVerification, smsOptOut: optOut },
+    }));
+  },
+  setSmsLockout: (lockoutUntil) => {
+    console.log("[UserStore] Setting SMS lockout:", lockoutUntil);
+    set((state) => ({
+      phoneVerification: {
+        ...state.phoneVerification,
+        smsLockoutUntil: lockoutUntil,
+        phoneVerificationStatus: lockoutUntil
+          ? "locked_out"
+          : state.phoneVerification.phoneVerificationStatus,
+      },
+    }));
+  },
   reset: () => {
     console.log("[UserStore] Resetting state");
-    set({ member: null, userRole: null, division: null, calendar_id: null });
+    set({
+      member: null,
+      userRole: null,
+      division: null,
+      calendar_id: null,
+      phoneVerification: {
+        phoneNumber: null,
+        isPhoneVerified: false,
+        phoneVerificationStatus: "not_started",
+        smsOptOut: false,
+        smsLockoutUntil: null,
+        lastVerificationAttempt: null,
+      },
+    });
   },
 }));

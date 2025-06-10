@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { StyleSheet, ScrollView, Alert, Modal, Platform, TextInput, View, Linking } from "react-native";
+import { StyleSheet, ScrollView, Modal, Platform, TextInput, View, Linking } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -14,12 +14,25 @@ import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import Constants from "expo-constants";
 import { parseISO, format, differenceInYears, isAfter } from "date-fns";
-import Toast from "react-native-toast-message";
 import { ChangePasswordModal } from "@/components/ui/ChangePasswordModal";
 import { MemberMessageModal } from "@/components/MemberMessageModal";
 import { MeetingNotificationPreferences } from "@/components/ui/MeetingNotificationPreferences";
 import { ClientOnlyDatePicker } from "@/components/ClientOnlyDatePicker";
-import { SmsOptInModal } from "@/components/ui/SmsOptInModal";
+import {
+  SmsOptInModal,
+  OtpVerificationModal,
+  PhoneVerificationBanner,
+  VerificationRevertWarningModal,
+} from "@/components/ui";
+import { showSuccessToast, showErrorToast } from "@/utils/toastHelpers";
+import {
+  validateAndFormatPhone,
+  formatPhoneForDisplay,
+  formatPhoneToE164,
+  sanitizePhoneInput,
+  parseE164ToClean,
+} from "@/utils/phoneValidation";
+import { useUserStore } from "@/store/userStore";
 
 type Member = Database["public"]["Tables"]["members"]["Row"];
 type ContactPreference = "in_app" | "phone" | "text" | "email" | "push";
@@ -33,6 +46,10 @@ interface UserPreferences {
   contact_preference: ContactPreference;
   created_at: string;
   updated_at: string;
+  phone_verified?: boolean;
+  sms_opt_out?: boolean;
+  sms_lockout_until?: string | null;
+  phone_verification_status?: "not_started" | "pending" | "verified" | "locked_out";
 }
 
 // Base Confirmation Modal component to be reused for all notification types
@@ -151,9 +168,8 @@ function SMSConfirmationContent() {
       <ThemedText style={styles.confirmationText}>
         For more information about how we handle your data, please review our{" "}
         <ThemedText style={styles.privacyLink} onPress={() => Linking.openURL(privacyPolicyUrl)}>
-          Privacy Policy
+          Privacy Policy.
         </ThemedText>
-        .
       </ThemedText>
     </>
   );
@@ -195,9 +211,8 @@ function EmailConfirmationContent() {
       <ThemedText style={styles.confirmationText}>
         For more information about how we handle your data, please review our{" "}
         <ThemedText style={styles.privacyLink} onPress={() => Linking.openURL(privacyPolicyUrl)}>
-          Privacy Policy
+          Privacy Policy.
         </ThemedText>
-        .
       </ThemedText>
     </>
   );
@@ -241,93 +256,55 @@ function PushConfirmationContent() {
       <ThemedText style={styles.confirmationText}>
         For more information about how we handle your data, please review our{" "}
         <ThemedText style={styles.privacyLink} onPress={() => Linking.openURL(privacyPolicyUrl)}>
-          Privacy Policy
+          Privacy Policy.
         </ThemedText>
-        .
       </ThemedText>
     </>
   );
 }
 
 async function registerForPushNotificationsAsync() {
-  let token;
-  let errorMessage = "";
+  let token: string;
 
-  try {
-    if (Platform.OS === "web") {
-      console.log("Push notifications are not supported on web platform");
-      return null;
-    }
+  if (Platform.OS === "android") {
+    await Notifications.setNotificationChannelAsync("default", {
+      name: "default",
+      importance: Notifications.AndroidImportance.MAX,
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: "#FF231F7C",
+    });
+  }
 
-    if (!Device.isDevice) {
-      console.log("Push notifications require a physical device");
-      return null;
-    }
-
-    // Check if we have permission
+  if (Device.isDevice) {
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
-    console.log("Existing notification permission status:", existingStatus);
-
     let finalStatus = existingStatus;
+
     if (existingStatus !== "granted") {
-      console.log("Requesting notification permission...");
       const { status } = await Notifications.requestPermissionsAsync();
       finalStatus = status;
-      console.log("New notification permission status:", finalStatus);
     }
 
     if (finalStatus !== "granted") {
-      errorMessage = "Permission not granted for push notifications";
-      throw new Error(errorMessage);
+      showErrorToast("Permission Denied", "Failed to get push token for push notification!");
+      return "";
     }
 
-    console.log("Getting Expo push token...");
-    const response = await Notifications.getExpoPushTokenAsync({
-      projectId: Constants.expoConfig?.extra?.eas?.projectId,
-    });
-    token = response.data;
-    console.log("Successfully obtained push token:", token);
-
-    // On Android, we need to set the notification channel
-    if (Platform.OS === "android") {
-      await Notifications.setNotificationChannelAsync("default", {
-        name: "default",
-        importance: Notifications.AndroidImportance.MAX,
-        vibrationPattern: [0, 250, 250, 250],
-        lightColor: "#FF231F7C",
-      });
+    try {
+      const projectId = Constants?.expoConfig?.extra?.eas?.projectId ?? Constants?.easConfig?.projectId;
+      if (!projectId) {
+        throw new Error("Project ID not found");
+      }
+      token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+      console.log("Expo Push Token:", token);
+    } catch (e) {
+      token = `${e}`;
     }
-
-    return token;
-  } catch (error) {
-    console.error("Error setting up push notifications:", error);
-    Alert.alert(
-      "Push Notification Setup Error",
-      errorMessage || "Failed to set up push notifications. Please check your device settings and try again."
-    );
-    return null;
+  } else {
+    showErrorToast("Error", "Must use physical device for Push Notifications");
+    return "";
   }
-}
 
-// Utility functions for phone number formatting
-function formatPhoneNumber(value: string): string {
-  // Strip all non-numeric characters
-  const cleaned = value.replace(/\D/g, "");
-
-  // Format as (XXX) XXX-XXXX
-  const match = cleaned.match(/^(\d{0,3})(\d{0,3})(\d{0,4})$/);
-  if (!match) return "";
-
-  const parts = [match[1], match[2], match[3]].filter(Boolean);
-
-  if (parts.length === 0) return "";
-  if (parts.length === 1) return `(${parts[0]}`;
-  if (parts.length === 2) return `(${parts[0]}) ${parts[1]}`;
-  return `(${parts[0]}) ${parts[1]}-${parts[2]}`;
-}
-
-function unformatPhoneNumber(value: string): string {
-  return value.replace(/\D/g, "");
+  return token;
 }
 
 function DateOfBirthModal({
@@ -354,22 +331,14 @@ function DateOfBirthModal({
   const validateDate = (date: Date): boolean => {
     // Check for future dates
     if (isAfter(date, new Date())) {
-      Toast.show({
-        type: "error",
-        text1: "Invalid Date",
-        text2: "Date of birth cannot be in the future",
-      });
+      showErrorToast("Invalid Date", "Date of birth cannot be in the future");
       return false;
     }
 
     // Check for age > 105
     const age = differenceInYears(new Date(), date);
     if (age > 105) {
-      Toast.show({
-        type: "error",
-        text1: "Invalid Age",
-        text2: "Age cannot be greater than 105 years",
-      });
+      showErrorToast("Invalid Age", "Age cannot be greater than 105 years");
       return false;
     }
 
@@ -378,11 +347,7 @@ function DateOfBirthModal({
       const currentDate = parseISO(currentDateOfBirth);
       const yearDifference = Math.abs(differenceInYears(date, currentDate));
       if (yearDifference > 10) {
-        Toast.show({
-          type: "error",
-          text1: "Significant Date Change",
-          text2: "Changes greater than 10 years require division admin approval",
-        });
+        showErrorToast("Significant Date Change", "Changes greater than 10 years require division admin approval");
         return false;
       }
     }
@@ -431,11 +396,7 @@ function DateOfBirthModal({
     } catch (error: any) {
       console.error("Error updating date of birth:", error);
       setError(error.message || "Failed to update date of birth");
-      Toast.show({
-        type: "error",
-        text1: "Error",
-        text2: error.message || "Failed to update date of birth",
-      });
+      showErrorToast("Error", error.message || "Failed to update date of birth");
     } finally {
       setIsLoading(false);
     }
@@ -505,8 +466,8 @@ function PhoneUpdateModal({
   const { session } = useAuth();
 
   const handlePhoneChange = (value: string) => {
-    // Only allow numbers, max 10 digits
-    const cleaned = value.replace(/\D/g, "").slice(0, 10);
+    // Use centralized phone sanitization
+    const cleaned = sanitizePhoneInput(value);
     setPhoneNumber(cleaned);
   };
 
@@ -528,8 +489,8 @@ function PhoneUpdateModal({
         throw new Error("You can only update your own phone number.");
       }
 
-      // Format phone number for Supabase (E.164 format)
-      const formattedPhone = `+1${phoneNumber}`; // Assuming US numbers for now
+      // Format phone number for Supabase (E.164 format) using centralized utility
+      const formattedPhone = formatPhoneToE164(phoneNumber);
 
       // Update phone in auth.users and metadata
       const { error: updateError } = await supabase.auth.updateUser({
@@ -554,7 +515,7 @@ function PhoneUpdateModal({
             throw metadataError;
           }
 
-          Alert.alert(
+          showSuccessToast(
             "Notice",
             "Phone number saved in profile. SMS verification will be enabled once the system is fully configured."
           );
@@ -594,7 +555,7 @@ function PhoneUpdateModal({
 
           <ThemedView style={styles.inputContainer}>
             <TextInput
-              value={formatPhoneNumber(phoneNumber)}
+              value={formatPhoneForDisplay(phoneNumber)}
               onChangeText={handlePhoneChange}
               placeholder="(555) 555-1234"
               placeholderTextColor={Colors[theme].textDim}
@@ -629,18 +590,27 @@ function PhoneUpdateModal({
 export default function ProfileScreen() {
   const params = useLocalSearchParams();
   const profileID = params.profileID as string | undefined;
-  const { user, session, member: loggedInMember } = useAuth(); // Use loggedInMember to avoid confusion
+  const { user, session, member: loggedInMember } = useAuth();
   const theme = (useColorScheme() ?? "light") as ColorScheme;
   const router = useRouter();
+
+  // UserStore integration
+  const {
+    phoneVerification,
+    updatePhoneVerification,
+    setPhoneNumber: setGlobalPhoneNumber,
+    setVerificationStatus,
+    setSmsOptOut,
+    setSmsLockout,
+  } = useUserStore();
 
   // State for the profile being viewed
   const [profile, setProfile] = useState<Member | null>(null);
   const [userPreferences, setUserPreferences] = useState<UserPreferences | null>(null);
-  const [phoneNumber, setPhoneNumber] = useState(""); // Phone number state
   const [divisionName, setDivisionName] = useState<string | null>(null);
   const [zoneName, setZoneName] = useState<string | null>(null);
 
-  // UI State
+  // UI State (keep these local as they're component-specific)
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isPhoneModalVisible, setIsPhoneModalVisible] = useState(false);
@@ -655,9 +625,42 @@ export default function ProfileScreen() {
 
   // Pending preference selection
   const [pendingPreference, setPendingPreference] = useState<ContactPreference | null>(null);
+  const [previousPreference, setPreviousPreference] = useState<ContactPreference>("in_app");
+
+  // OTP verification state (keep some local for UI, sync important parts with userStore)
+  const [isOtpModalVisible, setIsOtpModalVisible] = useState(false);
+  const [otpError, setOtpError] = useState<string | null>(null);
+  const [isOtpLoading, setIsOtpLoading] = useState(false);
+
+  // Verification revert warning modal
+  const [isRevertWarningVisible, setIsRevertWarningVisible] = useState(false);
 
   // Add new state for contact admin modal
   const [showContactAdminModal, setShowContactAdminModal] = useState(false);
+
+  // Get phone number from userStore instead of local state
+  const phoneNumber = phoneVerification.phoneNumber || "";
+  const otpPhoneNumber = phoneVerification.phoneNumber || "";
+
+  // Pre-construct safe values for modals to prevent text node errors
+  const safePhoneNumber = phoneNumber || "";
+  const safeOtpPhoneNumber = otpPhoneNumber || "";
+  const revertPhoneNumber = safeOtpPhoneNumber || safePhoneNumber;
+
+  // Pre-construct display values to prevent text node errors
+  const phoneDisplayText = phoneNumber ? formatPhoneForDisplay(phoneNumber) : "Not set";
+  const fullNameDisplay = profile ? `${profile.first_name} ${profile.last_name}` : "";
+  const emailDisplayText = user?.email || "Not set";
+  const dobDisplayText = profile?.date_of_birth ? format(parseISO(profile.date_of_birth), "MM/dd/yyyy") : "Not set";
+  const pinDisplayText = profile?.pin_number?.toString() || "";
+  const divisionDisplayText = divisionName || "Not assigned";
+  const zoneDisplayText = zoneName || "Not assigned";
+  const engineerDateDisplay = profile?.engineer_date
+    ? format(parseISO(profile.engineer_date), "MM/dd/yyyy")
+    : "Not set";
+  const companyHireDateDisplay = profile?.company_hire_date
+    ? format(parseISO(profile.company_hire_date), "MM/dd/yyyy")
+    : "Not set";
 
   // Determine if the logged-in user is viewing their own profile
   const isOwnProfile = session?.user?.id === profile?.id;
@@ -674,7 +677,7 @@ export default function ProfileScreen() {
       setDivisionName(null);
       setZoneName(null);
       setUserPreferences(null);
-      setPhoneNumber(""); // Reset phone number
+      setGlobalPhoneNumber(""); // Reset phone number
 
       try {
         // Enhanced validation for profileID
@@ -696,14 +699,23 @@ export default function ProfileScreen() {
         if (!memberData) throw new Error("Profile not found.");
 
         setProfile(memberData);
-        // If viewing own profile, update phone number state from metadata/user record
+        // If viewing own profile, update phone number state from auth.users record
         if (session?.user?.id === memberData.id) {
-          const phoneFromMetadata = session?.user?.user_metadata?.phone_number;
-          if (phoneFromMetadata) {
-            const cleanedPhone = phoneFromMetadata.replace(/\D/g, "");
-            setPhoneNumber(cleanedPhone);
+          // The phone number should be in session.user.phone from auth.users table
+          const phoneFromAuth = session?.user?.phone;
+          if (phoneFromAuth) {
+            // Use parseE164ToClean to properly handle country codes
+            const cleanedPhone = parseE164ToClean(phoneFromAuth);
+            setGlobalPhoneNumber(cleanedPhone);
           } else {
-            setPhoneNumber(session?.user?.phone?.replace(/\D/g, "") || "");
+            // Fallback: check user_metadata if phone isn't in main auth record
+            const phoneFromMetadata = session?.user?.user_metadata?.phone || session?.user?.user_metadata?.phone_number;
+            if (phoneFromMetadata) {
+              const cleanedPhone = parseE164ToClean(phoneFromMetadata);
+              setGlobalPhoneNumber(cleanedPhone);
+            } else {
+              setGlobalPhoneNumber(""); // No phone number found
+            }
           }
         }
 
@@ -723,6 +735,24 @@ export default function ProfileScreen() {
           await createDefaultPreferences(memberData.id, memberData.pin_number);
         } else {
           setUserPreferences(preferencesData as UserPreferences | null);
+
+          // Sync userStore with fetched preferences if this is the user's own profile
+          if (preferencesData && memberData.id === session?.user?.id) {
+            // Get the current phone number using parseE164ToClean to handle country codes
+            const currentPhoneNumber =
+              parseE164ToClean(session?.user?.phone) ||
+              parseE164ToClean(session?.user?.user_metadata?.phone) ||
+              parseE164ToClean(session?.user?.user_metadata?.phone_number) ||
+              null;
+
+            updatePhoneVerification({
+              phoneNumber: currentPhoneNumber,
+              isPhoneVerified: preferencesData.phone_verified || false,
+              phoneVerificationStatus: preferencesData.phone_verification_status || "not_started",
+              smsOptOut: preferencesData.sms_opt_out || false,
+              smsLockoutUntil: preferencesData.sms_lockout_until || null,
+            });
+          }
         }
 
         // 3. Fetch division name using memberData.division_id
@@ -799,6 +829,9 @@ export default function ProfileScreen() {
   const handleUpdatePreference = async (preference: ContactPreference) => {
     if (!isOwnProfile || !profile || !profile.pin_number || !session?.user?.id) return;
 
+    // Store current preference as previous for potential revert
+    setPreviousPreference(userPreferences?.contact_preference || "in_app");
+
     // Set the pending preference
     setPendingPreference(preference);
 
@@ -810,17 +843,44 @@ export default function ProfileScreen() {
 
     // For text preference, validate phone number first
     if (preference === "text") {
-      // Check if user has phone number
-      if (!phoneNumber || phoneNumber.length !== 10) {
-        Alert.alert(
+      // Check if user has phone number and validate it
+      if (!phoneNumber) {
+        showErrorToast(
           "Phone Number Required",
-          "A valid phone number is required to receive text messages. Please update your phone number first.",
-          [{ text: "OK", onPress: () => setIsPhoneModalVisible(true) }]
+          "A valid phone number is required to receive text messages. Please update your phone number first."
         );
+        setIsPhoneModalVisible(true);
         return;
       }
 
-      // Show SMS confirmation modal
+      // Validate phone number format using centralized utility
+      const validatedPhone = validateAndFormatPhone(phoneNumber);
+      if (!validatedPhone.isValid) {
+        showErrorToast("Invalid Phone Number", validatedPhone.error || "Please enter a valid US phone number.");
+        setIsPhoneModalVisible(true);
+        return;
+      }
+
+      // Check if user is locked out
+      if (userPreferences?.sms_lockout_until) {
+        const lockoutTime = new Date(userPreferences.sms_lockout_until);
+        if (lockoutTime > new Date()) {
+          showErrorToast(
+            "SMS Features Locked",
+            "SMS verification is temporarily disabled due to too many failed attempts. Please contact your division admin for assistance."
+          );
+          return;
+        }
+      }
+
+      // Check if phone is already verified
+      if (userPreferences?.phone_verified) {
+        // Phone already verified, can apply preference directly
+        await applyPreferenceChange(preference);
+        return;
+      }
+
+      // Show SMS confirmation modal to start verification flow
       setIsSMSOptInVisible(true);
       return;
     }
@@ -829,7 +889,7 @@ export default function ProfileScreen() {
     if (preference === "email") {
       // Validate email
       if (!user?.email) {
-        Alert.alert("Email Required", "A valid email is required to receive email notifications.");
+        showErrorToast("Email Required", "A valid email is required to receive email notifications.");
         return;
       }
 
@@ -841,7 +901,7 @@ export default function ProfileScreen() {
     // For push preference
     if (preference === "push") {
       if (!isDeviceMobile) {
-        Alert.alert("Error", "Push notifications are only available on mobile devices");
+        showErrorToast("Error", "Push notifications are only available on mobile devices");
         return;
       }
 
@@ -866,7 +926,7 @@ export default function ProfileScreen() {
       if (preference === "push") {
         const token = await registerForPushNotificationsAsync();
         if (!token) {
-          Alert.alert("Error", "Failed to setup push notifications. Please check settings.");
+          showErrorToast("Error", "Failed to setup push notifications. Please check settings.");
           return;
         }
         updatedToken = token;
@@ -911,10 +971,10 @@ export default function ProfileScreen() {
         successMessage = "You will now only receive notifications when using the app.";
       }
 
-      Alert.alert("Success", successMessage);
+      showSuccessToast("Success", successMessage);
     } catch (error: any) {
       console.error("Error updating preference:", error);
-      Alert.alert("Error", "Failed to update contact preference. Please try again.");
+      showErrorToast("Error", "Failed to update contact preference. Please try again.");
     } finally {
       // Reset pending preference
       setPendingPreference(null);
@@ -933,9 +993,171 @@ export default function ProfileScreen() {
   };
 
   // Cancel handlers for each confirmation
+  // OTP verification handlers
+  const handleSendOtp = async (phoneNumber: string) => {
+    if (!session?.user?.id || !profile?.pin_number) return;
+
+    try {
+      setIsOtpLoading(true);
+      setOtpError(null);
+
+      // Update verification status to pending
+      setVerificationStatus("pending");
+
+      // Validate and format phone number
+      const validatedPhone = validateAndFormatPhone(phoneNumber);
+      if (!validatedPhone.isValid) {
+        throw new Error(validatedPhone.error || "Invalid phone number format");
+      }
+
+      const response = await fetch(`${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/send-otp`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          phone: validatedPhone.e164,
+          user_id: session.user.id,
+          pin_number: profile.pin_number,
+        }),
+      });
+
+      // Read response as text first, then try to parse as JSON
+      const responseText = await response.text();
+      let result;
+      try {
+        result = JSON.parse(responseText);
+      } catch (jsonError) {
+        console.error("Failed to parse JSON response:", responseText);
+        throw new Error(`Server returned invalid response. Status: ${response.status}`);
+      }
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to send OTP");
+      }
+
+      // Store the phone number for verification and update userStore
+      setGlobalPhoneNumber(validatedPhone.e164);
+      updatePhoneVerification({
+        lastVerificationAttempt: new Date().toISOString(),
+      });
+
+      // Close SMS opt-in modal and show OTP modal
+      setIsSMSOptInVisible(false);
+      setIsOtpModalVisible(true);
+
+      showSuccessToast("OTP Sent", "Check your phone for the verification code");
+    } catch (error: any) {
+      console.error("Error sending OTP:", error);
+      setOtpError(error.message);
+      setVerificationStatus("not_started");
+      showErrorToast("Error", error.message || "Failed to send verification code");
+    } finally {
+      setIsOtpLoading(false);
+    }
+  };
+
+  const handleVerifyOtp = async (code: string) => {
+    if (!session?.user?.id || !otpPhoneNumber || !profile?.pin_number) return;
+
+    try {
+      setIsOtpLoading(true);
+      setOtpError(null);
+
+      const response = await fetch(`${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/verify-otp`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          phone: otpPhoneNumber,
+          user_id: session.user.id,
+          code: code,
+          pin_number: profile.pin_number,
+        }),
+      });
+
+      // Read response as text first, then try to parse as JSON
+      const responseText = await response.text();
+      let result;
+      try {
+        result = JSON.parse(responseText);
+      } catch (jsonError) {
+        console.error("Failed to parse JSON response:", responseText);
+        throw new Error(`Server returned invalid response. Status: ${response.status}`);
+      }
+
+      if (!response.ok) {
+        throw new Error(result.error || "Invalid verification code");
+      }
+
+      // Success - update userStore with verified status
+      setVerificationStatus("verified");
+      updatePhoneVerification({
+        isPhoneVerified: true,
+      });
+
+      // Close OTP modal
+      setIsOtpModalVisible(false);
+
+      // Apply the SMS preference change
+      await applyPreferenceChange("text");
+
+      showSuccessToast("Phone Verified", "Your phone number has been verified successfully!");
+    } catch (error: any) {
+      console.error("Error verifying OTP:", error);
+      setOtpError(error.message);
+      showErrorToast("Verification Failed", error.message || "Invalid verification code");
+    } finally {
+      setIsOtpLoading(false);
+    }
+  };
+
+  const handleResendOtp = async () => {
+    if (otpPhoneNumber) {
+      await handleSendOtp(otpPhoneNumber);
+    }
+  };
+
+  const handleOtpCancel = () => {
+    setIsOtpModalVisible(false);
+    setOtpError(null);
+    setPendingPreference(null);
+
+    // Reset verification status
+    setVerificationStatus("not_started");
+
+    // Show revert warning modal
+    setIsRevertWarningVisible(true);
+  };
+
+  const handleVerificationRevert = async () => {
+    setIsRevertWarningVisible(false);
+    // Revert to previous preference
+    await applyPreferenceChange(previousPreference);
+    showSuccessToast(
+      "Preference Reverted",
+      `Notifications set back to ${previousPreference === "in_app" ? "In-App Only" : previousPreference}`
+    );
+  };
+
+  const handleKeepTryingLater = () => {
+    setIsRevertWarningVisible(false);
+    // Keep text preference but user will see banner warning
+    showSuccessToast(
+      "Preference Saved",
+      "Text message preference saved. Please verify your phone number to receive notifications."
+    );
+  };
+
   const handleCancelSMSOptIn = () => {
     setIsSMSOptInVisible(false);
     setPendingPreference(null);
+
+    // Show revert warning modal
+    setIsRevertWarningVisible(true);
   };
 
   const handleCancelEmailConfirmation = () => {
@@ -948,21 +1170,12 @@ export default function ProfileScreen() {
     setPendingPreference(null);
   };
 
-  const handlePhoneUpdateSuccess = (newPhone: string) => {
-    setPhoneNumber(newPhone);
-    Alert.alert("Success", "Phone number updated successfully!");
-  };
-
   const handleDateOfBirthUpdateSuccess = (newDateOfBirth: string) => {
     // Update local profile state immediately for better UX
     if (profile) {
       setProfile({ ...profile, date_of_birth: newDateOfBirth });
     }
-    Toast.show({
-      type: "success",
-      text1: "Success",
-      text2: "Date of birth updated successfully!",
-    });
+    showSuccessToast("Success", "Date of birth updated successfully!");
   };
 
   // --- Conditional Renders ---
@@ -998,7 +1211,10 @@ export default function ProfileScreen() {
         <PhoneUpdateModal
           visible={isPhoneModalVisible && isOwnProfile}
           onClose={() => setIsPhoneModalVisible(false)}
-          onSuccess={handlePhoneUpdateSuccess}
+          onSuccess={(newPhone) => {
+            setGlobalPhoneNumber(newPhone);
+            showSuccessToast("Success", "Phone number updated successfully!");
+          }}
           currentPhone={phoneNumber}
           targetUserId={profile.id} // Safe to use profile.id here
         />
@@ -1018,15 +1234,29 @@ export default function ProfileScreen() {
       <SmsOptInModal
         visible={isSMSOptInVisible}
         onClose={handleCancelSMSOptIn}
-        onOptIn={async (phoneNumber: string) => {
-          // Update phone number in state
-          const cleanedPhone = phoneNumber.replace(/\D/g, "");
-          setPhoneNumber(cleanedPhone);
+        onOptIn={handleSendOtp}
+        currentPhoneNumber={safePhoneNumber}
+      />
 
-          // Apply the SMS preference change
-          await applyPreferenceChange("text");
-        }}
-        currentPhoneNumber={phoneNumber}
+      {/* OTP Verification Modal */}
+      <OtpVerificationModal
+        visible={isOtpModalVisible}
+        onClose={handleOtpCancel}
+        onVerify={handleVerifyOtp}
+        onResend={handleResendOtp}
+        phoneNumber={safeOtpPhoneNumber}
+        error={otpError}
+        isLoading={isOtpLoading}
+      />
+
+      {/* Verification Revert Warning Modal */}
+      <VerificationRevertWarningModal
+        visible={isRevertWarningVisible}
+        onClose={() => setIsRevertWarningVisible(false)}
+        onRevert={handleVerificationRevert}
+        onKeepTrying={handleKeepTryingLater}
+        previousPreference={previousPreference}
+        phoneNumber={revertPhoneNumber}
       />
 
       {/* Email and Push Notification Confirmation Modals */}
@@ -1053,16 +1283,16 @@ export default function ProfileScreen() {
         <ThemedText type="title">Personal Information</ThemedText>
         <ThemedView style={styles.infoRow}>
           <ThemedText type="subtitle">Name:</ThemedText>
-          <ThemedText>{`${profile.first_name} ${profile.last_name}`}</ThemedText>
+          <ThemedText>{fullNameDisplay}</ThemedText>
         </ThemedView>
         <ThemedView style={styles.infoRow}>
           <ThemedText type="subtitle">Email:</ThemedText>
-          <ThemedText>{user?.email || "Not set"}</ThemedText>
+          <ThemedText>{emailDisplayText}</ThemedText>
         </ThemedView>
         <ThemedView style={styles.infoRow}>
           <ThemedText type="subtitle">Phone:</ThemedText>
           <ThemedView style={styles.editRow}>
-            <ThemedText>{phoneNumber ? formatPhoneNumber(phoneNumber) : "Not set"}</ThemedText>
+            <ThemedText>{phoneDisplayText}</ThemedText>
             {canEditProfileDetails && (
               <TouchableOpacity onPress={() => setIsPhoneModalVisible(true)} style={styles.iconButton}>
                 <Ionicons name="pencil" size={24} color={Colors[theme].tint} />
@@ -1070,12 +1300,19 @@ export default function ProfileScreen() {
             )}
           </ThemedView>
         </ThemedView>
+        {/* Phone Verification Banner */}
+        {isOwnProfile && phoneNumber && userPreferences?.contact_preference === "text" && (
+          <PhoneVerificationBanner
+            phoneNumber={phoneNumber}
+            isVerified={phoneVerification.isPhoneVerified}
+            isLockedOut={phoneVerification.phoneVerificationStatus === "locked_out"}
+            lockoutUntil={phoneVerification.smsLockoutUntil}
+          />
+        )}
         <ThemedView style={styles.infoRow}>
           <ThemedText type="subtitle">Date of Birth:</ThemedText>
           <ThemedView style={styles.editRow}>
-            <ThemedText>
-              {profile.date_of_birth ? format(parseISO(profile.date_of_birth), "MM/dd/yyyy") : "Not set"}
-            </ThemedText>
+            <ThemedText>{dobDisplayText}</ThemedText>
             {canEditProfileDetails && (
               <TouchableOpacity onPress={() => setIsDateOfBirthModalVisible(true)} style={styles.iconButton}>
                 <Ionicons name="pencil" size={24} color={Colors[theme].tint} />
@@ -1223,27 +1460,23 @@ export default function ProfileScreen() {
         )}
         <ThemedView style={styles.infoRow}>
           <ThemedText type="subtitle">PIN:</ThemedText>
-          <ThemedText>{profile.pin_number}</ThemedText>
+          <ThemedText>{pinDisplayText}</ThemedText>
         </ThemedView>
         <ThemedView style={styles.infoRow}>
           <ThemedText type="subtitle">Division:</ThemedText>
-          <ThemedText>{divisionName || "Not assigned"}</ThemedText>
+          <ThemedText>{divisionDisplayText}</ThemedText>
         </ThemedView>
         <ThemedView style={styles.infoRow}>
           <ThemedText type="subtitle">Zone:</ThemedText>
-          <ThemedText>{zoneName || "Not assigned"}</ThemedText>
+          <ThemedText>{zoneDisplayText}</ThemedText>
         </ThemedView>
         <ThemedView style={styles.infoRow}>
           <ThemedText type="subtitle">Engineer Date:</ThemedText>
-          <ThemedText>
-            {profile.engineer_date ? format(parseISO(profile.engineer_date), "MM/dd/yyyy") : "Not set"}
-          </ThemedText>
+          <ThemedText>{engineerDateDisplay}</ThemedText>
         </ThemedView>
         <ThemedView style={styles.infoRow}>
           <ThemedText type="subtitle">Company Hire Date:</ThemedText>
-          <ThemedText>
-            {profile.company_hire_date ? format(parseISO(profile.company_hire_date), "MM/dd/yyyy") : "Not set"}
-          </ThemedText>
+          <ThemedText>{companyHireDateDisplay}</ThemedText>
         </ThemedView>
       </ThemedView>
 
@@ -1347,6 +1580,8 @@ const styles = StyleSheet.create({
     padding: 20,
     borderRadius: 12,
     gap: 16,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
   } as any,
   modalHeader: {
     flexDirection: "row",
