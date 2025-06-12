@@ -435,7 +435,7 @@ async function sendStatusChangeEmails(
         mailgunSendingKey,
         mailgunDomain,
         {
-          from: "CN/WC GCA BLET PLD App <replies@pldapp.bletcnwcgca.org>",
+          from: "CN/WC GCA BLET PLD App <requests@pldapp.bletcnwcgca.org>",
           to: String(memberEmail),
           subject: String(userSubject),
           html: String(userHtml),
@@ -469,7 +469,7 @@ async function sendStatusChangeEmails(
           mailgunSendingKey,
           mailgunDomain,
           {
-            from: "CN/WC GCA BLET PLD App <replies@pldapp.bletcnwcgca.org>",
+            from: "CN/WC GCA BLET PLD App <requests@pldapp.bletcnwcgca.org>",
             to: String(email),
             subject: String(adminSubject),
             html: String(adminHtml),

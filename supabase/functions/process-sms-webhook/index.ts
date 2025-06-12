@@ -7,6 +7,67 @@ const corsHeaders = {
         "authorization, x-client-info, apikey, content-type",
 };
 
+// Twilio signature validation
+async function validateTwilioSignature(
+    signature: string,
+    url: string,
+    body: string,
+    authToken: string,
+): Promise<boolean> {
+    try {
+        const encoder = new TextEncoder();
+        const key = await crypto.subtle.importKey(
+            "raw",
+            encoder.encode(authToken),
+            { name: "HMAC", hash: "SHA-1" },
+            false,
+            ["sign"],
+        );
+
+        const data = encoder.encode(url + body);
+        const signatureBuffer = await crypto.subtle.sign("HMAC", key, data);
+        const calculatedSignature = btoa(
+            String.fromCharCode(...new Uint8Array(signatureBuffer)),
+        );
+
+        return calculatedSignature === signature;
+    } catch (error) {
+        console.error("Signature validation error:", error);
+        return false;
+    }
+}
+
+// Log SMS webhook events for compliance (7-year retention requirement)
+async function logSmsWebhookEvent(
+    supabaseAdmin: any,
+    eventType: string,
+    phoneNumber: string,
+    messageBody: string,
+    userId?: string,
+    messageSid?: string,
+    accountSid?: string,
+) {
+    try {
+        const { error } = await supabaseAdmin
+            .from("sms_webhook_audit_log")
+            .insert({
+                event_type: eventType,
+                phone_number: phoneNumber,
+                message_body: messageBody,
+                user_id: userId || null,
+                message_sid: messageSid || null,
+                account_sid: accountSid || null,
+                created_at: new Date().toISOString(),
+            });
+
+        if (error) {
+            console.error("Failed to log SMS webhook event:", error);
+        }
+    } catch (error) {
+        console.error("SMS webhook audit logging error:", error);
+    }
+}
+
 // Format phone number to E.164 (assumes US numbers)
 function formatPhoneToE164(phone: string): string {
     // Remove all non-numeric characters
@@ -39,6 +100,37 @@ serve(async (req) => {
             return new Response("Method not allowed", {
                 status: 405,
                 headers: corsHeaders,
+            });
+        }
+
+        // Validate Twilio signature for security
+        const twilioSignature = req.headers.get("X-Twilio-Signature");
+        const twilioAuthToken = Deno.env.get("TWILIO_AUTH_TOKEN");
+
+        if (twilioSignature && twilioAuthToken) {
+            const url = req.url;
+            const rawBody = await req.text();
+
+            const isValidSignature = await validateTwilioSignature(
+                twilioSignature,
+                url,
+                rawBody,
+                twilioAuthToken,
+            );
+
+            if (!isValidSignature) {
+                console.error("Invalid Twilio signature");
+                return new Response("Unauthorized", {
+                    status: 401,
+                    headers: corsHeaders,
+                });
+            }
+
+            // Re-create request with the consumed body
+            req = new Request(req.url, {
+                method: req.method,
+                headers: req.headers,
+                body: rawBody,
             });
         }
 
@@ -93,6 +185,17 @@ serve(async (req) => {
                 `Webhook received for unknown/unverified phone: ${formattedPhone}, body: ${normalizedBody}`,
             );
 
+            // Log unknown phone webhook for compliance
+            await logSmsWebhookEvent(
+                supabaseAdmin,
+                "UNKNOWN",
+                formattedPhone,
+                normalizedBody,
+                undefined,
+                messageSid,
+                accountSid,
+            );
+
             // Still return 200 to acknowledge receipt to Twilio
             return new Response("OK", {
                 status: 200,
@@ -133,6 +236,16 @@ serve(async (req) => {
                 `SMS opt-out processed for user ${userId}, phone ${formattedPhone}, message: ${normalizedBody}`,
             );
 
+            await logSmsWebhookEvent(
+                supabaseAdmin,
+                "STOP",
+                formattedPhone,
+                normalizedBody,
+                userId,
+                messageSid,
+                accountSid,
+            );
+
             return new Response("OK - STOP processed", {
                 status: 200,
                 headers: corsHeaders,
@@ -166,6 +279,16 @@ serve(async (req) => {
                 `SMS opt-in processed for user ${userId}, phone ${formattedPhone}, message: ${normalizedBody}`,
             );
 
+            await logSmsWebhookEvent(
+                supabaseAdmin,
+                "START",
+                formattedPhone,
+                normalizedBody,
+                userId,
+                messageSid,
+                accountSid,
+            );
+
             return new Response("OK - START processed", {
                 status: 200,
                 headers: corsHeaders,
@@ -177,6 +300,16 @@ serve(async (req) => {
             // Log the help request
             console.log(
                 `SMS help request from user ${userId}, phone ${formattedPhone}`,
+            );
+
+            await logSmsWebhookEvent(
+                supabaseAdmin,
+                "HELP",
+                formattedPhone,
+                normalizedBody,
+                userId,
+                messageSid,
+                accountSid,
             );
 
             return new Response("OK - HELP processed", {

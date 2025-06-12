@@ -244,7 +244,7 @@ ${isPaidInLieu ? "Payment Request ID" : "Request ID"}: ${safeRequestId}
 
     // Prepare email data with both HTML and text content
     const emailData = {
-      from: "CN/WC GCA BLET PLD App <replies@pldapp.bletcnwcgca.org>",
+      from: "CN/WC GCA BLET PLD App <requests@pldapp.bletcnwcgca.org>",
       to: String(recipientEmail),
       subject: String(subject),
       html: String(htmlContent),

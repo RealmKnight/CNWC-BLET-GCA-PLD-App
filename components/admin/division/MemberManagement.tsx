@@ -33,8 +33,9 @@ import { useAuth, AuthContext } from "@/hooks/useAuth";
 import { useAdminCalendarManagementStore } from "@/store/adminCalendarManagementStore";
 import { useAdminMemberManagementStore, type MemberData } from "@/store/adminMemberManagementStore";
 import { MemberEditForm } from "./MemberEditForm";
+import { SmsLockoutManager } from "../SmsLockoutManager";
 
-type MemberAction = "list" | "edit" | "bulk" | "transfer";
+type MemberAction = "list" | "edit" | "bulk" | "transfer" | "sms_lockout";
 
 type BulkActionTab = "calendar" | "seniority" | "sdv" | "zone";
 
@@ -850,6 +851,12 @@ export function MemberManagement() {
             )}
           </View>
         )}
+
+        {currentAction === "sms_lockout" && (
+          <View style={{ display: currentAction === "sms_lockout" ? "flex" : "none", flex: 1 }}>
+            {lastLoadedDivision && <SmsLockoutManager divisionFilter={lastLoadedDivision} />}
+          </View>
+        )}
       </ThemedView>
     );
   }, [currentAction, lastLoadedDivision, memberListUI, selectedMember, handleCloseEditForm]);
@@ -885,6 +892,7 @@ export function MemberManagement() {
       <ThemedView style={styles.actionButtons}>
         {renderActionButton("list", "list", "Member List")}
         {isAdmin && renderActionButton("bulk", "people", "Bulk Actions")}
+        {isAdmin && renderActionButton("sms_lockout", "lock-closed", "SMS Lockouts")}
       </ThemedView>
     ),
     [renderActionButton, isAdmin]

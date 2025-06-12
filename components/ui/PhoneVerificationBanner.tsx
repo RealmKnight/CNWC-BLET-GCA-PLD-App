@@ -28,8 +28,8 @@ export function PhoneVerificationBanner({
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const colors = Colors[colorScheme];
 
-  // Don't show banner if phone is verified or if contact preference is not text
-  if (isVerified || contactPreference !== "text" || !phoneNumber) {
+  // Don't show banner if no phone number
+  if (!phoneNumber) {
     return null;
   }
 
@@ -82,25 +82,49 @@ export function PhoneVerificationBanner({
     );
   }
 
-  // Show unverified phone banner
-  return (
-    <ThemedView style={[styles.banner, styles.warningBanner, { backgroundColor: colors.warning + "15" }]}>
-      <ThemedView style={styles.bannerContent}>
-        <Ionicons name="warning" size={20} color={colors.warning} />
-        <ThemedView style={styles.textContainer}>
-          <ThemedText style={[styles.bannerTitle, { color: colors.warning }]}>Phone Number Not Verified</ThemedText>
-          <ThemedText style={[styles.bannerText, { color: colors.warning }]}>
-            You won't receive text message notifications until your phone number is verified.
-          </ThemedText>
+  if (isVerified) {
+    // Show verified banner - always show for verified phones
+    return (
+      <ThemedView style={[styles.banner, styles.successBanner, { backgroundColor: colors.success + "15" }]}>
+        <ThemedView style={styles.bannerContent}>
+          <Ionicons name="checkmark-circle" size={20} color={colors.success} />
+          <ThemedView style={styles.textContainer}>
+            <ThemedText style={[styles.bannerTitle, { color: colors.success }]}>Phone Number Verified</ThemedText>
+            <ThemedText style={[styles.bannerText, { color: colors.success }]}>
+              {contactPreference === "text"
+                ? "You're all set! You'll receive text message notifications at this number."
+                : "Your phone number is verified and ready for SMS notifications if you choose that option."}
+            </ThemedText>
+          </ThemedView>
         </ThemedView>
       </ThemedView>
-      {onVerifyPhone && (
-        <TouchableOpacity onPress={onVerifyPhone} style={styles.actionButton}>
-          <ThemedText style={[styles.actionButtonText, { color: colors.warning }]}>Verify Now</ThemedText>
-        </TouchableOpacity>
-      )}
-    </ThemedView>
-  );
+    );
+  }
+
+  // Only show unverified warning if contact preference is text
+  if (contactPreference === "text") {
+    return (
+      <ThemedView style={[styles.banner, styles.warningBanner, { backgroundColor: colors.warning + "15" }]}>
+        <ThemedView style={styles.bannerContent}>
+          <Ionicons name="warning" size={20} color={colors.warning} />
+          <ThemedView style={styles.textContainer}>
+            <ThemedText style={[styles.bannerTitle, { color: colors.warning }]}>Phone Number Not Verified</ThemedText>
+            <ThemedText style={[styles.bannerText, { color: colors.warning }]}>
+              You won't receive text message notifications until your phone number is verified.
+            </ThemedText>
+          </ThemedView>
+        </ThemedView>
+        {onVerifyPhone && (
+          <TouchableOpacity onPress={onVerifyPhone} style={styles.actionButton}>
+            <ThemedText style={[styles.actionButtonText, { color: colors.warning }]}>Verify Now</ThemedText>
+          </TouchableOpacity>
+        )}
+      </ThemedView>
+    );
+  }
+
+  // Don't show anything if not verified and contact preference is not text
+  return null;
 }
 
 const styles = StyleSheet.create({
@@ -116,6 +140,9 @@ const styles = StyleSheet.create({
   },
   errorBanner: {
     borderColor: Colors.dark.error + "30",
+  },
+  successBanner: {
+    borderColor: Colors.dark.success + "30",
   },
   bannerContent: {
     flexDirection: "row",

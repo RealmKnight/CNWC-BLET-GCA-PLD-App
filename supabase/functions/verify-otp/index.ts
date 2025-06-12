@@ -40,6 +40,138 @@ function formatPhoneToE164(phone: string): string {
     );
 }
 
+// Send OTP lockout notifications to division admins
+async function sendOtpLockoutNotificationToDivisionAdmins(
+    supabaseAdmin: any,
+    userId: string,
+    phoneNumber: string,
+    totalFailedAttempts: number,
+): Promise<boolean> {
+    try {
+        console.log(
+            `[OTP-Lockout] Sending notification for user ${userId} with ${totalFailedAttempts} failed attempts`,
+        );
+
+        // Get user's member info to find their division
+        const { data: memberData, error: memberError } = await supabaseAdmin
+            .from("members")
+            .select(`
+                id,
+                first_name,
+                last_name,
+                pin_number,
+                division_id,
+                divisions (
+                    name
+                )
+            `)
+            .eq("id", userId)
+            .single();
+
+        if (memberError || !memberData) {
+            console.error(
+                `[OTP-Lockout] Could not find member data for user ${userId}:`,
+                memberError,
+            );
+            return false;
+        }
+
+        const divisionId = memberData.division_id;
+        const divisionName = memberData.divisions?.[0]?.name ||
+            "Unknown Division";
+        const memberName = `${memberData.first_name} ${memberData.last_name}`;
+
+        // Get all division admins for this division
+        const { data: divisionAdmins, error: adminsError } = await supabaseAdmin
+            .from("members")
+            .select(`
+                id,
+                first_name,
+                last_name,
+                pin_number,
+                user_preferences (
+                    user_id
+                )
+            `)
+            .eq("division_id", divisionId)
+            .eq("role", "division_admin");
+
+        if (adminsError) throw adminsError;
+
+        if (!divisionAdmins || divisionAdmins.length === 0) {
+            console.warn(
+                `[OTP-Lockout] No division admins found for division ${divisionId}`,
+            );
+            return false;
+        }
+
+        const title = "SMS Verification Lockout - User Assistance Required";
+        const body =
+            `${memberName} (PIN: ${memberData.pin_number}) from ${divisionName} has been locked out of SMS verification after ${totalFailedAttempts} failed OTP attempts. The user may need assistance with their phone verification. Phone: ${phoneNumber}`;
+
+        let successCount = 0;
+        const totalAdmins = divisionAdmins.length;
+
+        // Send notifications to all division admins via the send-sms function
+        // This creates admin messages in the database for them to see
+        for (const admin of divisionAdmins) {
+            try {
+                if (
+                    admin.user_preferences && admin.user_preferences.length > 0
+                ) {
+                    const adminUserId = admin.user_preferences[0].user_id;
+
+                    // Create admin message for the division admin
+                    const { error: messageError } = await supabaseAdmin
+                        .from("admin_messages")
+                        .insert({
+                            sender_user_id: userId, // From the locked-out user
+                            recipient_roles: ["division_admin"],
+                            recipient_division_ids: [divisionId],
+                            subject: title,
+                            message: body,
+                            priority: "high",
+                            category: "system_alert",
+                            metadata: {
+                                type: "otp_lockout",
+                                phone_number: phoneNumber,
+                                failed_attempts: totalFailedAttempts,
+                                locked_user_id: userId,
+                                locked_user_name: memberName,
+                                locked_user_pin: memberData.pin_number,
+                            },
+                        });
+
+                    if (!messageError) {
+                        successCount++;
+                        console.log(
+                            `[OTP-Lockout] Created admin message for admin ${admin.pin_number}`,
+                        );
+                    } else {
+                        console.error(
+                            `[OTP-Lockout] Failed to create admin message for admin ${admin.pin_number}:`,
+                            messageError,
+                        );
+                    }
+                }
+            } catch (err) {
+                console.error(
+                    `[OTP-Lockout] Error creating admin message for admin ${admin.pin_number}:`,
+                    err,
+                );
+            }
+        }
+
+        console.log(
+            `[OTP-Lockout] Created admin messages for ${successCount}/${totalAdmins} division admins`,
+        );
+        return successCount > 0;
+    } catch (error) {
+        console.error("[OTP-Lockout] Error sending notifications:", error);
+        return false;
+    }
+}
+
 serve(async (req) => {
     if (req.method === "OPTIONS") {
         return new Response("ok", {
@@ -197,7 +329,20 @@ serve(async (req) => {
                         ignoreDuplicates: false,
                     });
 
-                // TODO: Send admin notification about user lockout
+                // Send admin notification about user lockout
+                try {
+                    await sendOtpLockoutNotificationToDivisionAdmins(
+                        supabaseAdmin,
+                        user_id,
+                        formattedPhone,
+                        totalFailedAttempts,
+                    );
+                } catch (notificationError) {
+                    console.error(
+                        "Error sending OTP lockout notification:",
+                        notificationError,
+                    );
+                }
                 console.log(
                     `User ${user_id} locked out due to ${totalFailedAttempts} failed OTP attempts`,
                 );

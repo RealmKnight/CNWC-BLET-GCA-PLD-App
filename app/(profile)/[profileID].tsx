@@ -1292,7 +1292,18 @@ export default function ProfileScreen() {
         <ThemedView style={styles.infoRow}>
           <ThemedText type="subtitle">Phone:</ThemedText>
           <ThemedView style={styles.editRow}>
-            <ThemedText>{phoneDisplayText}</ThemedText>
+            <ThemedView style={styles.phoneNumberContainer}>
+              <ThemedText>{phoneDisplayText}</ThemedText>
+              {/* Phone Verification Status Badge */}
+              {isOwnProfile && phoneNumber && phoneVerification.isPhoneVerified ? (
+                <Ionicons
+                  name="checkmark-circle"
+                  size={20}
+                  color={Colors[theme].success}
+                  style={styles.verificationIcon}
+                />
+              ) : null}
+            </ThemedView>
             {canEditProfileDetails && (
               <TouchableOpacity onPress={() => setIsPhoneModalVisible(true)} style={styles.iconButton}>
                 <Ionicons name="pencil" size={24} color={Colors[theme].tint} />
@@ -1300,15 +1311,6 @@ export default function ProfileScreen() {
             )}
           </ThemedView>
         </ThemedView>
-        {/* Phone Verification Banner */}
-        {isOwnProfile && phoneNumber && userPreferences?.contact_preference === "text" && (
-          <PhoneVerificationBanner
-            phoneNumber={phoneNumber}
-            isVerified={phoneVerification.isPhoneVerified}
-            isLockedOut={phoneVerification.phoneVerificationStatus === "locked_out"}
-            lockoutUntil={phoneVerification.smsLockoutUntil}
-          />
-        )}
         <ThemedView style={styles.infoRow}>
           <ThemedText type="subtitle">Date of Birth:</ThemedText>
           <ThemedView style={styles.editRow}>
@@ -1745,6 +1747,14 @@ const styles = StyleSheet.create({
   advancedSettingsText: {
     color: Colors.dark.buttonText,
     fontWeight: "600",
+    marginLeft: 8,
+  },
+  phoneNumberContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: Colors.dark.card,
+  },
+  verificationIcon: {
     marginLeft: 8,
   },
 });

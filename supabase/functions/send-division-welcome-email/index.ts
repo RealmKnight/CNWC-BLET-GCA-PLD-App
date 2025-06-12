@@ -133,7 +133,7 @@ serve(async (req) => {
                 <ul>
                     <li>Contact your division administrator</li>
                     <li>Refer to the PLD application help section</li>
-                    <li>Check that this email address can receive emails from <strong>replies@pldapp.bletcnwcgca.org</strong></li>
+                    <li>Check that this email address can receive emails from <strong>requests@pldapp.bletcnwcgca.org</strong></li>
                 </ul>
             </div>
         </div>
@@ -176,7 +176,7 @@ NEED HELP?
 If you have questions about this notification system or need technical support:
 - Contact your division administrator
 - Refer to the PLD application help section
-- Check that this email address can receive emails from replies@pldapp.bletcnwcgca.org
+- Check that this email address can receive emails from requests@pldapp.bletcnwcgca.org
 
 CN/WC GCA BLET Personal Leave Day Application
 This is an automated welcome message. You're receiving this because your email was added to division notifications.
@@ -185,7 +185,7 @@ Division: ${safeDivisionName} | Email: ${safeEmailAddress}
 
         // Prepare email data with safe string conversion
         const emailData = {
-            from: "CN/WC GCA BLET PLD App <replies@pldapp.bletcnwcgca.org>",
+            from: "CN/WC GCA BLET PLD App <requests@pldapp.bletcnwcgca.org>",
             to: String(safeEmailAddress),
             subject: String(subject),
             html: String(htmlContent),
