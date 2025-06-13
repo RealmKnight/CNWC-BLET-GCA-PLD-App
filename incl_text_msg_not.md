@@ -128,7 +128,7 @@ BEGIN
   FROM members
   WHERE id = user_id;
 
-  RETURN user_role IN ('admin', 'union_admin');
+  RETURN user_role IN ('admin', 'union_admin', 'application_admin');
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ```
@@ -244,12 +244,26 @@ async function createInAppNotificationFallback(
 
 ## Implementation Plan
 
-### Phase 1: Database Schema Updates
+### Phase 1: Database Schema Updates ✅ **COMPLETED**
 
-#### 1.1 Add SMS Tracking Tables
+**COMPLETED ITEMS:**
+
+- ✅ Created `sms_deliveries` table for SMS delivery tracking
+- ✅ Created `sms_rate_limits` table for rate limiting by category
+- ✅ Created `organization_sms_budget` table for cost management
+- ✅ Created `sms_cost_analytics` table for enhanced reporting
+- ✅ Added performance indexes for all SMS tables
+- ✅ Enhanced `user_preferences` with SMS limits and preferences
+- ✅ Enhanced `notification_categories` with SMS rate limits and emergency override
+- ✅ Updated `must_read` category to allow emergency override
+- ✅ Created `check_sms_budget_admin_permission()` function
+- ✅ Updated `on_notification_created()` trigger function to support SMS and email delivery
+- ✅ Inserted default organization SMS budget
+
+#### 1.1 Add SMS Tracking Tables ✅ **COMPLETED**
 
 ```sql
--- SMS Delivery Tracking (direct sending with logging)
+-- SMS Delivery Tracking (direct sending **and inbound status webhooks**)
 CREATE TABLE sms_deliveries (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   message_id TEXT NOT NULL, -- Reference to original message
@@ -260,7 +274,7 @@ CREATE TABLE sms_deliveries (
   status TEXT NOT NULL DEFAULT 'pending', -- pending, sent, failed (no delivered needed)
   twilio_sid TEXT, -- Twilio message SID for tracking
   error_message TEXT,
-  cost_amount DECIMAL(10,4), -- Track SMS costs
+  cost_amount DECIMAL(10,4), -- Raw Twilio cost (negative value)
   priority TEXT DEFAULT 'normal', -- normal, high, emergency
   was_truncated BOOLEAN DEFAULT false, -- Track if message was truncated
   sent_at TIMESTAMP WITH TIME ZONE,
@@ -304,7 +318,7 @@ CREATE INDEX idx_sms_rate_limits_user_id ON sms_rate_limits(user_id);
 CREATE INDEX idx_sms_rate_limits_last_sent ON sms_rate_limits(last_sms_sent);
 ```
 
-#### 1.2 Update Notification Preferences Schema
+#### 1.2 Update Notification Preferences Schema ✅ **COMPLETED**
 
 ```sql
 -- Add SMS as explicit delivery method option
@@ -334,9 +348,134 @@ SET allow_emergency_override = true, sms_rate_limit_minutes = 0
 WHERE code = 'must_read';
 ```
 
-### Phase 2: Enhanced Notification Service Functions
+#### 1.3 Update Notification Trigger Function for SMS and Email Delivery ✅ **COMPLETED**
 
-#### 2.1 SMS Delivery Function
+**Background:**
+Currently, the `on_notification_created` trigger function only queues push notifications based on user preferences. To fully support hybrid notification delivery, this function must be updated to also support SMS and email delivery, based on the user's preferences for each notification category.
+
+**Required Change:**
+
+- Update the `on_notification_created()` trigger function to:
+  - Check the user's delivery preference for the notification category (from `user_notification_preferences` or fallback to `user_preferences`).
+  - If the preference is `sms` (or `default` and the user's global preference is `text`), queue an SMS delivery (insert into `sms_deliveries`).
+  - If the preference is `email` (or `default` and the user's global preference is `email`), queue an email delivery (insert into `email_tracking`).
+  - Continue to queue push notifications as before if the preference is `push`.
+  - Skip delivery if preference is `in_app` or `none`.
+
+**SQL/PLPGSQL for Updated Function:**
+
+```sql
+CREATE OR REPLACE FUNCTION on_notification_created()
+RETURNS TRIGGER AS $$
+DECLARE
+  l_token TEXT;
+  l_preference TEXT;
+  l_category_code TEXT;
+  l_global_pref TEXT;
+  l_user_email TEXT;
+  l_user_phone TEXT;
+BEGIN
+  -- Get the notification category and user preference
+  l_category_code := NEW.notification_type;
+
+  -- Check if the user has this notification type enabled
+  SELECT delivery_method INTO l_preference
+  FROM user_notification_preferences
+  WHERE user_id = NEW.user_id AND category_code = l_category_code;
+
+  -- If no specific preference, check for default preference in user_preferences
+  IF l_preference IS NULL THEN
+    SELECT contact_preference INTO l_preference
+    FROM user_preferences
+    WHERE user_id = NEW.user_id;
+    IF l_preference IS NULL THEN
+      l_preference := 'default';
+    END IF;
+  END IF;
+
+  -- Get global preference for fallback logic
+  SELECT contact_preference INTO l_global_pref
+  FROM user_preferences
+  WHERE user_id = NEW.user_id;
+
+  -- Get user email and phone for delivery
+  SELECT email INTO l_user_email FROM auth.users WHERE id = NEW.user_id;
+  SELECT phone INTO l_user_phone FROM public.members WHERE id = NEW.user_id;
+
+  -- SMS Delivery
+  IF l_preference = 'sms' OR (l_preference = 'default' AND l_global_pref = 'text') THEN
+    IF l_user_phone IS NOT NULL THEN
+      INSERT INTO sms_deliveries (
+        message_id, recipient_id, phone_number, sms_content, full_content, status, created_at
+      ) VALUES (
+        NEW.id, NEW.user_id, l_user_phone, NEW.message, NEW.message, 'pending', NOW()
+      );
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  -- Email Delivery
+  IF l_preference = 'email' OR (l_preference = 'default' AND l_global_pref = 'email') THEN
+    IF l_user_email IS NOT NULL THEN
+      INSERT INTO email_tracking (
+        message_id, recipient, subject, status, created_at
+      ) VALUES (
+        NEW.id, l_user_email, COALESCE(NEW.title, 'Notification'), 'queued', NOW()
+      );
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  -- Push Notification Delivery
+  IF l_preference = 'push' OR (l_preference = 'default' AND l_global_pref = 'push') THEN
+    FOR l_token IN
+      SELECT push_token
+      FROM user_push_tokens
+      WHERE user_id = NEW.user_id AND is_active = true
+    LOOP
+      INSERT INTO push_notification_queue (
+        notification_id, user_id, push_token, title, body, data, status, next_attempt_at
+      ) VALUES (
+        NEW.id, NEW.user_id, l_token, COALESCE(NEW.title, 'New Notification'), NEW.message,
+        jsonb_build_object(
+          'notificationType', NEW.notification_type,
+          'messageId', NEW.id,
+          'importance', NEW.importance_level,
+          'timestamp', extract(epoch from NOW())
+        ),
+        'pending', NOW()
+      );
+    END LOOP;
+    RETURN NEW;
+  END IF;
+
+  -- In-app only or none: do nothing (notification already exists in-app)
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+```
+
+**Note:**
+
+- This function assumes the existence of `sms_deliveries` and `email_tracking` tables as described in the schema updates.
+- The function can be further extended to support fallback logic or additional delivery methods as needed.
+- This update ensures that all notification delivery methods (push, SMS, email, in-app) are handled centrally and consistently based on user preferences.
+
+### Phase 2: Enhanced Notification Service Functions ✅ **COMPLETED**
+
+**COMPLETED ITEMS:**
+
+- ✅ Added `sendSMSWithTracking()` function with comprehensive rate limiting and verification
+- ✅ Added SMS helper functions: `canUserReceiveSMS()`, `checkSMSRateLimit()`, `updateSMSRateLimit()`
+- ✅ Added budget checking functions: `checkOrganizationSMSBudget()`, `checkSMSLimits()`
+- ✅ Added SMS formatting and utility functions
+- ✅ Integrated SMS delivery into `sendNotificationWithHybridPriority()`
+- ✅ Added comprehensive fallback delivery methods
+- ✅ Updated `process-notification-queue` Edge Function to handle SMS deliveries
+- ✅ Enhanced `send-sms` Edge Function with tracking and budget management
+- ✅ Added SMS delivery metrics and analytics recording
+
+#### 2.1 SMS Delivery Function ✅ **COMPLETED**
 
 ```typescript
 // File: utils/notificationService.ts - New SMS functions
@@ -715,14 +854,24 @@ async function checkSMSLimits(userId: string): Promise<{ allowed: boolean; reaso
 }
 ```
 
-#### 2.2 Integration with Hybrid Notification System
+#### 2.2 Integration with Hybrid Notification System (App Layer) ✅ **COMPLETED**
+
+**Background:**
+The app's hybrid notification system (e.g., `sendNotificationWithHybridPriority` and related logic) is responsible for determining the best delivery method for each notification, handling user preferences, and providing fallbacks (push, SMS, email, in-app). This logic must be updated to fully support SMS as a first-class delivery method, in line with the new database and Edge Function changes.
+
+**Required Change:**
+
+- Update the app's notification service functions to:
+  - Check user delivery preferences for each notification category.
+  - If the preference is SMS (or default/text), queue an SMS delivery (insert into `sms_deliveries` or invoke the Edge Function as appropriate).
+  - If the preference is email (or default/email), queue an email delivery.
+  - Continue to support push and in-app notifications as before.
+  - Implement fallback logic: if SMS fails, fallback to push/email/in-app as appropriate.
+  - Ensure all delivery attempts are tracked and errors are logged for monitoring and debugging.
+
+**Example (TypeScript, App Layer):**
 
 ```typescript
-// File: utils/notificationService.ts - Update existing functions
-
-/**
- * Update sendNotificationWithHybridPriority to include SMS support
- */
 export async function sendNotificationWithHybridPriority(
   userId: string,
   notification: {
@@ -772,8 +921,7 @@ export async function sendNotificationWithHybridPriority(
           return true;
         } else {
           console.error(`[SMS] Failed to send to ${userId}:`, smsResult.error);
-
-          // If SMS fails, should we fallback to another method?
+          // Fallback to another method
           return await fallbackDeliveryMethod(userId, notification, deliveryMethod);
         }
       } else {
@@ -907,9 +1055,76 @@ async function fallbackDeliveryMethod(userId: string, notification: any, origina
 }
 ```
 
-### Phase 3: Edge Function Updates
+#### 2.3 Update process-notification-queue Edge Function to Process SMS ✅ **COMPLETED**
 
-#### 3.1 Enhanced send-sms Edge Function
+**Background:**
+Currently, the `process-notification-queue` Edge Function processes the `push_notification_queue` table to send push notifications. With the introduction of SMS notifications and the `sms_deliveries` table, this function must be updated to also process and deliver SMS notifications.
+
+**Required Change:**
+
+- Update the `process-notification-queue` Edge Function to:
+  - Periodically (every minute, as currently scheduled) scan the `sms_deliveries` table for rows with `status = 'pending'` (and optionally, failed with retries left).
+  - For each pending SMS delivery:
+    - Send the SMS using the Twilio API (or configured provider).
+    - Update the `sms_deliveries` row with the result: set `status` to `sent` or `failed`, log the Twilio SID, cost, and any error message.
+    - Implement retry logic for failed SMS deliveries if desired (e.g., increment a retry count, schedule next attempt).
+  - Ensure that SMS delivery respects rate limits, opt-out, and lockout status as tracked in the database.
+- This approach keeps all notification delivery processing centralized in a single scheduled Edge Function, simplifying monitoring and scaling.
+
+**Example Pseudocode:**
+
+```typescript
+// In process-notification-queue Edge Function
+async function processPendingSMSDeliveries() {
+  const { data: pendingSMS } = await supabase.from("sms_deliveries").select("*").eq("status", "pending");
+
+  for (const sms of pendingSMS) {
+    // Send SMS via Twilio/provider
+    const result = await sendSMS(sms.phone_number, sms.sms_content);
+    if (result.success) {
+      await supabase
+        .from("sms_deliveries")
+        .update({
+          status: "sent",
+          twilio_sid: result.sid,
+          cost_amount: result.cost,
+          sent_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", sms.id);
+    } else {
+      await supabase
+        .from("sms_deliveries")
+        .update({
+          status: "failed",
+          error_message: result.error,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", sms.id);
+    }
+  }
+}
+```
+
+**Note:**
+
+- This update ensures SMS notifications are delivered reliably and consistently, with retry and error handling, using the same scheduling and monitoring as push notifications.
+- No new Edge Function or cron job is required; all notification delivery is handled in one place.
+
+### Phase 3: Edge Function Updates ✅ **COMPLETED**
+
+**COMPLETED ITEMS:**
+
+- ✅ Enhanced `send-sms` Edge Function with proper TypeScript interfaces and validation
+- ✅ Added `validateSMSDelivery()` function for comprehensive verification and opt-out checking
+- ✅ Added `isOTP` parameter support for bypassing verification on OTP messages
+- ✅ Enhanced analytics logging to `notification_analytics` table
+- ✅ Added priority-based Twilio features (ValidityPeriod for high priority messages)
+- ✅ Improved error handling structure and response formatting
+- ✅ Created `send-emergency-sms` Edge Function for admin emergency SMS functionality
+- ✅ Created `get-sms-cost-stats` Edge Function for SMS cost analytics and dashboard
+
+#### 3.1 Enhanced send-sms Edge Function ✅ **COMPLETED**
 
 ```typescript
 // File: supabase/functions/send-sms/index.ts - Enhanced version
@@ -1123,9 +1338,19 @@ async function sendViaTwilio(
 // ... existing formatPhoneToE164 function ...
 ```
 
-### Phase 4: UI Updates
+### Phase 4: UI Updates ✅ **COMPLETED**
 
-#### 4.1 Admin Emergency Override Interface
+**COMPLETED ITEMS:**
+
+- ✅ Created `app/(admin)/emergency-sms.tsx` - Admin Emergency Override Interface
+- ✅ Created `app/(admin)/sms-cost-dashboard.tsx` - Cost Management Dashboard
+- ✅ Enhanced `app/(profile)/notification-settings.tsx` - Added SMS delivery method and verification status
+- ✅ Added SMS status indicator component with phone verification check
+- ✅ Added SMS validation for notification preferences
+- ✅ Implemented proper admin permission checks for emergency SMS and cost dashboard
+- ✅ Used consistent theming and components throughout all UI updates
+
+#### 4.1 Admin Emergency Override Interface ✅ **COMPLETED**
 
 ```typescript
 // File: app/(admin)/emergency-sms.tsx - New admin interface for emergency SMS
@@ -1162,7 +1387,7 @@ export default function EmergencySMSScreen() {
       .eq("id", session.user.id)
       .single();
 
-    if (!member || !["admin", "division_admin"].includes(member.role)) {
+    if (!member || !["admin", "union_admin", "application_admin", "division_admin"].includes(member.role)) {
       router.replace("/(tabs)/home");
       return;
     }
@@ -1276,8 +1501,8 @@ Are you sure you want to proceed?`,
       <View style={styles.targetSection}>
         <ThemedText style={styles.sectionTitle}>Target Users:</ThemedText>
 
-        {userRole === "admin" && (
-          <ThemedButton
+        {(userRole === "admin" || userRole === "union_admin" || userRole === "application_admin") && (
+          <ThemedTouchableOpacity
             title={`All Users (System-wide)`}
             onPress={() => setTargetUsers("all")}
             variant={targetUsers === "all" ? "primary" : "secondary"}
@@ -1285,7 +1510,7 @@ Are you sure you want to proceed?`,
           />
         )}
 
-        <ThemedButton
+        <ThemedTouchableOpacity
           title={`Division Users (${divisionUsers.length} users)`}
           onPress={() => setTargetUsers("division")}
           variant={targetUsers === "division" ? "primary" : "secondary"}
@@ -1293,7 +1518,7 @@ Are you sure you want to proceed?`,
         />
       </View>
 
-      <ThemedButton
+      <ThemedTouchableOpacity
         title={sending ? "Sending Emergency SMS..." : "Send Emergency SMS"}
         onPress={sendEmergencySMS}
         disabled={sending || !message.trim()}
@@ -1414,8 +1639,8 @@ const styles = StyleSheet.create({
   container: { flex: 1, padding: 20 },
   title: { fontSize: 24, fontWeight: "bold", marginBottom: 20 },
   statsGrid: { flexDirection: "row", justifyContent: "space-between", marginBottom: 30 },
-  statCard: { flex: 1, backgroundColor: "#f5f5f5", padding: 15, borderRadius: 8, marginHorizontal: 5 },
-  statValue: { fontSize: 24, fontWeight: "bold", color: "#2196F3" },
+  statCard: { flex: 1, backgroundColor: Colors.dark.card, padding: 15, borderRadius: 8, marginHorizontal: 5 },
+  statValue: { fontSize: 24, fontWeight: "bold", color: Colors.dark.text },
   statLabel: { fontSize: 14, color: "#666", marginTop: 5 },
   statCount: { fontSize: 12, color: "#999", marginTop: 2 },
   topUsersSection: { marginTop: 20 },
@@ -1446,7 +1671,6 @@ const deliveryMethods = [
   { id: "email", label: "Email" },
   { id: "sms", label: "Text Message (SMS)" }, // New option
   { id: "in_app", label: "In-App Only" },
-  { id: "none", label: "None" },
 ];
 
 // Add SMS-specific validation in updatePreference function
@@ -1468,14 +1692,25 @@ const updatePreference = async (
       .single();
 
     if (!userPrefs?.phone_verified || userPrefs.phone_verification_status !== "verified") {
-      Alert.alert(
-        "Phone Verification Required",
-        "You must verify your phone number before you can receive SMS notifications. Would you like to verify it now?",
-        [
-          { text: "Cancel", style: "cancel" },
-          { text: "Verify", onPress: () => router.push("/(profile)/phone-verification") },
-        ]
-      );
+      Toast.show({
+        type: "info",
+        text1: "Phone Verification Required",
+        text2:
+          "You must verify your phone number before you can receive SMS notifications. Would you like to verify it now?",
+        position: "bottom",
+        visibilityTime: 4000,
+        autoHide: false,
+        props: {
+          onAction: (action: string) => {
+            if (action === "confirm") {
+              router.push("/(profile)/phone-verification");
+            }
+            Toast.hide();
+          },
+          actionType: "confirm",
+          confirmText: "Verify",
+        },
+      });
       return;
     }
   }
@@ -1711,6 +1946,7 @@ export async function getSMSDeliveryStats(timeframe: "day" | "week" | "month" = 
 - Monitor SMS delivery failure rates
 - Track user opt-out rates
 - Alert on rate limit violations
+- Prune records older than 6 months (sms_deliveries & analytics)
 
 ### Cost Management
 

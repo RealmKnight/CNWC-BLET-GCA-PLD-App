@@ -1407,16 +1407,6 @@ export default function ProfileScreen() {
                     Push Notifications
                   </ThemedText>
                 </TouchableOpacity>
-
-                {/* Advanced PUSH Notification Settings Button */}
-
-                <TouchableOpacity
-                  style={styles.advancedSettingsButton}
-                  onPress={() => router.push("/(profile)/notification-settings")}
-                >
-                  <Ionicons name="notifications-outline" size={20} color={Colors[theme].tint} />
-                  <ThemedText style={styles.advancedSettingsText}>Advanced PUSH Notification Settings</ThemedText>
-                </TouchableOpacity>
               </ThemedView>
             )}
 
@@ -1424,6 +1414,17 @@ export default function ProfileScreen() {
             <ThemedText style={styles.sectionTitle}>Notification Settings</ThemedText>
             <View style={styles.notificationPreferences}>
               <MeetingNotificationPreferences />
+              <View style={styles.notificationPreferences2}>
+                {/* Advanced PUSH Notification Settings Button */}
+
+                <TouchableOpacity
+                  style={styles.advancedSettingsButton}
+                  onPress={() => router.push("/(profile)/notification-settings")}
+                >
+                  <Ionicons name="notifications-outline" size={20} color={Colors[theme].buttonText} />
+                  <ThemedText style={styles.advancedSettingsText}>Advanced Notification Settings</ThemedText>
+                </TouchableOpacity>
+              </View>
             </View>
           </ThemedView>
         </ThemedView>
@@ -1726,7 +1727,14 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.dark.card,
   },
   notificationPreferences: {
-    gap: 6,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    backgroundColor: Colors.dark.card,
+  },
+  notificationPreferences2: {
+    marginTop: 12,
+    gap: 8,
     backgroundColor: Colors.dark.card,
   },
   privacyLink: {
@@ -1742,7 +1750,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.dark.buttonBorder,
     backgroundColor: Colors.dark.buttonBackground,
-    marginTop: 8,
   },
   advancedSettingsText: {
     color: Colors.dark.buttonText,

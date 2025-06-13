@@ -41,6 +41,7 @@ import * as Device from "expo-device";
 import { createClient } from "@supabase/supabase-js";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { NotificationType } from "@/types/notifications";
+import { formatPhoneToE164 } from "./phoneValidation";
 
 const EXPO_PUSH_ENDPOINT = "https://exp.host/--/api/v2/push/send";
 
@@ -1532,11 +1533,10 @@ export async function sendNotificationWithHybridPriority(
         break;
     }
 
-    // Check if we should send via push based on user preferences
-    const shouldSendPush = await shouldSendPushNotification(
+    // Get user's preference for this category
+    const deliveryMethod = await getUserDeliveryMethodForCategory(
       userId,
       notification.categoryCode,
-      importance,
     );
 
     // Build extra data with all the necessary fields
@@ -1550,6 +1550,75 @@ export async function sendNotificationWithHybridPriority(
         : {}),
       ...(notification.extraData || {}),
     };
+
+    // Determine if SMS should be sent
+    const shouldSendSMS = await shouldSendSMSNotification(
+      userId,
+      notification.categoryCode,
+      deliveryMethod,
+      importance,
+    );
+
+    if (shouldSendSMS) {
+      // Get user's phone number
+      const phoneNumber = await getUserPhoneNumber(userId);
+
+      if (phoneNumber) {
+        // Format content for SMS (combine title and body)
+        const fullContent = `${notification.title}\n\n${notification.body}`;
+
+        // Send SMS with tracking
+        const smsResult = await sendSMSWithTracking(
+          userId,
+          phoneNumber,
+          fullContent,
+          notification.messageId,
+          notification.categoryCode,
+          importance === "high" ? "high" : "normal",
+        );
+
+        if (smsResult.success) {
+          console.log(`[SMS] Successfully sent to ${userId}`);
+
+          // Always create in-app notification as fallback regardless of SMS success
+          if (notification.messageId) {
+            await createInAppNotificationFallback(
+              userId,
+              notification,
+              "SMS sent successfully",
+            );
+          }
+
+          return true;
+        } else {
+          console.error(`[SMS] Failed to send to ${userId}:`, smsResult.error);
+          // Fallback to other delivery methods
+          return await fallbackDeliveryMethod(
+            userId,
+            notification,
+            deliveryMethod,
+            extraData,
+            notificationType,
+          );
+        }
+      } else {
+        console.warn(`[SMS] No phone number for user ${userId}`);
+        return await fallbackDeliveryMethod(
+          userId,
+          notification,
+          deliveryMethod,
+          extraData,
+          notificationType,
+        );
+      }
+    }
+
+    // Check if we should send via push based on user preferences
+    const shouldSendPush = await shouldSendPushNotification(
+      userId,
+      notification.categoryCode,
+      importance,
+    );
 
     if (shouldSendPush) {
       // Send push notification since user preferences allow it
@@ -2748,4 +2817,788 @@ export async function sendMeetingReminderNotification(
     divisionName,
     timeFrame,
   );
+}
+
+/**
+ * Enhanced SMS sending with rate limiting, verification and tracking
+ * Integrates with the hybrid notification system and follows existing patterns
+ */
+export async function sendSMSWithTracking(
+  userId: string,
+  phoneNumber: string,
+  fullContent: string,
+  messageId?: string,
+  categoryCode: string = "general_message",
+  priority: "normal" | "high" | "emergency" = "normal",
+  bypassRateLimit: boolean = false,
+): Promise<
+  {
+    success: boolean;
+    deliveryId?: string;
+    error?: string;
+    wasTruncated?: boolean;
+  }
+> {
+  try {
+    console.log(`[SMS] Starting SMS delivery for user ${userId}`);
+
+    // 1. Validate phone verification status
+    const isVerified = await validatePhoneVerification(userId, phoneNumber);
+    if (!isVerified) {
+      return { success: false, error: "Phone number not verified" };
+    }
+
+    // 2. Check opt-out status and lockout (unless emergency override)
+    if (priority !== "emergency") {
+      const canReceiveSMS = await canUserReceiveSMS(userId);
+      if (!canReceiveSMS.allowed) {
+        return { success: false, error: canReceiveSMS.reason };
+      }
+    }
+
+    // 3. Check rate limiting (unless bypassed)
+    if (!bypassRateLimit && priority !== "emergency") {
+      const rateLimitCheck = await checkSMSRateLimit(
+        userId,
+        categoryCode,
+        priority,
+      );
+      if (!rateLimitCheck.allowed) {
+        return { success: false, error: rateLimitCheck.reason };
+      }
+    }
+
+    // 4. Check organization-wide budget limits
+    const budgetCheck = await checkOrganizationSMSBudget();
+    if (!budgetCheck.allowed) {
+      return { success: false, error: budgetCheck.reason };
+    }
+
+    // 5. Check individual daily/monthly limits
+    const withinLimits = await checkSMSLimits(userId);
+    if (!withinLimits.allowed) {
+      return { success: false, error: withinLimits.reason };
+    }
+
+    // 6. Format content for SMS (truncate if necessary)
+    const { smsContent, wasTruncated } = formatContentForSMS(fullContent);
+
+    // 7. Create delivery tracking record
+    const { data: delivery, error: deliveryError } = await supabase
+      .from("sms_deliveries")
+      .insert({
+        message_id: messageId,
+        recipient_id: userId,
+        phone_number: phoneNumber,
+        sms_content: smsContent,
+        full_content: fullContent,
+        priority: priority,
+        was_truncated: wasTruncated,
+        status: "pending",
+      })
+      .select("id")
+      .single();
+
+    if (deliveryError) {
+      console.error("[SMS] Error creating delivery record:", deliveryError);
+      return { success: false, error: "Failed to create delivery record" };
+    }
+
+    // 8. Send SMS via Edge Function
+    const { data, error } = await supabase.functions.invoke("send-sms", {
+      body: {
+        to: phoneNumber,
+        content: smsContent,
+        messageId: messageId,
+        deliveryId: delivery.id,
+        priority,
+      },
+    });
+
+    if (error || !data?.success) {
+      // Update delivery record with failure
+      await supabase
+        .from("sms_deliveries")
+        .update({
+          status: "failed",
+          error_message: error?.message || "Unknown error",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", delivery.id);
+
+      return { success: false, error: error?.message || "SMS delivery failed" };
+    }
+
+    // 9. Update delivery record with success
+    await supabase
+      .from("sms_deliveries")
+      .update({
+        status: "sent",
+        twilio_sid: data.sid,
+        cost_amount: data.cost,
+        sent_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", delivery.id);
+
+    // 10. Update rate limiting tracking
+    if (priority !== "emergency") {
+      await updateSMSRateLimit(userId, categoryCode);
+    }
+
+    console.log(`[SMS] Successfully sent SMS to user ${userId}`);
+    return { success: true, deliveryId: delivery.id, wasTruncated };
+  } catch (error) {
+    console.error("[SMS] Error sending SMS:", error);
+    return { success: false, error: "Unexpected error sending SMS" };
+  }
+}
+
+/**
+ * Validate phone verification status for a user
+ */
+async function validatePhoneVerification(
+  userId: string,
+  phoneNumber: string,
+): Promise<boolean> {
+  try {
+    const { data: verification, error } = await supabase
+      .from("phone_verifications")
+      .select("verified")
+      .eq("user_id", userId)
+      .eq("phone", formatPhoneToE164(phoneNumber))
+      .eq("verified", true)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .single();
+
+    if (error && error.code !== "PGRST116") {
+      console.error("[SMS] Error checking phone verification:", error);
+      return false;
+    }
+
+    return !!verification?.verified;
+  } catch (error) {
+    console.error("[SMS] Exception checking phone verification:", error);
+    return false;
+  }
+}
+
+/**
+ * Check if user can receive SMS based on verification, opt-out, and lockout status
+ */
+async function canUserReceiveSMS(
+  userId: string,
+): Promise<{ allowed: boolean; reason?: string }> {
+  try {
+    const { data: prefs, error } = await supabase
+      .from("user_preferences")
+      .select("sms_opt_out, sms_lockout_until, phone_verified")
+      .eq("user_id", userId)
+      .single();
+
+    if (error && error.code !== "PGRST116") {
+      return { allowed: false, reason: "Unable to check user preferences" };
+    }
+
+    if (prefs?.sms_opt_out) {
+      return {
+        allowed: false,
+        reason: "User has opted out of SMS notifications",
+      };
+    }
+
+    if (
+      prefs?.sms_lockout_until && new Date(prefs.sms_lockout_until) > new Date()
+    ) {
+      return {
+        allowed: false,
+        reason: "User is temporarily locked out from SMS",
+      };
+    }
+
+    if (!prefs?.phone_verified) {
+      return { allowed: false, reason: "Phone number not verified" };
+    }
+
+    return { allowed: true };
+  } catch (error) {
+    console.error("[SMS] Error checking SMS permissions:", error);
+    return { allowed: false, reason: "Error checking permissions" };
+  }
+}
+
+/**
+ * Check SMS rate limiting based on category and priority
+ */
+async function checkSMSRateLimit(
+  userId: string,
+  categoryCode: string,
+  priority: string,
+): Promise<{ allowed: boolean; reason?: string }> {
+  try {
+    // Get category-specific rate limit
+    const { data: category, error: categoryError } = await supabase
+      .from("notification_categories")
+      .select("sms_rate_limit_minutes, allow_emergency_override")
+      .eq("code", categoryCode)
+      .single();
+
+    if (categoryError && categoryError.code !== "PGRST116") {
+      console.error("[SMS] Error checking category rate limit:", categoryError);
+      return { allowed: true }; // Fail open
+    }
+
+    // Check if this category allows emergency override
+    if (category?.allow_emergency_override && priority === "emergency") {
+      return { allowed: true };
+    }
+
+    // Get rate limit in minutes based on priority and category
+    let rateLimitMinutes = category?.sms_rate_limit_minutes || 20;
+
+    // High priority messages have shorter rate limits
+    if (priority === "high") {
+      rateLimitMinutes = Math.min(rateLimitMinutes, 10);
+    }
+
+    // Emergency messages bypass rate limits
+    if (priority === "emergency") {
+      return { allowed: true };
+    }
+
+    // Check last SMS time for this category
+    const { data: rateLimit, error: rateLimitError } = await supabase
+      .from("sms_rate_limits")
+      .select("last_sms_sent")
+      .eq("user_id", userId)
+      .eq("category_code", categoryCode)
+      .single();
+
+    if (rateLimitError && rateLimitError.code !== "PGRST116") {
+      console.error("[SMS] Error checking rate limit:", rateLimitError);
+      return { allowed: true }; // Allow if we can't check (fail open)
+    }
+
+    if (rateLimit?.last_sms_sent) {
+      const lastSentTime = new Date(rateLimit.last_sms_sent);
+      const now = new Date();
+      const minutesSinceLastSMS = (now.getTime() - lastSentTime.getTime()) /
+        (1000 * 60);
+
+      if (minutesSinceLastSMS < rateLimitMinutes) {
+        const waitTime = Math.ceil(rateLimitMinutes - minutesSinceLastSMS);
+        return {
+          allowed: false,
+          reason:
+            `Please wait ${waitTime} more minute(s) before sending another ${categoryCode} SMS`,
+        };
+      }
+    }
+
+    return { allowed: true };
+  } catch (error) {
+    console.error("[SMS] Error checking rate limit:", error);
+    return { allowed: true }; // Fail open for rate limiting
+  }
+}
+
+/**
+ * Update SMS rate limiting tracking
+ */
+async function updateSMSRateLimit(
+  userId: string,
+  categoryCode: string,
+): Promise<void> {
+  try {
+    const now = new Date().toISOString();
+
+    // Upsert rate limit record per category
+    await supabase.from("sms_rate_limits").upsert(
+      {
+        user_id: userId,
+        category_code: categoryCode,
+        last_sms_sent: now,
+        sms_count_last_hour: 1,
+        updated_at: now,
+      },
+      {
+        onConflict: "user_id,category_code",
+      },
+    );
+  } catch (error) {
+    console.error("[SMS] Error updating rate limit:", error);
+    // Don't throw - this is tracking only
+  }
+}
+
+/**
+ * Check organization-wide SMS budget limits
+ */
+async function checkOrganizationSMSBudget(): Promise<
+  { allowed: boolean; reason?: string }
+> {
+  try {
+    const { data: budget, error } = await supabase.from(
+      "organization_sms_budget",
+    ).select("*").single();
+
+    if (error && error.code !== "PGRST116") {
+      console.error("[SMS] Error checking organization budget:", error);
+      return { allowed: true }; // Fail open if can't check budget
+    }
+
+    if (!budget) {
+      return { allowed: true }; // No budget set, allow
+    }
+
+    // Reset counters if needed
+    const today = new Date().toISOString().split("T")[0];
+    const currentMonth = new Date().toISOString().substr(0, 7);
+
+    let needsUpdate = false;
+    let updates: any = {};
+
+    if (budget.last_daily_reset !== today) {
+      updates.current_daily_spend = 0;
+      updates.last_daily_reset = today;
+      needsUpdate = true;
+    }
+
+    if (!budget.last_monthly_reset.startsWith(currentMonth)) {
+      updates.current_monthly_spend = 0;
+      updates.last_monthly_reset = new Date().toISOString().split("T")[0];
+      needsUpdate = true;
+    }
+
+    if (needsUpdate) {
+      await supabase.from("organization_sms_budget").update(updates).eq(
+        "id",
+        budget.id,
+      );
+
+      // Update local values
+      budget.current_daily_spend = updates.current_daily_spend ||
+        budget.current_daily_spend;
+      budget.current_monthly_spend = updates.current_monthly_spend ||
+        budget.current_monthly_spend;
+    }
+
+    // Check daily budget (assuming average cost of $0.01 per SMS)
+    const estimatedCost = 0.01;
+    if (budget.current_daily_spend + estimatedCost > budget.daily_budget) {
+      return { allowed: false, reason: "Daily SMS budget exceeded" };
+    }
+
+    if (budget.current_monthly_spend + estimatedCost > budget.monthly_budget) {
+      return { allowed: false, reason: "Monthly SMS budget exceeded" };
+    }
+
+    return { allowed: true };
+  } catch (error) {
+    console.error("[SMS] Error checking organization budget:", error);
+    return { allowed: true }; // Fail open for budget checks
+  }
+}
+
+/**
+ * Check SMS daily/monthly limits for individual users
+ */
+async function checkSMSLimits(
+  userId: string,
+): Promise<{ allowed: boolean; reason?: string }> {
+  try {
+    // Get user limits
+    const { data: prefs, error: prefsError } = await supabase
+      .from("user_preferences")
+      .select("sms_daily_limit, sms_monthly_limit")
+      .eq("user_id", userId)
+      .single();
+
+    if (prefsError && prefsError.code !== "PGRST116") {
+      return { allowed: false, reason: "Unable to check SMS limits" };
+    }
+
+    const dailyLimit = prefs?.sms_daily_limit || 10;
+    const monthlyLimit = prefs?.sms_monthly_limit || 100;
+
+    // Check daily limit
+    const today = new Date().toISOString().split("T")[0];
+    const { count: dailyCount, error: dailyError } = await supabase
+      .from("sms_deliveries")
+      .select("*", { count: "exact", head: true })
+      .eq("recipient_id", userId)
+      .gte("created_at", `${today}T00:00:00.000Z`)
+      .lt("created_at", `${today}T23:59:59.999Z`)
+      .eq("status", "sent");
+
+    if (dailyError) {
+      console.error("[SMS] Error checking daily limit:", dailyError);
+    } else if ((dailyCount || 0) >= dailyLimit) {
+      return { allowed: false, reason: "Daily SMS limit exceeded" };
+    }
+
+    // Check monthly limit
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    monthStart.setHours(0, 0, 0, 0);
+
+    const { count: monthlyCount, error: monthlyError } = await supabase
+      .from("sms_deliveries")
+      .select("*", { count: "exact", head: true })
+      .eq("recipient_id", userId)
+      .gte("created_at", monthStart.toISOString())
+      .eq("status", "sent");
+
+    if (monthlyError) {
+      console.error("[SMS] Error checking monthly limit:", monthlyError);
+    } else if ((monthlyCount || 0) >= monthlyLimit) {
+      return { allowed: false, reason: "Monthly SMS limit exceeded" };
+    }
+
+    return { allowed: true };
+  } catch (error) {
+    console.error("[SMS] Error checking SMS limits:", error);
+    return { allowed: false, reason: "Error checking limits" };
+  }
+}
+
+/**
+ * Format content for SMS with length limits
+ */
+function formatContentForSMS(
+  fullContent: string,
+): { smsContent: string; wasTruncated: boolean } {
+  const maxLength = 160; // Standard SMS length
+
+  if (fullContent.length <= maxLength) {
+    return { smsContent: fullContent, wasTruncated: false };
+  }
+
+  // Truncate with "..." and add note about full message in app
+  const truncatedContent = fullContent.substring(0, maxLength - 25) +
+    "... (See full in app)";
+
+  return { smsContent: truncatedContent, wasTruncated: true };
+}
+
+/**
+ * Get user's phone number from members table (synced from auth.users)
+ * Falls back to Edge Function if members.phone_number is not available
+ */
+async function getUserPhoneNumber(userId: string): Promise<string | null> {
+  try {
+    // Primary method: get from members table (synced from auth.users via trigger)
+    const { data: member, error } = await supabase
+      .from("members")
+      .select("phone_number")
+      .eq("id", userId)
+      .single();
+
+    if (error && error.code !== "PGRST116") {
+      console.error("[SMS] Error getting user phone from members:", error);
+    }
+
+    // If we have a phone number from members table, return it
+    if (member?.phone_number) {
+      return member.phone_number;
+    }
+
+    // Fallback: try to get from auth.users via Edge Function
+    console.log(
+      "[SMS] No phone in members table, trying Edge Function fallback",
+    );
+    const { data, error: edgeFunctionError } = await supabase.functions.invoke(
+      "get-user-contact-info",
+      {
+        body: { userId, contactType: "phone" },
+      },
+    );
+
+    if (edgeFunctionError) {
+      console.error(
+        "[SMS] Error getting user phone from Edge Function:",
+        edgeFunctionError,
+      );
+      return null;
+    }
+
+    // Convert E.164 format to clean format if we got it from auth.users
+    if (data?.phone) {
+      return data.phone.replace(/^\+1/, "").replace(/[^0-9]/g, "");
+    }
+
+    return null;
+  } catch (error) {
+    console.error("[SMS] Exception getting user phone:", error);
+    return null;
+  }
+}
+
+/**
+ * Get user's email from auth.users table via Edge Function
+ * Note: Client-side code cannot directly access auth.users for other users
+ */
+async function getUserEmail(userId: string): Promise<string | null> {
+  try {
+    // Use Edge Function to get user email since client doesn't have admin access
+    const { data, error } = await supabase.functions.invoke(
+      "get-user-contact-info",
+      {
+        body: { userId, contactType: "email" },
+      },
+    );
+
+    if (error) {
+      console.error("[Email] Error getting user email:", error);
+      return null;
+    }
+
+    return data?.email || null;
+  } catch (error) {
+    console.error("[Email] Exception getting user email:", error);
+    return null;
+  }
+}
+
+/**
+ * Get user's delivery method preference for a specific category
+ */
+async function getUserDeliveryMethodForCategory(
+  userId: string,
+  categoryCode: string,
+): Promise<string> {
+  try {
+    // Check for category-specific preference
+    const { data: categoryPref, error: categoryError } = await supabase
+      .from("user_notification_preferences")
+      .select("delivery_method")
+      .eq("user_id", userId)
+      .eq("category_code", categoryCode)
+      .single();
+
+    if (categoryError && categoryError.code !== "PGRST116") {
+      console.error("[SMS] Error getting category preference:", categoryError);
+      return "default";
+    }
+
+    if (categoryPref?.delivery_method) {
+      return categoryPref.delivery_method;
+    }
+
+    // Fallback to global preference
+    const { data: globalPref, error: globalError } = await supabase
+      .from("user_preferences")
+      .select("contact_preference")
+      .eq("user_id", userId)
+      .single();
+
+    if (globalError && globalError.code !== "PGRST116") {
+      console.error("[SMS] Error getting global preference:", globalError);
+      return "default";
+    }
+
+    return globalPref?.contact_preference || "default";
+  } catch (error) {
+    console.error("[SMS] Exception getting delivery method:", error);
+    return "default";
+  }
+}
+
+/**
+ * Determine if SMS should be sent based on preferences
+ */
+async function shouldSendSMSNotification(
+  userId: string,
+  categoryCode: string,
+  userDeliveryMethod: string,
+  importance: string,
+): Promise<boolean> {
+  try {
+    // Check if user has SMS as their delivery method for this category
+    if (userDeliveryMethod === "sms") {
+      return true;
+    }
+
+    // Check if user's global preference is SMS and category uses default
+    if (userDeliveryMethod === "default") {
+      const { data: globalPrefs } = await supabase
+        .from("user_preferences")
+        .select("contact_preference")
+        .eq("user_id", userId)
+        .single();
+
+      return globalPrefs?.contact_preference === "text";
+    }
+
+    // For mandatory high-importance notifications, check if we should override
+    const { data: category } = await supabase
+      .from("notification_categories")
+      .select("is_mandatory, default_importance")
+      .eq("code", categoryCode)
+      .single();
+
+    if (category?.is_mandatory && importance === "high") {
+      // Check if user has SMS capability (verified phone)
+      const canReceive = await canUserReceiveSMS(userId);
+      return canReceive.allowed;
+    }
+
+    return false;
+  } catch (error) {
+    console.error("[SMS] Error determining SMS delivery:", error);
+    return false;
+  }
+}
+
+/**
+ * Create in-app notification fallback when SMS fails
+ */
+async function createInAppNotificationFallback(
+  userId: string,
+  notification: {
+    title: string;
+    body: string;
+    categoryCode: string;
+    messageId?: string;
+    requiresAcknowledgment?: boolean;
+    extraData?: Record<string, any>;
+  },
+  fallbackReason: string = "SMS delivery failed",
+): Promise<boolean> {
+  try {
+    await supabase.from("notifications").upsert(
+      {
+        id: notification.messageId || crypto.randomUUID(),
+        user_id: userId,
+        title: notification.title,
+        message: notification.body,
+        notification_type: getNotificationCategoryFromType(
+          notification.categoryCode as any,
+        ),
+        category_code: notification.categoryCode,
+        is_read: false,
+        requires_acknowledgment: notification.requiresAcknowledgment || false,
+        importance: "medium",
+        metadata: {
+          fallbackFrom: "sms",
+          fallbackReason,
+          ...notification.extraData,
+        },
+        created_at: new Date().toISOString(),
+      },
+      { onConflict: "id" },
+    );
+
+    return true;
+  } catch (error) {
+    console.error("[SMS] Error creating in-app fallback:", error);
+    return false;
+  }
+}
+
+/**
+ * Handle fallback delivery when SMS fails
+ */
+async function fallbackDeliveryMethod(
+  userId: string,
+  notification: {
+    title: string;
+    body: string;
+    categoryCode: string;
+    messageId?: string;
+    requiresAcknowledgment?: boolean;
+    divisionName?: string;
+    extraData?: Record<string, any>;
+  },
+  originalMethod: string,
+  extraData: Record<string, any>,
+  notificationType: NotificationType,
+): Promise<boolean> {
+  try {
+    console.log(`[SMS] Attempting fallback delivery for user ${userId}`);
+
+    // Try push notification as fallback
+    const shouldSendPush = await shouldSendPushNotification(
+      userId,
+      notification.categoryCode,
+      extraData.importance || "medium",
+    );
+
+    if (shouldSendPush) {
+      const pushResult = await sendTypedPushNotification(
+        userId,
+        notification.title,
+        notification.body,
+        notificationType,
+        notification.messageId,
+        {
+          ...extraData,
+          fallbackFrom: "sms",
+          originalMethod,
+        },
+      );
+
+      if (pushResult) {
+        console.log(
+          `[SMS] Fallback to push notification successful for user ${userId}`,
+        );
+        return true;
+      }
+    }
+
+    // Try email as second fallback if user prefers email
+    if (originalMethod === "email" || originalMethod === "default") {
+      const userEmail = await getUserEmail(userId);
+      if (userEmail) {
+        const emailContent = `${notification.title}\n\n${notification.body}`;
+        const emailResult = await sendEmail(
+          userEmail,
+          notification.title,
+          emailContent,
+        );
+
+        if (emailResult) {
+          console.log(`[SMS] Fallback to email successful for user ${userId}`);
+          return true;
+        }
+      }
+    }
+
+    // Final fallback - ensure in-app notification exists
+    if (notification.messageId) {
+      const inAppResult = await createInAppNotificationFallback(
+        userId,
+        notification,
+        "All delivery methods failed - in-app only",
+      );
+
+      if (inAppResult) {
+        console.log(
+          `[SMS] Final fallback to in-app notification for user ${userId}`,
+        );
+        return true;
+      }
+    }
+
+    return false;
+  } catch (error) {
+    console.error("[SMS] Error in fallback delivery:", error);
+
+    // Emergency fallback - try to create in-app notification
+    if (notification.messageId) {
+      try {
+        await createInAppNotificationFallback(
+          userId,
+          notification,
+          "Fallback delivery error",
+        );
+        return true;
+      } catch (emergencyError) {
+        console.error("[SMS] Emergency fallback failed:", emergencyError);
+      }
+    }
+
+    return false;
+  }
 }

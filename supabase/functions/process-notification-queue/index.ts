@@ -25,6 +25,25 @@ interface PushNotification {
     updated_at: string;
 }
 
+// Add interface for SMS Delivery
+interface SMSDelivery {
+    id: string;
+    message_id: string | null;
+    recipient_id: string;
+    phone_number: string;
+    sms_content: string;
+    full_content: string;
+    status: string;
+    twilio_sid?: string | null;
+    error_message?: string | null;
+    cost_amount?: number | null;
+    priority: string;
+    was_truncated: boolean;
+    sent_at?: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
 // Add interface for push notification parameters
 interface PushNotificationParams {
     to: string;
@@ -33,10 +52,27 @@ interface PushNotificationParams {
     data: Record<string, any>;
 }
 
+// Add interface for SMS parameters
+interface SMSParams {
+    to: string;
+    content: string;
+    messageId?: string;
+    deliveryId: string;
+    priority?: string;
+}
+
 // Add interface for push notification result
 interface PushNotificationResult {
     success: boolean;
     error?: string;
+}
+
+// Add interface for SMS result
+interface SMSResult {
+    success: boolean;
+    error?: string;
+    sid?: string;
+    cost?: number;
 }
 
 // Interface for updates object
@@ -120,6 +156,45 @@ serve(async (req) => {
 });
 
 async function processNotificationQueue(supabase: SupabaseClient) {
+    // Process both push notifications and SMS deliveries
+    const [pushResults, smsResults] = await Promise.allSettled([
+        processPushNotifications(supabase),
+        processSMSDeliveries(supabase),
+    ]);
+
+    // Combine results
+    let totalProcessed = 0;
+    let totalFailures = 0;
+
+    if (pushResults.status === "fulfilled") {
+        totalProcessed += pushResults.value.processed;
+        totalFailures += pushResults.value.failures;
+        console.log(
+            `Push notifications: ${pushResults.value.processed} processed, ${pushResults.value.failures} failed`,
+        );
+    } else {
+        console.error(
+            "Error processing push notifications:",
+            pushResults.reason,
+        );
+        totalFailures += 1; // Count the entire batch as a failure
+    }
+
+    if (smsResults.status === "fulfilled") {
+        totalProcessed += smsResults.value.processed;
+        totalFailures += smsResults.value.failures;
+        console.log(
+            `SMS deliveries: ${smsResults.value.processed} processed, ${smsResults.value.failures} failed`,
+        );
+    } else {
+        console.error("Error processing SMS deliveries:", smsResults.reason);
+        totalFailures += 1; // Count the entire batch as a failure
+    }
+
+    return { processed: totalProcessed, failures: totalFailures };
+}
+
+async function processPushNotifications(supabase: SupabaseClient) {
     // Get pending notifications that are due for processing
     const { data: pendingNotifications, error } = await supabase
         .from("push_notification_queue")
@@ -131,21 +206,60 @@ async function processNotificationQueue(supabase: SupabaseClient) {
         .limit(50);
 
     if (error) {
-        console.error("Error querying notification queue:", error);
+        console.error("Error querying push notification queue:", error);
         throw error;
     }
 
     if (!pendingNotifications || pendingNotifications.length === 0) {
-        console.log("No pending notifications to process");
+        console.log("No pending push notifications to process");
         return { processed: 0, failures: 0 };
     }
 
-    console.log(`Processing ${pendingNotifications.length} notifications`);
+    console.log(`Processing ${pendingNotifications.length} push notifications`);
 
     // Process each notification
     const results = await Promise.allSettled(
         pendingNotifications.map((notification) =>
             processNotification(supabase, notification)
+        ),
+    );
+
+    // Count successes and failures
+    const processed = results.filter(
+        (result) => result.status === "fulfilled" && result.value === true,
+    ).length;
+    const failures = results.filter(
+        (result) => result.status === "rejected" || result.value === false,
+    ).length;
+
+    return { processed, failures };
+}
+
+async function processSMSDeliveries(supabase: SupabaseClient) {
+    // Get pending SMS deliveries that are due for processing
+    const { data: pendingSMS, error } = await supabase
+        .from("sms_deliveries")
+        .select("*")
+        .eq("status", "pending")
+        .order("created_at", { ascending: true })
+        .limit(50);
+
+    if (error) {
+        console.error("Error querying SMS deliveries:", error);
+        throw error;
+    }
+
+    if (!pendingSMS || pendingSMS.length === 0) {
+        console.log("No pending SMS deliveries to process");
+        return { processed: 0, failures: 0 };
+    }
+
+    console.log(`Processing ${pendingSMS.length} SMS deliveries`);
+
+    // Process each SMS delivery
+    const results = await Promise.allSettled(
+        pendingSMS.map((smsDelivery) =>
+            processSMSDelivery(supabase, smsDelivery)
         ),
     );
 
@@ -244,6 +358,105 @@ async function processNotification(
             `Error processing notification ${notification.id}:`,
             error,
         );
+        return false;
+    }
+}
+
+async function processSMSDelivery(
+    supabase: SupabaseClient,
+    smsDelivery: SMSDelivery,
+) {
+    try {
+        console.log(
+            `Processing SMS delivery ${smsDelivery.id} to ${smsDelivery.phone_number}`,
+        );
+
+        // Send SMS via Twilio
+        const result = await sendSMSViaTwilio({
+            to: smsDelivery.phone_number,
+            content: smsDelivery.sms_content,
+            messageId: smsDelivery.message_id || undefined,
+            deliveryId: smsDelivery.id,
+            priority: smsDelivery.priority,
+        });
+
+        if (result.success) {
+            // Success - mark as sent
+            await supabase
+                .from("sms_deliveries")
+                .update({
+                    status: "sent",
+                    twilio_sid: result.sid,
+                    cost_amount: result.cost,
+                    sent_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString(),
+                })
+                .eq("id", smsDelivery.id);
+
+            // Record delivery metrics
+            if (smsDelivery.message_id) {
+                await recordSMSDeliveryMetrics(
+                    supabase,
+                    smsDelivery.message_id,
+                    smsDelivery.recipient_id,
+                    true,
+                    null,
+                    result.cost || 0,
+                );
+            }
+
+            console.log(`Successfully sent SMS ${smsDelivery.id}`);
+            return true;
+        } else {
+            // Failed - mark as failed (no retry for SMS to keep it simple)
+            await supabase
+                .from("sms_deliveries")
+                .update({
+                    status: "failed",
+                    error_message: result.error || "Unknown error",
+                    updated_at: new Date().toISOString(),
+                })
+                .eq("id", smsDelivery.id);
+
+            // Record delivery metrics
+            if (smsDelivery.message_id) {
+                await recordSMSDeliveryMetrics(
+                    supabase,
+                    smsDelivery.message_id,
+                    smsDelivery.recipient_id,
+                    false,
+                    result.error,
+                    0,
+                );
+            }
+
+            console.error(
+                `Failed to send SMS ${smsDelivery.id}: ${result.error}`,
+            );
+            return false;
+        }
+    } catch (error) {
+        console.error(
+            `Error processing SMS delivery ${smsDelivery.id}:`,
+            error,
+        );
+
+        // Mark as failed in case of exception
+        try {
+            await supabase
+                .from("sms_deliveries")
+                .update({
+                    status: "failed",
+                    error_message: error instanceof Error
+                        ? error.message
+                        : "Unknown error",
+                    updated_at: new Date().toISOString(),
+                })
+                .eq("id", smsDelivery.id);
+        } catch (updateError) {
+            console.error(`Failed to update SMS delivery status:`, updateError);
+        }
+
         return false;
     }
 }
@@ -427,4 +640,136 @@ async function updateQueueItemStatus(
     }
 
     return true;
+}
+
+// Format phone number to E.164 (assumes US numbers)
+function formatPhoneToE164(phone: string): string {
+    // Remove all non-numeric characters
+    const cleaned = phone.replace(/\D/g, "");
+
+    // If it starts with 1, assume it's already US format
+    if (cleaned.startsWith("1") && cleaned.length === 11) {
+        return `+${cleaned}`;
+    }
+
+    // If it's 10 digits, assume US number without country code
+    if (cleaned.length === 10) {
+        return `+1${cleaned}`;
+    }
+
+    // Return as-is if already formatted
+    return phone;
+}
+
+// Function for sending SMS via Twilio
+async function sendSMSViaTwilio(params: SMSParams): Promise<SMSResult> {
+    try {
+        console.log(`Sending SMS to: ${params.to}`);
+
+        const accountSid = Deno.env.get("TWILIO_ACCOUNT_SID");
+        const authToken = Deno.env.get("TWILIO_AUTH_TOKEN");
+        const messagingServiceSid = Deno.env.get("TWILIO_MESSAGE_SERVICE_SID");
+
+        if (!accountSid || !authToken || !messagingServiceSid) {
+            return {
+                success: false,
+                error:
+                    "Missing Twilio configuration. Please check your environment variables.",
+            };
+        }
+
+        const formattedPhone = formatPhoneToE164(params.to);
+
+        const response = await fetch(
+            `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
+            {
+                method: "POST",
+                headers: {
+                    "Authorization": `Basic ${
+                        btoa(`${accountSid}:${authToken}`)
+                    }`,
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                body: new URLSearchParams({
+                    To: formattedPhone,
+                    MessagingServiceSid: messagingServiceSid,
+                    Body: params.content,
+                }),
+            },
+        );
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error("Twilio API error:", errorText);
+            return {
+                success: false,
+                error: "Failed to send SMS via Twilio",
+            };
+        }
+
+        const result = await response.json();
+        console.log("Twilio response:", JSON.stringify(result));
+
+        return {
+            success: true,
+            sid: result.sid,
+            cost: parseFloat(result.price || "0") * -1, // Twilio returns negative prices
+        };
+    } catch (error: unknown) {
+        const errorMessage = error instanceof Error
+            ? error.message
+            : "Unknown error occurred";
+        console.error("Exception sending SMS:", errorMessage);
+        return { success: false, error: errorMessage };
+    }
+}
+
+// Record SMS delivery metrics
+async function recordSMSDeliveryMetrics(
+    client: SupabaseClient,
+    messageId: string,
+    userId: string,
+    success: boolean,
+    error: string | null = null,
+    cost: number = 0,
+) {
+    try {
+        const timestamp = new Date().toISOString();
+
+        // Record in notification analytics
+        await client.from("notification_analytics").insert({
+            notification_id: messageId,
+            user_id: userId,
+            delivery_method: "sms",
+            success,
+            timestamp,
+            metadata: {
+                cost,
+                error,
+            },
+        });
+
+        // Record in SMS cost analytics for reporting
+        if (success && cost > 0) {
+            // Get user's division and role for analytics
+            const { data: member } = await client
+                .from("members")
+                .select("division_name, role")
+                .eq("id", userId)
+                .single();
+
+            await client.from("sms_cost_analytics").insert({
+                division_name: member?.division_name || "unknown",
+                user_role: member?.role || "member",
+                cost_amount: cost,
+                message_count: 1,
+                date_sent: new Date().toISOString().split("T")[0],
+            });
+        }
+
+        return true;
+    } catch (error) {
+        console.error("Error recording SMS delivery metrics:", error);
+        return false;
+    }
 }

@@ -51,14 +51,126 @@ interface UserNotificationPreference {
 const deliveryMethods = [
   { id: "default", label: "Default (Based on Contact Preference)" },
   { id: "push", label: "Push Notification" },
+  { id: "email", label: "Email" },
+  { id: "sms", label: "Text Message (SMS)" },
   { id: "in_app", label: "In-App Only" },
-  { id: "none", label: "None" },
 ];
+
+// SMS Status Indicator Component
+function SMSStatusIndicator() {
+  const theme = (useColorScheme() ?? "light") as ColorScheme;
+  const { session } = useAuth();
+  const router = useRouter();
+  const [phoneVerified, setPhoneVerified] = useState<boolean>(false);
+  const [phoneNumber, setPhoneNumber] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchSMSStatus();
+  }, [session?.user?.id]);
+
+  const fetchSMSStatus = async () => {
+    if (!session?.user?.id) return;
+
+    try {
+      // Get phone verification status from user_preferences
+      const { data: prefsData, error: prefsError } = await supabase
+        .from("user_preferences")
+        .select("phone_verified")
+        .eq("user_id", session.user.id)
+        .single();
+
+      if (prefsError && prefsError.code !== "PGRST116") {
+        throw prefsError;
+      }
+
+      // Get phone number from members table (synced from auth.users)
+      const { data: memberData, error: memberError } = await supabase
+        .from("members")
+        .select("phone_number")
+        .eq("id", session.user.id)
+        .single();
+
+      if (memberError && memberError.code !== "PGRST116") {
+        console.warn("Error fetching phone from members:", memberError);
+      }
+
+      let phoneNumber = memberData?.phone_number || null;
+
+      // Fallback: if no phone in members table, try Edge Function
+      if (!phoneNumber) {
+        try {
+          const { data: contactData, error: contactError } = await supabase.functions.invoke("get-user-contact-info", {
+            body: { userId: session.user.id, contactType: "phone" },
+          });
+
+          if (!contactError && contactData?.phone) {
+            // Convert E.164 format to clean format for display
+            phoneNumber = contactData.phone.replace(/^\+1/, "").replace(/[^0-9]/g, "");
+          }
+        } catch (edgeFunctionError) {
+          console.warn("Edge Function fallback failed:", edgeFunctionError);
+        }
+      }
+
+      setPhoneVerified(prefsData?.phone_verified || false);
+      setPhoneNumber(phoneNumber);
+    } catch (error) {
+      console.error("Error fetching SMS status:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return <ThemedText style={styles.loadingText}>Loading SMS status...</ThemedText>;
+  }
+
+  return (
+    <ThemedView style={styles.smsStatusContainer}>
+      <ThemedView style={styles.infoRow}>
+        <ThemedText style={styles.infoLabel}>Phone Number:</ThemedText>
+        <ThemedText style={styles.infoValue}>{phoneNumber || "Not provided"}</ThemedText>
+      </ThemedView>
+
+      <ThemedView style={styles.infoRow}>
+        <ThemedText style={styles.infoLabel}>SMS Status:</ThemedText>
+        <ThemedView style={styles.statusContainer}>
+          <Ionicons
+            name={phoneVerified ? "checkmark-circle" : "alert-circle"}
+            size={16}
+            color={phoneVerified ? "#34c759" : "#ff9500"}
+          />
+          <ThemedText style={[styles.statusText, { color: phoneVerified ? "#34c759" : "#ff9500" }]}>
+            {phoneVerified ? "Verified" : "Not Verified"}
+          </ThemedText>
+        </ThemedView>
+      </ThemedView>
+
+      {!phoneVerified && (
+        <TouchableOpacity
+          style={[styles.verifyButton, { backgroundColor: Colors[theme].tint }]}
+          onPress={() => router.push("/(profile)/phone-verification")}
+        >
+          <Ionicons name="shield-checkmark" size={16} color={Colors.dark.buttonText} />
+          <ThemedText style={styles.verifyButtonText}>Verify Phone Number</ThemedText>
+        </TouchableOpacity>
+      )}
+
+      <ThemedText style={styles.smsInfoText}>
+        SMS notifications require a verified phone number. Standard messaging rates may apply.
+      </ThemedText>
+    </ThemedView>
+  );
+}
 
 export default function NotificationSettingsScreen() {
   const router = useRouter();
   const theme = (useColorScheme() ?? "light") as ColorScheme;
   const { session } = useAuth();
+
+  // Check if we're on a native mobile platform (not web)
+  const isNativeMobile = Platform.OS === "ios" || Platform.OS === "android";
 
   // Use our centralized push token store
   const {
@@ -165,7 +277,7 @@ export default function NotificationSettingsScreen() {
       const prefsMap: Record<string, { deliveryMethod: string; enabled: boolean }> = {};
       (prefsData || []).forEach((pref: UserNotificationPreference) => {
         prefsMap[pref.category_code] = {
-          deliveryMethod: pref.delivery_method,
+          deliveryMethod: pref.delivery_method === "none" ? "in_app" : pref.delivery_method, // Convert "none" to "in_app"
           enabled: pref.enabled,
         };
       });
@@ -197,14 +309,39 @@ export default function NotificationSettingsScreen() {
       return;
     }
 
-    // If this is a mandatory notification and the user is trying to set to "none",
-    // we won't allow that change
-    if (isMandatory && field === "deliveryMethod" && value === "none") {
-      Alert.alert(
-        "Required Notification",
-        "Critical notifications cannot be set to 'None'. Please choose a different delivery method."
-      );
-      return;
+    // Note: "none" option has been removed - minimum is "in_app"
+
+    // Add SMS-specific validation
+    if (field === "deliveryMethod" && value === "sms") {
+      // Check if phone is verified
+      const { data: userPrefs } = await supabase
+        .from("user_preferences")
+        .select("phone_verified")
+        .eq("user_id", session.user.id)
+        .single();
+
+      if (!userPrefs?.phone_verified) {
+        Toast.show({
+          type: "info",
+          text1: "Phone Verification Required",
+          text2:
+            "You must verify your phone number before you can receive SMS notifications. Would you like to verify it now?",
+          position: "bottom",
+          visibilityTime: 4000,
+          autoHide: false,
+          props: {
+            onAction: (action: string) => {
+              if (action === "confirm") {
+                router.push("/(profile)/phone-verification");
+              }
+              Toast.hide();
+            },
+            actionType: "confirm",
+            confirmText: "Verify",
+          },
+        });
+        return;
+      }
     }
 
     // Update local state immediately for responsive UI
@@ -429,266 +566,276 @@ export default function NotificationSettingsScreen() {
           />
         }
       >
-        <ThemedView style={styles.section}>
-          <ThemedText type="title">Push Notification Settings</ThemedText>
+        {/* Push Notification Settings - Only show on native mobile platforms */}
+        {isNativeMobile && (
+          <ThemedView style={styles.section}>
+            <ThemedText type="title">Push Notification Settings</ThemedText>
 
-          <ThemedView style={styles.statusSection}>
-            <ThemedText style={styles.sectionTitle}>Current Permission Status</ThemedText>
-            {renderPermissionStatus()}
+            <ThemedView style={styles.statusSection}>
+              <ThemedText style={styles.sectionTitle}>Current Permission Status</ThemedText>
+              {renderPermissionStatus()}
 
-            <TouchableOpacity style={styles.refreshButton} onPress={refreshPermissionStatus} disabled={isRefreshing}>
-              <Ionicons
-                name="refresh"
-                size={16}
-                color={Colors[theme].text}
-                style={isRefreshing ? { opacity: 0.5 } : {}}
-              />
-              <ThemedText style={[styles.refreshText, isRefreshing ? { opacity: 0.5 } : {}]}>
-                {isRefreshing ? "Refreshing..." : "Refresh Status"}
-              </ThemedText>
-            </TouchableOpacity>
-          </ThemedView>
-
-          {/* Token info */}
-          <ThemedView style={styles.statusSection}>
-            <ThemedText style={styles.sectionTitle}>Device Registration</ThemedText>
-            <ThemedView style={styles.tokenStatus}>
-              <Ionicons
-                name={isRegistered ? "phone-portrait" : ("phone-portrait-outline" as IoniconsName)}
-                size={24}
-                color={isRegistered ? Colors[theme].success : Colors[theme].textDim}
-              />
-              <ThemedText style={styles.tokenStatusText}>
-                {isRegistered
-                  ? "Device is registered for push notifications"
-                  : "Device is not registered for push notifications"}
-              </ThemedText>
-            </ThemedView>
-
-            {isRegistered && lastRegistrationDate && (
-              <ThemedView style={styles.infoRow}>
-                <ThemedText style={styles.infoLabel}>Last Updated:</ThemedText>
-                <ThemedText style={styles.infoValue}>{formatDate(lastRegistrationDate)}</ThemedText>
-              </ThemedView>
-            )}
-
-            {isRegistered && (
-              <TouchableOpacity
-                style={[styles.secondaryButton, { marginTop: 12 }]}
-                onPress={handleRefreshToken}
-                disabled={isRefreshing}
-              >
-                <Ionicons name="refresh-circle" size={20} color={Colors[theme].tint} />
-                <ThemedText style={styles.secondaryButtonText}>
-                  {isRefreshing ? "Refreshing Token..." : "Refresh Push Token"}
+              <TouchableOpacity style={styles.refreshButton} onPress={refreshPermissionStatus} disabled={isRefreshing}>
+                <Ionicons
+                  name="refresh"
+                  size={16}
+                  color={Colors[theme].text}
+                  style={isRefreshing ? { opacity: 0.5 } : {}}
+                />
+                <ThemedText style={[styles.refreshText, isRefreshing ? { opacity: 0.5 } : {}]}>
+                  {isRefreshing ? "Refreshing..." : "Refresh Status"}
                 </ThemedText>
               </TouchableOpacity>
-            )}
+            </ThemedView>
 
-            {isLoading && <ThemedText style={styles.loadingText}>Working...</ThemedText>}
+            {/* Token info */}
+            <ThemedView style={styles.statusSection}>
+              <ThemedText style={styles.sectionTitle}>Device Registration</ThemedText>
+              <ThemedView style={styles.tokenStatus}>
+                <Ionicons
+                  name={isRegistered ? "phone-portrait" : ("phone-portrait-outline" as IoniconsName)}
+                  size={24}
+                  color={isRegistered ? Colors[theme].success : Colors[theme].textDim}
+                />
+                <ThemedText style={styles.tokenStatusText}>
+                  {isRegistered
+                    ? "Device is registered for push notifications"
+                    : "Device is not registered for push notifications"}
+                </ThemedText>
+              </ThemedView>
 
-            {error && <ThemedText style={[styles.errorText, { color: Colors[theme].error }]}>{error}</ThemedText>}
+              {isRegistered && lastRegistrationDate && (
+                <ThemedView style={styles.infoRow}>
+                  <ThemedText style={styles.infoLabel}>Last Updated:</ThemedText>
+                  <ThemedText style={styles.infoValue}>{formatDate(lastRegistrationDate)}</ThemedText>
+                </ThemedView>
+              )}
+
+              {isRegistered && (
+                <TouchableOpacity
+                  style={[styles.secondaryButton, { marginTop: 12 }]}
+                  onPress={handleRefreshToken}
+                  disabled={isRefreshing}
+                >
+                  <Ionicons name="refresh-circle" size={20} color={Colors[theme].tint} />
+                  <ThemedText style={styles.secondaryButtonText}>
+                    {isRefreshing ? "Refreshing Token..." : "Refresh Push Token"}
+                  </ThemedText>
+                </TouchableOpacity>
+              )}
+
+              {isLoading && <ThemedText style={styles.loadingText}>Working...</ThemedText>}
+
+              {error && <ThemedText style={[styles.errorText, { color: Colors[theme].error }]}>{error}</ThemedText>}
+            </ThemedView>
+
+            {/* Action buttons based on status */}
+            <ThemedView style={styles.actionSection}>
+              {permissionStatus === "undetermined" && (
+                <TouchableOpacity
+                  style={styles.permissionButton}
+                  onPress={handleRequestPermission}
+                  disabled={isLoading}
+                >
+                  <Ionicons name="notifications-outline" size={20} color={Colors.dark.buttonText} />
+                  <ThemedText style={styles.permissionButtonText}>Allow Push Notifications</ThemedText>
+                </TouchableOpacity>
+              )}
+
+              {permissionStatus === "denied" && (
+                <TouchableOpacity
+                  style={[styles.actionButton, { backgroundColor: Colors[theme].warning }]}
+                  onPress={openDeviceSettings}
+                >
+                  <Ionicons name="settings-outline" size={20} color={Colors.dark.buttonText} />
+                  <ThemedText style={styles.permissionButtonText}>Open Device Settings</ThemedText>
+                </TouchableOpacity>
+              )}
+
+              {permissionStatus === "granted" && !isRegistered && (
+                <TouchableOpacity
+                  style={styles.permissionButton}
+                  onPress={() => session?.user?.id && registerDevice(session.user.id)}
+                  disabled={isLoading}
+                >
+                  <Ionicons name="cloud-upload-outline" size={20} color="#FFFFFF" />
+                  <ThemedText style={styles.permissionButtonText}>Register This Device</ThemedText>
+                </TouchableOpacity>
+              )}
+            </ThemedView>
           </ThemedView>
+        )}
 
-          {/* Action buttons based on status */}
-          <ThemedView style={styles.actionSection}>
-            {permissionStatus === "undetermined" && (
-              <TouchableOpacity style={styles.permissionButton} onPress={handleRequestPermission} disabled={isLoading}>
-                <Ionicons name="notifications-outline" size={20} color={Colors.dark.buttonText} />
-                <ThemedText style={styles.permissionButtonText}>Allow Push Notifications</ThemedText>
-              </TouchableOpacity>
-            )}
+        {/* SMS Status Section */}
+        <ThemedView style={styles.smsSection}>
+          <ThemedText style={styles.sectionTitle}>SMS Notifications</ThemedText>
+          <SMSStatusIndicator />
+        </ThemedView>
 
-            {permissionStatus === "denied" && (
-              <TouchableOpacity
-                style={[styles.actionButton, { backgroundColor: Colors[theme].warning }]}
-                onPress={openDeviceSettings}
-              >
-                <Ionicons name="settings-outline" size={20} color={Colors.dark.buttonText} />
-                <ThemedText style={styles.permissionButtonText}>Open Device Settings</ThemedText>
-              </TouchableOpacity>
-            )}
+        {/* Notification preferences info */}
+        <ThemedView style={styles.infoSection}>
+          <ThemedText style={styles.sectionTitle}>Notification Preferences</ThemedText>
+          <ThemedText style={styles.infoText}>
+            Your current contact preference is set to:{" "}
+            <ThemedText style={styles.preferenceBold}>{contactPreference || "Not set"}</ThemedText>
+          </ThemedText>
 
-            {permissionStatus === "granted" && !isRegistered && (
-              <TouchableOpacity
-                style={styles.permissionButton}
-                onPress={() => session?.user?.id && registerDevice(session.user.id)}
-                disabled={isLoading}
-              >
-                <Ionicons name="cloud-upload-outline" size={20} color="#FFFFFF" />
-                <ThemedText style={styles.permissionButtonText}>Register This Device</ThemedText>
-              </TouchableOpacity>
-            )}
-          </ThemedView>
+          <ThemedText style={styles.infoText}>
+            To change how you receive notifications, please visit your profile settings.
+          </ThemedText>
 
-          {/* Notification preferences info */}
-          <ThemedView style={styles.infoSection}>
-            <ThemedText style={styles.sectionTitle}>Notification Preferences</ThemedText>
-            <ThemedText style={styles.infoText}>
-              Your current contact preference is set to:{" "}
-              <ThemedText style={styles.preferenceBold}>{contactPreference || "Not set"}</ThemedText>
-            </ThemedText>
+          <TouchableOpacity style={styles.linkButton} onPress={() => router.push("/(profile)/[profileID]")}>
+            <ThemedText style={styles.linkText}>Go to Profile Settings</ThemedText>
+          </TouchableOpacity>
+        </ThemedView>
 
-            <ThemedText style={styles.infoText}>
-              To change how you receive notifications, please visit your profile settings.
-            </ThemedText>
+        {/* Notification Category Preferences */}
+        <ThemedView style={styles.categorySection}>
+          <ThemedText style={styles.sectionTitle}>Notification Category Preferences</ThemedText>
+          <ThemedText style={styles.preferencesDescription}>
+            Customize which notifications you receive and how they're delivered
+          </ThemedText>
 
-            <TouchableOpacity style={styles.linkButton} onPress={() => router.push("/(profile)/[profileID]")}>
-              <ThemedText style={styles.linkText}>Go to Profile Settings</ThemedText>
-            </TouchableOpacity>
-          </ThemedView>
+          {loadingCategories ? (
+            <ThemedText style={styles.loadingText}>Loading categories...</ThemedText>
+          ) : (
+            categories.map((category) => {
+              const pref = preferences[category.code] || {
+                deliveryMethod: "default",
+                enabled: true,
+              };
 
-          {/* Notification Category Preferences */}
-          <ThemedView style={styles.categorySection}>
-            <ThemedText style={styles.sectionTitle}>Notification Category Preferences</ThemedText>
-            <ThemedText style={styles.preferencesDescription}>
-              Customize which notifications you receive and how they're delivered
-            </ThemedText>
+              const isMandatory = category.is_mandatory;
 
-            {loadingCategories ? (
-              <ThemedText style={styles.loadingText}>Loading categories...</ThemedText>
-            ) : (
-              categories.map((category) => {
-                const pref = preferences[category.code] || {
-                  deliveryMethod: "default",
-                  enabled: true,
-                };
+              return (
+                <ThemedView key={category.code} style={styles.categoryItem}>
+                  <ThemedView style={styles.categoryHeader}>
+                    <ThemedText type="subtitle">{category.name}</ThemedText>
+                    <Switch
+                      value={pref.enabled}
+                      onValueChange={(value) => updatePreference(category.code, "enabled", value, isMandatory)}
+                      trackColor={{ false: "#767577", true: Colors[theme].tint }}
+                      thumbColor="#f4f3f4"
+                      disabled={isMandatory} // Disable toggle for mandatory notifications
+                    />
+                  </ThemedView>
 
-                const isMandatory = category.is_mandatory;
+                  <ThemedText style={styles.categoryDescription}>{category.description}</ThemedText>
 
-                return (
-                  <ThemedView key={category.code} style={styles.categoryItem}>
-                    <ThemedView style={styles.categoryHeader}>
-                      <ThemedText type="subtitle">{category.name}</ThemedText>
-                      <Switch
-                        value={pref.enabled}
-                        onValueChange={(value) => updatePreference(category.code, "enabled", value, isMandatory)}
-                        trackColor={{ false: "#767577", true: Colors[theme].tint }}
-                        thumbColor="#f4f3f4"
-                        disabled={isMandatory} // Disable toggle for mandatory notifications
-                      />
+                  {isMandatory && (
+                    <ThemedView style={styles.mandatoryTag}>
+                      <ThemedText style={styles.mandatoryText}>Required</ThemedText>
                     </ThemedView>
+                  )}
 
-                    <ThemedText style={styles.categoryDescription}>{category.description}</ThemedText>
+                  <ThemedView style={styles.deliveryMethodContainer}>
+                    <ThemedText style={styles.deliveryLabel}>Delivery Method:</ThemedText>
 
-                    {isMandatory && (
-                      <ThemedView style={styles.mandatoryTag}>
-                        <ThemedText style={styles.mandatoryText}>Required</ThemedText>
-                      </ThemedView>
-                    )}
-
-                    <ThemedView style={styles.deliveryMethodContainer}>
-                      <ThemedText style={styles.deliveryLabel}>Delivery Method:</ThemedText>
-
-                      {deliveryMethods.map((method) => (
-                        <ThemedView key={method.id} style={styles.radioOption}>
-                          <TouchableOpacity
-                            onPress={() => updatePreference(category.code, "deliveryMethod", method.id, isMandatory)}
-                            style={styles.radioButton}
-                            disabled={isMandatory && method.id === "none"} // Disable "None" option for mandatory notifications
+                    {deliveryMethods.map((method) => (
+                      <ThemedView key={method.id} style={styles.radioOption}>
+                        <TouchableOpacity
+                          onPress={() => updatePreference(category.code, "deliveryMethod", method.id, isMandatory)}
+                          style={styles.radioButton}
+                          disabled={!isNativeMobile && method.id === "push"} // Disable push option on web platforms
+                        >
+                          <Ionicons
+                            name={pref.deliveryMethod === method.id ? "radio-button-on" : "radio-button-off"}
+                            size={24}
+                            color={
+                              !isNativeMobile && method.id === "push"
+                                ? Colors[theme].textDim
+                                : pref.deliveryMethod === method.id
+                                ? Colors[theme].tint
+                                : Colors[theme].textDim
+                            }
+                          />
+                          <ThemedText
+                            style={[
+                              styles.radioLabel,
+                              !isNativeMobile && method.id === "push" ? { color: Colors[theme].textDim } : null,
+                            ]}
                           >
-                            <Ionicons
-                              name={pref.deliveryMethod === method.id ? "radio-button-on" : "radio-button-off"}
-                              size={24}
-                              color={
-                                isMandatory && method.id === "none"
-                                  ? Colors[theme].textDim
-                                  : pref.deliveryMethod === method.id
-                                  ? Colors[theme].tint
-                                  : Colors[theme].textDim
-                              }
-                            />
-                            <ThemedText
-                              style={[
-                                styles.radioLabel,
-                                isMandatory && method.id === "none" ? { color: Colors[theme].textDim } : null,
-                              ]}
-                            >
-                              {method.label}
-                              {isMandatory && method.id === "none" && " (Not Available)"}
-                            </ThemedText>
-                          </TouchableOpacity>
-                        </ThemedView>
-                      ))}
-                    </ThemedView>
+                            {method.label}
+                            {!isNativeMobile && method.id === "push" && " (Mobile Only)"}
+                          </ThemedText>
+                        </TouchableOpacity>
+                      </ThemedView>
+                    ))}
+                  </ThemedView>
 
-                    <ThemedView
+                  <ThemedView
+                    style={[
+                      styles.importanceIndicator,
+                      {
+                        backgroundColor:
+                          category.default_importance === "high"
+                            ? "rgba(255, 59, 48, 0.2)"
+                            : category.default_importance === "medium"
+                            ? "rgba(255, 149, 0, 0.2)"
+                            : "rgba(52, 199, 89, 0.2)",
+                      },
+                    ]}
+                  >
+                    <ThemedText
                       style={[
-                        styles.importanceIndicator,
+                        styles.importanceLabel,
                         {
-                          backgroundColor:
+                          color:
                             category.default_importance === "high"
-                              ? "rgba(255, 59, 48, 0.2)"
+                              ? "#ff3b30"
                               : category.default_importance === "medium"
-                              ? "rgba(255, 149, 0, 0.2)"
-                              : "rgba(52, 199, 89, 0.2)",
+                              ? "#ff9500"
+                              : "#34c759",
                         },
                       ]}
                     >
-                      <ThemedText
-                        style={[
-                          styles.importanceLabel,
-                          {
-                            color:
-                              category.default_importance === "high"
-                                ? "#ff3b30"
-                                : category.default_importance === "medium"
-                                ? "#ff9500"
-                                : "#34c759",
-                          },
-                        ]}
-                      >
-                        Priority: {category.default_importance.toUpperCase()}
-                        {isMandatory ? " (Fixed)" : ""}
-                      </ThemedText>
-                    </ThemedView>
+                      Priority: {category.default_importance.toUpperCase()}
+                      {isMandatory ? " (Fixed)" : ""}
+                    </ThemedText>
                   </ThemedView>
-                );
-              })
-            )}
+                </ThemedView>
+              );
+            })
+          )}
+        </ThemedView>
+
+        {/* Platform-specific troubleshooting */}
+        <ThemedView style={styles.troubleshootSection}>
+          <ThemedText style={styles.sectionTitle}>Troubleshooting</ThemedText>
+
+          <ThemedView style={styles.troubleshootItem}>
+            <Ionicons name="alert-circle-outline" size={20} color={Colors[theme].textDim} />
+            <ThemedText style={styles.troubleshootText}>
+              If you're not receiving notifications, try refreshing your token, checking device settings, or restarting
+              the app.
+            </ThemedText>
           </ThemedView>
 
-          {/* Platform-specific troubleshooting */}
-          <ThemedView style={styles.troubleshootSection}>
-            <ThemedText style={styles.sectionTitle}>Troubleshooting</ThemedText>
-
+          {Platform.OS === "ios" && (
             <ThemedView style={styles.troubleshootItem}>
-              <Ionicons name="alert-circle-outline" size={20} color={Colors[theme].textDim} />
+              <Ionicons name="logo-apple" size={20} color={Colors[theme].textDim} />
               <ThemedText style={styles.troubleshootText}>
-                If you're not receiving notifications, try refreshing your token, checking device settings, or
-                restarting the app.
+                On iOS, ensure notifications are enabled for this app in Settings → Notifications →{" "}
+                {Application.applicationName || "BLET App"}
               </ThemedText>
             </ThemedView>
+          )}
 
-            {Platform.OS === "ios" && (
+          {Platform.OS === "android" && (
+            <>
               <ThemedView style={styles.troubleshootItem}>
-                <Ionicons name="logo-apple" size={20} color={Colors[theme].textDim} />
+                <Ionicons name="logo-android" size={20} color={Colors[theme].textDim} />
                 <ThemedText style={styles.troubleshootText}>
-                  On iOS, ensure notifications are enabled for this app in Settings → Notifications →{" "}
-                  {Application.applicationName || "BLET App"}
+                  Some Android devices have battery optimization settings that can block notifications. Make sure to
+                  disable battery optimization for this app.
                 </ThemedText>
               </ThemedView>
-            )}
 
-            {Platform.OS === "android" && (
-              <>
-                <ThemedView style={styles.troubleshootItem}>
-                  <Ionicons name="logo-android" size={20} color={Colors[theme].textDim} />
-                  <ThemedText style={styles.troubleshootText}>
-                    Some Android devices have battery optimization settings that can block notifications. Make sure to
-                    disable battery optimization for this app.
-                  </ThemedText>
-                </ThemedView>
-
-                <TouchableOpacity
-                  style={styles.helpButton}
-                  onPress={() => Linking.openURL("https://dontkillmyapp.com")}
-                >
-                  <ThemedText style={styles.helpButtonText}>Android Battery Optimization Guide</ThemedText>
-                </TouchableOpacity>
-              </>
-            )}
-          </ThemedView>
+              <TouchableOpacity style={styles.helpButton} onPress={() => Linking.openURL("https://dontkillmyapp.com")}>
+                <ThemedText style={styles.helpButtonText}>Android Battery Optimization Guide</ThemedText>
+              </TouchableOpacity>
+            </>
+          )}
         </ThemedView>
       </ScrollView>
     </>
@@ -932,5 +1079,34 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "600",
     color: "#ff3b30",
+  },
+  // SMS-related styles
+  smsSection: {
+    backgroundColor: Colors.dark.card,
+    borderRadius: 12,
+    padding: 16,
+    marginTop: 8,
+  },
+  smsStatusContainer: {
+    gap: 12,
+  },
+  verifyButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 8,
+  },
+  verifyButtonText: {
+    color: Colors.dark.buttonText,
+    fontWeight: "600",
+    marginLeft: 8,
+  },
+  smsInfoText: {
+    fontSize: 12,
+    opacity: 0.7,
+    fontStyle: "italic",
+    marginTop: 8,
   },
 });
