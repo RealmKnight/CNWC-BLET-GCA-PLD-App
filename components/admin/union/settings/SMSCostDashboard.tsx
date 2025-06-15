@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from "react";
 import { View, StyleSheet, ScrollView, RefreshControl, TouchableOpacity } from "react-native";
-import { Stack } from "expo-router";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { useAuth } from "@/hooks/useAuth";
@@ -10,8 +9,7 @@ import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { Ionicons } from "@expo/vector-icons";
 
-type ColorScheme = keyof typeof Colors;
-
+// Types
 interface SMSCostStats {
   dailyCost: number;
   weeklyCost: number;
@@ -31,28 +29,16 @@ interface SMSCostStats {
   divisionBreakdown: Array<{ division: string; count: number; cost: number }>;
 }
 
-function SMSCostDashboard() {
+export function SMSCostDashboard() {
   const { session, userRole } = useAuth();
-  const colorScheme = (useColorScheme() ?? "light") as ColorScheme;
+  const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const [stats, setStats] = useState<SMSCostStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
-    checkAdminPermission();
     fetchCostStats();
   }, []);
-
-  const checkAdminPermission = async () => {
-    if (!session?.user?.id) return;
-
-    const { data: member } = await supabase.from("members").select("role").eq("id", session.user.id).single();
-
-    if (!member || !["admin", "union_admin", "application_admin"].includes(member.role)) {
-      router.replace("/(tabs)/home");
-      return;
-    }
-  };
 
   const fetchCostStats = async (isRefresh = false) => {
     try {
@@ -75,9 +61,7 @@ function SMSCostDashboard() {
     }
   };
 
-  const onRefresh = () => {
-    fetchCostStats(true);
-  };
+  const onRefresh = () => fetchCostStats(true);
 
   const getBudgetStatusColor = (percentUsed: number) => {
     if (percentUsed >= 90) return "#ff3b30";
@@ -85,7 +69,7 @@ function SMSCostDashboard() {
     return "#34c759";
   };
 
-  if (!userRole || !["admin", "union_admin", "application_admin"].includes(userRole)) {
+  if (!userRole || !["union_admin", "application_admin", "division_admin"].includes(userRole)) {
     return (
       <ThemedView style={styles.container}>
         <ThemedText>You do not have permission to view this page.</ThemedText>
@@ -113,6 +97,7 @@ function SMSCostDashboard() {
 
         {/* Cost Overview Cards */}
         <View style={styles.statsGrid}>
+          {/* Daily */}
           <ThemedView style={[styles.statCard, { backgroundColor: Colors[colorScheme].card }]}>
             <View style={styles.statHeader}>
               <Ionicons name="today" size={24} color={Colors[colorScheme].tint} />
@@ -122,6 +107,7 @@ function SMSCostDashboard() {
             <ThemedText style={styles.statCount}>{stats?.dailyCount || 0} messages</ThemedText>
           </ThemedView>
 
+          {/* Weekly */}
           <ThemedView style={[styles.statCard, { backgroundColor: Colors[colorScheme].card }]}>
             <View style={styles.statHeader}>
               <Ionicons name="calendar" size={24} color={Colors[colorScheme].tint} />
@@ -131,6 +117,7 @@ function SMSCostDashboard() {
             <ThemedText style={styles.statCount}>{stats?.weeklyCount || 0} messages</ThemedText>
           </ThemedView>
 
+          {/* Monthly */}
           <ThemedView style={[styles.statCard, { backgroundColor: Colors[colorScheme].card }]}>
             <View style={styles.statHeader}>
               <Ionicons name="calendar-outline" size={24} color={Colors[colorScheme].tint} />
@@ -148,6 +135,7 @@ function SMSCostDashboard() {
               Budget Status
             </ThemedText>
 
+            {/* Daily Budget */}
             <View style={styles.budgetRow}>
               <ThemedText style={styles.budgetLabel}>Daily Budget:</ThemedText>
               <View style={styles.budgetInfo}>
@@ -162,6 +150,7 @@ function SMSCostDashboard() {
               </View>
             </View>
 
+            {/* Monthly Budget */}
             <View style={styles.budgetRow}>
               <ThemedText style={styles.budgetLabel}>Monthly Budget:</ThemedText>
               <View style={styles.budgetInfo}>
@@ -179,7 +168,7 @@ function SMSCostDashboard() {
         )}
 
         {/* Top SMS Users */}
-        {stats?.topUsers && stats.topUsers.length > 0 && (
+        {stats?.topUsers?.length ? (
           <ThemedView style={[styles.section, { backgroundColor: Colors[colorScheme].card }]}>
             <ThemedText type="subtitle" style={styles.sectionTitle}>
               Top SMS Users (This Month)
@@ -200,16 +189,16 @@ function SMSCostDashboard() {
               </View>
             ))}
           </ThemedView>
-        )}
+        ) : null}
 
         {/* Division Breakdown */}
-        {stats?.divisionBreakdown && stats.divisionBreakdown.length > 0 && (
+        {stats?.divisionBreakdown?.length ? (
           <ThemedView style={[styles.section, { backgroundColor: Colors[colorScheme].card }]}>
             <ThemedText type="subtitle" style={styles.sectionTitle}>
               Division Breakdown (This Month)
             </ThemedText>
 
-            {stats.divisionBreakdown.map((division, index) => (
+            {stats.divisionBreakdown.map((division) => (
               <View key={division.division} style={styles.divisionRow}>
                 <ThemedText style={styles.divisionName}>{division.division}</ThemedText>
                 <View style={styles.divisionStats}>
@@ -219,17 +208,14 @@ function SMSCostDashboard() {
               </View>
             ))}
           </ThemedView>
-        )}
+        ) : null}
 
         {/* Budget Management Button */}
         <TouchableOpacity
           style={[styles.manageBudgetButton, { backgroundColor: Colors[colorScheme].tint }]}
-          onPress={() => {
-            // Navigate to budget management screen (to be implemented)
-            console.log("Navigate to budget management");
-          }}
+          onPress={() => console.log("Navigate to budget management")}
         >
-          <Ionicons name="settings" size={20} color="white" />
+          <Ionicons name="settings" size={20} color={Colors.dark.buttonText} />
           <ThemedText style={styles.manageBudgetText}>Manage SMS Budget</ThemedText>
         </TouchableOpacity>
       </ThemedView>
@@ -237,29 +223,19 @@ function SMSCostDashboard() {
   );
 }
 
+// Styles
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  content: {
-    padding: 20,
-    gap: 20,
-  },
-  title: {
-    marginBottom: 10,
-  },
-  statsGrid: {
-    flexDirection: "row",
-    gap: 12,
-    flexWrap: "wrap",
-  },
+  container: { flex: 1 },
+  content: { padding: 20, gap: 20 },
+  title: { marginBottom: 10 },
+  statsGrid: { flexDirection: "row", gap: 12, flexWrap: "wrap" },
   statCard: {
     flex: 1,
     minWidth: 150,
     padding: 16,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.1)",
+    borderColor: Colors.dark.border,
   },
   statHeader: {
     flexDirection: "row",
@@ -267,110 +243,52 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 8,
   },
-  statValue: {
-    fontSize: 24,
-    fontWeight: "bold",
-  },
-  statLabel: {
-    fontSize: 14,
-    opacity: 0.7,
-    marginBottom: 4,
-  },
-  statCount: {
-    fontSize: 12,
-    opacity: 0.6,
-  },
+  statValue: { fontSize: 24, fontWeight: "bold" },
+  statLabel: { fontSize: 14, opacity: 0.7, marginBottom: 4 },
+  statCount: { fontSize: 12, opacity: 0.6 },
   section: {
     padding: 16,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.1)",
+    borderColor: Colors.dark.border,
   },
-  sectionTitle: {
-    marginBottom: 16,
-  },
+  sectionTitle: { marginBottom: 16 },
   budgetRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 12,
   },
-  budgetLabel: {
-    flex: 1,
-  },
-  budgetInfo: {
-    alignItems: "flex-end",
-  },
-  budgetAmount: {
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  budgetPercent: {
-    fontSize: 12,
-    fontWeight: "bold",
-  },
+  budgetLabel: { flex: 1 },
+  budgetInfo: { alignItems: "flex-end" },
+  budgetAmount: { fontSize: 14, fontWeight: "600" },
+  budgetPercent: { fontSize: 12, fontWeight: "bold" },
   userRow: {
     flexDirection: "row",
     alignItems: "center",
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(0,0,0,0.1)",
+    borderBottomColor: Colors.dark.border,
   },
-  userRank: {
-    width: 40,
-    alignItems: "center",
-  },
-  rankNumber: {
-    fontSize: 16,
-    fontWeight: "bold",
-    opacity: 0.7,
-  },
-  userInfo: {
-    flex: 1,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  userName: {
-    flex: 1,
-    fontSize: 16,
-  },
-  userStats: {
-    alignItems: "flex-end",
-  },
-  userCount: {
-    fontSize: 14,
-    opacity: 0.7,
-  },
-  userCost: {
-    fontSize: 16,
-    fontWeight: "bold",
-    color: "#007AFF",
-  },
+  userRank: { width: 40, alignItems: "center" },
+  rankNumber: { fontSize: 16, fontWeight: "bold", opacity: 0.7 },
+  userInfo: { flex: 1, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  userName: { flex: 1, fontSize: 16 },
+  userStats: { alignItems: "flex-end" },
+  userCount: { fontSize: 14, opacity: 0.7 },
+  userCost: { fontSize: 16, fontWeight: "bold", color: "#007AFF" },
   divisionRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(0,0,0,0.1)",
+    borderBottomColor: Colors.dark.border,
   },
-  divisionName: {
-    flex: 1,
-    fontSize: 16,
-  },
-  divisionStats: {
-    alignItems: "flex-end",
-  },
-  divisionCount: {
-    fontSize: 14,
-    opacity: 0.7,
-  },
-  divisionCost: {
-    fontSize: 16,
-    fontWeight: "bold",
-    color: "#007AFF",
-  },
+  divisionName: { flex: 1, fontSize: 16 },
+  divisionStats: { alignItems: "flex-end" },
+  divisionCount: { fontSize: 14, opacity: 0.7 },
+  divisionCost: { fontSize: 16, fontWeight: "bold", color: "#007AFF" },
   manageBudgetButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -379,23 +297,5 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginTop: 10,
   },
-  manageBudgetText: {
-    color: "white",
-    fontWeight: "600",
-    marginLeft: 8,
-  },
+  manageBudgetText: { color: Colors.dark.buttonText, fontWeight: "600", marginLeft: 8 },
 });
-
-export default function Page() {
-  return (
-    <>
-      <Stack.Screen
-        options={{
-          title: "SMS Cost Dashboard",
-          headerShown: true,
-        }}
-      />
-      <SMSCostDashboard />
-    </>
-  );
-}

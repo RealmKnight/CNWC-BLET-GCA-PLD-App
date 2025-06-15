@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from "react";
 import { View, StyleSheet, ScrollView, TouchableOpacity, Platform } from "react-native";
-import { Stack } from "expo-router";
+import Toast from "react-native-toast-message";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedTextInput } from "@/components/ThemedTextInput";
-import { ThemedToast } from "@/components/ThemedToast";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/utils/supabase";
 import { router } from "expo-router";
@@ -19,9 +18,9 @@ interface DivisionUser {
   phone: string;
 }
 
-function EmergencySMSScreen() {
+export function EmergencySMS() {
   const { session, userRole } = useAuth();
-  const colorScheme = useColorScheme() ?? "light";
+  const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
   const [message, setMessage] = useState("");
   const [targetUsers, setTargetUsers] = useState<"all" | "division">("division");
   const [divisionUsers, setDivisionUsers] = useState<DivisionUser[]>([]);
@@ -29,37 +28,26 @@ function EmergencySMSScreen() {
   const [userDivision, setUserDivision] = useState<string | null>(null);
 
   useEffect(() => {
-    checkAdminPermission();
-    fetchDivisionUsers();
-  }, []);
-
-  const checkAdminPermission = async () => {
-    if (!session?.user?.id) return;
-
-    const { data: member } = await supabase
-      .from("members")
-      .select("role, division_name")
-      .eq("id", session.user.id)
-      .single();
-
-    if (!member || !["admin", "union_admin", "application_admin", "division_admin"].includes(member.role)) {
-      router.replace("/(tabs)/home");
-      return;
+    // Fetch division users only for admins that require it
+    if (userRole === "division_admin") {
+      fetchDivisionUsers();
     }
-
-    setUserDivision(member.division_name);
-  };
+  }, [userRole]);
 
   const fetchDivisionUsers = async () => {
     if (!session?.user?.id) return;
 
     try {
-      // Get admin's division
-      const { data: adminMember } = await supabase
+      const { data: adminMember, error } = await supabase
         .from("members")
         .select("division_name")
         .eq("id", session.user.id)
         .single();
+
+      if (error) {
+        console.error("Division fetch error:", error);
+        return;
+      }
 
       if (adminMember?.division_name) {
         const { data: users } = await supabase
@@ -69,6 +57,7 @@ function EmergencySMSScreen() {
           .eq("status", "active")
           .not("phone", "is", null);
 
+        setUserDivision(adminMember.division_name);
         setDivisionUsers(users || []);
       }
     } catch (error) {
@@ -78,11 +67,11 @@ function EmergencySMSScreen() {
 
   const sendEmergencySMS = async () => {
     if (!message.trim()) {
-      ThemedToast.show("Please enter a message", "error");
+      Toast.show({ type: "error", text1: "Please enter a message" });
       return;
     }
 
-    // Show confirmation alert
+    // Confirmation on web
     if (Platform.OS === "web") {
       const confirmed = window.confirm(
         `This will send an emergency SMS that bypasses user preferences and rate limits.\n\nMessage: "${message}"\nTarget: ${
@@ -90,9 +79,6 @@ function EmergencySMSScreen() {
         }\n\nAre you sure you want to proceed?`
       );
       if (!confirmed) return;
-    } else {
-      // For mobile, we'll proceed directly since Alert doesn't work well on web
-      // In a real implementation, you might want to use a custom modal
     }
 
     await confirmSendEmergencySMS();
@@ -113,21 +99,21 @@ function EmergencySMSScreen() {
 
       if (error) throw error;
 
-      ThemedToast.show(
-        `Emergency SMS sent to ${data.sentCount} users. ${data.failCount} failed.`,
-        data.failCount > 0 ? "warning" : "success"
-      );
+      Toast.show({
+        type: data.failCount > 0 ? "info" : "success",
+        text1: `Emergency SMS sent to ${data.sentCount} users. ${data.failCount} failed.`,
+      });
 
       setMessage("");
     } catch (error) {
       console.error("Emergency SMS error:", error);
-      ThemedToast.show("Failed to send emergency SMS", "error");
+      Toast.show({ type: "error", text1: "Failed to send emergency SMS" });
     } finally {
       setSending(false);
     }
   };
 
-  if (!userRole || !["admin", "union_admin", "application_admin", "division_admin"].includes(userRole)) {
+  if (!userRole || !["union_admin", "application_admin", "division_admin"].includes(userRole)) {
     return (
       <ThemedView style={styles.container}>
         <ThemedText>Checking permissions...</ThemedText>
@@ -142,6 +128,7 @@ function EmergencySMSScreen() {
           Emergency SMS Notification
         </ThemedText>
 
+        {/* Warning */}
         <ThemedView style={[styles.warningCard, { backgroundColor: Colors[colorScheme].card }]}>
           <Ionicons name="warning" size={24} color="#ff6b6b" style={styles.warningIcon} />
           <ThemedText style={styles.warning}>
@@ -149,6 +136,7 @@ function EmergencySMSScreen() {
           </ThemedText>
         </ThemedView>
 
+        {/* Message */}
         <ThemedView style={styles.formSection}>
           <ThemedText type="subtitle" style={styles.sectionTitle}>
             Emergency Message
@@ -174,46 +162,70 @@ function EmergencySMSScreen() {
           </ThemedText>
         </ThemedView>
 
+        {/* Target Users */}
         <ThemedView style={styles.formSection}>
           <ThemedText type="subtitle" style={styles.sectionTitle}>
             Target Users
           </ThemedText>
 
-          {(userRole === "admin" || userRole === "union_admin" || userRole === "application_admin") && (
+          {(userRole === "union_admin" || userRole === "application_admin") && (
             <TouchableOpacity
               style={[
                 styles.targetButton,
-                targetUsers === "all" && styles.targetButtonActive,
                 { borderColor: Colors[colorScheme].border },
+                targetUsers === "all" && {
+                  backgroundColor: Colors[colorScheme].buttonBackground,
+                  borderColor: Colors[colorScheme].buttonText,
+                },
               ]}
               onPress={() => setTargetUsers("all")}
             >
               <Ionicons
                 name={targetUsers === "all" ? "radio-button-on" : "radio-button-off"}
                 size={24}
-                color={targetUsers === "all" ? Colors[colorScheme].tint : Colors[colorScheme].text}
+                color={targetUsers === "all" ? Colors[colorScheme].buttonText : Colors[colorScheme].text}
               />
-              <ThemedText style={styles.targetButtonText}>All Users (System-wide)</ThemedText>
+              <ThemedText
+                style={{
+                  marginLeft: 12,
+                  flex: 1,
+                  color: targetUsers === "all" ? Colors[colorScheme].buttonText : Colors[colorScheme].text,
+                }}
+              >
+                All Users (System-wide)
+              </ThemedText>
             </TouchableOpacity>
           )}
 
           <TouchableOpacity
             style={[
               styles.targetButton,
-              targetUsers === "division" && styles.targetButtonActive,
               { borderColor: Colors[colorScheme].border },
+              targetUsers === "division" && {
+                backgroundColor: Colors[colorScheme].buttonBackground,
+                borderColor: Colors[colorScheme].tint,
+              },
             ]}
             onPress={() => setTargetUsers("division")}
           >
             <Ionicons
               name={targetUsers === "division" ? "radio-button-on" : "radio-button-off"}
               size={24}
-              color={targetUsers === "division" ? Colors[colorScheme].tint : Colors[colorScheme].text}
+              color={targetUsers === "division" ? Colors[colorScheme].buttonText : Colors[colorScheme].text}
             />
-            <ThemedText style={styles.targetButtonText}>Division Users ({divisionUsers.length} users)</ThemedText>
+            <ThemedText
+              style={{
+                marginLeft: 12,
+                flex: 1,
+                color: targetUsers === "division" ? Colors[colorScheme].buttonText : Colors[colorScheme].text,
+              }}
+            >
+              Division Users ({divisionUsers.length} users)
+            </ThemedText>
           </TouchableOpacity>
         </ThemedView>
 
+        {/* Send Button */}
         <TouchableOpacity
           style={[
             styles.sendButton,
@@ -236,16 +248,9 @@ function EmergencySMSScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  content: {
-    padding: 20,
-    gap: 20,
-  },
-  title: {
-    marginBottom: 10,
-  },
+  container: { flex: 1 },
+  content: { padding: 20, gap: 20 },
+  title: { marginBottom: 10 },
   warningCard: {
     flexDirection: "row",
     padding: 16,
@@ -254,35 +259,13 @@ const styles = StyleSheet.create({
     borderColor: "#ff6b6b",
     alignItems: "flex-start",
   },
-  warningIcon: {
-    marginRight: 12,
-    marginTop: 2,
-  },
-  warning: {
-    flex: 1,
-    color: "#ff6b6b",
-    fontStyle: "italic",
-    lineHeight: 20,
-  },
-  formSection: {
-    gap: 12,
-  },
-  sectionTitle: {
-    marginBottom: 8,
-  },
-  messageInput: {
-    minHeight: 100,
-    textAlignVertical: "top",
-    padding: 12,
-  },
-  charCount: {
-    fontSize: 12,
-    opacity: 0.7,
-  },
-  truncateNote: {
-    color: "#ff6b6b",
-    fontStyle: "italic",
-  },
+  warningIcon: { marginRight: 12, marginTop: 2 },
+  warning: { flex: 1, color: "#ff6b6b", fontStyle: "italic", lineHeight: 20 },
+  formSection: { gap: 12 },
+  sectionTitle: { marginBottom: 8 },
+  messageInput: { minHeight: 100, textAlignVertical: "top", padding: 12 },
+  charCount: { fontSize: 12, opacity: 0.7 },
+  truncateNote: { color: "#ff6b6b", fontStyle: "italic" },
   targetButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -290,13 +273,6 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     marginBottom: 8,
-  },
-  targetButtonActive: {
-    backgroundColor: "rgba(0, 122, 255, 0.1)",
-  },
-  targetButtonText: {
-    marginLeft: 12,
-    flex: 1,
   },
   sendButton: {
     flexDirection: "row",
@@ -307,26 +283,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     marginTop: 20,
   },
-  sendButtonIcon: {
-    marginRight: 8,
-  },
-  sendButtonText: {
-    color: "white",
-    fontWeight: "600",
-    fontSize: 16,
-  },
+  sendButtonIcon: { marginRight: 8, color: Colors.dark.error },
+  sendButtonText: { color: Colors.dark.error, fontWeight: "600", fontSize: 16 },
 });
-
-export default function Page() {
-  return (
-    <>
-      <Stack.Screen
-        options={{
-          title: "Emergency SMS",
-          headerShown: true,
-        }}
-      />
-      <EmergencySMSScreen />
-    </>
-  );
-}
