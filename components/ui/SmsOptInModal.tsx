@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   StyleSheet,
@@ -43,6 +43,14 @@ export function SmsOptInModal({ visible, onClose, onOptIn, currentPhoneNumber = 
   };
 
   const [phoneNumber, setPhoneNumber] = useState(formatInitialPhone(currentPhoneNumber));
+
+  // Sync the local phoneNumber state whenever the prop changes or when the modal is reopened.
+  useEffect(() => {
+    if (visible) {
+      setPhoneNumber(formatInitialPhone(currentPhoneNumber));
+    }
+  }, [currentPhoneNumber, visible]);
+
   const [agreeToSms, setAgreeToSms] = useState(false);
   const [acceptTerms, setAcceptTerms] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);

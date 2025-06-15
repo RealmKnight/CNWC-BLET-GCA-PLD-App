@@ -582,36 +582,44 @@ export function AuthProvider({ children }: AuthProviderProps) {
       // Determine source for debugging
       let source = `authStateChange-${event}`;
 
-      // Only call updateAuthState if session state actually changes
+      // Always get the current session - Supabase may have already set it up from URL parameters
+      console.log("[Auth] Performing initial session check");
+      supabase.auth
+        .getSession()
+        .then(({ data: { session: initialSession } }) => {
+          console.log(
+            "[Auth] Initial getSession result:",
+            initialSession ? `User: ${initialSession.user.id}` : "No session"
+          );
+          // Always update auth state with the initial session
+          updateAuthState(initialSession, "initial");
+        })
+        .catch((error) => {
+          console.error("[Auth] Error during initial getSession:", error);
+          updateAuthState(null, "initial-error");
+        });
+
       const currentSessionUserId = sessionRef.current?.user?.id;
       const newSessionUserId = session?.user?.id;
 
-      if (currentSessionUserId !== newSessionUserId) {
-        console.log(
-          `[Auth] Session user change detected (${currentSessionUserId} -> ${newSessionUserId}), calling updateAuthState.`
-        );
+      // Refresh auth state if the user changed OR Supabase notifies us that the user profile
+      // itself was updated (e.g. phone number change) or a new token was issued.
+      const shouldUpdate =
+        currentSessionUserId !== newSessionUserId || event === "USER_UPDATED" || event === "TOKEN_REFRESHED";
+
+      if (shouldUpdate) {
+        if (currentSessionUserId !== newSessionUserId) {
+          console.log(
+            `[Auth] Session user change detected (${currentSessionUserId} -> ${newSessionUserId}), calling updateAuthState.`
+          );
+        } else {
+          console.log(`[Auth] Auth event ${event} received, refreshing auth state.`);
+        }
         updateAuthState(session, source);
       } else {
-        console.log(`[Auth] Auth state change (${event}), but session user unchanged. Skipping updateAuthState.`);
+        console.log(`[Auth] Auth state change (${event}), but no relevant change detected. Skipping updateAuthState.`);
       }
     });
-
-    // Always get the current session - Supabase may have already set it up from URL parameters
-    console.log("[Auth] Performing initial session check");
-    supabase.auth
-      .getSession()
-      .then(({ data: { session: initialSession } }) => {
-        console.log(
-          "[Auth] Initial getSession result:",
-          initialSession ? `User: ${initialSession.user.id}` : "No session"
-        );
-        // Always update auth state with the initial session
-        updateAuthState(initialSession, "initial");
-      })
-      .catch((error) => {
-        console.error("[Auth] Error during initial getSession:", error);
-        updateAuthState(null, "initial-error");
-      });
 
     return () => {
       authListener?.subscription.unsubscribe();

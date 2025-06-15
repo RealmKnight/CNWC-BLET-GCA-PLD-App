@@ -1211,8 +1211,24 @@ export default function ProfileScreen() {
         <PhoneUpdateModal
           visible={isPhoneModalVisible && isOwnProfile}
           onClose={() => setIsPhoneModalVisible(false)}
-          onSuccess={(newPhone) => {
+          onSuccess={async (newPhone) => {
             setGlobalPhoneNumber(newPhone);
+            // Reset verification status for new phone number
+            setVerificationStatus("not_started");
+
+            // Update verification status in database for new phone number
+            if (session?.user?.id) {
+              await supabase
+                .from("user_preferences")
+                .update({
+                  phone_verified: false,
+                  phone_verification_status: "not_started",
+                })
+                .eq("user_id", session.user.id);
+            }
+
+            // Refresh session to get updated phone number
+            await supabase.auth.refreshSession();
             showSuccessToast("Success", "Phone number updated successfully!");
           }}
           currentPhone={phoneNumber}
