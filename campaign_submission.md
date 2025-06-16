@@ -5,11 +5,11 @@
 **Campaign Type:** Customer Care  
 **Use Case:** Customer Care  
 **Vertical:** Labor Union  
-**Organization:** Brotherhood of Locomotive Engineers and Trainmen (BLET) CN/WC GCA
+**Organization:** Brotherhood of Locomotive Engineers and Trainmen (BLET) WC GCA
 
 ## Campaign Description
 
-This campaign sends users notifications from the BLET CN/WC GCA PLD application that they have selected to receive via text message. The application serves union members for managing Personal Leave Days (PLD) and Single Day Vacation (SDV) requests, division communications, meeting notifications, and other important union-related communications. Users explicitly opt-in to receive SMS notifications through the application's notification preference settings and can opt-out at any time by replying STOP or changing their preferences in the app.
+This campaign sends users notifications from the BLET WC GCA PLD application that they have selected to receive via text message. The application serves union members for managing Personal Leave Days (PLD) and Single Day Vacation (SDV) requests, division communications, meeting notifications, and other important union-related communications. Users explicitly opt-in to receive SMS notifications through the application's notification preference settings and can opt-out at any time by replying STOP or changing their preferences in the app.
 
 ## Sample Messages (1-5)
 
@@ -52,7 +52,7 @@ Your division administrator has updated meeting schedules. Please check the app 
 
 ## How End-Users Consent to Receive Messages
 
-End-users provide explicit opt-in consent through BLET CN/WC GCA PLD mobile application:
+End-users provide explicit opt-in consent through BLET WC GCA PLD mobile application:
 
 Opt-In Process:
 
@@ -62,7 +62,7 @@ Opt-In Process:
    - Input field with real-time validation for 10-digit US numbers
    - Required field indicator
      Explicit Opt-In Language:
-   - Checkbox: "I agree to receive transactional/informational SMS messages at the phone number provided from Brotherhood of Locomotive Engineers and Trainmen (BLET) CN/WC GCA. Message and data rates may apply. Reply STOP to opt-out."
+   - Checkbox: "I agree to receive transactional/informational SMS messages at the phone number provided from Brotherhood of Locomotive Engineers and Trainmen (BLET) WC GCA. Message and data rates may apply. Reply STOP to opt-out."
    - Business name highlighted in app brand color
      See Sample of Modal in Opt-In Section of Privacy policy
      <https://cnwc-gca-pld-app--test.expo.app/privacy>
@@ -113,7 +113,7 @@ This process ensures full TCPA and A2P 10DLC compliance, providing clear user co
 
 **Content Type:** All messages are transactional/informational notifications related to union business activities, request status updates, meeting reminders, and administrative communications.
 
-**Target Audience:** Active union members of the Brotherhood of Locomotive Engineers and Trainmen (BLET) CN/WC GCA who have authenticated accounts in the mobile application.
+**Target Audience:** Active union members of the Brotherhood of Locomotive Engineers and Trainmen (BLET) WC GCA who have authenticated accounts in the mobile application.
 
 **SMS Service Provider:** Twilio
 

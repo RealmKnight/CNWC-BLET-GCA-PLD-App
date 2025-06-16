@@ -683,7 +683,7 @@ After investigating the current paid in lieu (PIL) request submission flow, I've
    ```typescript
    // Update HTML and text content to reflect payment vs. regular request
    const requestTypeText = isPaidInLieu ? "Payment Request" : "Request";
-   const headerTitle = isPaidInLieu ? "CN/WC GCA BLET PLD Payment Request" : "CN/WC GCA BLET PLD Request";
+   const headerTitle = isPaidInLieu ? "WC GCA BLET PLD Payment Request" : "WC GCA BLET PLD Request";
    const instructionText = isPaidInLieu
      ? "This is a request for payment in lieu of time off."
      : "This is a request for time off.";

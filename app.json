@@ -29,7 +29,7 @@
       "favicon": "./assets/images/favicon.png",
       "name": "BLET PLD App",
       "shortName": "PLD App",
-      "description": "CN/WC GCA BLET PLD App for members of GCA 910",
+      "description": "WC GCA BLET PLD App for members of GCA 910",
       "themeColor": "#000000",
       "backgroundColor": "#000000",
       "display": "standalone",

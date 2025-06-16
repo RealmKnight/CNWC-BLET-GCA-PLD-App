@@ -179,12 +179,12 @@ export function AppHeader() {
   const getTabTitle = () => {
     if (!isTabsRoute) return "";
     if (segments.length === 1 && segments[0] === "(tabs)") {
-      return "CN/WC GCA BLET PLD App";
+      return "WC GCA BLET PLD App";
     }
     const tabSegment = segments[1] as "index" | "notifications" | "calendar" | "mytime" | undefined;
     switch (tabSegment) {
       case "index":
-        return "CN/WC GCA BLET PLD App";
+        return "WC GCA BLET PLD App";
       case "notifications":
         return "Notifications";
       case "calendar":

@@ -129,8 +129,8 @@ serve(async (req) => {
     // UPDATED: Email content variables for PIL vs regular requests
     const requestTypeText = isPaidInLieu ? "Payment Request" : "Request";
     const headerTitle = isPaidInLieu
-      ? "CN/WC GCA BLET PLD Payment Request"
-      : "CN/WC GCA BLET PLD Request";
+      ? "WC GCA BLET PLD Payment Request"
+      : "WC GCA BLET PLD Request";
     const instructionText = isPaidInLieu
       ? "This is a request for payment in lieu of time off."
       : "This is a request for time off.";
@@ -204,7 +204,7 @@ serve(async (req) => {
         </div>
         
         <div class="footer">
-            <p>This is an automated message from the CN/WC GCA BLET PLD Application.</p>
+            <p>This is an automated message from the WC GCA BLET PLD Application.</p>
             <p>${
       isPaidInLieu ? "Payment Request ID" : "Request ID"
     }: ${safeRequestId}</p>
@@ -214,7 +214,7 @@ serve(async (req) => {
 
     // UPDATED: Text content with PIL-aware messaging
     const textContent = `
-CN/WC GCA BLET PLD ${requestTypeText}
+WC GCA BLET PLD ${requestTypeText}
 
 ${isPaidInLieu ? "⚠️ PAYMENT REQUEST: " + instructionText + "\n" : ""}
 Employee Name: ${safeMemberName}
@@ -238,13 +238,13 @@ ${
     }
 - "denied - other - [specific reason]"
 
-This is an automated message from the CN/WC GCA BLET PLD Application.
+This is an automated message from the WC GCA BLET PLD Application.
 ${isPaidInLieu ? "Payment Request ID" : "Request ID"}: ${safeRequestId}
     `;
 
     // Prepare email data with both HTML and text content
     const emailData = {
-      from: "CN/WC GCA BLET PLD App <requests@pldapp.bletcnwcgca.org>",
+      from: "WC GCA BLET PLD App <requests@pldapp.bletcnwcgca.org>",
       to: String(recipientEmail),
       subject: String(subject),
       html: String(htmlContent),

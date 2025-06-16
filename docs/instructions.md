@@ -286,7 +286,7 @@ await sendMessageWithNotification({
 
 ### **6. Divisions**
 
-The **CN/WC GCA of the BLET** includes the following divisions:
+The **WC GCA of the BLET** includes the following divisions:
 
 - **163** - Proctor, MN - Zone 10
 - **173** - Fond Du Lac, WI - Zone 3 and Zone 4

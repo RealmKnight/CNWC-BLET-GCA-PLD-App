@@ -165,8 +165,8 @@ export default function PrivacyPolicyScreen() {
           <ThemedText style={styles.bulletItem}>
             • Explicit opt-in language is prominently displayed on the form page (not hidden in separate terms): "I
             agree to receive transactional/informational SMS messages at the phone number provided above from
-            Brotherhood of Locomotive Engineers and Trainmen (BLET) CN/WC GCA. Message and data rates may apply. Reply
-            STOP to opt-out."
+            Brotherhood of Locomotive Engineers and Trainmen (BLET) WC GCA. Message and data rates may apply. Reply STOP
+            to opt-out."
           </ThemedText>
           <ThemedText style={styles.bulletItem}>
             • Clear disclosure that "Consent is not a condition of purchase" and "Message frequency will vary. Message &

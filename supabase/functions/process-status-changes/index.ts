@@ -249,7 +249,7 @@ async function sendStatusChangeEmails(
         <html>
         <head><style>${baseUserStyle} .status { background-color: #00b894; color: white; padding: 10px; text-align: center; font-weight: bold; margin-bottom: 20px; }</style></head>
         <body>
-          <div class="header"><h1>CN/WC GCA BLET PLD Request</h1></div>
+          <div class="header"><h1>WC GCA BLET PLD Request</h1></div>
           <div class="status">REQUEST APPROVED</div>
           <div class="content">
             <h2>Good news, ${memberName}!</h2>
@@ -262,7 +262,7 @@ async function sendStatusChangeEmails(
             <p>If you need to cancel this request, you can do so through the app.</p>
           </div>
           <div class="footer">
-            <p>CN/WC GCA BLET PLD Application</p>
+            <p>WC GCA BLET PLD Application</p>
           </div>
         </body>
         </html>`;
@@ -277,7 +277,7 @@ async function sendStatusChangeEmails(
         <html>
         <head><style>${baseAdminStyle} .status { background-color: #00b894; color: white; padding: 10px; text-align: center; font-weight: bold; margin-bottom: 20px; }</style></head>
         <body>
-          <div class="header"><h1>CN/WC GCA BLET PLD Notification</h1></div>
+          <div class="header"><h1>WC GCA BLET PLD Notification</h1></div>
           <div class="status">REQUEST APPROVED</div>
           <div class="content">
             <h2>Status Update</h2>
@@ -290,7 +290,7 @@ async function sendStatusChangeEmails(
             </div>
           </div>
           <div class="footer">
-            <p>CN/WC GCA BLET PLD Application</p>
+            <p>WC GCA BLET PLD Application</p>
           </div>
         </body>
         </html>`;
@@ -306,7 +306,7 @@ async function sendStatusChangeEmails(
         <html>
         <head><style>${baseUserStyle} .status { background-color: #d63031; color: white; padding: 10px; text-align: center; font-weight: bold; margin-bottom: 20px; }</style></head>
         <body>
-          <div class="header"><h1>CN/WC GCA BLET PLD Request</h1></div>
+          <div class="header"><h1>WC GCA BLET PLD Request</h1></div>
           <div class="status">REQUEST DENIED</div>
           <div class="content">
             <h2>Request Update</h2>
@@ -322,7 +322,7 @@ async function sendStatusChangeEmails(
             <p>You may contact your division administrator for more information.</p>
           </div>
           <div class="footer">
-            <p>CN/WC GCA BLET PLD Application</p>
+            <p>WC GCA BLET PLD Application</p>
           </div>
         </body>
         </html>`;
@@ -339,7 +339,7 @@ async function sendStatusChangeEmails(
         <html>
         <head><style>${baseAdminStyle} .status { background-color: #d63031; color: white; padding: 10px; text-align: center; font-weight: bold; margin-bottom: 20px; }</style></head>
         <body>
-          <div class="header"><h1>CN/WC GCA BLET PLD Notification</h1></div>
+          <div class="header"><h1>WC GCA BLET PLD Notification</h1></div>
           <div class="status">REQUEST DENIED</div>
           <div class="content">
             <h2>Status Update</h2>
@@ -355,7 +355,7 @@ async function sendStatusChangeEmails(
             </div>
           </div>
           <div class="footer">
-            <p>CN/WC GCA BLET PLD Application</p>
+            <p>WC GCA BLET PLD Application</p>
           </div>
         </body>
         </html>`;
@@ -374,7 +374,7 @@ async function sendStatusChangeEmails(
         <html>
         <head><style>${baseUserStyle} .status { background-color: #fdcb6e; color: #2d3436; padding: 10px; text-align: center; font-weight: bold; margin-bottom: 20px; }</style></head>
         <body>
-          <div class="header"><h1>CN/WC GCA BLET PLD Request</h1></div>
+          <div class="header"><h1>WC GCA BLET PLD Request</h1></div>
           <div class="status">CANCELLATION CONFIRMED</div>
           <div class="content">
             <h2>Cancellation Confirmed</h2>
@@ -386,7 +386,7 @@ async function sendStatusChangeEmails(
             </div>
           </div>
           <div class="footer">
-            <p>CN/WC GCA BLET PLD Application</p>
+            <p>WC GCA BLET PLD Application</p>
           </div>
         </body>
         </html>`;
@@ -401,7 +401,7 @@ async function sendStatusChangeEmails(
         <html>
         <head><style>${baseAdminStyle} .status { background-color: #fdcb6e; color: #2d3436; padding: 10px; text-align: center; font-weight: bold; margin-bottom: 20px; }</style></head>
         <body>
-          <div class="header"><h1>CN/WC GCA BLET PLD Notification</h1></div>
+          <div class="header"><h1>WC GCA BLET PLD Notification</h1></div>
           <div class="status">REQUEST CANCELLED</div>
           <div class="content">
             <h2>Status Update</h2>
@@ -414,7 +414,7 @@ async function sendStatusChangeEmails(
             </div>
           </div>
           <div class="footer">
-            <p>CN/WC GCA BLET PLD Application</p>
+            <p>WC GCA BLET PLD Application</p>
           </div>
         </body>
         </html>`;
@@ -435,7 +435,7 @@ async function sendStatusChangeEmails(
         mailgunSendingKey,
         mailgunDomain,
         {
-          from: "CN/WC GCA BLET PLD App <requests@pldapp.bletcnwcgca.org>",
+          from: "WC GCA BLET PLD App <requests@pldapp.bletcnwcgca.org>",
           to: String(memberEmail),
           subject: String(userSubject),
           html: String(userHtml),
@@ -469,7 +469,7 @@ async function sendStatusChangeEmails(
           mailgunSendingKey,
           mailgunDomain,
           {
-            from: "CN/WC GCA BLET PLD App <requests@pldapp.bletcnwcgca.org>",
+            from: "WC GCA BLET PLD App <requests@pldapp.bletcnwcgca.org>",
             to: String(email),
             subject: String(adminSubject),
             html: String(adminHtml),

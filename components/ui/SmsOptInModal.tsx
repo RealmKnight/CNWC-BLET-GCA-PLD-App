@@ -190,7 +190,7 @@ export function SmsOptInModal({ visible, onClose, onOptIn, currentPhoneNumber = 
                   <ThemedText style={styles.required}>* </ThemedText>I agree to receive transactional/informational SMS
                   messages at the phone number provided above from{" "}
                   <ThemedText style={styles.businessName}>
-                    Brotherhood of Locomotive Engineers and Trainmen (BLET) CN/WC GCA
+                    Brotherhood of Locomotive Engineers and Trainmen (BLET) WC GCA
                   </ThemedText>
                   . Message and data rates may apply. Reply STOP to opt-out.
                 </ThemedText>
@@ -228,8 +228,7 @@ export function SmsOptInModal({ visible, onClose, onOptIn, currentPhoneNumber = 
               </ThemedView>
               <ThemedText style={[styles.infoText, isSmallScreen && styles.infoTextSmall]}>
                 By providing your phone number you agree to receive informational text messages from{" "}
-                <ThemedText style={styles.businessName}>BLET CN/WC GCA</ThemedText>. Consent is not a condition of
-                purchase.
+                <ThemedText style={styles.businessName}>BLET WCA</ThemedText>. Consent is not a condition of purchase.
               </ThemedText>
               <ThemedText style={[styles.infoText, isSmallScreen && styles.infoTextSmall]}>
                 Message frequency will vary. Message & data rates may apply. Reply HELP for help or STOP to cancel.

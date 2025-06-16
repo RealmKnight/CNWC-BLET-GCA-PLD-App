@@ -61,7 +61,7 @@ serve(async (req) => {
         const safeDivisionId = String(divisionId);
 
         // Prepare welcome email content
-        const subject = "Welcome to CN/WC GCA BLET PLD Email Notifications - " +
+        const subject = "Welcome to WC GCA BLET PLD Email Notifications - " +
             safeDivisionName;
         const htmlContent = `
     <!DOCTYPE html>
@@ -85,7 +85,7 @@ serve(async (req) => {
     </head>
     <body>
         <div class="header">
-            <div class="logo">🚂 CN/WC GCA BLET PLD</div>
+            <div class="logo">🚂 WC GCA BLET PLD</div>
             <h1>Email Notification System</h1>
         </div>
         
@@ -139,7 +139,7 @@ serve(async (req) => {
         </div>
         
         <div class="footer">
-            <p><strong>CN/WC GCA BLET Personal Leave Day Application</strong></p>
+            <p><strong>WC GCA BLET Personal Leave Day Application</strong></p>
             <p>This is an automated welcome message. You're receiving this because your email was added to division notifications.</p>
             <p>Division: ${safeDivisionName} | Email: ${safeEmailAddress}</p>
         </div>
@@ -147,7 +147,7 @@ serve(async (req) => {
     </html>`;
 
         const textContent = `
-CN/WC GCA BLET PLD Email Notification System
+WC GCA BLET PLD Email Notification System
 Welcome Message
 
 Hello!
@@ -178,14 +178,14 @@ If you have questions about this notification system or need technical support:
 - Refer to the PLD application help section
 - Check that this email address can receive emails from requests@pldapp.bletcnwcgca.org
 
-CN/WC GCA BLET Personal Leave Day Application
+WC GCA BLET Personal Leave Day Application
 This is an automated welcome message. You're receiving this because your email was added to division notifications.
 Division: ${safeDivisionName} | Email: ${safeEmailAddress}
     `;
 
         // Prepare email data with safe string conversion
         const emailData = {
-            from: "CN/WC GCA BLET PLD App <requests@pldapp.bletcnwcgca.org>",
+            from: "WC GCA BLET PLD App <requests@pldapp.bletcnwcgca.org>",
             to: String(safeEmailAddress),
             subject: String(subject),
             html: String(htmlContent),

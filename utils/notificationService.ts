@@ -565,7 +565,7 @@ function formatEmailContent(subject: string, message: string): string {
       <div>${message}</div>
     </div>
     <div class="footer">
-      <p>This is an automated message from the BLET CN/WC GCA PLD App.</p>
+      <p>This is an automated message from the BLET WC GCA PLD App.</p>
       <p>Please do not reply to this email.</p>
     </div>
   </div>
@@ -1083,7 +1083,7 @@ async function sendPasswordResetEmailViaEdgeFunction(
     const { data, error } = await supabase.functions.invoke("send-email", {
       body: {
         to: email,
-        subject: "Reset Your Password - BLET CN/WC GCA PLD App",
+        subject: "Reset Your Password - BLET WC GCA PLD App",
         content: `
           <div style="text-align: center; padding: 20px;">
             <img src="https://ymkihdiegkqbeegfebse.supabase.co/storage/v1/object/public/public_assets/logo/BLETblackgold.png" 
@@ -1091,7 +1091,7 @@ async function sendPasswordResetEmailViaEdgeFunction(
                  style="max-width: 200px; height: auto;">
             <h1 style="color: #003366;">Reset Your Password</h1>
             <p style="font-size: 16px; line-height: 1.5;">
-              We received a request to reset your password for the BLET CN/WC GCA PLD App.
+              We received a request to reset your password for the BLET WC GCA PLD App.
             </p>
             <p style="font-size: 16px; line-height: 1.5;">
               Please click the button below to reset your password:
@@ -1106,7 +1106,7 @@ async function sendPasswordResetEmailViaEdgeFunction(
               If you did not request a password reset, you can ignore this email.
             </p>
             <p style="font-style: italic; color: #666;">
-              This is an automated message from the BLET CN/WC GCA PLD App.
+              This is an automated message from the BLET WC GCA PLD App.
             </p>
           </div>
         `,

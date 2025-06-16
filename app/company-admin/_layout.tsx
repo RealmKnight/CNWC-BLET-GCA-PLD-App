@@ -11,7 +11,7 @@ export default function CompanyAdminLayout() {
       <Stack
         screenOptions={{
           headerShown: true,
-          title: "CN/WC BLET PLD/SDV App - CN Admin",
+          title: "WC BLET PLD/SDV App - CN Admin",
           headerBackVisible: false,
           headerTitleStyle: {
             fontFamily: "Inter",

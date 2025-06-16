@@ -158,8 +158,8 @@ serve(async (req) => {
     // UPDATED: Email content variables for PIL vs regular cancellations
     const requestTypeText = isPaidInLieu ? "Payment Request" : "Request";
     const headerTitle = isPaidInLieu
-      ? "CN/WC GCA BLET PLD Payment Cancellation"
-      : "CN/WC GCA BLET PLD Cancellation";
+      ? "WC GCA BLET PLD Payment Cancellation"
+      : "WC GCA BLET PLD Cancellation";
     const instructionText = isPaidInLieu
       ? "This is a cancellation request for a payment in lieu request."
       : "This is a cancellation request for a time off request.";
@@ -220,7 +220,7 @@ serve(async (req) => {
         </div>
         
         <div class="footer">
-            <p>This is an automated message from the CN/WC GCA BLET PLD Application.</p>
+            <p>This is an automated message from the WC GCA BLET PLD Application.</p>
             <p>${
       isPaidInLieu ? "Payment Request ID" : "Request ID"
     }: ${safeRequestId}</p>
@@ -230,7 +230,7 @@ serve(async (req) => {
 
     // UPDATED: Text content with PIL-aware messaging
     const textContent = `
-CN/WC GCA BLET PLD ${requestTypeText} Cancellation
+WC GCA BLET PLD ${requestTypeText} Cancellation
 
 🚫 CANCELLATION REQUEST: ${instructionText}
 
@@ -247,13 +247,13 @@ To confirm this cancellation, please reply to this email with one of the followi
 
 Note: Once confirmed, this ${requestTypeText.toLowerCase()} will be permanently cancelled and cannot be restored.
 
-This is an automated message from the CN/WC GCA BLET PLD Application.
+This is an automated message from the WC GCA BLET PLD Application.
 ${isPaidInLieu ? "Payment Request ID" : "Request ID"}: ${safeRequestId}
     `;
 
     // Prepare email data with both HTML and text content
     const emailData = {
-      from: "CN/WC GCA BLET PLD App <requests@pldapp.bletcnwcgca.org>",
+      from: "WC GCA BLET PLD App <requests@pldapp.bletcnwcgca.org>",
       to: String(recipientEmail),
       subject: String(subject),
       html: String(htmlContent),
