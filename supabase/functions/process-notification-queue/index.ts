@@ -102,27 +102,61 @@ serve(async (req) => {
     }
 
     try {
-        // Create Supabase client
-        const supabaseClient = createClient(
-            Deno.env.get("SUPABASE_URL") ?? "",
-            Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-        );
+        console.log("=== Starting notification queue processing ===");
+        console.log("Request method:", req.method);
+        console.log("Request URL:", req.url);
 
-        // Log connection info
-        console.log("Supabase URL:", Deno.env.get("SUPABASE_URL"));
+        // Check environment variables
+        const supabaseUrl = Deno.env.get("SUPABASE_URL");
+        const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+        if (!supabaseUrl || !supabaseKey) {
+            const missingVars = [
+                !supabaseUrl && "SUPABASE_URL",
+                !supabaseKey && "SUPABASE_SERVICE_ROLE_KEY",
+            ].filter(Boolean);
+
+            const errorMsg = `Missing required environment variables: ${
+                missingVars.join(", ")
+            }`;
+            console.error(errorMsg);
+            return new Response(
+                JSON.stringify({
+                    error: errorMsg,
+                    details:
+                        "Edge function environment variables not properly configured",
+                }),
+                {
+                    headers: {
+                        ...corsHeaders,
+                        "Content-Type": "application/json",
+                    },
+                    status: 500,
+                },
+            );
+        }
+
+        // Create Supabase client
+        const supabaseClient = createClient(supabaseUrl, supabaseKey);
+        console.log("Supabase client created successfully");
 
         try {
             // Test database connection with a simple query
+            console.log("Testing database connection...");
             const { data: testData, error: testError } = await supabaseClient
                 .from("push_notification_queue")
-                .select("count(*)")
+                .select("id")
                 .limit(1);
 
             if (testError) {
                 console.error("Database connection test failed:", testError);
                 throw new Error(`Database test failed: ${testError.message}`);
             } else {
-                console.log("Database connection test successful:", testData);
+                console.log(
+                    "Database connection test successful - found",
+                    testData?.length || 0,
+                    "rows",
+                );
             }
         } catch (dbTestError) {
             console.error("Exception in database test:", dbTestError);
@@ -130,7 +164,9 @@ serve(async (req) => {
         }
 
         // Process pending notifications
+        console.log("Starting notification queue processing...");
         const result = await processNotificationQueue(supabaseClient);
+        console.log("Notification queue processing completed:", result);
 
         return new Response(
             JSON.stringify({
@@ -147,11 +183,24 @@ serve(async (req) => {
         const errorMessage = error instanceof Error
             ? error.message
             : "Unknown error occurred";
-        console.error("Error processing queue:", error);
-        return new Response(JSON.stringify({ error: errorMessage }), {
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-            status: 500,
-        });
+        const errorStack = error instanceof Error ? error.stack : undefined;
+
+        console.error("=== ERROR PROCESSING QUEUE ===");
+        console.error("Error message:", errorMessage);
+        console.error("Error stack:", errorStack);
+        console.error("Error object:", error);
+
+        return new Response(
+            JSON.stringify({
+                error: errorMessage,
+                stack: errorStack,
+                timestamp: new Date().toISOString(),
+            }),
+            {
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+                status: 500,
+            },
+        );
     }
 });
 
