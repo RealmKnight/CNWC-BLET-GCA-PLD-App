@@ -86,9 +86,45 @@ serve(async (req) => {
       throw new Error("Member information not found for this request");
     }
 
+    // Get division details if division_id exists
+    let divisionData = null;
+    if (memberData?.division_id) {
+      console.log(
+        "Fetching division details for division_id:",
+        memberData.division_id,
+      );
+      const { data: division, error: divisionError } = await supabase
+        .from("divisions")
+        .select("name, location")
+        .eq("id", memberData.division_id)
+        .single();
+
+      if (divisionError) {
+        console.warn(
+          `[send-cancellation-email] Failed to get division details for division_id ${memberData.division_id}: ${divisionError.message}`,
+        );
+      } else {
+        divisionData = division;
+        console.log("Division data fetched:", divisionData);
+      }
+    }
+
     const memberInfo = memberData;
     const memberName = `${memberInfo.first_name} ${memberInfo.last_name}`;
     console.log("Member name constructed:", memberName);
+
+    // Extract division info for sender name
+    let senderPrefix = "";
+    if (divisionData?.name && divisionData?.location) {
+      // Extract city from "City, ST" format
+      const city = divisionData.location.split(",")[0].trim();
+      senderPrefix = `${city} `;
+      console.log("Sender prefix constructed:", senderPrefix);
+    } else if (memberData?.division_id) {
+      console.warn(
+        `[send-cancellation-email] Division data incomplete for division_id: ${memberData.division_id}`,
+      );
+    }
 
     // ADDED: PIL detection and email routing logic
     const isPaidInLieu = requestData.paid_in_lieu === true;
@@ -150,7 +186,7 @@ serve(async (req) => {
     const safeMemberName = String(memberName);
     const safeFormattedDate = String(formattedDate);
 
-    // UPDATED: Subject line logic for PIL vs regular cancellations
+    // UPDATED: Subject line logic for PIL vs regular cancellations (division info now in sender)
     const subject = isPaidInLieu
       ? `CANCELLATION - ${safeLeaveType} Payment Request - ${safeMemberName} [Payment Request ID: ${safeRequestId}]`
       : `CANCELLATION - ${safeLeaveType} Request - ${safeMemberName} [Request ID: ${safeRequestId}]`;
@@ -253,7 +289,8 @@ ${isPaidInLieu ? "Payment Request ID" : "Request ID"}: ${safeRequestId}
 
     // Prepare email data with both HTML and text content
     const emailData = {
-      from: "WC GCA BLET PLD App <requests@pldapp.bletcnwcgca.org>",
+      from:
+        `${senderPrefix}WC GCA BLET PLD App <requests@pldapp.bletcnwcgca.org>`,
       to: String(recipientEmail),
       subject: String(subject),
       html: String(htmlContent),
