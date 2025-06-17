@@ -37,10 +37,12 @@ serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Get request details from Supabase first - UPDATED: Include paid_in_lieu field
+    // Get request details from Supabase first - UPDATED: Include paid_in_lieu and calendar_id fields
     const { data: requestData, error: requestError } = await supabase
       .from("pld_sdv_requests")
-      .select("id, request_date, leave_type, member_id, paid_in_lieu")
+      .select(
+        "id, request_date, leave_type, member_id, paid_in_lieu, calendar_id",
+      )
       .eq("id", requestId)
       .single();
 
@@ -67,36 +69,34 @@ serve(async (req) => {
       throw new Error("Member information not found for this request");
     }
 
-    // Get division details if division_id exists
-    let divisionData = null;
-    if (memberData?.division_id) {
-      const { data: division, error: divisionError } = await supabase
-        .from("divisions")
-        .select("name, location")
-        .eq("id", memberData.division_id)
+    // Get calendar details if calendar_id exists
+    let calendarData = null;
+    if (requestData?.calendar_id) {
+      const { data: calendar, error: calendarError } = await supabase
+        .from("calendars")
+        .select("name")
+        .eq("id", requestData.calendar_id)
         .single();
 
-      if (divisionError) {
+      if (calendarError) {
         console.warn(
-          `[send-request-email] Failed to get division details for division_id ${memberData.division_id}: ${divisionError.message}`,
+          `[send-request-email] Failed to get calendar details for calendar_id ${requestData.calendar_id}: ${calendarError.message}`,
         );
       } else {
-        divisionData = division;
+        calendarData = calendar;
       }
     }
 
     const memberInfo = memberData;
     const memberName = `${memberInfo.first_name} ${memberInfo.last_name}`;
 
-    // Extract division info for sender name
+    // Extract calendar name for sender prefix
     let senderPrefix = "";
-    if (divisionData?.name && divisionData?.location) {
-      // Extract city from "City, ST" format
-      const city = divisionData.location.split(",")[0].trim();
-      senderPrefix = `${city} `;
-    } else if (memberData?.division_id) {
+    if (calendarData?.name) {
+      senderPrefix = `${calendarData.name} `;
+    } else if (requestData?.calendar_id) {
       console.warn(
-        `[send-request-email] Division data incomplete for division_id: ${memberData.division_id}`,
+        `[send-request-email] Calendar data not found for calendar_id: ${requestData.calendar_id}`,
       );
     }
 

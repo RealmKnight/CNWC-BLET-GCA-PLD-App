@@ -623,7 +623,7 @@ async function sendErrorNotificationToAdmin(
     console.log("=== SENDING ERROR NOTIFICATION TO ADMIN ===");
     console.log("Request ID:", requestId);
     console.log("Error details:", errorDetails);
-    // Get request details to find the division admin
+    // Step 1: Get request details and member info
     const { data: requestData, error: requestError } = await supabase.from(
       "pld_sdv_requests",
     ).select(`
@@ -632,18 +632,12 @@ async function sendErrorNotificationToAdmin(
         leave_type,
         members!inner(
           division_id,
-          name,
-          employee_id,
-          divisions!inner(
-            name,
-            admin_user_id,
-            users!inner(
-              email,
-              name
-            )
-          )
+          first_name,
+          last_name,
+          pin_number
         )
       `).eq("id", requestId).single();
+
     if (requestError || !requestData) {
       console.error(
         "Failed to get request data for error notification:",
@@ -651,11 +645,89 @@ async function sendErrorNotificationToAdmin(
       );
       return;
     }
-    const adminEmail = requestData.members?.divisions?.users?.email;
-    const adminName = requestData.members?.divisions?.users?.name;
-    const divisionName = requestData.members?.divisions?.name;
-    const memberName = requestData.members?.name;
-    const employeeId = requestData.members?.employee_id;
+
+    if (!requestData.members?.division_id) {
+      console.error("No division_id found for member in request");
+      return;
+    }
+
+    const memberDivisionId = requestData.members.division_id;
+    const memberName =
+      `${requestData.members.first_name} ${requestData.members.last_name}`;
+    const employeeId = requestData.members.pin_number;
+
+    // Step 2: Check for division email settings
+    const { data: divisionEmailData, error: divisionEmailError } =
+      await supabase.from(
+        "division_email_settings",
+      ).select("primary_email, additional_emails")
+        .eq("division_id", memberDivisionId)
+        .single();
+
+    let adminEmail = null;
+    let adminName = null;
+
+    // Step 3: Determine admin email with priority order
+    if (divisionEmailData?.primary_email) {
+      adminEmail = divisionEmailData.primary_email;
+      adminName = "Division Admin"; // Generic name when using division emails
+      console.log("Using division primary email for notification");
+    } else if (
+      divisionEmailData?.additional_emails &&
+      divisionEmailData.additional_emails.length > 0
+    ) {
+      adminEmail = divisionEmailData.additional_emails[0];
+      adminName = "Division Admin"; // Generic name when using division emails
+      console.log("Using first additional division email for notification");
+    } else {
+      // Step 4: Fallback to division admin member lookup
+      console.log("No division emails found, looking up division admin member");
+
+      const { data: divisionAdminData, error: divisionAdminError } =
+        await supabase.from(
+          "members",
+        ).select("id, first_name, last_name")
+          .eq("role", "division_admin")
+          .eq("division_id", memberDivisionId)
+          .single();
+
+      if (divisionAdminError || !divisionAdminData) {
+        console.error("Failed to find division admin:", divisionAdminError);
+        return;
+      }
+
+      // Step 5: Get division admin's email from auth.users
+      const { data: adminUserData, error: adminUserError } = await supabase
+        .from(
+          "auth.users",
+        ).select("email")
+        .eq("id", divisionAdminData.id)
+        .single();
+
+      if (adminUserError || !adminUserData?.email) {
+        console.error("Failed to get division admin email:", adminUserError);
+        return;
+      }
+
+      adminEmail = adminUserData.email;
+      adminName =
+        `${divisionAdminData.first_name} ${divisionAdminData.last_name}`;
+      console.log("Using division admin member email for notification");
+    }
+
+    // Step 6: Get division name
+    const { data: divisionData, error: divisionError } = await supabase.from(
+      "divisions",
+    ).select("name")
+      .eq("id", memberDivisionId)
+      .single();
+
+    if (divisionError || !divisionData) {
+      console.error("Failed to get division name:", divisionError);
+      return;
+    }
+
+    const divisionName = divisionData.name;
     if (!adminEmail) {
       console.error("No admin email found for division");
       return;
