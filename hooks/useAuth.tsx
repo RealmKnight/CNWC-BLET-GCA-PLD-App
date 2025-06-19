@@ -15,6 +15,8 @@ import { format } from "date-fns";
 import { useTimeStore } from "@/store/timeStore";
 // Import the notification service integration function
 import { initializeNotificationServiceIntegration } from "@/utils/notificationService";
+import { refreshSessionIfNeeded, TOKEN_EXPIRY_BUFFER_MS } from "@/utils/supabase";
+import { onReachabilityChange } from "@/utils/connectivity";
 
 declare global {
   interface Window {
@@ -204,7 +206,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       if (!notificationStore.isInitialized) {
         console.log("[Auth] Initializing notification store...");
         // Set up notification subscription and store cleanup function
-        const notificationCleanup = notificationStore.subscribeToMessages(userId);
+        const notificationCleanup = await notificationStore.subscribeToMessages(userId);
         notificationCleanupRef.current = notificationCleanup;
 
         // Fetch initial messages with just userId (function will query pin number from member data)
@@ -219,7 +221,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         const member = useUserStore.getState().member;
         const userRole = useUserStore.getState().userRole;
         const roles = userRole ? [userRole] : [];
-        const announcementCleanup = announcementStore.initializeAnnouncementStore(
+        const announcementCleanup = await announcementStore.initializeAnnouncementStore(
           userId,
           member?.division_id || null,
           roles
@@ -245,8 +247,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
           console.log("[Auth] Calendar store initialized");
 
           // Set up calendar subscriptions and store cleanup function
-          const calendarCleanup = setupCalendarSubscriptions();
-          calendarCleanupRef.current = calendarCleanup;
+          try {
+            const calCleanup = await setupCalendarSubscriptions();
+            calendarCleanupRef.current = calCleanup;
+          } catch (e) {
+            console.error("[Auth] Calendar subscription error", e);
+          }
         }
 
         // 4. Initialize vacation calendar store
@@ -264,8 +270,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
           console.log("[Auth] Vacation calendar store initialized");
 
           // Set up vacation calendar subscriptions and store cleanup function
-          const vacationCalendarCleanup = setupVacationCalendarSubscriptions();
-          vacationCalendarCleanupRef.current = vacationCalendarCleanup;
+          try {
+            const vacCleanup = await setupVacationCalendarSubscriptions();
+            vacationCalendarCleanupRef.current = vacCleanup;
+          } catch (e) {
+            console.error("[Auth] Vacation subscription error", e);
+          }
         }
 
         // 5. Initialize Time Store
@@ -632,33 +642,30 @@ export function AuthProvider({ children }: AuthProviderProps) {
       if (appStateRef.current.match(/inactive|background/) && nextAppState === "active") {
         console.log("[Auth] App has come to the foreground!");
 
-        // Debounce the check slightly to avoid rapid calls
+        // Debounce & grace period (2 s) before channel recreation elsewhere
+        const GRACE_MS = 2_000;
+
         if (appStateTimeout.current) {
           clearTimeout(appStateTimeout.current);
         }
 
-        appStateTimeout.current = setTimeout(() => {
-          console.log("[Auth] Checking session validity on app focus...");
-          supabase.auth
-            .getSession()
-            .then(({ data: { session: currentValidSession } }) => {
-              const currentSessionUserId = sessionRef.current?.user?.id;
-              const validSessionUserId = currentValidSession?.user?.id;
-              console.log("[Auth] Focus check comparison:", { currentSessionUserId, validSessionUserId });
-              if (currentSessionUserId !== validSessionUserId) {
-                console.log("[Auth] Session changed while app was in background. Updating auth state.");
-                updateAuthState(currentValidSession, "appStateChange-focus-diff");
-              } else {
-                console.log("[Auth] Session still valid on app focus.");
-                // Optional: Verify realtime connections or trigger a light refresh if needed
-              }
-            })
-            .catch((error) => {
-              console.error("[Auth] Error checking session on app focus:", error);
-              // Decide if this error should trigger a sign-out
-              // updateAuthState(null, "appStateChange-error");
-            });
-        }, 500); // 500ms debounce
+        appStateTimeout.current = setTimeout(async () => {
+          try {
+            await refreshSessionIfNeeded();
+            console.log("[Auth] Session refreshed (if needed) on resume.");
+          } catch (e) {
+            console.error("[Auth] Failed to refresh session on resume", e);
+          }
+        }, GRACE_MS);
+      }
+      // When moving to background clean up realtime sockets
+      if (nextAppState.match(/inactive|background/)) {
+        try {
+          supabase.realtime.removeAllChannels();
+          console.log("[Auth] Cleared realtime channels on background.");
+        } catch (e) {
+          console.warn("[Auth] Error clearing realtime channels", e);
+        }
       }
       appStateRef.current = nextAppState;
       setAppState(nextAppState); // Keep state updated if needed elsewhere
@@ -674,6 +681,21 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
     };
   }, [updateAuthState]); // updateAuthState dependency
+
+  // --- Network Connectivity Listener ---
+  useEffect(() => {
+    const cleanup = onReachabilityChange(async (online) => {
+      if (online) {
+        try {
+          await refreshSessionIfNeeded();
+          console.log("[Auth] Connectivity restored — session ensured valid.");
+        } catch (e) {
+          console.warn("[Auth] Failed to refresh session on connectivity restore", e);
+        }
+      }
+    });
+    return cleanup;
+  }, []);
 
   // --- Authentication Functions ---
   const signIn = async (email: string, password: string, captchaToken?: string) => {

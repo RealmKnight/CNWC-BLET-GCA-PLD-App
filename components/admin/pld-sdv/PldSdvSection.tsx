@@ -8,6 +8,7 @@ import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { TouchableOpacityComponent } from "@/components/TouchableOpacityComponent";
 import { supabase } from "@/utils/supabase";
+import { createRealtimeChannel } from "@/utils/realtime";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { ThemedView } from "@/components/ThemedView";
 import { showSuccessToast, showErrorToast, showConfirmToast } from "@/utils/toastHelpers";
@@ -295,9 +296,11 @@ export function PldSdvSection() {
     }
 
     console.log("[PldSdvSection] Setting up real-time subscription.");
-    const subscription = supabase
-      .channel("pld-sdv-requests-changes")
-      .on(
+    let subscription: any;
+    (async () => {
+      subscription = await createRealtimeChannel("pld-sdv-requests-changes");
+
+      subscription.on(
         "postgres_changes",
         {
           event: "*",
@@ -309,12 +312,12 @@ export function PldSdvSection() {
           console.log("Real-time update received");
           fetchPendingRequests();
         }
-      )
-      .subscribe();
+      );
+    })();
 
     return () => {
       console.log("[PldSdvSection] Unsubscribing from real-time changes.");
-      subscription.unsubscribe();
+      subscription?.unsubscribe?.();
     };
     // Stabilize dependencies: Depend on user ID and the memoized fetch function
   }, [user?.id, fetchPendingRequests]);

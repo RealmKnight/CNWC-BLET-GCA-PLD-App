@@ -6,6 +6,7 @@ import { useUserStore } from "@/store/userStore";
 import * as Notifications from "expo-notifications";
 import { RealtimeChannel } from "@supabase/supabase-js";
 import { createRealtimeCallback } from "@/utils/realtimeErrorHandler";
+import { createRealtimeChannel } from "@/utils/realtime";
 
 interface Message {
   id: string;
@@ -48,7 +49,7 @@ interface NotificationStore {
   fetchMessages: (userId: string, recipientId: string) => Promise<void>;
   markAsRead: (messageId: string, pinNumber: number) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
-  subscribeToMessages: (userId: string) => () => void;
+  subscribeToMessages: (userId: string) => Promise<() => void>;
   acknowledgeMessage: (messageId: string, pinNumber: number) => Promise<void>;
   archiveMessage: (messageId: string) => Promise<void>;
   setIsInitialized: (initialized: boolean) => void;
@@ -384,7 +385,7 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
     }
   },
 
-  subscribeToMessages: (userId: string) => {
+  subscribeToMessages: async (userId: string) => {
     if (!userId) {
       console.warn(
         "[NotificationStore] subscribeToMessages called with no userId",
@@ -441,9 +442,11 @@ const useNotificationStore = create<NotificationStore>((set, get) => ({
 
     try {
       // Create all channels
-      const messagesChannel = supabase.channel(messagesChannelId);
-      const userPinChannel = supabase.channel(userPinChannelId);
-      const deliveriesChannel = supabase.channel(deliveriesChannelId);
+      const messagesChannel = await createRealtimeChannel(messagesChannelId);
+      const userPinChannel = await createRealtimeChannel(userPinChannelId);
+      const deliveriesChannel = await createRealtimeChannel(
+        deliveriesChannelId,
+      );
 
       // Track created channels
       activeChannels.messagesChannel = messagesChannel;

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { supabase } from "@/utils/supabase";
+import { createRealtimeChannel } from "@/utils/realtime";
 import {
     addDays,
     endOfWeek,
@@ -534,7 +535,7 @@ export const useVacationCalendarStore = create<VacationCalendarState>((
     },
 }));
 
-export function setupVacationCalendarSubscriptions() {
+export async function setupVacationCalendarSubscriptions() {
     const { member } = useUserStore.getState();
     const calendarId = member?.calendar_id;
 
@@ -555,10 +556,12 @@ export function setupVacationCalendarSubscriptions() {
     const MAX_RECONNECT_ATTEMPTS = 3;
     const RECONNECT_DELAY = 5000;
 
-    const allotmentsChannel = supabase.channel(
+    const allotmentsChannel = await createRealtimeChannel(
         `vacation-allotments-${calendarId}`,
     );
-    const requestsChannel = supabase.channel(`vacation-requests-${calendarId}`);
+    const requestsChannel = await createRealtimeChannel(
+        `vacation-requests-${calendarId}`,
+    );
 
     const handleSubscriptionError = async (error: any, channelName: string) => {
         console.error(

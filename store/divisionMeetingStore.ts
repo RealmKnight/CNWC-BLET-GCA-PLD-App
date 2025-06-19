@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { supabase } from "@/utils/supabase";
+import { createRealtimeChannel } from "@/utils/realtime";
 import {
     calculateMeetingOccurrences,
     generateICalendarData,
@@ -554,284 +555,280 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
             : "-global";
 
         // Subscribe to division_meetings changes with enhanced filtering
-        const meetingsChannel = supabase
-            .channel(`division-meetings-changes${channelSuffix}`)
-            .on("postgres_changes", {
-                event: "*",
-                schema: "public",
-                table: "division_meetings",
-                ...(divisionId
-                    ? { filter: `division_id=eq.${divisionId}` }
-                    : {}),
-            }, (payload) => {
+        const meetingsChannel = await createRealtimeChannel(
+            `division-meetings-changes${channelSuffix}`,
+        );
+        meetingsChannel.on("postgres_changes", {
+            event: "*",
+            schema: "public",
+            table: "division_meetings",
+            ...(divisionId ? { filter: `division_id=eq.${divisionId}` } : {}),
+        }, (payload) => {
+            console.log(
+                `[Realtime] Division meetings change received for ${
+                    divisionName || "ALL"
+                }:`,
+                {
+                    event: payload.eventType,
+                    table: payload.table,
+                    recordId: (payload.new as any)?.id ||
+                        (payload.old as any)?.id,
+                    divisionId: (payload.new as any)?.division_id ||
+                        (payload.old as any)?.division_id,
+                },
+            );
+
+            // Validate that this change is relevant to our division context
+            const changeDivisionId = (payload.new as any)?.division_id ||
+                (payload.old as any)?.division_id;
+            if (
+                divisionId && changeDivisionId &&
+                changeDivisionId !== divisionId
+            ) {
                 console.log(
-                    `[Realtime] Division meetings change received for ${
-                        divisionName || "ALL"
-                    }:`,
-                    {
-                        event: payload.eventType,
-                        table: payload.table,
-                        recordId: (payload.new as any)?.id ||
-                            (payload.old as any)?.id,
-                        divisionId: (payload.new as any)?.division_id ||
-                            (payload.old as any)?.division_id,
-                    },
+                    `[Realtime] Ignoring change for different division (expected: ${divisionId}, got: ${changeDivisionId})`,
                 );
+                return;
+            }
 
-                // Validate that this change is relevant to our division context
-                const changeDivisionId = (payload.new as any)?.division_id ||
-                    (payload.old as any)?.division_id;
-                if (
-                    divisionId && changeDivisionId &&
-                    changeDivisionId !== divisionId
-                ) {
-                    console.log(
-                        `[Realtime] Ignoring change for different division (expected: ${divisionId}, got: ${changeDivisionId})`,
+            // Refresh the appropriate division's data
+            if (divisionName) {
+                console.log(
+                    `[Realtime] Refreshing meetings for division: ${divisionName}`,
+                );
+                get().fetchDivisionMeetings(divisionName);
+            } else {
+                // Find the affected division and refresh it
+                const state = get();
+                const affectedDivisionName = Object.keys(state.meetings)
+                    .find((division) =>
+                        state.meetings[division].some((meeting) =>
+                            meeting.division_id === changeDivisionId
+                        )
                     );
-                    return;
+
+                if (affectedDivisionName) {
+                    console.log(
+                        `[Realtime] Refreshing meetings for affected division: ${affectedDivisionName}`,
+                    );
+                    get().fetchDivisionMeetings(affectedDivisionName);
                 }
+            }
+        });
 
-                // Refresh the appropriate division's data
-                if (divisionName) {
-                    console.log(
-                        `[Realtime] Refreshing meetings for division: ${divisionName}`,
-                    );
-                    get().fetchDivisionMeetings(divisionName);
-                } else {
-                    // Find the affected division and refresh it
-                    const state = get();
-                    const affectedDivisionName = Object.keys(state.meetings)
-                        .find((division) =>
-                            state.meetings[division].some((meeting) =>
-                                meeting.division_id === changeDivisionId
-                            )
-                        );
-
-                    if (affectedDivisionName) {
-                        console.log(
-                            `[Realtime] Refreshing meetings for affected division: ${affectedDivisionName}`,
-                        );
-                        get().fetchDivisionMeetings(affectedDivisionName);
-                    }
-                }
-            })
-            .subscribe(createRealtimeCallback(
-                "DivisionMeetings",
-                // onError callback
-                (status, err) => {
-                    console.error(
-                        `[Realtime] Division meetings subscription error: ${status}`,
-                        err,
-                    );
-                },
-                // onSuccess callback
-                (status) => {
-                    console.log(
-                        `[Realtime] Division meetings subscription status: ${status}`,
-                    );
-                },
-            ));
+        meetingsChannel.subscribe(createRealtimeCallback(
+            "DivisionMeetings",
+            (status, err) => {
+                console.error(
+                    `[Realtime] Division meetings subscription error: ${status}`,
+                    err,
+                );
+            },
+            (status) => {
+                console.log(
+                    `[Realtime] Division meetings subscription status: ${status}`,
+                );
+            },
+        ));
 
         // Subscribe to meeting_occurrences changes with enhanced division filtering
-        const occurrencesChannel = supabase
-            .channel(`meeting-occurrences-changes${channelSuffix}`)
-            .on("postgres_changes", {
-                event: "*",
-                schema: "public",
-                table: "meeting_occurrences",
-                // Filter by meeting pattern IDs if we have them for more precise filtering
-                ...(divisionMeetingPatternIds.length > 0
-                    ? {
-                        filter: `meeting_pattern_id=in.(${
-                            divisionMeetingPatternIds.join(",")
-                        })`,
-                    }
-                    : {}),
-            }, async (payload) => {
+        const occurrencesChannel = await createRealtimeChannel(
+            `meeting-occurrences-changes${channelSuffix}`,
+        );
+        occurrencesChannel.on("postgres_changes", {
+            event: "*",
+            schema: "public",
+            table: "meeting_occurrences",
+            // Filter by meeting pattern IDs if we have them for more precise filtering
+            ...(divisionMeetingPatternIds.length > 0
+                ? {
+                    filter: `meeting_pattern_id=in.(${
+                        divisionMeetingPatternIds.join(",")
+                    })`,
+                }
+                : {}),
+        }, async (payload) => {
+            console.log(
+                `[Realtime] Meeting occurrences change received for ${
+                    divisionName || "ALL"
+                }:`,
+                {
+                    event: payload.eventType,
+                    table: payload.table,
+                    recordId: (payload.new as any)?.id ||
+                        (payload.old as any)?.id,
+                    patternId: (payload.new as any)?.meeting_pattern_id ||
+                        (payload.old as any)?.meeting_pattern_id,
+                },
+            );
+
+            const { selectedMeetingPatternId, currentDivisionContext } = get();
+            const changePatternId = (payload.new as any)?.meeting_pattern_id ||
+                (payload.old as any)?.meeting_pattern_id;
+
+            // Validate that this change is relevant to our division context
+            if (
+                divisionMeetingPatternIds.length > 0 && changePatternId &&
+                !divisionMeetingPatternIds.includes(changePatternId)
+            ) {
                 console.log(
-                    `[Realtime] Meeting occurrences change received for ${
-                        divisionName || "ALL"
-                    }:`,
-                    {
-                        event: payload.eventType,
-                        table: payload.table,
-                        recordId: (payload.new as any)?.id ||
-                            (payload.old as any)?.id,
-                        patternId: (payload.new as any)?.meeting_pattern_id ||
-                            (payload.old as any)?.meeting_pattern_id,
-                    },
+                    `[Realtime] Ignoring occurrence change for different division pattern`,
                 );
+                return;
+            }
 
-                const { selectedMeetingPatternId, currentDivisionContext } =
-                    get();
-                const changePatternId =
-                    (payload.new as any)?.meeting_pattern_id ||
-                    (payload.old as any)?.meeting_pattern_id;
+            // If the change is for the currently selected pattern, refresh occurrences
+            if (
+                selectedMeetingPatternId &&
+                changePatternId === selectedMeetingPatternId
+            ) {
+                console.log(
+                    `[Realtime] Refreshing occurrences for selected pattern: ${selectedMeetingPatternId}`,
+                );
+                get().fetchMeetingOccurrences(selectedMeetingPatternId);
+            }
 
-                // Validate that this change is relevant to our division context
+            // Refresh search results if we're in the relevant division context
+            const contextToRefresh = currentDivisionContext || divisionName;
+            if (contextToRefresh) {
+                const { searchTerm, dateRangeFilter } = get();
                 if (
-                    divisionMeetingPatternIds.length > 0 && changePatternId &&
-                    !divisionMeetingPatternIds.includes(changePatternId)
+                    searchTerm ||
+                    (dateRangeFilter.start && dateRangeFilter.end)
                 ) {
                     console.log(
-                        `[Realtime] Ignoring occurrence change for different division pattern`,
+                        `[Realtime] Refreshing search results for division: ${contextToRefresh}`,
                     );
-                    return;
-                }
+                    const validDateRange =
+                        dateRangeFilter.start && dateRangeFilter.end
+                            ? {
+                                start: dateRangeFilter.start as Date,
+                                end: dateRangeFilter.end as Date,
+                            }
+                            : undefined;
 
-                // If the change is for the currently selected pattern, refresh occurrences
-                if (
-                    selectedMeetingPatternId &&
-                    changePatternId === selectedMeetingPatternId
-                ) {
-                    console.log(
-                        `[Realtime] Refreshing occurrences for selected pattern: ${selectedMeetingPatternId}`,
+                    get().searchMeetingMinutes(
+                        searchTerm,
+                        contextToRefresh,
+                        validDateRange,
+                        get().currentPage,
                     );
-                    get().fetchMeetingOccurrences(selectedMeetingPatternId);
                 }
+            }
+        });
 
-                // Refresh search results if we're in the relevant division context
-                const contextToRefresh = currentDivisionContext || divisionName;
-                if (contextToRefresh) {
-                    const { searchTerm, dateRangeFilter } = get();
-                    if (
-                        searchTerm ||
-                        (dateRangeFilter.start && dateRangeFilter.end)
-                    ) {
-                        console.log(
-                            `[Realtime] Refreshing search results for division: ${contextToRefresh}`,
-                        );
-                        const validDateRange =
-                            dateRangeFilter.start && dateRangeFilter.end
-                                ? {
-                                    start: dateRangeFilter.start as Date,
-                                    end: dateRangeFilter.end as Date,
-                                }
-                                : undefined;
-
-                        get().searchMeetingMinutes(
-                            searchTerm,
-                            contextToRefresh,
-                            validDateRange,
-                            get().currentPage,
-                        );
-                    }
-                }
-            })
-            .subscribe(createRealtimeCallback(
-                "MeetingOccurrences",
-                // onError callback
-                (status, err) => {
-                    console.error(
-                        `[Realtime] Meeting occurrences subscription error: ${status}`,
-                        err,
-                    );
-                },
-                // onSuccess callback
-                (status) => {
-                    console.log(
-                        `[Realtime] Meeting occurrences subscription status: ${status}`,
-                    );
-                },
-            ));
+        occurrencesChannel.subscribe(createRealtimeCallback(
+            "MeetingOccurrences",
+            (status, err) => {
+                console.error(
+                    `[Realtime] Meeting occurrences subscription error: ${status}`,
+                    err,
+                );
+            },
+            (status) => {
+                console.log(
+                    `[Realtime] Meeting occurrences subscription status: ${status}`,
+                );
+            },
+        ));
 
         // Subscribe to meeting_minutes changes with enhanced division filtering
-        const minutesChannel = supabase
-            .channel(`meeting-minutes-changes${channelSuffix}`)
-            .on("postgres_changes", {
-                event: "*",
-                schema: "public",
-                table: "meeting_minutes",
-                // Filter by meeting pattern IDs if we have them
-                ...(divisionMeetingPatternIds.length > 0
-                    ? {
-                        filter: `meeting_id=in.(${
-                            divisionMeetingPatternIds.join(",")
-                        })`,
-                    }
-                    : {}),
-            }, async (payload) => {
+        const minutesChannel = await createRealtimeChannel(
+            `meeting-minutes-changes${channelSuffix}`,
+        );
+        minutesChannel.on("postgres_changes", {
+            event: "*",
+            schema: "public",
+            table: "meeting_minutes",
+            // Filter by meeting pattern IDs if we have them
+            ...(divisionMeetingPatternIds.length > 0
+                ? {
+                    filter: `meeting_id=in.(${
+                        divisionMeetingPatternIds.join(",")
+                    })`,
+                }
+                : {}),
+        }, async (payload) => {
+            console.log(
+                `[Realtime] Meeting minutes change received for ${
+                    divisionName || "ALL"
+                }:`,
+                {
+                    event: payload.eventType,
+                    table: payload.table,
+                    recordId: (payload.new as any)?.id ||
+                        (payload.old as any)?.id,
+                    meetingId: (payload.new as any)?.meeting_id ||
+                        (payload.old as any)?.meeting_id,
+                },
+            );
+
+            const { selectedOccurrenceId, currentDivisionContext } = get();
+            const changeMeetingId = (payload.new as any)?.meeting_id ||
+                (payload.old as any)?.meeting_id;
+
+            // Validate that this change is relevant to our division context
+            if (
+                divisionMeetingPatternIds.length > 0 && changeMeetingId &&
+                !divisionMeetingPatternIds.includes(changeMeetingId)
+            ) {
                 console.log(
-                    `[Realtime] Meeting minutes change received for ${
-                        divisionName || "ALL"
-                    }:`,
-                    {
-                        event: payload.eventType,
-                        table: payload.table,
-                        recordId: (payload.new as any)?.id ||
-                            (payload.old as any)?.id,
-                        meetingId: (payload.new as any)?.meeting_id ||
-                            (payload.old as any)?.meeting_id,
-                    },
+                    `[Realtime] Ignoring minutes change for different division meeting`,
                 );
+                return;
+            }
 
-                const { selectedOccurrenceId, currentDivisionContext } = get();
-                const changeMeetingId = (payload.new as any)?.meeting_id ||
-                    (payload.old as any)?.meeting_id;
+            // Refresh minutes if we're looking at the affected occurrence
+            if (selectedOccurrenceId) {
+                console.log(
+                    `[Realtime] Refreshing minutes for selected occurrence: ${selectedOccurrenceId}`,
+                );
+                get().fetchMeetingMinutes(selectedOccurrenceId);
+            }
 
-                // Validate that this change is relevant to our division context
+            // Refresh search results if we're in the relevant division context
+            const contextToRefresh = currentDivisionContext || divisionName;
+            if (contextToRefresh) {
+                const { searchTerm, dateRangeFilter } = get();
                 if (
-                    divisionMeetingPatternIds.length > 0 && changeMeetingId &&
-                    !divisionMeetingPatternIds.includes(changeMeetingId)
+                    searchTerm ||
+                    (dateRangeFilter.start && dateRangeFilter.end)
                 ) {
                     console.log(
-                        `[Realtime] Ignoring minutes change for different division meeting`,
+                        `[Realtime] Refreshing search results for division: ${contextToRefresh}`,
                     );
-                    return;
-                }
+                    const validDateRange =
+                        dateRangeFilter.start && dateRangeFilter.end
+                            ? {
+                                start: dateRangeFilter.start as Date,
+                                end: dateRangeFilter.end as Date,
+                            }
+                            : undefined;
 
-                // Refresh minutes if we're looking at the affected occurrence
-                if (selectedOccurrenceId) {
-                    console.log(
-                        `[Realtime] Refreshing minutes for selected occurrence: ${selectedOccurrenceId}`,
+                    get().searchMeetingMinutes(
+                        searchTerm,
+                        contextToRefresh,
+                        validDateRange,
+                        get().currentPage,
                     );
-                    get().fetchMeetingMinutes(selectedOccurrenceId);
                 }
+            }
+        });
 
-                // Refresh search results if we're in the relevant division context
-                const contextToRefresh = currentDivisionContext || divisionName;
-                if (contextToRefresh) {
-                    const { searchTerm, dateRangeFilter } = get();
-                    if (
-                        searchTerm ||
-                        (dateRangeFilter.start && dateRangeFilter.end)
-                    ) {
-                        console.log(
-                            `[Realtime] Refreshing search results for division: ${contextToRefresh}`,
-                        );
-                        const validDateRange =
-                            dateRangeFilter.start && dateRangeFilter.end
-                                ? {
-                                    start: dateRangeFilter.start as Date,
-                                    end: dateRangeFilter.end as Date,
-                                }
-                                : undefined;
-
-                        get().searchMeetingMinutes(
-                            searchTerm,
-                            contextToRefresh,
-                            validDateRange,
-                            get().currentPage,
-                        );
-                    }
-                }
-            })
-            .subscribe(createRealtimeCallback(
-                "MeetingMinutes",
-                // onError callback
-                (status, err) => {
-                    console.error(
-                        `[Realtime] Meeting minutes subscription error: ${status}`,
-                        err,
-                    );
-                },
-                // onSuccess callback
-                (status) => {
-                    console.log(
-                        `[Realtime] Meeting minutes subscription status: ${status}`,
-                    );
-                },
-            ));
+        minutesChannel.subscribe(createRealtimeCallback(
+            "MeetingMinutes",
+            (status, err) => {
+                console.error(
+                    `[Realtime] Meeting minutes subscription error: ${status}`,
+                    err,
+                );
+            },
+            (status) => {
+                console.log(
+                    `[Realtime] Meeting minutes subscription status: ${status}`,
+                );
+            },
+        ));
 
         // Store the subscription channels
         set({

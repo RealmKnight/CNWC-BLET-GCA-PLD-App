@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { supabase } from "@/utils/supabase";
+import { createRealtimeChannel } from "@/utils/realtime";
 import {
     RealtimeChannel,
     RealtimePostgresChangesPayload,
@@ -201,9 +202,11 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
         console.log(
             `[TimeStore] Setting up realtime channel for member: ${memberId}`,
         );
-        const realtimeChannel = supabase
-            .channel(`mytime-updates-${memberId}`)
-            // --- PLD/SDV Requests --- Correctly filtered by member_id
+        const channelName = `mytime-updates-${memberId}`;
+        const realtimeChannel = await createRealtimeChannel(channelName);
+
+        // --- PLD/SDV Requests --- Correctly filtered by member_id
+        realtimeChannel
             .on(
                 "postgres_changes",
                 {
@@ -261,57 +264,59 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
                         get().handleRealtimeUpdate(payload, "pld_sdv_requests");
                     }
                 },
-            )
-            // --- Six Month Requests --- Correctly filtered by member_id
-            .on(
-                "postgres_changes",
-                {
-                    event: "*",
-                    schema: "public",
-                    table: "six_month_requests",
-                    filter: `member_id=eq.${memberId}`,
-                },
-                (payload) =>
-                    get().handleRealtimeUpdate(payload, "six_month_requests"),
-            )
-            // --- Vacation Requests --- Filter by PIN if available
-            .on(
-                "postgres_changes",
-                {
-                    event: "*",
-                    schema: "public",
-                    table: "vacation_requests",
-                    // Only add filter if PIN was successfully fetched
-                    filter: memberPin
-                        ? `pin_number=eq.${memberPin}`
-                        : undefined,
-                },
-                (payload) =>
-                    get().handleRealtimeUpdate(payload, "vacation_requests"),
-            )
-            // --- Allocations --- Watch the correct table
-            .on(
-                "postgres_changes",
-                {
-                    event: "*",
-                    schema: "public",
-                    table: "pld_sdv_allocations",
-                    filter: `member_id=eq.${memberId}`,
-                },
-                (payload) =>
-                    get().handleRealtimeUpdate(payload, "pld_sdv_allocations"),
-            )
-            // --- Member Info (Optional but useful for stats) --- Watch members table too
-            .on(
-                "postgres_changes",
-                {
-                    event: "*",
-                    schema: "public",
-                    table: "members",
-                    filter: `id=eq.${memberId}`,
-                },
-                (payload) => get().handleRealtimeUpdate(payload, "members"),
             );
+
+        // --- Six Month Requests --- Correctly filtered by member_id
+        realtimeChannel.on(
+            "postgres_changes",
+            {
+                event: "*",
+                schema: "public",
+                table: "six_month_requests",
+                filter: `member_id=eq.${memberId}`,
+            },
+            (payload) =>
+                get().handleRealtimeUpdate(payload, "six_month_requests"),
+        );
+
+        // --- Vacation Requests --- Filter by PIN if available
+        realtimeChannel.on(
+            "postgres_changes",
+            {
+                event: "*",
+                schema: "public",
+                table: "vacation_requests",
+                // Only add filter if PIN was successfully fetched
+                filter: memberPin ? `pin_number=eq.${memberPin}` : undefined,
+            },
+            (payload) =>
+                get().handleRealtimeUpdate(payload, "vacation_requests"),
+        );
+
+        // --- Allocations --- Watch the correct table
+        realtimeChannel.on(
+            "postgres_changes",
+            {
+                event: "*",
+                schema: "public",
+                table: "pld_sdv_allocations",
+                filter: `member_id=eq.${memberId}`,
+            },
+            (payload) =>
+                get().handleRealtimeUpdate(payload, "pld_sdv_allocations"),
+        );
+
+        // --- Member Info (Optional but useful for stats) --- Watch members table too
+        realtimeChannel.on(
+            "postgres_changes",
+            {
+                event: "*",
+                schema: "public",
+                table: "members",
+                filter: `id=eq.${memberId}`,
+            },
+            (payload) => get().handleRealtimeUpdate(payload, "members"),
+        );
 
         realtimeChannel.subscribe(createRealtimeCallback(
             "TimeStore",

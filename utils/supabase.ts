@@ -73,3 +73,51 @@ export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
     schema: "public",
   },
 });
+
+// Grace period (ms) before we consider a token 'about to expire'
+export const TOKEN_EXPIRY_BUFFER_MS = 15_000;
+
+/**
+ * Ensures we have a fresh access-token. If the current token is
+ * already valid for > TOKEN_EXPIRY_BUFFER_MS it just resolves quickly.
+ * Otherwise it triggers `supabase.auth.refreshSession()`.
+ * Returns the (possibly refreshed) session object.
+ */
+export async function refreshSessionIfNeeded() {
+  try {
+    const {
+      data: { session },
+      error,
+    } = await supabase.auth.getSession();
+    if (error) throw error;
+
+    const expiresAtSec = session?.expires_at ?? 0;
+    const msUntilExpiry = expiresAtSec * 1000 - Date.now();
+    if (msUntilExpiry > TOKEN_EXPIRY_BUFFER_MS) {
+      return session;
+    }
+
+    const { data: refreshed, error: refreshErr } = await supabase.auth
+      .refreshSession();
+    if (refreshErr) throw refreshErr;
+    return refreshed.session;
+  } catch (err) {
+    console.warn("[supabase] refreshSessionIfNeeded failed", err);
+    throw err;
+  }
+}
+
+// Keep realtime sockets up-to-date when Supabase refreshes the token internally
+supabase.auth.onAuthStateChange((event, session) => {
+  if (event === "TOKEN_REFRESHED" && session?.access_token) {
+    try {
+      // propagate new JWT to open realtime connections
+      supabase.realtime.setAuth(session.access_token);
+    } catch (e) {
+      console.error(
+        "[supabase] Error propagating refreshed token to realtime",
+        e,
+      );
+    }
+  }
+});

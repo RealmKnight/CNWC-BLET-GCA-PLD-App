@@ -40,6 +40,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useAdminCalendarManagementStore } from "@/store/adminCalendarManagementStore";
 import { Calendar as RNCalendar } from "react-native-calendars";
 import { useTimeStore } from "@/store/timeStore";
+import { createRealtimeChannel } from "@/utils/realtime";
 // Define TimeOffRequest interface based on pld_sdv_requests schema
 interface TimeOffRequest {
   id: string;
@@ -166,106 +167,109 @@ function RequestDialog({
 
     console.log("[RequestDialog] Setting up real-time subscription for", selectedDate);
     const channelName = `request-dialog-${selectedDate}-${Date.now()}`;
-    const channel = supabase
-      .channel(channelName)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "pld_sdv_requests",
-          filter: `request_date=eq.${selectedDate} AND calendar_id=eq.${calendarId}`,
-        },
-        (payload: RealtimePostgresChangesPayload<any>) => {
-          console.log("[RequestDialog] Received pld_sdv_requests update:", payload);
-          const { eventType, new: newRecord, old: oldRecord } = payload;
 
-          if (eventType === "INSERT") {
-            setLocalRequests((prev) => {
-              if (prev.some((req) => req.id === newRecord.id)) return prev;
-              supabase
-                .from("members")
-                .select("id, first_name, last_name, pin_number")
-                .eq("id", newRecord.member_id)
-                .single()
-                .then(({ data: memberData, error }) => {
-                  if (!error && memberData) {
-                    const newRequest: DayRequest = {
-                      ...newRecord,
-                      member: { ...memberData, pin_number: memberData.pin_number || 0 },
-                    };
-                    setLocalRequests((currentPrev) =>
-                      currentPrev.some((req) => req.id === newRecord.id) ? currentPrev : [...currentPrev, newRequest]
-                    );
-                  }
-                });
-              return prev;
-            });
-          } else if (eventType === "UPDATE") {
-            setLocalRequests((prev) =>
-              prev.map((req) =>
-                req.id === newRecord.id ? { ...req, ...newRecord, member: newRecord.member || req.member } : req
-              )
-            );
+    (async () => {
+      const channel = await createRealtimeChannel(channelName);
+      channel
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "pld_sdv_requests",
+            filter: `request_date=eq.${selectedDate} AND calendar_id=eq.${calendarId}`,
+          },
+          (payload: RealtimePostgresChangesPayload<any>) => {
+            console.log("[RequestDialog] Received pld_sdv_requests update:", payload);
+            const { eventType, new: newRecord, old: oldRecord } = payload;
 
-            // Only update time stats if it affects the current user
-            if (member && newRecord.member_id === member.id) {
-              // Do a targeted update instead of refreshing the entire time store
-              if (newRecord.status !== oldRecord.status) {
-                console.log(`[RequestDialog] Request status changed: ${oldRecord.status} -> ${newRecord.status}`);
-                // Only update the specific piece of state that changed instead of refreshing everything
-              }
-            }
-          } else if (eventType === "DELETE") {
-            setLocalRequests((prev) => prev.filter((req) => req.id !== oldRecord.id));
-          }
-        }
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "pld_sdv_allotments",
-          filter: `date=eq.${selectedDate}`,
-        },
-        async (payload: RealtimePostgresChangesPayload<any>) => {
-          console.log("[RequestDialog] Received allotment update:", payload);
-          const { new: newRecord } = payload;
-          if (newRecord && typeof newRecord === "object" && "max_allotment" in newRecord) {
-            try {
-              const newAllotmentValue = {
-                max: newRecord.max_allotment,
-                current: newRecord.current_requests ?? propCurrentAllotment,
-              };
-              console.log("[RequestDialog] Updating allotment:", newAllotmentValue);
-              setLocalAllotments(newAllotmentValue);
+            if (eventType === "INSERT") {
+              setLocalRequests((prev) => {
+                if (prev.some((req) => req.id === newRecord.id)) return prev;
+                supabase
+                  .from("members")
+                  .select("id, first_name, last_name, pin_number")
+                  .eq("id", newRecord.member_id)
+                  .single()
+                  .then(({ data: memberData, error }) => {
+                    if (!error && memberData) {
+                      const newRequest: DayRequest = {
+                        ...newRecord,
+                        member: { ...memberData, pin_number: memberData.pin_number || 0 },
+                      };
+                      setLocalRequests((currentPrev) =>
+                        currentPrev.some((req) => req.id === newRecord.id) ? currentPrev : [...currentPrev, newRequest]
+                      );
+                    }
+                  });
+                return prev;
+              });
+            } else if (eventType === "UPDATE") {
+              setLocalRequests((prev) =>
+                prev.map((req) =>
+                  req.id === newRecord.id ? { ...req, ...newRecord, member: newRecord.member || req.member } : req
+                )
+              );
 
-              // Only fetch requests if allotment changed significantly
-              if (newAllotmentValue.max !== localAllotments.max) {
-                const { data, error } = await supabase
-                  .from("pld_sdv_requests")
-                  .select(
-                    `id, member_id, calendar_id, request_date, leave_type, status, requested_at, waitlist_position, paid_in_lieu, member:members!inner (id, first_name, last_name, pin_number)`
-                  )
-                  .eq("calendar_id", calendarId)
-                  .eq("request_date", selectedDate);
-                if (!error && data) {
-                  setLocalRequests(data as unknown as DayRequest[]);
-                  console.log(`[RequestDialog] Updated requests after allotment change: ${data.length} requests`);
+              // Only update time stats if it affects the current user
+              if (member && newRecord.member_id === member.id) {
+                // Do a targeted update instead of refreshing the entire time store
+                if (newRecord.status !== oldRecord.status) {
+                  console.log(`[RequestDialog] Request status changed: ${oldRecord.status} -> ${newRecord.status}`);
+                  // Only update the specific piece of state that changed instead of refreshing everything
                 }
               }
-            } catch (error) {
-              console.error("[RequestDialog] Error refreshing after allotment update:", error);
+            } else if (eventType === "DELETE") {
+              setLocalRequests((prev) => prev.filter((req) => req.id !== oldRecord.id));
             }
           }
-        }
-      )
-      .subscribe((status) => {
-        console.log("[RequestDialog] Subscription status:", status);
-      });
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "pld_sdv_allotments",
+            filter: `date=eq.${selectedDate}`,
+          },
+          async (payload: RealtimePostgresChangesPayload<any>) => {
+            console.log("[RequestDialog] Received allotment update:", payload);
+            const { new: newRecord } = payload;
+            if (newRecord && typeof newRecord === "object" && "max_allotment" in newRecord) {
+              try {
+                const newAllotmentValue = {
+                  max: newRecord.max_allotment,
+                  current: newRecord.current_requests ?? propCurrentAllotment,
+                };
+                console.log("[RequestDialog] Updating allotment:", newAllotmentValue);
+                setLocalAllotments(newAllotmentValue);
 
-    realtimeChannelRef.current = channel;
+                // Only fetch requests if allotment changed significantly
+                if (newAllotmentValue.max !== localAllotments.max) {
+                  const { data, error } = await supabase
+                    .from("pld_sdv_requests")
+                    .select(
+                      `id, member_id, calendar_id, request_date, leave_type, status, requested_at, waitlist_position, paid_in_lieu, member:members!inner (id, first_name, last_name, pin_number)`
+                    )
+                    .eq("calendar_id", calendarId)
+                    .eq("request_date", selectedDate);
+                  if (!error && data) {
+                    setLocalRequests(data as unknown as DayRequest[]);
+                    console.log(`[RequestDialog] Updated requests after allotment change: ${data.length} requests`);
+                  }
+                }
+              } catch (error) {
+                console.error("[RequestDialog] Error refreshing after allotment update:", error);
+              }
+            }
+          }
+        )
+        .subscribe((status) => {
+          console.log("[RequestDialog] Subscription status:", status);
+        });
+
+      realtimeChannelRef.current = channel;
+    })();
 
     return () => {
       console.log("[RequestDialog] Cleaning up real-time subscription on unmount/update");
@@ -303,102 +307,104 @@ function RequestDialog({
           console.log("[RequestDialog] Re-enabling real-time updates after successful submission");
           // Re-setup subscription (logic is identical to the initial setup in useEffect)
           const channelName = `request-dialog-${selectedDate}-${Date.now()}`;
-          const channel = supabase
-            .channel(channelName)
-            .on(
-              "postgres_changes",
-              {
-                event: "*",
-                schema: "public",
-                table: "pld_sdv_requests",
-                filter: `request_date=eq.${selectedDate} AND calendar_id=eq.${calendarId}`,
-              },
-              (payload: RealtimePostgresChangesPayload<any>) => {
-                console.log("[RequestDialog] Received pld_sdv_requests update (re-sub):", payload);
-                const { eventType, new: newRecord, old: oldRecord } = payload;
-                if (eventType === "INSERT") {
-                  setLocalRequests((prev) => {
-                    if (prev.some((req) => req.id === newRecord.id)) return prev;
-                    supabase
-                      .from("members")
-                      .select("id, first_name, last_name, pin_number")
-                      .eq("id", newRecord.member_id)
-                      .single()
-                      .then(({ data: memberData, error }) => {
-                        if (!error && memberData) {
-                          const newRequest: DayRequest = {
-                            ...newRecord,
-                            member: { ...memberData, pin_number: memberData.pin_number || 0 },
-                          };
-                          setLocalRequests((currentPrev) =>
-                            currentPrev.some((req) => req.id === newRecord.id)
-                              ? currentPrev
-                              : [...currentPrev, newRequest]
+
+          async () => {
+            const channel = await createRealtimeChannel(channelName);
+            channel
+              .on(
+                "postgres_changes",
+                {
+                  event: "*",
+                  schema: "public",
+                  table: "pld_sdv_requests",
+                  filter: `request_date=eq.${selectedDate} AND calendar_id=eq.${calendarId}`,
+                },
+                (payload: RealtimePostgresChangesPayload<any>) => {
+                  console.log("[RequestDialog] Received pld_sdv_requests update (re-sub):", payload);
+                  const { eventType, new: newRecord, old: oldRecord } = payload;
+                  if (eventType === "INSERT") {
+                    setLocalRequests((prev) => {
+                      if (prev.some((req) => req.id === newRecord.id)) return prev;
+                      supabase
+                        .from("members")
+                        .select("id, first_name, last_name, pin_number")
+                        .eq("id", newRecord.member_id)
+                        .single()
+                        .then(({ data: memberData, error }) => {
+                          if (!error && memberData) {
+                            const newRequest: DayRequest = {
+                              ...newRecord,
+                              member: { ...memberData, pin_number: memberData.pin_number || 0 },
+                            };
+                            setLocalRequests((currentPrev) =>
+                              currentPrev.some((req) => req.id === newRecord.id)
+                                ? currentPrev
+                                : [...currentPrev, newRequest]
+                            );
+                          }
+                        });
+                      return prev;
+                    });
+                  } else if (eventType === "UPDATE") {
+                    setLocalRequests((prev) =>
+                      prev.map((req) =>
+                        req.id === newRecord.id ? { ...req, ...newRecord, member: newRecord.member || req.member } : req
+                      )
+                    );
+
+                    // Only update if status changed
+                    if (newRecord.status !== oldRecord.status) {
+                      console.log(`[RequestDialog] Request status changed: ${oldRecord.status} -> ${newRecord.status}`);
+                    }
+                  } else if (eventType === "DELETE") {
+                    setLocalRequests((prev) => prev.filter((req) => req.id !== oldRecord.id));
+                  }
+                }
+              )
+              .on(
+                "postgres_changes",
+                {
+                  event: "*",
+                  schema: "public",
+                  table: "pld_sdv_allotments",
+                  filter: `date=eq.${selectedDate}`,
+                },
+                async (payload: RealtimePostgresChangesPayload<any>) => {
+                  console.log("[RequestDialog] Received allotment update (re-sub):", payload);
+                  const { new: newRecord } = payload;
+                  if (newRecord && typeof newRecord === "object" && "max_allotment" in newRecord) {
+                    try {
+                      const newAllotmentValue = {
+                        max: newRecord.max_allotment,
+                        current: newRecord.current_requests ?? propCurrentAllotment,
+                      };
+                      console.log("[RequestDialog] Updating allotment (re-sub):", newAllotmentValue);
+                      setLocalAllotments(newAllotmentValue);
+
+                      // Only fetch if value changed significantly
+                      if (newAllotmentValue.max !== localAllotments.max) {
+                        const { data, error } = await supabase
+                          .from("pld_sdv_requests")
+                          .select(
+                            `id, member_id, calendar_id, request_date, leave_type, status, requested_at, waitlist_position, paid_in_lieu, member:members!inner (id, first_name, last_name, pin_number)`
+                          )
+                          .eq("calendar_id", calendarId)
+                          .eq("request_date", selectedDate);
+                        if (!error && data) {
+                          setLocalRequests(data as unknown as DayRequest[]);
+                          console.log(
+                            `[RequestDialog] Updated requests after allotment change (re-sub): ${data.length} requests`
                           );
                         }
-                      });
-                    return prev;
-                  });
-                } else if (eventType === "UPDATE") {
-                  setLocalRequests((prev) =>
-                    prev.map((req) =>
-                      req.id === newRecord.id ? { ...req, ...newRecord, member: newRecord.member || req.member } : req
-                    )
-                  );
-
-                  // Only update if status changed
-                  if (newRecord.status !== oldRecord.status) {
-                    console.log(`[RequestDialog] Request status changed: ${oldRecord.status} -> ${newRecord.status}`);
-                  }
-                } else if (eventType === "DELETE") {
-                  setLocalRequests((prev) => prev.filter((req) => req.id !== oldRecord.id));
-                }
-              }
-            )
-            .on(
-              "postgres_changes",
-              {
-                event: "*",
-                schema: "public",
-                table: "pld_sdv_allotments",
-                filter: `date=eq.${selectedDate}`,
-              },
-              async (payload: RealtimePostgresChangesPayload<any>) => {
-                console.log("[RequestDialog] Received allotment update (re-sub):", payload);
-                const { new: newRecord } = payload;
-                if (newRecord && typeof newRecord === "object" && "max_allotment" in newRecord) {
-                  try {
-                    const newAllotmentValue = {
-                      max: newRecord.max_allotment,
-                      current: newRecord.current_requests ?? propCurrentAllotment,
-                    };
-                    console.log("[RequestDialog] Updating allotment (re-sub):", newAllotmentValue);
-                    setLocalAllotments(newAllotmentValue);
-
-                    // Only fetch if value changed significantly
-                    if (newAllotmentValue.max !== localAllotments.max) {
-                      const { data, error } = await supabase
-                        .from("pld_sdv_requests")
-                        .select(
-                          `id, member_id, calendar_id, request_date, leave_type, status, requested_at, waitlist_position, paid_in_lieu, member:members!inner (id, first_name, last_name, pin_number)`
-                        )
-                        .eq("calendar_id", calendarId)
-                        .eq("request_date", selectedDate);
-                      if (!error && data) {
-                        setLocalRequests(data as unknown as DayRequest[]);
-                        console.log(
-                          `[RequestDialog] Updated requests after allotment change (re-sub): ${data.length} requests`
-                        );
                       }
+                    } catch (error) {
+                      console.error("[RequestDialog] Error refreshing after allotment update (re-sub):", error);
                     }
-                  } catch (error) {
-                    console.error("[RequestDialog] Error refreshing after allotment update (re-sub):", error);
                   }
                 }
-              }
-            )
-            .subscribe((status) => console.log(`[RequestDialog] Re-subscription status (${channelName}):`, status));
-          realtimeChannelRef.current = channel;
+              )
+              .subscribe((status) => console.log(`[RequestDialog] Re-subscription status (${channelName}):`, status));
+          };
         }
       }, 1000);
     } catch (err) {
@@ -508,45 +514,54 @@ function RequestDialog({
 
           // Setup realtime subscription for six_month_requests
           const sixMonthChannelName = `request-dialog-six-month-${selectedDate}-${Date.now()}`;
-          const sixMonthChannel = supabase
-            .channel(sixMonthChannelName)
-            .on(
-              "postgres_changes",
-              { event: "*", schema: "public", table: "six_month_requests", filter: `request_date=eq.${selectedDate}` },
-              async (payload) => {
-                console.log("[RequestDialog] Received six-month request update:", payload);
-                // Refresh the count on update
-                try {
-                  const { data: refreshData, error: refreshError } = await supabase.rpc(
-                    "count_six_month_requests_by_date",
-                    { p_request_date: selectedDate, p_calendar_id: calendarId }
-                  );
-                  if (!refreshError) {
-                    const newCount = refreshData || 0;
-                    console.log(`[RequestDialog] Updated six-month request count: ${newCount}`);
-                    // --- Use local state setter ---
-                    setTotalSixMonthRequestsState(newCount);
-                  }
-                } catch (refreshErr) {
-                  console.error("[RequestDialog] Error refreshing six-month request count:", refreshErr);
-                }
-              }
-            )
-            .subscribe((status) => console.log(`Six-month sub status (${sixMonthChannelName}):`, status));
 
-          // Combine cleanup if other channel exists (improved logic)
-          const existingChannel = realtimeChannelRef.current;
-          realtimeChannelRef.current = {
-            // Store the new channel or a combined unsubscriber
-            unsubscribe: () => {
-              console.log(`[RequestDialog] Unsubscribing six-month channel: ${sixMonthChannelName}`);
-              sixMonthChannel.unsubscribe();
-              if (existingChannel && existingChannel !== sixMonthChannel) {
-                console.log(`[RequestDialog] Unsubscribing previous channel during combine`);
-                existingChannel.unsubscribe();
-              }
-            },
-          } as RealtimeChannel;
+          let sixMonthChannel: RealtimeChannel | null = null;
+          (async () => {
+            sixMonthChannel = await createRealtimeChannel(sixMonthChannelName);
+            sixMonthChannel
+              .on(
+                "postgres_changes",
+                {
+                  event: "*",
+                  schema: "public",
+                  table: "six_month_requests",
+                  filter: `request_date=eq.${selectedDate}`,
+                },
+                async (payload) => {
+                  console.log("[RequestDialog] Received six-month request update:", payload);
+                  // Refresh the count on update
+                  try {
+                    const { data: refreshData, error: refreshError } = await supabase.rpc(
+                      "count_six_month_requests_by_date",
+                      { p_request_date: selectedDate, p_calendar_id: calendarId }
+                    );
+                    if (!refreshError) {
+                      const newCount = refreshData || 0;
+                      console.log(`[RequestDialog] Updated six-month request count: ${newCount}`);
+                      // --- Use local state setter ---
+                      setTotalSixMonthRequestsState(newCount);
+                    }
+                  } catch (refreshErr) {
+                    console.error("[RequestDialog] Error refreshing six-month request count:", refreshErr);
+                  }
+                }
+              )
+              .subscribe((status) => console.log(`Six-month sub status (${sixMonthChannelName}):`, status));
+
+            // Combine cleanup if other channel exists (improved logic)
+            const existingChannel = realtimeChannelRef.current;
+            realtimeChannelRef.current = {
+              // Store the new channel or a combined unsubscriber
+              unsubscribe: () => {
+                console.log(`[RequestDialog] Unsubscribing six-month channel: ${sixMonthChannelName}`);
+                sixMonthChannel?.unsubscribe();
+                if (existingChannel && existingChannel !== sixMonthChannel) {
+                  console.log(`[RequestDialog] Unsubscribing previous channel during combine`);
+                  existingChannel.unsubscribe();
+                }
+              },
+            } as RealtimeChannel;
+          })();
         } catch (error) {
           console.error("[RequestDialog] Exception in fetchTotalSixMonthRequests:", error);
           // --- Use local state setter ---
@@ -1676,9 +1691,14 @@ export default function CalendarScreen() {
   useEffect(() => {
     if (member?.id && member?.calendar_id) {
       console.log("[CalendarScreen] Setting up calendar subscriptions");
-      const cleanupFn = setupCalendarSubscriptions();
+      let cleanup: () => void = () => {};
+      setupCalendarSubscriptions()
+        .then((fn) => {
+          cleanup = fn;
+        })
+        .catch((e) => console.error("[CalendarScreen] Subscription setup failed", e));
 
-      return cleanupFn; // Return the cleanup function directly
+      return () => cleanup();
     }
   }, [member?.id, member?.calendar_id]);
 

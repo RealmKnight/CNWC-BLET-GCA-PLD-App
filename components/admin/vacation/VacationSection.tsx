@@ -8,6 +8,7 @@ import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { TouchableOpacityComponent } from "@/components/TouchableOpacityComponent";
 import { supabase } from "@/utils/supabase";
+import { createRealtimeChannel } from "@/utils/realtime";
 import { sendMessageWithNotification } from "@/utils/notificationService";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { ThemedView } from "@/components/ThemedView";
@@ -264,9 +265,11 @@ export function VacationSection() {
     }
 
     console.log("[VacationSection] Setting up real-time subscription.");
-    const subscription = supabase
-      .channel("vacation-requests-changes")
-      .on(
+    let subscription: any;
+    (async () => {
+      subscription = await createRealtimeChannel("vacation-requests-changes");
+
+      subscription.on(
         "postgres_changes",
         {
           event: "*",
@@ -278,12 +281,12 @@ export function VacationSection() {
           console.log("Real-time update received");
           fetchPendingRequests();
         }
-      )
-      .subscribe();
+      );
+    })();
 
     return () => {
       console.log("[VacationSection] Unsubscribing from real-time changes.");
-      subscription.unsubscribe();
+      subscription?.unsubscribe?.();
     };
     // Stabilize dependencies: Depend on user ID and the memoized fetch function
   }, [user?.id, fetchPendingRequests]);

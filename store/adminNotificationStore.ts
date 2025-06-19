@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { supabase } from "@/utils/supabase";
+import { createRealtimeChannel } from "@/utils/realtime";
 import type { AdminMessage } from "@/types/adminMessages";
 import type {
     RealtimeChannel,
@@ -438,29 +439,32 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
         let retryCount = 0;
         const maxRetries = 3;
         const setupChannel = () => {
-            try {
-                const channel = supabase
-                    .channel(channelName)
-                    .on(
-                        "postgres_changes",
-                        {
-                            event: "*",
-                            schema: "public",
-                            table: "admin_messages",
-                        },
-                        handleRealtimeUpdate,
-                    )
-                    .on(
-                        "postgres_changes",
-                        {
-                            event: "*",
-                            schema: "public",
-                            table: "admin_message_read_status",
-                            filter: `user_id=eq.${userId}`,
-                        },
-                        handleRealtimeUpdate,
-                    )
-                    .subscribe(createRealtimeCallback(
+            (async () => {
+                try {
+                    const channel = await createRealtimeChannel(channelName);
+
+                    channel
+                        .on(
+                            "postgres_changes",
+                            {
+                                event: "*",
+                                schema: "public",
+                                table: "admin_messages",
+                            },
+                            handleRealtimeUpdate,
+                        )
+                        .on(
+                            "postgres_changes",
+                            {
+                                event: "*",
+                                schema: "public",
+                                table: "admin_message_read_status",
+                                filter: `user_id=eq.${userId}`,
+                            },
+                            handleRealtimeUpdate,
+                        );
+
+                    channel.subscribe(createRealtimeCallback(
                         "AdminNotifications",
                         // onError callback
                         (status, err) => {
@@ -552,28 +556,26 @@ const useAdminNotificationStore = create<AdminNotificationStore>((
                             );
                         },
                     ));
-
-                return channel;
-            } catch (error) {
-                console.error(
-                    "[initializeAdminNotifications] Exception setting up channel:",
-                    error,
-                );
-                set({
-                    isLoading: false,
-                    error: `Channel setup failed: ${
-                        error instanceof Error ? error.message : "Unknown error"
-                    }`,
-                    subscriptionStatus: "error",
-                });
-                return null;
-            }
+                } catch (error) {
+                    console.error(
+                        "[initializeAdminNotifications] Exception setting up channel:",
+                        error,
+                    );
+                    set({
+                        isLoading: false,
+                        error: `Channel setup failed: ${
+                            error instanceof Error
+                                ? error.message
+                                : "Unknown error"
+                        }`,
+                        subscriptionStatus: "error",
+                    });
+                }
+            })();
         };
 
-        const channel = setupChannel();
-        if (channel) {
-            set({ realtimeChannel: channel });
-        }
+        // Kick off initial realtime subscription setup
+        setupChannel();
 
         // Return cleanup function
         return () => {

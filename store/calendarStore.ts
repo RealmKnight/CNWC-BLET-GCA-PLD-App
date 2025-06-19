@@ -20,6 +20,7 @@ import {
   StoreEventType,
 } from "@/utils/storeManager";
 import { createRealtimeCallback } from "@/utils/realtimeErrorHandler";
+import { createRealtimeChannel } from "@/utils/realtime";
 
 type Member = Database["public"]["Tables"]["members"]["Row"];
 type BaseRequest = Database["public"]["Tables"]["pld_sdv_requests"]["Row"];
@@ -259,8 +260,7 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
             "waitlisted",
             "cancellation_pending",
             "transferred",
-          ]
-            .includes(req.status) &&
+          ].includes(req.status) &&
           req.paid_in_lieu === true,
       );
 
@@ -1074,7 +1074,7 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
 }));
 
 // Setup the realtime subscriptions
-export function setupCalendarSubscriptions() {
+export async function setupCalendarSubscriptions() {
   console.log("[CalendarStore] Setting up calendar subscriptions");
 
   const member = useUserStore.getState().member;
@@ -1101,11 +1101,11 @@ export function setupCalendarSubscriptions() {
   );
 
   // Create channels for different tables
-  const pldSdvAllotmentsChannel = supabase.channel(
+  const pldSdvAllotmentsChannel = await createRealtimeChannel(
     "pld-sdv-allotments-changes",
   );
-  const requestsChannel = supabase.channel("requests-changes");
-  const sixMonthRequestsChannel = supabase.channel(
+  const requestsChannel = await createRealtimeChannel("requests-changes");
+  const sixMonthRequestsChannel = await createRealtimeChannel(
     "six-month-requests-changes",
   );
 

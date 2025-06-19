@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { supabase } from "@/utils/supabase";
+import { createRealtimeChannel } from "@/utils/realtime";
 import type {
     AnalyticsExportRequest,
     Announcement,
@@ -115,7 +116,7 @@ interface AnnouncementStore {
         userId: string,
         assignedDivisionId: number | null,
         roles: string[],
-    ) => () => void;
+    ) => Promise<() => void>;
     setDivisionContext: (divisionName: string | null) => void; // Following pattern from divisionMeetingStore
     fetchDivisionAnnouncements: (divisionName: string) => Promise<void>; // Following pattern from divisionMeetingStore
     fetchGCAnnouncements: () => Promise<void>;
@@ -186,7 +187,7 @@ interface AnnouncementStore {
         divisionName: string,
         force?: boolean,
     ) => Promise<void>;
-    subscribeToAnnouncements: (divisionName?: string) => () => void; // Following pattern from divisionMeetingStore
+    subscribeToAnnouncements: (divisionName?: string) => Promise<() => void>; // Following pattern from divisionMeetingStore
     unsubscribeFromAnnouncements: () => void; // Following pattern from divisionMeetingStore
 }
 
@@ -885,7 +886,7 @@ export const useAnnouncementStore = create<AnnouncementStore>((set, get) => ({
     },
 
     // Subscription handling with division context (following pattern from divisionMeetingStore)
-    subscribeToAnnouncements: (divisionName?: string) => {
+    subscribeToAnnouncements: async (divisionName?: string) => {
         const { unsubscribeFromAnnouncements, subscriptionStatus } = get();
 
         // Don't set up new subscriptions if we're already subscribed
@@ -933,110 +934,111 @@ export const useAnnouncementStore = create<AnnouncementStore>((set, get) => ({
 
         const channelSuffix = divisionName ? `-${divisionName}` : "";
 
-        // Subscribe to announcements changes with division filtering (following pattern from divisionMeetingStore)
-        const announcementsChannel = supabase
-            .channel(`announcements-changes${channelSuffix}`)
-            .on(
-                "postgres_changes",
-                {
-                    event: "*",
-                    schema: "public",
-                    table: "announcements",
-                },
-                (payload) => {
+        // Subscribe to announcements changes with division filtering
+        const announcementsChannel = await createRealtimeChannel(
+            `announcements-changes${channelSuffix}`,
+        );
+        announcementsChannel.on(
+            "postgres_changes",
+            {
+                event: "*",
+                schema: "public",
+                table: "announcements",
+            },
+            (payload) => {
+                console.log(
+                    `[Realtime] Announcements change received for ${
+                        divisionName || "ALL"
+                    }:`,
+                    {
+                        event: payload.eventType,
+                        table: payload.table,
+                        recordId: (payload.new as any)?.id ||
+                            (payload.old as any)?.id,
+                        targetType: (payload.new as any)?.target_type ||
+                            (payload.old as any)?.target_type,
+                        targetDivisionIds:
+                            (payload.new as any)?.target_division_ids ||
+                            (payload.old as any)?.target_division_ids,
+                    },
+                );
+
+                // Validate that this change is relevant to our division context
+                const changeTargetType = (payload.new as any)?.target_type ||
+                    (payload.old as any)?.target_type;
+                const changeTargetDivisionIds =
+                    (payload.new as any)?.target_division_ids ||
+                    (payload.old as any)?.target_division_ids;
+
+                if (
+                    divisionId &&
+                    changeTargetType === "division" &&
+                    changeTargetDivisionIds &&
+                    !changeTargetDivisionIds.includes(divisionId)
+                ) {
                     console.log(
-                        `[Realtime] Announcements change received for ${
-                            divisionName || "ALL"
-                        }:`,
-                        {
-                            event: payload.eventType,
-                            table: payload.table,
-                            recordId: (payload.new as any)?.id ||
-                                (payload.old as any)?.id,
-                            targetType: (payload.new as any)?.target_type ||
-                                (payload.old as any)?.target_type,
-                            targetDivisionIds:
-                                (payload.new as any)?.target_division_ids ||
-                                (payload.old as any)?.target_division_ids,
+                        `[Realtime] Ignoring change for different division (expected: ${divisionId}, got: ${changeTargetDivisionIds})`,
+                    );
+                    return;
+                }
+
+                // Refresh the appropriate division's data
+                if (divisionName) {
+                    console.log(
+                        `[Realtime] Refreshing announcements for division: ${divisionName}`,
+                    );
+                    if (divisionName === "GCA") {
+                        get().fetchGCAnnouncements();
+                    } else {
+                        get().fetchDivisionAnnouncements(divisionName);
+                    }
+                }
+            },
+        );
+
+        announcementsChannel.subscribe();
+
+        // Subscribe to read status changes
+        const readStatusChannel = await createRealtimeChannel(
+            `announcement-read-status-changes${channelSuffix}`,
+        );
+        readStatusChannel.on(
+            "postgres_changes",
+            {
+                event: "*",
+                schema: "public",
+                table: "announcement_read_status",
+            },
+            (payload) => {
+                console.log(
+                    `[Realtime] Read status change received:`,
+                    payload,
+                );
+
+                // Update read status in local state
+                const announcementId = (payload.new as any)?.announcement_id ||
+                    (payload.old as any)?.announcement_id;
+                const userId = (payload.new as any)?.user_id ||
+                    (payload.old as any)?.user_id;
+
+                if (announcementId && userId) {
+                    // Update local read status map
+                    set((state) => ({
+                        readStatusMap: {
+                            ...state.readStatusMap,
+                            [announcementId]: payload.eventType !== "DELETE",
                         },
+                    }));
+
+                    // Recalculate unread counts
+                    get()._calculateUnreadCounts(
+                        get().userDivisionId || undefined,
                     );
+                }
+            },
+        );
 
-                    // Validate that this change is relevant to our division context
-                    const changeTargetType =
-                        (payload.new as any)?.target_type ||
-                        (payload.old as any)?.target_type;
-                    const changeTargetDivisionIds =
-                        (payload.new as any)?.target_division_ids ||
-                        (payload.old as any)?.target_division_ids;
-
-                    if (
-                        divisionId &&
-                        changeTargetType === "division" &&
-                        changeTargetDivisionIds &&
-                        !changeTargetDivisionIds.includes(divisionId)
-                    ) {
-                        console.log(
-                            `[Realtime] Ignoring change for different division (expected: ${divisionId}, got: ${changeTargetDivisionIds})`,
-                        );
-                        return;
-                    }
-
-                    // Refresh the appropriate division's data
-                    if (divisionName) {
-                        console.log(
-                            `[Realtime] Refreshing announcements for division: ${divisionName}`,
-                        );
-                        if (divisionName === "GCA") {
-                            get().fetchGCAnnouncements();
-                        } else {
-                            get().fetchDivisionAnnouncements(divisionName);
-                        }
-                    }
-                },
-            )
-            .subscribe();
-
-        // Subscribe to read status changes (following pattern from divisionMeetingStore)
-        const readStatusChannel = supabase
-            .channel(`announcement-read-status-changes${channelSuffix}`)
-            .on(
-                "postgres_changes",
-                {
-                    event: "*",
-                    schema: "public",
-                    table: "announcement_read_status",
-                },
-                (payload) => {
-                    console.log(
-                        `[Realtime] Read status change received:`,
-                        payload,
-                    );
-
-                    // Update read status in local state
-                    const announcementId =
-                        (payload.new as any)?.announcement_id ||
-                        (payload.old as any)?.announcement_id;
-                    const userId = (payload.new as any)?.user_id ||
-                        (payload.old as any)?.user_id;
-
-                    if (announcementId && userId) {
-                        // Update local read status map
-                        set((state) => ({
-                            readStatusMap: {
-                                ...state.readStatusMap,
-                                [announcementId]:
-                                    payload.eventType !== "DELETE",
-                            },
-                        }));
-
-                        // Recalculate unread counts
-                        get()._calculateUnreadCounts(
-                            get().userDivisionId || undefined,
-                        );
-                    }
-                },
-            )
-            .subscribe();
+        readStatusChannel.subscribe();
 
         // Store the subscription channels (following pattern from divisionMeetingStore)
         set({
@@ -1115,7 +1117,7 @@ export const useAnnouncementStore = create<AnnouncementStore>((set, get) => ({
     },
 
     // Initialize announcement store
-    initializeAnnouncementStore: (
+    initializeAnnouncementStore: async (
         userId: string,
         assignedDivisionId: number | null,
         roles: string[],
@@ -1133,7 +1135,7 @@ export const useAnnouncementStore = create<AnnouncementStore>((set, get) => ({
         get().setIsInitialized(true);
 
         // Subscribe to realtime updates
-        const cleanup = get().subscribeToAnnouncements();
+        const cleanup = await get().subscribeToAnnouncements();
 
         // Fetch initial announcement data to populate badges
         const fetchInitialData = async () => {

@@ -4,6 +4,7 @@ import { ThemedText } from "@/components/ThemedText";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { supabase } from "@/utils/supabase";
+import { createRealtimeChannel } from "@/utils/realtime";
 
 interface EmailAlertsBadgeProps {
   divisionFilter?: string; // Optional division filter for division admins
@@ -98,34 +99,38 @@ export function EmailAlertsBadge({ divisionFilter }: EmailAlertsBadgeProps) {
     fetchAlertCount();
 
     // Set up real-time subscription for email tracking changes
-    const emailTrackingSubscription = supabase
-      .channel("email_alerts_badge")
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "email_tracking",
-        },
-        () => {
-          fetchAlertCount();
-        }
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "division_email_audit_log",
-        },
-        () => {
-          fetchAlertCount();
-        }
-      )
-      .subscribe();
+    let emailTrackingSubscription: any;
+    (async () => {
+      emailTrackingSubscription = await createRealtimeChannel("email_alerts_badge");
+
+      emailTrackingSubscription
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "email_tracking",
+          },
+          () => {
+            fetchAlertCount();
+          }
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "division_email_audit_log",
+          },
+          () => {
+            fetchAlertCount();
+          }
+        )
+        .subscribe();
+    })();
 
     return () => {
-      emailTrackingSubscription.unsubscribe();
+      emailTrackingSubscription?.unsubscribe?.();
     };
   }, [divisionFilter]);
 
