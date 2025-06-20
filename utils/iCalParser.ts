@@ -252,6 +252,10 @@ export function parseSummary(summary: string): {
 } | null {
     console.log(`[iCalParser] Parsing summary: "${summary}"`);
 
+    // Support summaries where the leave type is wrapped in parentheses, e.g. "T. Cardinal (SDV)"
+    // Strip the parentheses so that existing regex patterns can handle the string normally.
+    summary = summary.replace(/\(\s*(PLD|SDV)\s*\)/gi, "$1");
+
     // Normalize the summary to handle inconsistent spacing around dash
     // Replace dash with space-dash-space, then collapse multiple spaces
     const normalizedSummary = summary
