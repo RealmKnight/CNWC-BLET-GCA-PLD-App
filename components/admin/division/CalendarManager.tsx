@@ -328,7 +328,7 @@ export function CalendarManager() {
             contentContainerStyle={styles.contentContainer}
             nestedScrollEnabled={true}
           >
-            <PldSdvManager selectedDivision={selectedDivision} selectedCalendarId={selectedCalendarId || undefined} />
+            <PldSdvManager selectedDivision={selectedDivision} selectedCalendarId={selectedCalendarId} />
           </ScrollView>
         );
       default:

@@ -43,6 +43,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { ViewPldSdvComponent } from "./ViewPldSdvComponent";
 import { ImportPldSdvComponent } from "./ImportPldSdvComponent";
 import { ManualPldSdvRequestEntry } from "./ManualPldSdvRequestEntry";
+import { ManageWaitlistComponent } from "./ManageWaitlistComponent";
 
 // Types for our component
 type DatePreset = "3days" | "7days" | "30days" | "6months" | "alltime" | "custom";
@@ -74,7 +75,7 @@ interface MemberSearchResult {
 
 interface PldSdvManagerProps {
   selectedDivision: string;
-  selectedCalendarId: string | null | undefined;
+  selectedCalendarId: string | null;
 }
 
 interface DynamicStyles extends Record<string, StyleProp<ViewStyle | TextStyle | ImageStyle>> {
@@ -102,7 +103,7 @@ interface DynamicStyles extends Record<string, StyleProp<ViewStyle | TextStyle |
 }
 
 // Define the tab types
-type PldSdvTab = "view" | "import" | "enter";
+type PldSdvTab = "view" | "import" | "enter" | "waitlist";
 
 export function PldSdvManager({ selectedDivision, selectedCalendarId }: PldSdvManagerProps) {
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
@@ -182,9 +183,21 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId }: PldSdvMa
   const [statusFilter, setStatusFilter] = useState<RequestStatus | "all">("all");
   const [typeFilter, setTypeFilter] = useState<RequestType | "all">("all");
   const [isDivisionReady, setIsDivisionReady] = useState(false);
+  // Add local calendar selection state
+  const [localSelectedCalendarId, setLocalSelectedCalendarId] = useState<string | null>(selectedCalendarId);
+
+  // Sync prop changes with local state
+  useEffect(() => {
+    setLocalSelectedCalendarId(selectedCalendarId);
+  }, [selectedCalendarId]);
+
+  // Update ref when local calendar state changes
+  useEffect(() => {
+    currentCalendarIdRef.current = localSelectedCalendarId;
+  }, [localSelectedCalendarId]);
 
   // Refs to hold the latest state for fetchRequests to avoid closure issues
-  const currentCalendarIdRef = useRef<string | null | undefined>(selectedCalendarId);
+  const currentCalendarIdRef = useRef<string | null | undefined>(localSelectedCalendarId);
   const currentStartDateRef = useRef<string>(startDate);
   const currentEndDateRef = useRef<string>(endDate);
   const currentSelectedMemberRef = useRef<MemberSearchResult | null>(selectedMember);
@@ -681,10 +694,10 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId }: PldSdvMa
         return (
           <ViewPldSdvComponent
             selectedDivision={selectedDivision}
-            selectedCalendarId={selectedCalendarId}
+            selectedCalendarId={localSelectedCalendarId}
             onCalendarChange={(calendarId) => {
-              // No need to update selectedCalendarId since it comes from props
               console.log("[PldSdvManager] Calendar changed from ViewPldSdvComponent:", calendarId);
+              setLocalSelectedCalendarId(calendarId);
             }}
           />
         );
@@ -692,9 +705,10 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId }: PldSdvMa
         return (
           <ImportPldSdvComponent
             selectedDivision={selectedDivision}
-            selectedCalendarId={selectedCalendarId}
+            selectedCalendarId={localSelectedCalendarId}
             onCalendarChange={(calendarId) => {
               console.log("[PldSdvManager] Calendar changed from ImportPldSdvComponent:", calendarId);
+              setLocalSelectedCalendarId(calendarId);
             }}
           />
         );
@@ -702,16 +716,28 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId }: PldSdvMa
         return (
           <ManualPldSdvRequestEntry
             selectedDivision={selectedDivision}
-            selectedCalendarId={selectedCalendarId}
+            selectedCalendarId={localSelectedCalendarId}
             onCalendarChange={(calendarId) => {
               console.log("[PldSdvManager] Calendar changed from ManualPldSdvRequestEntry:", calendarId);
+              setLocalSelectedCalendarId(calendarId);
+            }}
+          />
+        );
+      case "waitlist":
+        return (
+          <ManageWaitlistComponent
+            selectedDivision={selectedDivision}
+            selectedCalendarId={localSelectedCalendarId}
+            onCalendarChange={(calendarId) => {
+              console.log("[PldSdvManager] Calendar changed from ManageWaitlistComponent:", calendarId);
+              setLocalSelectedCalendarId(calendarId);
             }}
           />
         );
       default:
-        return <ViewPldSdvComponent selectedDivision={selectedDivision} selectedCalendarId={selectedCalendarId} />;
+        return <ViewPldSdvComponent selectedDivision={selectedDivision} selectedCalendarId={localSelectedCalendarId} />;
     }
-  }, [activeTab, selectedDivision, selectedCalendarId]);
+  }, [activeTab, selectedDivision, localSelectedCalendarId]);
 
   return (
     <ThemedView style={currentStyles.container}>
@@ -719,6 +745,7 @@ export function PldSdvManager({ selectedDivision, selectedCalendarId }: PldSdvMa
         {renderTabButton("view", "list-outline", "View PLD/SDV")}
         {renderTabButton("import", "cloud-upload-outline", "Import PLD/SDV")}
         {renderTabButton("enter", "create-outline", "Enter PLD/SDV")}
+        {renderTabButton("waitlist", "reorder-four-outline", "Manage Waitlist(s)")}
       </View>
 
       <View style={currentStyles.contentContainer}>{renderTabContent()}</View>
