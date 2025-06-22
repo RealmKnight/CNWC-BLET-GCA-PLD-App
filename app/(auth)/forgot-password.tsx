@@ -10,6 +10,9 @@ import { sendPasswordResetEmail } from "@/utils/notificationService";
 import TurnstileCaptcha, { TurnstileCaptchaRef } from "@/components/ui/TurnstileCaptcha";
 import { useAuth } from "@/hooks/useAuth";
 
+// Email validation regex
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export default function ForgotPasswordScreen() {
   const [email, setEmail] = useState("");
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
@@ -17,8 +20,27 @@ export default function ForgotPasswordScreen() {
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [emailError, setEmailError] = useState<string | null>(null);
   const { resetPassword, isCaptchaEnabled } = useAuth();
   const captchaRef = useRef<TurnstileCaptchaRef>(null);
+
+  const validateEmail = (email: string): string | null => {
+    if (!email.trim()) {
+      return "Email is required";
+    }
+    if (!EMAIL_REGEX.test(email)) {
+      return "Please enter a valid email address";
+    }
+    return null;
+  };
+
+  const handleEmailChange = (value: string) => {
+    setEmail(value);
+    // Clear email error when user starts typing
+    if (emailError) {
+      setEmailError(null);
+    }
+  };
 
   const handleCaptchaVerify = (token: string) => {
     console.log("[ForgotPassword] CAPTCHA verified successfully");
@@ -44,16 +66,11 @@ export default function ForgotPasswordScreen() {
       setError(null);
       setCaptchaError(null);
 
-      // Basic validation
-      if (!email) {
-        setError("Please enter your email address");
-        return;
-      }
+      // Validate email using the consistent validation function
+      const emailValidationError = validateEmail(email);
+      setEmailError(emailValidationError);
 
-      // Email format validation
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(email)) {
-        setError("Please enter a valid email address");
+      if (emailValidationError) {
         return;
       }
 
@@ -116,16 +133,18 @@ export default function ForgotPasswordScreen() {
         {!isSubmitted ? (
           <>
             <TextInput
-              style={styles.input}
+              style={[styles.input, emailError && styles.inputError]}
               placeholder="Email"
               placeholderTextColor={Colors.dark.secondary}
               value={email}
-              onChangeText={setEmail}
+              onChangeText={handleEmailChange}
+              onBlur={() => setEmailError(validateEmail(email))}
               autoCapitalize="none"
               keyboardType="email-address"
               editable={!isLoading}
               accessibilityLabel="Email input field"
             />
+            {emailError && <ThemedText style={styles.validationError}>{emailError}</ThemedText>}
 
             {/* CAPTCHA Component */}
             <TurnstileCaptcha
@@ -266,5 +285,16 @@ const styles = StyleSheet.create({
     textAlign: "center",
     fontSize: 14,
     opacity: 0.8,
+  },
+  inputError: {
+    borderColor: Colors.dark.error,
+    borderWidth: 1,
+  },
+  validationError: {
+    color: Colors.dark.error,
+    fontSize: 12,
+    marginTop: -10,
+    marginBottom: 15,
+    paddingHorizontal: 5,
   },
 });

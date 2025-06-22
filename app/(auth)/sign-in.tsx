@@ -1,12 +1,16 @@
 import { useState, useRef } from "react";
 import { StyleSheet, TextInput, TouchableOpacity, Image } from "react-native";
 import { Link } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@/hooks/useAuth";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedScrollView } from "@/components/ThemedScrollView";
 import { ThemedText } from "@/components/ThemedText";
 import { Colors } from "@/constants/Colors";
 import TurnstileCaptcha, { TurnstileCaptchaRef } from "@/components/ui/TurnstileCaptcha";
+
+// Email validation regex
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // TODO: Add admin controls to enable/disable CAPTCHA protection
 // Future enhancement: Allow application_admin to enable/disable CAPTCHA protection
@@ -21,8 +25,28 @@ export default function SignInScreen() {
   const [captchaError, setCaptchaError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [emailError, setEmailError] = useState<string | null>(null);
   const { signIn, isCaptchaEnabled } = useAuth();
   const captchaRef = useRef<TurnstileCaptchaRef>(null);
+
+  const validateEmail = (email: string): string | null => {
+    if (!email.trim()) {
+      return "Email is required";
+    }
+    if (!EMAIL_REGEX.test(email)) {
+      return "Please enter a valid email address";
+    }
+    return null;
+  };
+
+  const handleEmailChange = (value: string) => {
+    setEmail(value);
+    // Clear email error when user starts typing
+    if (emailError) {
+      setEmailError(null);
+    }
+  };
 
   const handleCaptchaVerify = (token: string) => {
     console.log("[SignIn] CAPTCHA verified successfully");
@@ -94,24 +118,32 @@ export default function SignInScreen() {
 
       <ThemedView style={styles.form}>
         <TextInput
-          style={styles.input}
+          style={[styles.input, emailError && styles.inputError]}
           placeholder="Email"
           placeholderTextColor={Colors.dark.secondary}
           value={email}
-          onChangeText={setEmail}
+          onChangeText={handleEmailChange}
+          onBlur={() => setEmailError(validateEmail(email))}
           autoCapitalize="none"
           keyboardType="email-address"
           editable={!isLoading}
         />
-        <TextInput
-          style={styles.input}
-          placeholder="Password"
-          placeholderTextColor={Colors.dark.secondary}
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-          editable={!isLoading}
-        />
+        {emailError && <ThemedText style={styles.validationError}>{emailError}</ThemedText>}
+
+        <ThemedView style={styles.inputContainer}>
+          <TextInput
+            style={styles.inputWithIcon}
+            placeholder="Password"
+            placeholderTextColor={Colors.dark.secondary}
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry={!showPassword}
+            editable={!isLoading}
+          />
+          <TouchableOpacity style={styles.eyeIcon} onPress={() => setShowPassword(!showPassword)} disabled={isLoading}>
+            <Ionicons name={showPassword ? "eye-off" : "eye"} size={20} color={Colors.dark.secondary} />
+          </TouchableOpacity>
+        </ThemedView>
 
         {/* CAPTCHA Component */}
         <TurnstileCaptcha
@@ -237,5 +269,36 @@ const styles = StyleSheet.create({
     height: 163,
     alignSelf: "center",
     marginBottom: 20,
+  },
+  inputContainer: {
+    position: "relative",
+    marginBottom: 15,
+  },
+  inputWithIcon: {
+    height: 50,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    borderRadius: 8,
+    paddingHorizontal: 15,
+    paddingRight: 50, // Make room for the eye icon
+    backgroundColor: Colors.dark.card,
+    color: Colors.dark.primary,
+  },
+  eyeIcon: {
+    position: "absolute",
+    right: 15,
+    top: 15,
+    padding: 5,
+  },
+  inputError: {
+    borderColor: Colors.dark.error,
+    borderWidth: 1,
+  },
+  validationError: {
+    color: Colors.dark.error,
+    fontSize: 12,
+    marginTop: -10,
+    marginBottom: 15,
+    paddingHorizontal: 5,
   },
 });

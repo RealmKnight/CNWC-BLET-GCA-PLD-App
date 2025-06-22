@@ -1,12 +1,16 @@
 import { useState, useRef } from "react";
 import { StyleSheet, TextInput, TouchableOpacity, Image } from "react-native";
 import { Link } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@/hooks/useAuth";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedScrollView } from "@/components/ThemedScrollView";
 import { ThemedText } from "@/components/ThemedText";
 import { Colors } from "@/constants/Colors";
 import TurnstileCaptcha, { TurnstileCaptchaRef } from "@/components/ui/TurnstileCaptcha";
+
+// Email validation regex
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function SignUpScreen() {
   const [email, setEmail] = useState("");
@@ -16,8 +20,68 @@ export default function SignUpScreen() {
   const [captchaError, setCaptchaError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [confirmPasswordError, setConfirmPasswordError] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const { signUp, isCaptchaEnabled } = useAuth();
   const captchaRef = useRef<TurnstileCaptchaRef>(null);
+
+  const validateEmail = (email: string): string | null => {
+    if (!email.trim()) {
+      return "Email is required";
+    }
+    if (!EMAIL_REGEX.test(email)) {
+      return "Please enter a valid email address";
+    }
+    return null;
+  };
+
+  const validatePassword = (password: string): string | null => {
+    if (!password) {
+      return "Password is required";
+    }
+    if (password.length < 8) {
+      return "Password must be at least 8 characters long";
+    }
+    return null;
+  };
+
+  const validateConfirmPassword = (password: string, confirmPassword: string): string | null => {
+    if (!confirmPassword) {
+      return "Please confirm your password";
+    }
+    if (password !== confirmPassword) {
+      return "Passwords do not match";
+    }
+    return null;
+  };
+
+  const handleEmailChange = (value: string) => {
+    setEmail(value);
+    if (emailError) {
+      setEmailError(validateEmail(value));
+    }
+  };
+
+  const handlePasswordChange = (value: string) => {
+    setPassword(value);
+    if (passwordError) {
+      setPasswordError(validatePassword(value));
+    }
+    // Also revalidate confirm password if it's been entered
+    if (confirmPassword && confirmPasswordError) {
+      setConfirmPasswordError(validateConfirmPassword(value, confirmPassword));
+    }
+  };
+
+  const handleConfirmPasswordChange = (value: string) => {
+    setConfirmPassword(value);
+    if (confirmPasswordError) {
+      setConfirmPasswordError(validateConfirmPassword(password, value));
+    }
+  };
 
   const handleCaptchaVerify = (token: string) => {
     console.log("[SignUp] CAPTCHA verified successfully");
@@ -43,9 +107,18 @@ export default function SignUpScreen() {
       setCaptchaError(null);
       setIsLoading(true);
 
-      // Validate form inputs
-      if (password !== confirmPassword) {
-        throw new Error("Passwords do not match");
+      // Validate all form inputs
+      const emailValidationError = validateEmail(email);
+      const passwordValidationError = validatePassword(password);
+      const confirmPasswordValidationError = validateConfirmPassword(password, confirmPassword);
+
+      setEmailError(emailValidationError);
+      setPasswordError(passwordValidationError);
+      setConfirmPasswordError(confirmPasswordValidationError);
+
+      // If any validation errors exist, stop submission
+      if (emailValidationError || passwordValidationError || confirmPasswordValidationError) {
+        return;
       }
 
       // Validate CAPTCHA token only if CAPTCHA is enabled
@@ -77,7 +150,9 @@ export default function SignUpScreen() {
   };
 
   // Determine if form is ready to submit
-  const isFormReady = isCaptchaEnabled ? !!captchaToken : true;
+  const isFormValid =
+    email.trim() && password && confirmPassword && !emailError && !passwordError && !confirmPasswordError;
+  const isFormReady = isFormValid && (isCaptchaEnabled ? !!captchaToken : true);
 
   return (
     <ThemedScrollView
@@ -94,35 +169,62 @@ export default function SignUpScreen() {
 
       <ThemedView style={styles.form}>
         <TextInput
-          style={styles.input}
+          style={[styles.input, emailError && styles.inputError]}
           placeholder="Email"
           placeholderTextColor={Colors.dark.secondary}
           value={email}
-          onChangeText={setEmail}
+          onChangeText={handleEmailChange}
+          onBlur={() => setEmailError(validateEmail(email))}
           autoCapitalize="none"
           keyboardType="email-address"
           editable={!isLoading}
         />
+        {emailError && <ThemedText style={styles.validationError}>{emailError}</ThemedText>}
 
-        <TextInput
-          style={styles.input}
-          placeholder="Password"
-          placeholderTextColor={Colors.dark.secondary}
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-          editable={!isLoading}
-        />
+        <ThemedView style={styles.passwordSection}>
+          <ThemedView style={styles.inputContainer}>
+            <TextInput
+              style={[styles.inputWithIcon, passwordError && styles.inputError]}
+              placeholder="Password"
+              placeholderTextColor={Colors.dark.secondary}
+              value={password}
+              onChangeText={handlePasswordChange}
+              onBlur={() => setPasswordError(validatePassword(password))}
+              secureTextEntry={!showPassword}
+              editable={!isLoading}
+            />
+            <TouchableOpacity
+              style={styles.eyeIcon}
+              onPress={() => setShowPassword(!showPassword)}
+              disabled={isLoading}
+            >
+              <Ionicons name={showPassword ? "eye-off" : "eye"} size={20} color={Colors.dark.secondary} />
+            </TouchableOpacity>
+          </ThemedView>
+        </ThemedView>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Confirm Password"
-          placeholderTextColor={Colors.dark.secondary}
-          value={confirmPassword}
-          onChangeText={setConfirmPassword}
-          secureTextEntry
-          editable={!isLoading}
-        />
+        <ThemedView style={styles.inputContainer}>
+          <TextInput
+            style={[styles.inputWithIcon, confirmPasswordError && styles.inputError]}
+            placeholder="Confirm Password"
+            placeholderTextColor={Colors.dark.secondary}
+            value={confirmPassword}
+            onChangeText={handleConfirmPasswordChange}
+            onBlur={() => setConfirmPasswordError(validateConfirmPassword(password, confirmPassword))}
+            secureTextEntry={!showConfirmPassword}
+            editable={!isLoading}
+          />
+          <TouchableOpacity
+            style={styles.eyeIcon}
+            onPress={() => setShowConfirmPassword(!showConfirmPassword)}
+            disabled={isLoading}
+          >
+            <Ionicons name={showConfirmPassword ? "eye-off" : "eye"} size={20} color={Colors.dark.secondary} />
+          </TouchableOpacity>
+        </ThemedView>
+        <ThemedText style={styles.passwordRequirement}>Password must be at least 8 characters long</ThemedText>
+        {passwordError && <ThemedText style={styles.validationError}>{passwordError}</ThemedText>}
+        {confirmPasswordError && <ThemedText style={styles.validationError}>{confirmPasswordError}</ThemedText>}
 
         {/* CAPTCHA Component */}
         <TurnstileCaptcha
@@ -232,5 +334,46 @@ const styles = StyleSheet.create({
     height: 163,
     alignSelf: "center",
     marginBottom: 20,
+  },
+  passwordSection: {
+    marginBottom: 5,
+  },
+  passwordRequirement: {
+    color: Colors.dark.warning,
+    fontSize: 12,
+    marginTop: -10,
+    marginBottom: 15,
+    paddingHorizontal: 5,
+  },
+  inputError: {
+    borderColor: Colors.dark.error,
+    borderWidth: 1,
+  },
+  validationError: {
+    color: Colors.dark.error,
+    fontSize: 12,
+    marginTop: -10,
+    marginBottom: 15,
+    paddingHorizontal: 5,
+  },
+  inputContainer: {
+    position: "relative",
+    marginBottom: 15,
+  },
+  inputWithIcon: {
+    height: 50,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    borderRadius: 8,
+    paddingHorizontal: 15,
+    paddingRight: 50, // Make room for the eye icon
+    backgroundColor: Colors.dark.card,
+    color: Colors.dark.primary,
+  },
+  eyeIcon: {
+    position: "absolute",
+    right: 15,
+    top: 15,
+    padding: 5,
   },
 });
