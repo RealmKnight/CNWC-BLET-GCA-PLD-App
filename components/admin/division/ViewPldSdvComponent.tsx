@@ -40,6 +40,10 @@ import { CalendarSelector } from "./CalendarSelector";
 type DatePreset = "3days" | "7days" | "30days" | "6months" | "alltime" | "custom";
 
 interface PldSdvRequest extends Tables<"pld_sdv_requests"> {
+  // Additional fields not in the base Supabase type but present in the actual database
+  pin_number?: number | null; // For imported calendar requests
+  import_source?: string | null; // Source of the import
+  imported_at?: string | null; // When it was imported
   member?: {
     id: string;
     pin_number: number;
@@ -334,41 +338,106 @@ export function ViewPldSdvComponent({
       }
       lastFetchRef.current = { calendarId, startDate: start, endDate: end, timestamp: now };
 
-      // Main query using values from refs
-      let query = supabase
+      // Step 1: Fetch requests without member join
+      let requestQuery = supabase
         .from("pld_sdv_requests")
-        .select(
-          `
-          *,
-          member:members (
-            id,
-            pin_number,
-            first_name,
-            last_name
-          )
-        `
-        )
+        .select("*")
         .eq("calendar_id", calendarId)
-        .gte("request_date", start) // Use ref value
-        .lte("request_date", end); // Use ref value
+        .gte("request_date", start)
+        .lte("request_date", end);
 
       // Apply member filter using ref value
       if (member && search.length > 0) {
-        query = query.eq("member_id", member.id);
+        requestQuery = requestQuery.eq("member_id", member.id);
       }
 
-      console.log("[ViewPldSdvComponent] Executing main query with ref params:", {
+      console.log("[ViewPldSdvComponent] Executing requests query with ref params:", {
         calendarId,
         startDate: start,
         endDate: end,
         memberId: member?.id,
       });
-      const { data, error } = await query;
 
-      if (error) throw error;
+      const { data: requestsData, error: requestsError } = await requestQuery;
+      if (requestsError) throw requestsError;
 
-      console.log(`[ViewPldSdvComponent] Fetched ${data?.length || 0} requests successfully (refs).`);
-      setRequests(data || []);
+      if (!requestsData || requestsData.length === 0) {
+        console.log("[ViewPldSdvComponent] No requests found");
+        setRequests([]);
+        return;
+      }
+
+      // Step 2: Get unique member IDs and pin numbers for member lookup
+      const memberIds = new Set<string>();
+      const pinNumbers = new Set<number>();
+
+      requestsData.forEach((request) => {
+        if (request.member_id) {
+          memberIds.add(request.member_id);
+        } else if (request.pin_number) {
+          pinNumbers.add(request.pin_number);
+        }
+      });
+
+      // Step 3: Fetch member data for both member_id and pin_number cases
+      const memberMap = new Map<string, any>(); // key: member_id or pin_number, value: member data
+
+      // Fetch members by ID (for registered users)
+      if (memberIds.size > 0) {
+        const { data: membersById, error: membersByIdError } = await supabase
+          .from("members")
+          .select("id, pin_number, first_name, last_name")
+          .in("id", Array.from(memberIds));
+
+        if (membersByIdError) {
+          console.warn("[ViewPldSdvComponent] Error fetching members by ID:", membersByIdError);
+        } else if (membersById) {
+          membersById.forEach((member) => {
+            if (member.id) {
+              memberMap.set(`id_${member.id}`, member);
+            }
+          });
+        }
+      }
+
+      // Fetch members by PIN (for imported calendar requests)
+      if (pinNumbers.size > 0) {
+        const { data: membersByPin, error: membersByPinError } = await supabase
+          .from("members")
+          .select("id, pin_number, first_name, last_name")
+          .in("pin_number", Array.from(pinNumbers));
+
+        if (membersByPinError) {
+          console.warn("[ViewPldSdvComponent] Error fetching members by PIN:", membersByPinError);
+        } else if (membersByPin) {
+          membersByPin.forEach((member) => {
+            memberMap.set(`pin_${member.pin_number}`, member);
+          });
+        }
+      }
+
+      // Step 4: Enrich requests with member data
+      const enrichedRequests = requestsData.map((request) => {
+        let memberData = null;
+
+        // First try to match by member_id
+        if (request.member_id) {
+          memberData = memberMap.get(`id_${request.member_id}`);
+        }
+
+        // Fallback to match by pin_number for imported requests
+        if (!memberData && request.pin_number) {
+          memberData = memberMap.get(`pin_${request.pin_number}`);
+        }
+
+        return {
+          ...request,
+          member: memberData || null,
+        };
+      });
+
+      console.log(`[ViewPldSdvComponent] Fetched ${enrichedRequests.length} requests with member data enrichment.`);
+      setRequests(enrichedRequests);
     } catch (error) {
       console.error("[ViewPldSdvComponent] Error in fetchRequests (refs):", error);
       setError(error instanceof Error ? error.message : "Failed to fetch requests");
@@ -898,7 +967,11 @@ export function ViewPldSdvComponent({
                     {format(parseISO(request.request_date), "MMM d, yyyy")}
                   </td>
                   <td style={styles.tableCell as React.CSSProperties}>
-                    {request.member ? `${request.member.last_name}, ${request.member.first_name}` : "Unknown"}
+                    {request.member
+                      ? `${request.member.last_name}, ${request.member.first_name}`
+                      : request.pin_number
+                      ? `PIN: ${request.pin_number}`
+                      : "Unknown"}
                   </td>
                   <td style={styles.tableCell as React.CSSProperties}>{request.leave_type}</td>
                   <td style={styles.tableCell as React.CSSProperties}>{request.status}</td>
@@ -944,7 +1017,11 @@ export function ViewPldSdvComponent({
                   {format(parseISO(request.request_date), "MMM d, yyyy")}
                 </ThemedText>
                 <ThemedText style={styles.listItemMember as StyleProp<TextStyle>}>
-                  {request.member ? `${request.member.last_name}, ${request.member.first_name}` : "Unknown"}
+                  {request.member
+                    ? `${request.member.last_name}, ${request.member.first_name}`
+                    : request.pin_number
+                    ? `PIN: ${request.pin_number}`
+                    : "Unknown"}
                 </ThemedText>
                 <ThemedText style={styles.listItemType as StyleProp<TextStyle>}>{request.leave_type}</ThemedText>
                 <ThemedText style={styles.listItemStatus as StyleProp<TextStyle>}>{request.status}</ThemedText>
