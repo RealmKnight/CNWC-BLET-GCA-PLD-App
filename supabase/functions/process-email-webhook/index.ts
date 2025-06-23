@@ -436,6 +436,9 @@ serve(async (req) => {
       "approved": [
         "cancelled",
       ],
+      "cancellation_pending": [
+        "cancelled",
+      ],
       "denied": [],
       "cancelled": [],
     };
@@ -746,7 +749,7 @@ async function sendErrorNotificationToAdmin(
           subject: `🚨 Email Webhook Processing Error - Request ${
             requestId.substring(0, 8)
           }`,
-          html: `
+          htmlContent: `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
               <h2 style="color: #dc2626;">Email Webhook Processing Error</h2>
               
