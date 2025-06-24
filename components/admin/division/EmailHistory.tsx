@@ -531,7 +531,8 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
                         : record.request.pin_number
                         ? `PIN ${record.request.pin_number}`
                         : "Unknown Member"}{" "}
-                      - {record.request.leave_type} on {new Date(record.request.request_date).toLocaleDateString()}
+                      - {record.request.leave_type} on{" "}
+                      {new Date(record.request.request_date + "T12:00:00").toLocaleDateString()}
                     </ThemedText>
                   </View>
                 )}
