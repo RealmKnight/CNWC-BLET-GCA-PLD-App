@@ -1167,7 +1167,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     paddingHorizontal: 12,
     width: "100%",
-    fontSize: 14,
+    fontSize: 16, // Prevent iOS Safari auto-zoom
     ...(Platform.OS === "web" && {
       outlineColor: Colors.light.tint,
       outlineOffset: 0,

@@ -802,7 +802,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    fontSize: 14,
+    fontSize: 16, // Prevent iOS Safari auto-zoom
     backgroundColor: Colors.dark.background,
     color: Colors.dark.text,
   },

@@ -1423,7 +1423,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     paddingHorizontal: 12,
     width: "100%",
-    fontSize: 14, // Ensure consistent font size
+    fontSize: 16, // Prevent iOS Safari auto-zoom
     ...(Platform.OS === "web" && {
       outlineColor: Colors.light.tint, // Use a defined color
       outlineOffset: 0,
