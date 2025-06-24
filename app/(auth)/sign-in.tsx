@@ -1,8 +1,9 @@
 import { useState, useRef } from "react";
-import { StyleSheet, TextInput, TouchableOpacity, Image } from "react-native";
+import { StyleSheet, TextInput, TouchableOpacity, Image, KeyboardAvoidingView, Platform } from "react-native";
 import { Link } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@/hooks/useAuth";
+import { useWebInputEnhancements } from "@/hooks/useWebInputEnhancements";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedScrollView } from "@/components/ThemedScrollView";
 import { ThemedText } from "@/components/ThemedText";
@@ -29,6 +30,9 @@ export default function SignInScreen() {
   const [emailError, setEmailError] = useState<string | null>(null);
   const { signIn, isCaptchaEnabled } = useAuth();
   const captchaRef = useRef<TurnstileCaptchaRef>(null);
+
+  // Enable web-specific input enhancements for iOS PWA
+  useWebInputEnhancements();
 
   const validateEmail = (email: string): string | null => {
     if (!email.trim()) {
@@ -220,6 +224,7 @@ const styles = StyleSheet.create({
     marginBottom: 15,
     backgroundColor: Colors.dark.card,
     color: Colors.dark.primary,
+    fontSize: 16,
   },
   button: {
     backgroundColor: Colors.dark.buttonBackground,
@@ -283,6 +288,7 @@ const styles = StyleSheet.create({
     paddingRight: 50, // Make room for the eye icon
     backgroundColor: Colors.dark.card,
     color: Colors.dark.primary,
+    fontSize: 16,
   },
   eyeIcon: {
     position: "absolute",

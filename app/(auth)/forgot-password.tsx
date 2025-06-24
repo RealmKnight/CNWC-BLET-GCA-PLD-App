@@ -9,6 +9,7 @@ import { supabase } from "@/utils/supabase";
 import { sendPasswordResetEmail } from "@/utils/notificationService";
 import TurnstileCaptcha, { TurnstileCaptchaRef } from "@/components/ui/TurnstileCaptcha";
 import { useAuth } from "@/hooks/useAuth";
+import { useWebInputEnhancements } from "@/hooks/useWebInputEnhancements";
 
 // Email validation regex
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -23,6 +24,9 @@ export default function ForgotPasswordScreen() {
   const [emailError, setEmailError] = useState<string | null>(null);
   const { resetPassword, isCaptchaEnabled } = useAuth();
   const captchaRef = useRef<TurnstileCaptchaRef>(null);
+
+  // Enable web-specific input enhancements for iOS PWA
+  useWebInputEnhancements();
 
   const validateEmail = (email: string): string | null => {
     if (!email.trim()) {
@@ -224,6 +228,7 @@ const styles = StyleSheet.create({
     marginBottom: 15,
     backgroundColor: Colors.dark.card,
     color: Colors.dark.primary,
+    fontSize: 16,
   },
   button: {
     backgroundColor: Colors.dark.buttonBackground,
