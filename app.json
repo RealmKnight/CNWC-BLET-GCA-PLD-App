@@ -9,6 +9,7 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
+      "bundleIdentifier": "com.cnwcgcablet.pldapp",
       "supportsTablet": true,
       "runtimeVersion": {
         "policy": "appVersion"
@@ -21,7 +22,7 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#000000"
       },
-      "runtimeVersion": "1.0.0"
+      "runtimeVersion": "1.0.53"
     },
     "web": {
       "bundler": "metro",

@@ -1315,6 +1315,7 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
                 Member: {selectedMember?.first_name} {selectedMember?.last_name}
               </ThemedText>
               <ThemedText style={styles.modalInfoText}>Date: {formattedDate}</ThemedText>
+              <ThemedText style={styles.modalInfoText}>Request ID: {editingRequest.id}</ThemedText>
 
               {/* Leave Type Selector */}
               <View style={styles.selectorContainer}>
