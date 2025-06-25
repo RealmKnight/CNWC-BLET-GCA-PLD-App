@@ -165,6 +165,13 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
   const [selectedStatus, setSelectedStatus] = useState<string>("");
   const [selectedLeaveType, setSelectedLeaveType] = useState<"PLD" | "SDV">("PLD");
 
+  // Add state for request ID lookup
+  const [lookupRequestId, setLookupRequestId] = useState("");
+  const [lookupResult, setLookupResult] = useState<any | null>(null);
+  const [lookupError, setLookupError] = useState<string | null>(null);
+  const [isLookingUp, setIsLookingUp] = useState(false);
+  const [lookupDivisionWarning, setLookupDivisionWarning] = useState<string | null>(null);
+
   // Available statuses for admin editing
   const availableStatuses = ["approved", "pending", "waitlisted", "denied", "cancelled"];
   const availableLeaveTypes = ["PLD", "SDV"];
@@ -588,6 +595,11 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       setSearchQuery(`${member.last_name}, ${member.first_name} (${member.pin_number})`);
       setSearchResults([]);
 
+      // Clear lookup result when selecting a member
+      setLookupResult(null);
+      setLookupError(null);
+      setLookupDivisionWarning(null);
+
       // Close mobile search modal if open
       if (Platform.OS !== "web") {
         setShowMobileSearchModal(false);
@@ -858,6 +870,131 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     setEditingRequest(null);
     setError(null);
   }, []);
+
+  // Function to lookup request by ID
+  const handleRequestLookup = useCallback(async () => {
+    if (!lookupRequestId.trim()) {
+      setLookupError("Please enter a request ID");
+      return;
+    }
+
+    try {
+      setIsLookingUp(true);
+      setLookupError(null);
+      setLookupDivisionWarning(null);
+
+      // Clear member selection when doing request lookup
+      setSelectedMember(null);
+      setSearchQuery("");
+      setMemberRequests([]);
+      setMemberCalendarName(null);
+      setAvailableDays(null);
+      setSuccessMessage(null);
+
+      // Fetch request by ID globally
+      const { data: requestData, error: requestError } = await supabase
+        .from("pld_sdv_requests")
+        .select(
+          `
+          id,
+          request_date,
+          leave_type,
+          status,
+          paid_in_lieu,
+          calendar_id,
+          member_id,
+          pin_number,
+          requested_at,
+          responded_at,
+          responded_by
+        `
+        )
+        .eq("id", lookupRequestId.trim())
+        .single();
+
+      if (requestError) {
+        if (requestError.code === "PGRST116") {
+          setLookupError("Request ID not found");
+        } else {
+          setLookupError(`Error: ${requestError.message}`);
+        }
+        setIsLookingUp(false);
+        return;
+      }
+
+      if (!requestData) {
+        setLookupError("Request ID not found");
+        setIsLookingUp(false);
+        return;
+      }
+
+      // Check if this request's calendar belongs to the current division
+      const requestCalendar = currentDivisionCalendars.find((cal) => cal.id === requestData.calendar_id);
+      const isInCurrentDivision = !!requestCalendar;
+
+      // Fetch member data based on member_id or pin_number
+      let memberData = null;
+      if (requestData.member_id) {
+        const { data: memberByIdData, error: memberByIdError } = await supabase
+          .from("members")
+          .select("id, first_name, last_name, pin_number, calendar_id")
+          .eq("id", requestData.member_id)
+          .single();
+
+        if (!memberByIdError && memberByIdData) {
+          memberData = memberByIdData;
+        }
+      }
+
+      // If no member found by ID, try pin_number
+      if (!memberData && requestData.pin_number) {
+        const { data: memberByPinData, error: memberByPinError } = await supabase
+          .from("members")
+          .select("id, first_name, last_name, pin_number, calendar_id")
+          .eq("pin_number", requestData.pin_number)
+          .single();
+
+        if (!memberByPinError && memberByPinData) {
+          memberData = memberByPinData;
+        }
+      }
+
+      // Combine request and member data
+      const lookupData = {
+        ...requestData,
+        calendar_name: calendarNames[requestData.calendar_id] || "Unknown Calendar",
+        member_name: memberData
+          ? `${memberData.last_name}, ${memberData.first_name}`
+          : `Unknown Member (PIN: ${requestData.pin_number})`,
+        member_data: memberData,
+        is_in_current_division: isInCurrentDivision,
+      };
+
+      setLookupResult(lookupData);
+
+      // Set division warning if request is outside current division
+      if (!isInCurrentDivision) {
+        setLookupDivisionWarning(
+          `⚠️ This request belongs to a different division. You may need to switch to the appropriate division to manage this member's full history.`
+        );
+      }
+    } catch (err: any) {
+      console.error("Error looking up request:", err);
+      setLookupError(`Error: ${err.message || "Unknown error occurred"}`);
+    } finally {
+      setIsLookingUp(false);
+    }
+  }, [lookupRequestId, currentDivisionCalendars, calendarNames]);
+
+  // Function to load member history from lookup result
+  const handleLoadMemberFromLookup = useCallback(() => {
+    if (!lookupResult?.member_data || !lookupResult.is_in_current_division) {
+      return;
+    }
+
+    const member = lookupResult.member_data;
+    handleSelectMember(member);
+  }, [lookupResult, handleSelectMember]);
 
   // Handle date selection
   const handleDateChange = useCallback((date: Date | null) => {
@@ -1165,10 +1302,122 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     );
   };
 
+  // Render request ID lookup section
+  const renderRequestLookup = () => (
+    <View style={styles.section}>
+      <ThemedText style={styles.sectionTitle}>Quick Request Lookup</ThemedText>
+      <View style={styles.lookupContainer}>
+        <View style={styles.lookupInputWrapper}>
+          <TextInput
+            value={lookupRequestId}
+            onChangeText={setLookupRequestId}
+            placeholder="Enter Request ID (UUID)"
+            style={[styles.lookupInput, { color: Colors[colorScheme].text }]}
+            placeholderTextColor={Colors[colorScheme].secondary}
+          />
+          <Button
+            onPress={handleRequestLookup}
+            disabled={isLookingUp || !lookupRequestId.trim()}
+            variant="primary"
+            style={styles.lookupButton}
+          >
+            {isLookingUp ? "Looking up..." : "Lookup"}
+          </Button>
+        </View>
+
+        {lookupError && <ThemedText style={styles.lookupError}>{lookupError}</ThemedText>}
+
+        {lookupResult && (
+          <View style={styles.lookupResultContainer}>
+            <ThemedText style={styles.lookupResultTitle}>Request Found</ThemedText>
+
+            <View style={styles.lookupResultGrid}>
+              <View style={styles.lookupResultRow}>
+                <ThemedText style={styles.lookupResultLabel}>Request ID:</ThemedText>
+                <ThemedText style={styles.lookupResultValue}>{lookupResult.id}</ThemedText>
+              </View>
+
+              <View style={styles.lookupResultRow}>
+                <ThemedText style={styles.lookupResultLabel}>Member:</ThemedText>
+                <ThemedText style={styles.lookupResultValue}>
+                  {lookupResult.member_name} ({lookupResult.pin_number})
+                </ThemedText>
+              </View>
+
+              <View style={styles.lookupResultRow}>
+                <ThemedText style={styles.lookupResultLabel}>Date:</ThemedText>
+                <ThemedText style={styles.lookupResultValue}>
+                  {format(parseISO(lookupResult.request_date), "MMM dd, yyyy")}
+                </ThemedText>
+              </View>
+
+              <View style={styles.lookupResultRow}>
+                <ThemedText style={styles.lookupResultLabel}>Type:</ThemedText>
+                <ThemedText style={styles.lookupResultValue}>{lookupResult.leave_type}</ThemedText>
+              </View>
+
+              <View style={styles.lookupResultRow}>
+                <ThemedText style={styles.lookupResultLabel}>Status:</ThemedText>
+                <View style={styles.statusContainer}>
+                  <View style={[styles.statusDot, { backgroundColor: getStatusColor(lookupResult.status) }]} />
+                  <ThemedText style={styles.lookupResultValue}>{lookupResult.status}</ThemedText>
+                </View>
+              </View>
+
+              <View style={styles.lookupResultRow}>
+                <ThemedText style={styles.lookupResultLabel}>Paid In Lieu:</ThemedText>
+                <ThemedText style={styles.lookupResultValue}>{lookupResult.paid_in_lieu ? "Yes" : "No"}</ThemedText>
+              </View>
+
+              <View style={styles.lookupResultRow}>
+                <ThemedText style={styles.lookupResultLabel}>Calendar:</ThemedText>
+                <ThemedText style={styles.lookupResultValue}>{lookupResult.calendar_name}</ThemedText>
+              </View>
+            </View>
+
+            {lookupDivisionWarning && (
+              <ThemedText style={styles.lookupDivisionWarning}>{lookupDivisionWarning}</ThemedText>
+            )}
+
+            <View style={styles.lookupActions}>
+              <Button
+                onPress={() => handleEditRequest(lookupResult)}
+                variant="secondary"
+                style={styles.lookupActionButton}
+              >
+                <Ionicons name="create-outline" size={16} color={Colors[colorScheme].text} /> Edit Request
+              </Button>
+
+              {lookupResult.is_in_current_division && lookupResult.member_data && (
+                <Button onPress={handleLoadMemberFromLookup} variant="primary" style={styles.lookupActionButton}>
+                  <Ionicons name="person-outline" size={16} color={Colors[colorScheme].buttonText} /> Load Member
+                  History
+                </Button>
+              )}
+            </View>
+
+            <Button
+              onPress={() => {
+                setLookupResult(null);
+                setLookupRequestId("");
+                setLookupError(null);
+                setLookupDivisionWarning(null);
+              }}
+              variant="secondary"
+              style={styles.clearLookupButton}
+            >
+              Clear Lookup
+            </Button>
+          </View>
+        )}
+      </View>
+    </View>
+  );
+
   // Render the member search - modified for platform specifics
   const renderMemberSearch = () => (
     <View style={styles.section}>
-      <ThemedText style={styles.sectionTitle}>1. Select Member</ThemedText>
+      <ThemedText style={styles.sectionTitle}>Select Member by Search</ThemedText>
       <View style={styles.searchContainer} onLayout={Platform.OS !== "web" ? handleSearchInputLayout : undefined}>
         <View style={styles.searchInputWrapper}>
           <TextInput
@@ -1229,7 +1478,7 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
 
     return (
       <View style={styles.section}>
-        <ThemedText style={styles.sectionTitle}>2. Enter Request Details</ThemedText>
+        <ThemedText style={styles.sectionTitle}>Enter Request Details</ThemedText>
 
         <View style={styles.formRow}>
           <ThemedText style={styles.label}>Request Date:</ThemedText>
@@ -2165,6 +2414,96 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       color: Colors.dark.secondary,
       fontStyle: "italic",
     },
+    // Lookup styles
+    lookupContainer: {
+      marginBottom: 16,
+    },
+    lookupInputWrapper: {
+      flexDirection: "row",
+      alignItems: "center",
+      marginBottom: 12,
+    },
+    lookupInput: {
+      flex: 1,
+      height: 40,
+      borderWidth: 1,
+      borderColor: Colors.dark.border,
+      borderRadius: 8,
+      paddingHorizontal: 12,
+      marginRight: 12,
+      ...(Platform.OS === "web" && {
+        outlineColor: Colors.dark.border,
+        outlineWidth: 0,
+      }),
+    },
+    lookupButton: {
+      minWidth: 100,
+    },
+    lookupError: {
+      color: Colors.dark.error,
+      fontSize: 14,
+      marginBottom: 12,
+    },
+    lookupResultContainer: {
+      marginTop: 16,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: Colors.dark.border,
+      borderRadius: 8,
+      backgroundColor: Colors.dark.card,
+    },
+    lookupResultTitle: {
+      fontSize: 18,
+      fontWeight: "bold",
+      marginBottom: 16,
+      color: Colors.dark.success,
+    },
+    lookupResultGrid: {
+      marginBottom: 16,
+    },
+    lookupResultRow: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      paddingVertical: 8,
+      borderBottomWidth: 1,
+      borderBottomColor: Colors.dark.border + "30",
+    },
+    lookupResultLabel: {
+      fontSize: 14,
+      fontWeight: "600",
+      flex: 1,
+      color: Colors.dark.text,
+    },
+    lookupResultValue: {
+      fontSize: 14,
+      flex: 2,
+      textAlign: "right",
+      color: Colors.dark.text,
+    },
+    lookupDivisionWarning: {
+      color: Colors.dark.warning,
+      fontSize: 14,
+      marginBottom: 16,
+      padding: 12,
+      backgroundColor: Colors.dark.warning + "20",
+      borderRadius: 6,
+      borderWidth: 1,
+      borderColor: Colors.dark.warning + "50",
+    },
+    lookupActions: {
+      flexDirection: Platform.OS === "web" ? "row" : "column",
+      justifyContent: "space-between",
+      marginBottom: 16,
+    },
+    lookupActionButton: {
+      marginBottom: Platform.OS === "web" ? 0 : 8,
+      marginRight: Platform.OS === "web" ? 8 : 0,
+      minWidth: Platform.OS === "web" ? 160 : undefined,
+    },
+    clearLookupButton: {
+      alignSelf: "flex-start",
+    },
   });
 
   // Fix the outer container and remove platform-specific conditions
@@ -2190,6 +2529,7 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       </ThemedText>
 
       <ScrollView style={styles.content} key={`scroll-${selectedMember?.id || "none"}`}>
+        {renderRequestLookup()}
         {renderMemberSearch()}
         {selectedMember && renderMemberRequests()}
         {selectedMember && renderAvailableDays()}
