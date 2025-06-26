@@ -2087,12 +2087,23 @@ export default function CalendarScreen() {
       </ThemedView>
     );
   }
+  // Enhanced calendar access check to handle furloughed members
   if (!member?.calendar_id) {
+    // Check if member is furloughed (inactive but has location data)
+    const isFurloughed = member?.status === "IN-ACTIVE" && member?.division_id && member?.current_zone_id;
+
+    const iconName = isFurloughed ? "person-outline" : "alert-circle-outline";
+    const iconColor = isFurloughed ? Colors[theme].error : Colors[theme].warning;
+    const title = isFurloughed ? "Member Furloughed" : "Calendar not assigned.";
+    const message = isFurloughed
+      ? "Calendar access is temporarily unavailable while you are furloughed. Contact your admin for restoration."
+      : "Not assigned a calendar. Please contact your division admin.";
+
     return (
       <ThemedView style={styles.centeredContainer}>
-        <Ionicons name="alert-circle-outline" size={48} color={Colors[theme].warning} />
-        <ThemedText style={styles.errorText}>Calendar not assigned.</ThemedText>
-        <ThemedText style={{ textAlign: "center" }}>Please contact support or your division admin.</ThemedText>
+        <Ionicons name={iconName} size={48} color={iconColor} />
+        <ThemedText style={styles.errorText}>{title}</ThemedText>
+        <ThemedText style={{ textAlign: "center" }}>{message}</ThemedText>
       </ThemedView>
     );
   }

@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { StyleSheet, TextInput, View, Platform, ActivityIndicator, Alert } from "react-native";
+import { StyleSheet, TextInput, View, Platform, ActivityIndicator } from "react-native";
+import { ThemedToast } from "@/components/ThemedToast";
+import Toast from "react-native-toast-message";
 import { Picker } from "@react-native-picker/picker";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -64,6 +66,21 @@ interface TransferData {
   notes?: string;
 }
 
+// New types for furlough/restore functionality
+type TransferType = "location_transfer" | "furlough" | "restore";
+
+interface FurloughData {
+  reason: string;
+  notes?: string;
+}
+
+interface RestoreData {
+  division_id?: number;
+  zone_id?: number;
+  calendar_id?: string;
+  notes?: string;
+}
+
 interface TransferSummary {
   member_pin: number;
   old_division_id?: number;
@@ -86,6 +103,7 @@ interface DropdownProps {
   onSelect: (value: number | string) => void;
   disabled?: boolean;
   required?: boolean;
+  hasError?: boolean;
 }
 
 const Dropdown: React.FC<DropdownProps> = ({
@@ -96,6 +114,7 @@ const Dropdown: React.FC<DropdownProps> = ({
   onSelect,
   disabled = false,
   required = false,
+  hasError = false,
 }) => {
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
 
@@ -122,8 +141,8 @@ const Dropdown: React.FC<DropdownProps> = ({
             padding: 8,
             backgroundColor: Colors[colorScheme].background,
             color: Colors[colorScheme].text,
-            borderColor: Colors[colorScheme].border,
-            borderWidth: 1,
+            borderColor: hasError ? Colors[colorScheme].error : Colors[colorScheme].border,
+            borderWidth: hasError ? 2 : 1,
             borderRadius: 8,
             width: "100%",
             fontSize: 14,
@@ -151,7 +170,8 @@ const Dropdown: React.FC<DropdownProps> = ({
           style={[
             styles.pickerContainer,
             disabled && styles.pickerDisabled,
-            { borderColor: Colors[colorScheme].border },
+            hasError && styles.pickerContainerError,
+            { borderColor: hasError ? Colors[colorScheme].error : Colors[colorScheme].border },
           ]}
         >
           <Picker
@@ -184,6 +204,7 @@ export function MemberTransfer() {
   const { user } = useAuth();
 
   // State
+  const [transferType, setTransferType] = useState<TransferType>("location_transfer");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<MemberSearchResult[]>([]);
   const [selectedMember, setSelectedMember] = useState<MemberSearchResult | null>(null);
@@ -192,9 +213,12 @@ export function MemberTransfer() {
   const [zones, setZones] = useState<Zone[]>([]);
   const [calendars, setCalendars] = useState<Calendar[]>([]);
   const [transferData, setTransferData] = useState<TransferData>({});
+  const [furloughData, setFurloughData] = useState<FurloughData>({ reason: "" });
+  const [restoreData, setRestoreData] = useState<RestoreData>({});
   const [isLoading, setIsLoading] = useState(false);
   const [isTransferring, setIsTransferring] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
+  const [operationError, setOperationError] = useState<string | null>(null);
 
   // Load initial data
   useEffect(() => {
@@ -243,54 +267,66 @@ export function MemberTransfer() {
     }
   };
 
-  // Search members
-  const searchMembers = useCallback(async (query: string) => {
-    if (query.length < 3) {
-      setSearchResults([]);
-      return;
-    }
-
-    try {
-      setIsLoading(true);
-      const searchTerm = query.trim();
-
-      console.log("Searching for:", searchTerm);
-
-      // Check if the search term is purely numeric (PIN search)
-      const isNumericSearch = /^\d+$/.test(searchTerm);
-
-      let supabaseQuery = supabase
-        .from("members")
-        .select(
-          "pin_number, first_name, last_name, status, division_id, current_zone_id, home_zone_id, calendar_id, id"
-        );
-
-      if (isNumericSearch) {
-        // For numeric search, try both exact match and partial match
-        const pinNumber = parseInt(searchTerm);
-        supabaseQuery = supabaseQuery.or(`pin_number.eq.${pinNumber},pin_number::text.ilike.%${searchTerm}%`);
-      } else {
-        // Search by name (case insensitive)
-        const nameTerm = searchTerm.toLowerCase();
-        supabaseQuery = supabaseQuery.or(`first_name.ilike.%${nameTerm}%,last_name.ilike.%${nameTerm}%`);
+  // Search members - Enhanced to handle different transfer types
+  const searchMembers = useCallback(
+    async (query: string) => {
+      if (query.length < 3) {
+        setSearchResults([]);
+        return;
       }
 
-      const { data, error } = await supabaseQuery.order("last_name").limit(50);
+      try {
+        setIsLoading(true);
+        const searchTerm = query.trim();
 
-      if (error) {
-        console.error("Supabase error:", error);
-        throw error;
+        console.log("Searching for:", searchTerm, "Transfer type:", transferType);
+
+        // Check if the search term is purely numeric (PIN search)
+        const isNumericSearch = /^\d+$/.test(searchTerm);
+
+        let supabaseQuery = supabase
+          .from("members")
+          .select(
+            "pin_number, first_name, last_name, status, division_id, current_zone_id, home_zone_id, calendar_id, id"
+          );
+
+        // Filter by status based on transfer type
+        if (transferType === "restore") {
+          // For restore, only show inactive members
+          supabaseQuery = supabaseQuery.eq("status", "IN-ACTIVE");
+        } else {
+          // For location transfer and furlough, only show active members
+          supabaseQuery = supabaseQuery.eq("status", "ACTIVE");
+        }
+
+        if (isNumericSearch) {
+          // For numeric search, try both exact match and partial match
+          const pinNumber = parseInt(searchTerm);
+          supabaseQuery = supabaseQuery.or(`pin_number.eq.${pinNumber},pin_number::text.ilike.%${searchTerm}%`);
+        } else {
+          // Search by name (case insensitive)
+          const nameTerm = searchTerm.toLowerCase();
+          supabaseQuery = supabaseQuery.or(`first_name.ilike.%${nameTerm}%,last_name.ilike.%${nameTerm}%`);
+        }
+
+        const { data, error } = await supabaseQuery.order("last_name").limit(50);
+
+        if (error) {
+          console.error("Supabase error:", error);
+          throw error;
+        }
+
+        console.log("Search results:", data?.length || 0, "members found");
+        setSearchResults(data || []);
+      } catch (error) {
+        console.error("Error searching members:", error);
+        setSearchResults([]);
+      } finally {
+        setIsLoading(false);
       }
-
-      console.log("Search results:", data?.length || 0, "members found");
-      setSearchResults(data || []);
-    } catch (error) {
-      console.error("Error searching members:", error);
-      setSearchResults([]);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+    },
+    [transferType]
+  );
 
   // Handle search input changes
   const handleSearchChange = useCallback(
@@ -351,14 +387,17 @@ export function MemberTransfer() {
     }
   }, []);
 
-  // Clear selection
+  // Clear selection - Enhanced to reset all transfer type data
   const handleClearSelection = () => {
     setSelectedMember(null);
     setSearchQuery("");
     setSearchResults([]);
     setMemberRequests([]);
     setTransferData({});
+    setFurloughData({ reason: "" });
+    setRestoreData({});
     setShowConfirmation(false);
+    setOperationError(null);
   };
 
   // Get filtered zones based on selected division
@@ -451,16 +490,211 @@ export function MemberTransfer() {
     return null;
   };
 
-  // Handle transfer submission
-  const handleTransfer = async () => {
-    const validationError = validateTransfer();
+  // Validate furlough data
+  const validateFurlough = (): string | null => {
+    if (!selectedMember) return "No member selected";
+    if (!furloughData.reason.trim()) return "Furlough reason is required";
+    if (selectedMember.status !== "ACTIVE") return "Only active members can be furloughed";
+    return null;
+  };
+
+  // Validate restore data
+  const validateRestore = (): string | null => {
+    if (!selectedMember) return "No member selected";
+    if (selectedMember.status !== "IN-ACTIVE") return "Only inactive members can be restored";
+
+    // If providing new location, validate required fields
+    if (restoreData.division_id || restoreData.zone_id || restoreData.calendar_id) {
+      if (restoreData.division_id && !restoreData.zone_id) {
+        return "Zone is required when specifying a new division";
+      }
+      if (restoreData.division_id && !restoreData.calendar_id) {
+        return "Calendar is required when specifying a new division";
+      }
+    }
+
+    return null;
+  };
+
+  // Handle furlough submission
+  const handleFurlough = async () => {
+    setOperationError(null); // Clear any previous errors
+
+    const validationError = validateFurlough();
     if (validationError) {
-      Alert.alert("Validation Error", validationError);
+      setOperationError(validationError);
+      Toast.show({
+        type: "error",
+        text1: "Validation Error",
+        text2: validationError,
+      });
       return;
     }
 
     if (!user?.id) {
-      Alert.alert("Error", "User not authenticated");
+      setOperationError("User not authenticated");
+      Toast.show({
+        type: "error",
+        text1: "Authentication Error",
+        text2: "User not authenticated",
+      });
+      return;
+    }
+
+    try {
+      setIsTransferring(true);
+
+      const { data, error } = await supabase.rpc("furlough_member", {
+        p_member_pin: selectedMember!.pin_number,
+        p_furloughed_by: user.id,
+        p_furlough_reason: furloughData.reason,
+        p_furlough_notes: furloughData.notes || null,
+      });
+
+      if (error) throw error;
+
+      if (data?.success) {
+        // Success - show toast and reset form
+        Toast.show({
+          type: "success",
+          text1: "Furlough Successful",
+          text2: `Member furloughed successfully. ${data.cancelled_requests} requests cancelled, ${data.transferred_requests} requests transferred.`,
+        });
+
+        // Reset the entire form on success
+        handleClearSelection();
+      } else {
+        // Operation failed - show error but keep form state
+        const errorMessage = data?.error || "Unknown error occurred";
+        setOperationError(errorMessage);
+        Toast.show({
+          type: "error",
+          text1: "Furlough Failed",
+          text2: errorMessage,
+        });
+
+        // Return to form (don't clear) so user can fix issues
+        setShowConfirmation(false);
+      }
+    } catch (error) {
+      console.error("Error furloughing member:", error);
+      const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
+      setOperationError(errorMessage);
+      Toast.show({
+        type: "error",
+        text1: "Furlough Failed",
+        text2: errorMessage,
+      });
+
+      // Return to form so user can try again
+      setShowConfirmation(false);
+    } finally {
+      setIsTransferring(false);
+    }
+  };
+
+  // Handle restore submission
+  const handleRestore = async () => {
+    setOperationError(null); // Clear any previous errors
+
+    const validationError = validateRestore();
+    if (validationError) {
+      setOperationError(validationError);
+      Toast.show({
+        type: "error",
+        text1: "Validation Error",
+        text2: validationError,
+      });
+      return;
+    }
+
+    if (!user?.id) {
+      setOperationError("User not authenticated");
+      Toast.show({
+        type: "error",
+        text1: "Authentication Error",
+        text2: "User not authenticated",
+      });
+      return;
+    }
+
+    try {
+      setIsTransferring(true);
+
+      const { data, error } = await supabase.rpc("restore_member", {
+        p_member_pin: selectedMember!.pin_number,
+        p_restored_by: user.id,
+        p_new_division_id: restoreData.division_id || null,
+        p_new_zone_id: restoreData.zone_id || null,
+        p_new_calendar_id: restoreData.calendar_id || null,
+        p_restore_notes: restoreData.notes || null,
+      });
+
+      if (error) throw error;
+
+      if (data?.success) {
+        // Success - show toast and reset form
+        const locationChanged = data.was_location_changed ? " (with location changes)" : " (to original location)";
+        Toast.show({
+          type: "success",
+          text1: "Restore Successful",
+          text2: `Member restored successfully${locationChanged}.`,
+        });
+
+        // Reset the entire form on success
+        handleClearSelection();
+      } else {
+        // Operation failed - show error but keep form state
+        const errorMessage = data?.error || "Unknown error occurred";
+        setOperationError(errorMessage);
+        Toast.show({
+          type: "error",
+          text1: "Restore Failed",
+          text2: errorMessage,
+        });
+
+        // Return to form so user can fix issues
+        setShowConfirmation(false);
+      }
+    } catch (error) {
+      console.error("Error restoring member:", error);
+      const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
+      setOperationError(errorMessage);
+      Toast.show({
+        type: "error",
+        text1: "Restore Failed",
+        text2: errorMessage,
+      });
+
+      // Return to form so user can try again
+      setShowConfirmation(false);
+    } finally {
+      setIsTransferring(false);
+    }
+  };
+
+  // Handle transfer submission
+  const handleTransfer = async () => {
+    setOperationError(null); // Clear any previous errors
+
+    const validationError = validateTransfer();
+    if (validationError) {
+      setOperationError(validationError);
+      Toast.show({
+        type: "error",
+        text1: "Validation Error",
+        text2: validationError,
+      });
+      return;
+    }
+
+    if (!user?.id) {
+      setOperationError("User not authenticated");
+      Toast.show({
+        type: "error",
+        text1: "Authentication Error",
+        text2: "User not authenticated",
+      });
       return;
     }
 
@@ -480,20 +714,42 @@ export function MemberTransfer() {
       if (error) throw error;
 
       if (data?.success) {
-        Alert.alert(
-          "Transfer Successful",
-          `Member transferred successfully.\n${data.cancelled_requests} requests cancelled, ${data.transferred_requests} requests transferred.`,
-          [{ text: "OK", onPress: handleClearSelection }]
-        );
+        // Success - show toast and reset form
+        Toast.show({
+          type: "success",
+          text1: "Transfer Successful",
+          text2: `Member transferred successfully. ${data.cancelled_requests} requests cancelled, ${data.transferred_requests} requests transferred.`,
+        });
+
+        // Reset the entire form on success
+        handleClearSelection();
       } else {
-        Alert.alert("Transfer Failed", data?.error || "Unknown error occurred");
+        // Operation failed - show error but keep form state
+        const errorMessage = data?.error || "Unknown error occurred";
+        setOperationError(errorMessage);
+        Toast.show({
+          type: "error",
+          text1: "Transfer Failed",
+          text2: errorMessage,
+        });
+
+        // Return to form so user can fix issues
+        setShowConfirmation(false);
       }
     } catch (error) {
       console.error("Error transferring member:", error);
-      Alert.alert("Transfer Failed", error instanceof Error ? error.message : "Unknown error occurred");
+      const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
+      setOperationError(errorMessage);
+      Toast.show({
+        type: "error",
+        text1: "Transfer Failed",
+        text2: errorMessage,
+      });
+
+      // Return to form so user can try again
+      setShowConfirmation(false);
     } finally {
       setIsTransferring(false);
-      setShowConfirmation(false);
     }
   };
 
@@ -519,12 +775,106 @@ export function MemberTransfer() {
   // Check if division transfer is happening
   const isDivisionTransfer = transferData.division_id && transferData.division_id !== selectedMember?.division_id;
 
+  // Helper function to determine if a field has an error for highlighting
+  const hasFieldError = (fieldName: string): boolean => {
+    if (!operationError) return false;
+
+    // Map error messages to fields that should be highlighted
+    const errorFieldMap: Record<string, string[]> = {
+      reason: ["furlough reason is required", "reason"],
+      division: [
+        "division",
+        "zone is required when transferring divisions",
+        "calendar is required when transferring divisions",
+      ],
+      zone: ["zone", "zone is required"],
+      calendar: ["calendar", "calendar is required"],
+    };
+
+    const lowerError = operationError.toLowerCase();
+    return errorFieldMap[fieldName]?.some((keyword) => lowerError.includes(keyword)) || false;
+  };
+
   return (
     <ThemedView style={styles.container}>
       <PlatformScrollView contentContainerStyle={styles.scrollContent}>
+        {/* Transfer Type Selection */}
+        <ThemedView style={styles.section}>
+          <ThemedText style={styles.sectionTitle}>Transfer Type</ThemedText>
+          <View style={styles.transferTypeContainer}>
+            <TouchableOpacityComponent
+              style={[
+                styles.transferTypeButton,
+                transferType === "location_transfer" && styles.transferTypeButtonActive,
+                { borderColor: Colors[colorScheme].border },
+              ]}
+              onPress={() => {
+                setTransferType("location_transfer");
+                handleClearSelection();
+              }}
+              activeOpacity={0.7}
+            >
+              <ThemedText
+                style={[styles.transferTypeText, transferType === "location_transfer" && styles.transferTypeTextActive]}
+              >
+                Location Transfer
+              </ThemedText>
+              <ThemedText style={styles.transferTypeDescription}>
+                Change member's division, zone, or calendar assignment
+              </ThemedText>
+            </TouchableOpacityComponent>
+
+            <TouchableOpacityComponent
+              style={[
+                styles.transferTypeButton,
+                transferType === "furlough" && styles.transferTypeButtonActive,
+                { borderColor: Colors[colorScheme].border },
+              ]}
+              onPress={() => {
+                setTransferType("furlough");
+                handleClearSelection();
+              }}
+              activeOpacity={0.7}
+            >
+              <ThemedText
+                style={[styles.transferTypeText, transferType === "furlough" && styles.transferTypeTextActive]}
+              >
+                Furlough Member
+              </ThemedText>
+              <ThemedText style={styles.transferTypeDescription}>
+                Set member to inactive while preserving location data
+              </ThemedText>
+            </TouchableOpacityComponent>
+
+            <TouchableOpacityComponent
+              style={[
+                styles.transferTypeButton,
+                transferType === "restore" && styles.transferTypeButtonActive,
+                { borderColor: Colors[colorScheme].border },
+              ]}
+              onPress={() => {
+                setTransferType("restore");
+                handleClearSelection();
+              }}
+              activeOpacity={0.7}
+            >
+              <ThemedText
+                style={[styles.transferTypeText, transferType === "restore" && styles.transferTypeTextActive]}
+              >
+                Restore Member
+              </ThemedText>
+              <ThemedText style={styles.transferTypeDescription}>
+                Restore previously furloughed member to active status
+              </ThemedText>
+            </TouchableOpacityComponent>
+          </View>
+        </ThemedView>
+
         {/* Member Search Section */}
         <ThemedView style={styles.section}>
-          <ThemedText style={styles.sectionTitle}>1. Select Member</ThemedText>
+          <ThemedText style={styles.sectionTitle}>
+            {transferType === "restore" ? "1. Select Inactive Member" : "1. Select Member"}
+          </ThemedText>
           <View style={styles.searchContainer}>
             <TextInput
               style={[styles.searchInput, { color: Colors[colorScheme].text }]}
@@ -673,10 +1023,10 @@ export function MemberTransfer() {
           </ThemedView>
         )}
 
-        {/* Transfer Form Section */}
-        {selectedMember && (
+        {/* Conditional Form Section based on Transfer Type */}
+        {selectedMember && transferType === "location_transfer" && (
           <ThemedView style={styles.section}>
-            <ThemedText style={styles.sectionTitle}>3. Transfer Options</ThemedText>
+            <ThemedText style={styles.sectionTitle}>3. Location Transfer Options</ThemedText>
 
             {/* Division Selector */}
             <Dropdown
@@ -685,6 +1035,7 @@ export function MemberTransfer() {
               placeholder="Select Division (optional)"
               options={divisions.map((d) => ({ id: d.id, name: d.name }))}
               onSelect={handleDivisionSelect}
+              hasError={hasFieldError("division")}
             />
 
             {/* Zone Selector */}
@@ -695,6 +1046,7 @@ export function MemberTransfer() {
               options={filteredZones.map((z) => ({ id: z.id, name: z.name }))}
               onSelect={handleZoneSelect}
               required={Boolean(isDivisionTransfer)}
+              hasError={hasFieldError("zone")}
             />
 
             {/* Calendar Selector */}
@@ -705,6 +1057,7 @@ export function MemberTransfer() {
               options={filteredCalendars.map((c) => ({ id: c.id, name: c.name }))}
               onSelect={handleCalendarSelect}
               required={Boolean(isDivisionTransfer)}
+              hasError={hasFieldError("calendar")}
             />
 
             {/* Home Zone Selector */}
@@ -741,6 +1094,149 @@ export function MemberTransfer() {
           </ThemedView>
         )}
 
+        {/* Furlough Form Section */}
+        {selectedMember && transferType === "furlough" && (
+          <ThemedView style={styles.section}>
+            <ThemedText style={styles.sectionTitle}>3. Furlough Details</ThemedText>
+
+            {/* Current Member Location (Read-only) */}
+            <View style={styles.currentLocationContainer}>
+              <ThemedText style={styles.currentLocationTitle}>Current Assignment (Preserved):</ThemedText>
+              <ThemedText style={styles.currentLocationDetail}>
+                Division: {divisions.find((d) => d.id === selectedMember.division_id)?.name || "Unknown"}
+              </ThemedText>
+              <ThemedText style={styles.currentLocationDetail}>
+                Zone: {zones.find((z) => z.id === selectedMember.current_zone_id)?.name || "Unknown"}
+              </ThemedText>
+              <ThemedText style={styles.currentLocationDetail}>
+                Calendar: {calendars.find((c) => c.id === selectedMember.calendar_id)?.name || "Unknown"}
+              </ThemedText>
+            </View>
+
+            {/* Furlough Reason */}
+            <View style={styles.formGroup}>
+              <ThemedText style={styles.label}>
+                Furlough Reason <ThemedText style={styles.required}>*</ThemedText>
+              </ThemedText>
+              <TextInput
+                style={[
+                  styles.searchInput,
+                  { color: Colors[colorScheme].text },
+                  hasFieldError("reason") && styles.searchInputError,
+                ]}
+                placeholder="e.g., voluntary, forced, position eliminated"
+                placeholderTextColor={Colors[colorScheme].textDim}
+                value={furloughData.reason}
+                onChangeText={(text) => {
+                  setFurloughData((prev) => ({ ...prev, reason: text }));
+                  // Clear error when user starts typing
+                  if (operationError && hasFieldError("reason")) {
+                    setOperationError(null);
+                  }
+                }}
+              />
+            </View>
+
+            {/* Furlough Notes */}
+            <View style={styles.formGroup}>
+              <ThemedText style={styles.label}>Additional Notes (optional):</ThemedText>
+              <TextInput
+                style={[styles.notesInput, { color: Colors[colorScheme].text }]}
+                placeholder="Additional details about the furlough..."
+                placeholderTextColor={Colors[colorScheme].textDim}
+                value={furloughData.notes || ""}
+                onChangeText={(text) => setFurloughData((prev) => ({ ...prev, notes: text }))}
+                multiline
+                numberOfLines={3}
+              />
+            </View>
+
+            {/* Furlough Impact Info */}
+            <View style={styles.requirementInfo}>
+              <ThemedText style={styles.requirementText}>
+                ℹ️ Member will be set to inactive status and calendar access will be removed. All location data will be
+                preserved for future restoration.
+              </ThemedText>
+            </View>
+          </ThemedView>
+        )}
+
+        {/* Restore Form Section */}
+        {selectedMember && transferType === "restore" && (
+          <ThemedView style={styles.section}>
+            <ThemedText style={styles.sectionTitle}>3. Restore Member</ThemedText>
+
+            {/* Show Original Location */}
+            <View style={styles.currentLocationContainer}>
+              <ThemedText style={styles.currentLocationTitle}>Original Assignment:</ThemedText>
+              <ThemedText style={styles.currentLocationDetail}>
+                Division: {divisions.find((d) => d.id === selectedMember.division_id)?.name || "Unknown"}
+              </ThemedText>
+              <ThemedText style={styles.currentLocationDetail}>
+                Zone: {zones.find((z) => z.id === selectedMember.current_zone_id)?.name || "Unknown"}
+              </ThemedText>
+              <ThemedText style={styles.currentLocationDetail}>
+                Home Zone: {zones.find((z) => z.id === selectedMember.home_zone_id)?.name || "Unknown"}
+              </ThemedText>
+            </View>
+
+            {/* Optional New Location Override */}
+            <ThemedText style={styles.label}>Override Location (optional):</ThemedText>
+
+            <Dropdown
+              label="New Division"
+              value={restoreData.division_id}
+              placeholder="Use original division"
+              options={divisions.map((d) => ({ id: d.id, name: d.name }))}
+              onSelect={(divisionId) => setRestoreData((prev) => ({ ...prev, division_id: Number(divisionId) }))}
+              hasError={hasFieldError("division")}
+            />
+
+            <Dropdown
+              label="New Zone"
+              value={restoreData.zone_id}
+              placeholder="Use original zone"
+              options={filteredZones.map((z) => ({ id: z.id, name: z.name }))}
+              onSelect={(zoneId) => setRestoreData((prev) => ({ ...prev, zone_id: Number(zoneId) }))}
+              required={Boolean(restoreData.division_id)}
+              hasError={hasFieldError("zone")}
+            />
+
+            <Dropdown
+              label="New Calendar"
+              value={restoreData.calendar_id}
+              placeholder="Use original calendar"
+              options={filteredCalendars.map((c) => ({ id: c.id, name: c.name }))}
+              onSelect={(calendarId) => setRestoreData((prev) => ({ ...prev, calendar_id: String(calendarId) }))}
+              required={Boolean(restoreData.division_id)}
+              hasError={hasFieldError("calendar")}
+            />
+
+            {/* Restore Notes */}
+            <View style={styles.formGroup}>
+              <ThemedText style={styles.label}>Restoration Notes (optional):</ThemedText>
+              <TextInput
+                style={[styles.notesInput, { color: Colors[colorScheme].text }]}
+                placeholder="Reason for restoration, any location changes, etc."
+                placeholderTextColor={Colors[colorScheme].textDim}
+                value={restoreData.notes || ""}
+                onChangeText={(text) => setRestoreData((prev) => ({ ...prev, notes: text }))}
+                multiline
+                numberOfLines={3}
+              />
+            </View>
+
+            {/* Restore Requirements Info */}
+            {restoreData.division_id && (
+              <View style={styles.requirementInfo}>
+                <ThemedText style={styles.requirementText}>
+                  ℹ️ Location override selected. Zone and Calendar are required when changing divisions.
+                </ThemedText>
+              </View>
+            )}
+          </ThemedView>
+        )}
+
         {/* Confirmation Section */}
         {selectedMember && !showConfirmation && (
           <ThemedView style={styles.section}>
@@ -749,7 +1245,11 @@ export function MemberTransfer() {
               onPress={() => setShowConfirmation(true)}
               activeOpacity={0.7}
             >
-              <ThemedText style={styles.reviewButtonText}>Review Transfer</ThemedText>
+              <ThemedText style={styles.reviewButtonText}>
+                {transferType === "location_transfer" && "Review Transfer"}
+                {transferType === "furlough" && "Review Furlough"}
+                {transferType === "restore" && "Review Restoration"}
+              </ThemedText>
             </ThemedTouchableOpacity>
           </ThemedView>
         )}
@@ -757,52 +1257,113 @@ export function MemberTransfer() {
         {/* Transfer Confirmation */}
         {showConfirmation && selectedMember && (
           <ThemedView style={styles.section}>
-            <ThemedText style={styles.sectionTitle}>4. Confirm Transfer</ThemedText>
+            <ThemedText style={styles.sectionTitle}>
+              4. {transferType === "location_transfer" && "Confirm Transfer"}
+              {transferType === "furlough" && "Confirm Furlough"}
+              {transferType === "restore" && "Confirm Restoration"}
+            </ThemedText>
 
             <View style={styles.confirmationContainer}>
-              <ThemedText style={styles.confirmationTitle}>Transfer Summary:</ThemedText>
+              <ThemedText style={styles.confirmationTitle}>
+                {transferType === "location_transfer" && "Transfer Summary:"}
+                {transferType === "furlough" && "Furlough Summary:"}
+                {transferType === "restore" && "Restoration Summary:"}
+              </ThemedText>
               <ThemedText style={styles.confirmationDetail}>
                 Member: {selectedMember.last_name}, {selectedMember.first_name} ({selectedMember.pin_number})
               </ThemedText>
 
-              {transferData.division_id && (
-                <ThemedText style={styles.confirmationDetail}>
-                  Division: {divisions.find((d) => d.id === selectedMember.division_id)?.name} →{" "}
-                  {divisions.find((d) => d.id === transferData.division_id)?.name}
-                </ThemedText>
+              {/* Location Transfer Confirmation */}
+              {transferType === "location_transfer" && (
+                <>
+                  {transferData.division_id && (
+                    <ThemedText style={styles.confirmationDetail}>
+                      Division: {divisions.find((d) => d.id === selectedMember.division_id)?.name} →{" "}
+                      {divisions.find((d) => d.id === transferData.division_id)?.name}
+                    </ThemedText>
+                  )}
+
+                  {transferData.zone_id && (
+                    <ThemedText style={styles.confirmationDetail}>
+                      Zone: {zones.find((z) => z.id === selectedMember.current_zone_id)?.name} →{" "}
+                      {zones.find((z) => z.id === transferData.zone_id)?.name}
+                    </ThemedText>
+                  )}
+
+                  {transferData.calendar_id && (
+                    <ThemedText style={styles.confirmationDetail}>
+                      Calendar: {calendars.find((c) => c.id === selectedMember.calendar_id)?.name} →{" "}
+                      {calendars.find((c) => c.id === transferData.calendar_id)?.name}
+                    </ThemedText>
+                  )}
+
+                  {transferData.home_zone_id && (
+                    <ThemedText style={styles.confirmationDetail}>
+                      Home Zone: {zones.find((z) => z.id === selectedMember.home_zone_id)?.name} →{" "}
+                      {zones.find((z) => z.id === transferData.home_zone_id)?.name}
+                    </ThemedText>
+                  )}
+                </>
               )}
 
-              {transferData.zone_id && (
-                <ThemedText style={styles.confirmationDetail}>
-                  Zone: {zones.find((z) => z.id === selectedMember.current_zone_id)?.name} →{" "}
-                  {zones.find((z) => z.id === transferData.zone_id)?.name}
-                </ThemedText>
+              {/* Furlough Confirmation */}
+              {transferType === "furlough" && (
+                <>
+                  <ThemedText style={styles.confirmationDetail}>Status: ACTIVE → IN-ACTIVE</ThemedText>
+                  <ThemedText style={styles.confirmationDetail}>Reason: {furloughData.reason}</ThemedText>
+                  {furloughData.notes && (
+                    <ThemedText style={styles.confirmationDetail}>Notes: {furloughData.notes}</ThemedText>
+                  )}
+                  <ThemedText style={styles.confirmationDetail}>
+                    Calendar Assignment: Will be removed (location data preserved)
+                  </ThemedText>
+                </>
               )}
 
-              {transferData.calendar_id && (
-                <ThemedText style={styles.confirmationDetail}>
-                  Calendar: {calendars.find((c) => c.id === selectedMember.calendar_id)?.name} →{" "}
-                  {calendars.find((c) => c.id === transferData.calendar_id)?.name}
-                </ThemedText>
+              {/* Restore Confirmation */}
+              {transferType === "restore" && (
+                <>
+                  <ThemedText style={styles.confirmationDetail}>Status: IN-ACTIVE → ACTIVE</ThemedText>
+                  {restoreData.division_id ? (
+                    <>
+                      <ThemedText style={styles.confirmationDetail}>
+                        Division: {divisions.find((d) => d.id === selectedMember.division_id)?.name} →{" "}
+                        {divisions.find((d) => d.id === restoreData.division_id)?.name}
+                      </ThemedText>
+                      <ThemedText style={styles.confirmationDetail}>
+                        Zone: {zones.find((z) => z.id === selectedMember.current_zone_id)?.name} →{" "}
+                        {zones.find((z) => z.id === restoreData.zone_id)?.name}
+                      </ThemedText>
+                      <ThemedText style={styles.confirmationDetail}>
+                        Calendar: Will be assigned to {calendars.find((c) => c.id === restoreData.calendar_id)?.name}
+                      </ThemedText>
+                    </>
+                  ) : (
+                    <ThemedText style={styles.confirmationDetail}>
+                      Will be restored to original location and calendar assignment
+                    </ThemedText>
+                  )}
+                  {restoreData.notes && (
+                    <ThemedText style={styles.confirmationDetail}>Notes: {restoreData.notes}</ThemedText>
+                  )}
+                </>
               )}
 
-              {transferData.home_zone_id && (
-                <ThemedText style={styles.confirmationDetail}>
-                  Home Zone: {zones.find((z) => z.id === selectedMember.home_zone_id)?.name} →{" "}
-                  {zones.find((z) => z.id === transferData.home_zone_id)?.name}
-                </ThemedText>
+              {/* Request Impact - Only for location transfer and furlough */}
+              {(transferType === "location_transfer" || transferType === "furlough") && (
+                <>
+                  <ThemedText style={styles.impactTitle}>Impact on Requests:</ThemedText>
+                  <ThemedText style={styles.impactDetail}>
+                    • {transferImpact.cancelled} requests will be cancelled
+                  </ThemedText>
+                  <ThemedText style={styles.impactDetail}>
+                    • {transferImpact.transferred} requests will be marked as transferred
+                  </ThemedText>
+                  <ThemedText style={styles.impactDetail}>
+                    • {transferImpact.unchanged} requests will remain unchanged
+                  </ThemedText>
+                </>
               )}
-
-              <ThemedText style={styles.impactTitle}>Impact on Requests:</ThemedText>
-              <ThemedText style={styles.impactDetail}>
-                • {transferImpact.cancelled} requests will be cancelled
-              </ThemedText>
-              <ThemedText style={styles.impactDetail}>
-                • {transferImpact.transferred} requests will be marked as transferred
-              </ThemedText>
-              <ThemedText style={styles.impactDetail}>
-                • {transferImpact.unchanged} requests will remain unchanged
-              </ThemedText>
 
               <View style={styles.confirmationButtons}>
                 <ThemedTouchableOpacity
@@ -817,7 +1378,11 @@ export function MemberTransfer() {
 
                 <ThemedTouchableOpacity
                   style={[styles.confirmButton, { backgroundColor: Colors[colorScheme].error }]}
-                  onPress={handleTransfer}
+                  onPress={() => {
+                    if (transferType === "location_transfer") handleTransfer();
+                    else if (transferType === "furlough") handleFurlough();
+                    else if (transferType === "restore") handleRestore();
+                  }}
                   disabled={isTransferring}
                   activeOpacity={0.7}
                 >
@@ -825,7 +1390,9 @@ export function MemberTransfer() {
                     <ActivityIndicator size="small" color={Colors[colorScheme].background} />
                   ) : (
                     <ThemedText style={[styles.confirmButtonText, { color: Colors[colorScheme].background }]}>
-                      Confirm Transfer
+                      {transferType === "location_transfer" && "Confirm Transfer"}
+                      {transferType === "furlough" && "Confirm Furlough"}
+                      {transferType === "restore" && "Confirm Restore"}
                     </ThemedText>
                   )}
                 </ThemedTouchableOpacity>
@@ -834,6 +1401,7 @@ export function MemberTransfer() {
           </ThemedView>
         )}
       </PlatformScrollView>
+      <ThemedToast />
     </ThemedView>
   );
 }
@@ -871,6 +1439,13 @@ const styles = StyleSheet.create({
     ...(Platform.OS === "web" && {
       outlineColor: Colors.dark.border,
       outlineWidth: 0,
+    }),
+  },
+  searchInputError: {
+    borderColor: Colors.dark.error,
+    borderWidth: 2,
+    ...(Platform.OS === "web" && {
+      outlineColor: Colors.dark.error,
     }),
   },
   clearButton: {
@@ -987,6 +1562,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: Colors.dark.background,
   },
+  pickerContainerError: {
+    borderColor: Colors.dark.error,
+    borderWidth: 2,
+  },
   pickerDisabled: {
     opacity: 0.5,
     backgroundColor: Colors.dark.card,
@@ -1007,6 +1586,13 @@ const styles = StyleSheet.create({
     ...(Platform.OS === "web" && {
       outlineColor: Colors.dark.border,
       outlineWidth: 0,
+    }),
+  },
+  notesInputError: {
+    borderColor: Colors.dark.error,
+    borderWidth: 2,
+    ...(Platform.OS === "web" && {
+      outlineColor: Colors.dark.error,
     }),
   },
   requirementInfo: {
@@ -1076,5 +1662,50 @@ const styles = StyleSheet.create({
   confirmButtonText: {
     fontSize: 14,
     fontWeight: "600",
+  },
+  // New styles for transfer type selection
+  transferTypeContainer: {
+    gap: 12,
+  },
+  transferTypeButton: {
+    padding: 16,
+    borderRadius: 8,
+    borderWidth: 2,
+    backgroundColor: Colors.dark.background,
+  },
+  transferTypeButtonActive: {
+    borderColor: Colors.dark.tint,
+    backgroundColor: Colors.dark.card,
+  },
+  transferTypeText: {
+    fontSize: 16,
+    fontWeight: "600",
+    marginBottom: 4,
+  },
+  transferTypeTextActive: {
+    color: Colors.dark.tint,
+  },
+  transferTypeDescription: {
+    fontSize: 14,
+    opacity: 0.7,
+  },
+  // Current location display styles
+  currentLocationContainer: {
+    padding: 12,
+    backgroundColor: Colors.dark.background,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    marginBottom: 16,
+  },
+  currentLocationTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    marginBottom: 8,
+  },
+  currentLocationDetail: {
+    fontSize: 14,
+    marginBottom: 4,
+    opacity: 0.8,
   },
 });
