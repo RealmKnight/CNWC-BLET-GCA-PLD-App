@@ -982,16 +982,24 @@ export const useAnnouncementStore = create<AnnouncementStore>((set, get) => ({
                     return;
                 }
 
-                // Refresh the appropriate division's data
-                if (divisionName) {
+                // Refresh the appropriate announcement type based on the actual change
+                if (changeTargetType === "GCA") {
+                    console.log(
+                        `[Realtime] Refreshing GCA announcements due to GCA change`,
+                    );
+                    get().fetchGCAnnouncements();
+                } else if (
+                    changeTargetType === "division" && divisionName &&
+                    divisionName !== "GCA"
+                ) {
                     console.log(
                         `[Realtime] Refreshing announcements for division: ${divisionName}`,
                     );
-                    if (divisionName === "GCA") {
-                        get().fetchGCAnnouncements();
-                    } else {
-                        get().fetchDivisionAnnouncements(divisionName);
-                    }
+                    get().fetchDivisionAnnouncements(divisionName);
+                } else {
+                    console.log(
+                        `[Realtime] Skipping refresh - changeTargetType: ${changeTargetType}, divisionName: ${divisionName}`,
+                    );
                 }
             },
         );

@@ -178,6 +178,10 @@ export function usePriorityRouter() {
                             ? `/(gca)/announcements`
                             : `/(division)/${division}/announcements`;
 
+                        console.log(
+                            `[PriorityRouter] Adding announcement ${announcement.id} (${announcement.title}) with target_type: ${announcement.target_type}, route: ${route}`,
+                        );
+
                         items.push({
                             id: announcement.id,
                             type: "announcement",
@@ -496,6 +500,10 @@ export function usePriorityRouter() {
                                         announcement.target_type === "GCA"
                                             ? `/(gca)/announcements`
                                             : `/(division)/${division}/announcements`;
+
+                                    console.log(
+                                        `[PriorityRouter] Deferred check: Adding announcement ${announcement.id} (${announcement.title}) with target_type: ${announcement.target_type}, route: ${route}`,
+                                    );
 
                                     items.push({
                                         id: announcement.id,
