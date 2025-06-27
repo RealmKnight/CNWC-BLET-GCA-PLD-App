@@ -20,6 +20,11 @@ import {
     StoreEventType,
 } from "@/utils/storeManager";
 import { createRealtimeCallback } from "@/utils/realtimeErrorHandler";
+import {
+    invokeWithAttemptLogging,
+    invokeWithRetryAndTimeout,
+    logStructuredError,
+} from "@/utils/emailAttemptLogger";
 // Import specific table types
 type DbMembers = Database["public"]["Tables"]["members"]["Row"];
 type DbPldSdvRequests = Database["public"]["Tables"]["pld_sdv_requests"]["Row"];
@@ -1068,37 +1073,36 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
 
                 // *** UPDATED: Only send email notification if request was NOT waitlisted ***
                 if (shouldSendCompanyEmail) {
-                    try {
-                        console.log(
-                            "[TimeStore] Sending cancellation email notification to company...",
-                        );
-                        const { error: emailError } = await supabase.functions
-                            .invoke(
-                                "send-cancellation-email",
-                                {
-                                    body: {
-                                        requestId: requestId,
-                                    },
-                                },
-                            );
+                    console.log(
+                        "[TimeStore] Sending cancellation email notification to company...",
+                    );
 
-                        if (emailError) {
-                            console.error(
-                                "[TimeStore] Cancellation email notification failed:",
-                                emailError,
-                            );
-                            // Don't fail the cancellation if email fails - the cancellation was successful
-                        } else {
-                            console.log(
-                                "[TimeStore] Cancellation email notification sent successfully",
-                            );
-                        }
-                    } catch (emailError) {
+                    const emailResult = await invokeWithRetryAndTimeout(
+                        "send-cancellation-email",
+                        { requestId: requestId },
+                        {
+                            requestId: requestId,
+                            emailType: "cancellation",
+                            appComponent: "TimeStore.cancelRequest",
+                            attemptData: {
+                                originalStatus,
+                                shouldSendCompanyEmail,
+                                memberId,
+                            },
+                        },
+                    );
+
+                    if (!emailResult.success) {
                         console.error(
-                            "[TimeStore] Error sending cancellation email notification:",
-                            emailError,
+                            "[TimeStore] Cancellation email notification failed:",
+                            emailResult.error,
                         );
-                        // Continue - cancellation was successful even if email failed
+                        // Don't fail the cancellation if email fails - the cancellation was successful
+                    } else {
+                        console.log(
+                            "[TimeStore] Cancellation email notification sent successfully",
+                            `(Attempt ID: ${emailResult.attemptId})`,
+                        );
                     }
                 } else {
                     console.log(
@@ -1309,37 +1313,39 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
             console.log("[TimeStore] Request submitted successfully:", data);
 
             // Send email notification for the new request
-            try {
-                console.log(
-                    "[TimeStore] Sending request email notification...",
-                );
-                const { error: emailError } = await supabase.functions.invoke(
-                    "send-request-email",
-                    {
-                        body: {
-                            requestId: data.id,
-                        },
-                    },
-                );
+            console.log(
+                "[TimeStore] Sending request email notification...",
+            );
 
-                if (emailError) {
-                    console.error(
-                        "[TimeStore] Email notification failed:",
-                        emailError,
-                    );
-                    // Don't fail the entire request submission if email fails
-                    // The request is already in the database successfully
-                } else {
-                    console.log(
-                        "[TimeStore] Email notification sent successfully",
-                    );
-                }
-            } catch (emailError) {
+            const emailResult = await invokeWithRetryAndTimeout(
+                "send-request-email",
+                { requestId: data.id },
+                {
+                    requestId: data.id,
+                    emailType: "request",
+                    appComponent: "TimeStore.submitRequest",
+                    attemptData: {
+                        leaveType,
+                        requestDate: date,
+                        isPaidInLieu,
+                        memberId,
+                        calendarId: member.calendar_id,
+                    },
+                },
+            );
+
+            if (!emailResult.success) {
                 console.error(
-                    "[TimeStore] Error sending email notification:",
-                    emailError,
+                    "[TimeStore] Email notification failed:",
+                    emailResult.error,
                 );
-                // Continue - request was successful even if email failed
+                // Don't fail the entire request submission if email fails
+                // The request is already in the database successfully
+            } else {
+                console.log(
+                    "[TimeStore] Email notification sent successfully",
+                    `(Attempt ID: ${emailResult.attemptId})`,
+                );
             }
 
             set({ isSubmittingAction: false });

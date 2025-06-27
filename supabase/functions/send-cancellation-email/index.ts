@@ -13,13 +13,60 @@ serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  // Phase 3: Enhanced structured logging and timing
+  const startTime = Date.now();
+  const correlationId = crypto.randomUUID();
+  let attemptId: number | undefined; // Declare at top level for error handling
+  let auditStage = "initialization";
+
+  // Enhanced logging helper
+  const logAuditEvent = (
+    stage: string,
+    details: Record<string, any> = {},
+    error: Error | null = null,
+  ) => {
+    const timestamp = new Date().toISOString();
+    const executionTime = Date.now() - startTime;
+
+    const logData: Record<string, any> = {
+      timestamp,
+      correlationId,
+      stage,
+      executionTimeMs: executionTime,
+      attemptId,
+      ...details,
+    };
+
+    if (error) {
+      logData.error = {
+        message: error.message,
+        stack: error.stack,
+        name: error.name,
+      };
+      console.error(`[AUDIT-ERROR] [${stage}] [${correlationId}]`, logData);
+    } else {
+      console.log(`[AUDIT] [${stage}] [${correlationId}]`, logData);
+    }
+  };
+
   try {
-    const { requestId } = await req.json();
-    console.log("Received request with requestId:", requestId);
+    auditStage = "request_parsing";
+    logAuditEvent("function_start", { method: req.method });
+
+    const requestBody = await req.json();
+    const { requestId } = requestBody;
+    attemptId = requestBody.attemptId; // Assign to top-level variable
+
+    logAuditEvent("request_parsed", {
+      requestId: requestId ? "present" : "missing",
+      attemptId: attemptId ? "present" : "missing",
+      bodyKeys: Object.keys(requestBody),
+    });
 
     // Validate required fields
+    auditStage = "validation";
     if (!requestId) {
-      console.log("Error: Missing requestId");
+      logAuditEvent("validation_failed", { reason: "Missing requestId" });
       return new Response(
         JSON.stringify({ error: "Missing requestId" }),
         {
@@ -29,25 +76,62 @@ serve(async (req) => {
       );
     }
 
+    logAuditEvent("validation_passed", {
+      requestId,
+      hasAttemptId: !!attemptId,
+    });
+
     // Initialize Supabase client
+    auditStage = "supabase_init";
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    console.log("Environment check - SUPABASE_URL:", supabaseUrl ? "✓" : "✗");
-    console.log(
-      "Environment check - SUPABASE_SERVICE_ROLE_KEY:",
-      supabaseServiceKey ? "✓" : "✗",
-    );
+
+    logAuditEvent("env_check", {
+      supabaseUrl: supabaseUrl ? "present" : "missing",
+      supabaseKey: supabaseServiceKey ? "present" : "missing",
+    });
 
     if (!supabaseUrl || !supabaseServiceKey) {
-      console.log("Error: Missing Supabase configuration");
-      throw new Error("Missing Supabase configuration");
+      const error = new Error("Missing Supabase configuration");
+      logAuditEvent("supabase_init_failed", {}, error);
+      throw error;
     }
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
-    console.log("Supabase client created successfully");
+    logAuditEvent("supabase_client_created");
+
+    // Update attempt status to email_queued if attemptId provided
+    if (attemptId) {
+      console.log(
+        "Updating attempt status to email_queued for attemptId:",
+        attemptId,
+      );
+      const { error: attemptUpdateError } = await supabase.rpc(
+        "update_email_attempt",
+        {
+          p_attempt_id: attemptId,
+          p_attempt_status: "email_queued",
+          p_response_data: null,
+          p_error_message: null,
+          p_email_tracking_id: null,
+        },
+      );
+
+      if (attemptUpdateError) {
+        console.error(
+          "Failed to update attempt status to email_queued:",
+          attemptUpdateError,
+        );
+        // Continue anyway - don't fail the email send
+      } else {
+        console.log("Successfully updated attempt status to email_queued");
+      }
+    }
 
     // Get request details from Supabase first - UPDATED: Include paid_in_lieu and calendar_id fields
-    console.log("Fetching request details for ID:", requestId);
+    auditStage = "data_fetch";
+    logAuditEvent("fetching_request_data", { requestId });
+
     const { data: requestData, error: requestError } = await supabase
       .from("pld_sdv_requests")
       .select(
@@ -57,11 +141,20 @@ serve(async (req) => {
       .single();
 
     if (requestError) {
-      console.log("Error fetching request details:", requestError);
-      throw new Error(`Failed to get request details: ${requestError.message}`);
+      const error = new Error(
+        `Failed to get request details: ${requestError.message}`,
+      );
+      logAuditEvent("request_data_fetch_failed", { requestError }, error);
+      throw error;
     }
 
-    console.log("Request data fetched:", requestData);
+    logAuditEvent("request_data_fetched", {
+      hasData: !!requestData,
+      memberIdPresent: !!requestData?.member_id,
+      isPaidInLieu: requestData?.paid_in_lieu,
+      hasCalendarId: !!requestData?.calendar_id,
+      leaveType: requestData?.leave_type,
+    });
 
     if (!requestData.member_id) {
       console.log("Error: Member ID not found in request data");
@@ -299,9 +392,13 @@ ${isPaidInLieu ? "Payment Request ID" : "Request ID"}: ${safeRequestId}
     };
 
     // Send email using direct Mailgun API
-    console.log("Sending email with Mailgun API...");
-    console.log("Email data subject:", emailData.subject);
-    console.log("Email recipient:", emailData.to);
+    auditStage = "email_sending";
+    logAuditEvent("email_send_starting", {
+      recipient: recipientEmail,
+      subject: emailData.subject,
+      isPaidInLieu,
+      payloadSize: JSON.stringify(emailData).length,
+    });
 
     // Create form data for Mailgun API
     const formData = new FormData();
@@ -314,6 +411,8 @@ ${isPaidInLieu ? "Payment Request ID" : "Request ID"}: ${safeRequestId}
 
     // Send via Mailgun REST API
     const mailgunUrl = `https://api.mailgun.net/v3/${mailgunDomain}/messages`;
+    const sendStartTime = Date.now();
+
     const response = await fetch(mailgunUrl, {
       method: "POST",
       headers: {
@@ -322,18 +421,31 @@ ${isPaidInLieu ? "Payment Request ID" : "Request ID"}: ${safeRequestId}
       body: formData,
     });
 
+    const mailgunResponseTime = Date.now() - sendStartTime;
+
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("Mailgun API error:", response.status, errorText);
-      throw new Error(`Mailgun API error: ${response.status} - ${errorText}`);
+      const error = new Error(
+        `Mailgun API error: ${response.status} - ${errorText}`,
+      );
+      logAuditEvent("mailgun_api_error", {
+        status: response.status,
+        responseTime: mailgunResponseTime,
+        errorText: errorText.substring(0, 500), // Truncate for logging
+      }, error);
+      throw error;
     }
 
     const result = await response.json();
 
-    console.log("Email sent successfully, result:", result);
+    logAuditEvent("email_sent_successfully", {
+      messageId: result.id,
+      responseTime: mailgunResponseTime,
+      recipient: recipientEmail,
+    });
 
     // UPDATED: Email tracking with PIL-aware email_type
-    const { error: trackingError } = await supabase
+    const { data: trackingData, error: trackingError } = await supabase
       .from("email_tracking")
       .insert({
         request_id: requestId,
@@ -345,12 +457,54 @@ ${isPaidInLieu ? "Payment Request ID" : "Request ID"}: ${safeRequestId}
         retry_count: 0,
         created_at: new Date().toISOString(),
         last_updated_at: new Date().toISOString(),
-      });
+      })
+      .select("id")
+      .single();
 
     if (trackingError) {
       console.error("Failed to record email tracking:", trackingError);
       // Don't fail the request if tracking fails
     }
+
+    // Update attempt status to email_sent and link to email_tracking if attemptId provided
+    if (attemptId) {
+      console.log(
+        "Updating attempt status to email_sent for attemptId:",
+        attemptId,
+      );
+      const { error: attemptFinalUpdateError } = await supabase.rpc(
+        "update_email_attempt",
+        {
+          p_attempt_id: attemptId,
+          p_attempt_status: "email_sent",
+          p_response_data: JSON.stringify({
+            mailgun_message_id: result.id,
+            recipient: recipientEmail,
+            is_paid_in_lieu: isPaidInLieu,
+          }),
+          p_error_message: null,
+          p_email_tracking_id: trackingData?.id || null,
+        },
+      );
+
+      if (attemptFinalUpdateError) {
+        console.error(
+          "Failed to update attempt status to email_sent:",
+          attemptFinalUpdateError,
+        );
+        // Continue anyway - email was sent successfully
+      } else {
+        console.log("Successfully updated attempt status to email_sent");
+      }
+    }
+
+    auditStage = "completion";
+    logAuditEvent("function_completed_successfully", {
+      messageId: result.id,
+      totalExecutionTime: Date.now() - startTime,
+      recipient: recipientEmail,
+      isPaidInLieu,
+    });
 
     return new Response(
       JSON.stringify({
@@ -359,17 +513,61 @@ ${isPaidInLieu ? "Payment Request ID" : "Request ID"}: ${safeRequestId}
         messageId: result.id,
         recipient: recipientEmail,
         isPaidInLieu: isPaidInLieu,
+        correlationId,
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       },
     );
   } catch (error) {
-    console.error("Error in send-cancellation-email:", error);
-
     const errorMessage = error instanceof Error
       ? error.message
       : "Failed to send cancellation email";
+
+    logAuditEvent("function_failed", {
+      stage: auditStage,
+      totalExecutionTime: Date.now() - startTime,
+    }, error instanceof Error ? error : new Error(errorMessage));
+
+    // Update attempt status to email_failed if attemptId provided
+    if (typeof attemptId !== "undefined") {
+      try {
+        console.log(
+          "Updating attempt status to email_failed for attemptId:",
+          attemptId,
+        );
+        const supabaseUrl = Deno.env.get("SUPABASE_URL");
+        const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+        if (supabaseUrl && supabaseServiceKey) {
+          const supabase = createClient(supabaseUrl, supabaseServiceKey);
+          const { error: attemptErrorUpdateError } = await supabase.rpc(
+            "update_email_attempt",
+            {
+              p_attempt_id: attemptId,
+              p_attempt_status: "email_failed",
+              p_response_data: null,
+              p_error_message: errorMessage,
+              p_email_tracking_id: null,
+            },
+          );
+
+          if (attemptErrorUpdateError) {
+            console.error(
+              "Failed to update attempt status to email_failed:",
+              attemptErrorUpdateError,
+            );
+          } else {
+            console.log("Successfully updated attempt status to email_failed");
+          }
+        }
+      } catch (attemptUpdateError) {
+        console.error(
+          "Error updating attempt status in catch block:",
+          attemptUpdateError,
+        );
+      }
+    }
 
     return new Response(
       JSON.stringify({

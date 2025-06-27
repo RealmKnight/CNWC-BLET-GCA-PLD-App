@@ -4,6 +4,48 @@ import {
     SupabaseClient,
 } from "https://esm.sh/@supabase/supabase-js@2.7.1";
 
+// Add correlation ID and audit logging support
+function generateCorrelationId(): string {
+    return `pnq_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
+interface AuditEvent {
+    correlationId: string;
+    stage: string;
+    timestamp: string;
+    data?: any;
+    error?: string;
+    executionTimeMs?: number;
+}
+
+async function logAuditEvent(
+    supabase: SupabaseClient,
+    event: AuditEvent,
+): Promise<void> {
+    try {
+        // Log to email_health_log for monitoring
+        await supabase.from("email_health_log").insert({
+            health_status: {
+                correlationId: event.correlationId,
+                stage: event.stage,
+                timestamp: event.timestamp,
+                data: event.data,
+                error: event.error,
+                executionTimeMs: event.executionTimeMs,
+                function: "process-notification-queue",
+            },
+            healthy: !event.error,
+            recent_failures: event.error ? 1 : 0,
+            stuck_attempts: 0,
+            average_execution_time_ms: event.executionTimeMs || 0,
+            issues: event.error ? [event.error] : [],
+            checked_at: event.timestamp,
+        });
+    } catch (logError) {
+        console.error("[Audit] Failed to log audit event:", logError);
+    }
+}
+
 // Add interface for PushNotification
 interface PushNotification {
     id: string;
@@ -101,10 +143,16 @@ serve(async (req) => {
         });
     }
 
+    const correlationId = generateCorrelationId();
+    const startTime = Date.now();
+    let supabaseClient: SupabaseClient | null = null;
+
     try {
-        console.log("=== Starting notification queue processing ===");
-        console.log("Request method:", req.method);
-        console.log("Request URL:", req.url);
+        console.log(
+            `[${correlationId}] === Starting notification queue processing ===`,
+        );
+        console.log(`[${correlationId}] Request method:`, req.method);
+        console.log(`[${correlationId}] Request URL:`, req.url);
 
         // Check environment variables
         const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -137,42 +185,121 @@ serve(async (req) => {
         }
 
         // Create Supabase client
-        const supabaseClient = createClient(supabaseUrl, supabaseKey);
-        console.log("Supabase client created successfully");
+        supabaseClient = createClient(supabaseUrl, supabaseKey);
+        console.log(`[${correlationId}] Supabase client created successfully`);
+
+        // Log initialization stage
+        if (supabaseClient) {
+            await logAuditEvent(supabaseClient, {
+                correlationId,
+                stage: "initialization",
+                timestamp: new Date().toISOString(),
+                data: {
+                    requestMethod: req.method,
+                    requestUrl: req.url,
+                },
+            });
+        }
 
         try {
             // Test database connection with a simple query
-            console.log("Testing database connection...");
+            const dbTestStart = Date.now();
+            console.log(`[${correlationId}] Testing database connection...`);
             const { data: testData, error: testError } = await supabaseClient
                 .from("push_notification_queue")
                 .select("id")
                 .limit(1);
 
             if (testError) {
-                console.error("Database connection test failed:", testError);
+                console.error(
+                    `[${correlationId}] Database connection test failed:`,
+                    testError,
+                );
+
+                await logAuditEvent(supabaseClient, {
+                    correlationId,
+                    stage: "database_test_failed",
+                    timestamp: new Date().toISOString(),
+                    error: testError.message,
+                    executionTimeMs: Date.now() - dbTestStart,
+                });
+
                 throw new Error(`Database test failed: ${testError.message}`);
             } else {
+                const dbTestTime = Date.now() - dbTestStart;
                 console.log(
-                    "Database connection test successful - found",
+                    `[${correlationId}] Database connection test successful - found`,
                     testData?.length || 0,
                     "rows",
                 );
+
+                await logAuditEvent(supabaseClient, {
+                    correlationId,
+                    stage: "database_test_success",
+                    timestamp: new Date().toISOString(),
+                    data: { rowsFound: testData?.length || 0 },
+                    executionTimeMs: dbTestTime,
+                });
             }
         } catch (dbTestError) {
-            console.error("Exception in database test:", dbTestError);
+            console.error(
+                `[${correlationId}] Exception in database test:`,
+                dbTestError,
+            );
+
+            if (supabaseClient) {
+                await logAuditEvent(supabaseClient, {
+                    correlationId,
+                    stage: "database_test_exception",
+                    timestamp: new Date().toISOString(),
+                    error: dbTestError instanceof Error
+                        ? dbTestError.message
+                        : String(dbTestError),
+                });
+            }
+
             throw dbTestError;
         }
 
         // Process pending notifications
-        console.log("Starting notification queue processing...");
+        const processingStart = Date.now();
+        console.log(
+            `[${correlationId}] Starting notification queue processing...`,
+        );
+
+        await logAuditEvent(supabaseClient, {
+            correlationId,
+            stage: "queue_processing_start",
+            timestamp: new Date().toISOString(),
+        });
+
         const result = await processNotificationQueue(supabaseClient);
-        console.log("Notification queue processing completed:", result);
+        const processingTime = Date.now() - processingStart;
+
+        console.log(
+            `[${correlationId}] Notification queue processing completed:`,
+            result,
+        );
+
+        await logAuditEvent(supabaseClient, {
+            correlationId,
+            stage: "queue_processing_complete",
+            timestamp: new Date().toISOString(),
+            data: {
+                processed: result.processed,
+                failures: result.failures,
+                totalExecutionTimeMs: Date.now() - startTime,
+            },
+            executionTimeMs: processingTime,
+        });
 
         return new Response(
             JSON.stringify({
                 success: true,
                 processed: result.processed,
                 failures: result.failures,
+                correlationId,
+                executionTimeMs: Date.now() - startTime,
             }),
             {
                 headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -184,17 +311,42 @@ serve(async (req) => {
             ? error.message
             : "Unknown error occurred";
         const errorStack = error instanceof Error ? error.stack : undefined;
+        const totalExecutionTime = Date.now() - startTime;
 
-        console.error("=== ERROR PROCESSING QUEUE ===");
-        console.error("Error message:", errorMessage);
-        console.error("Error stack:", errorStack);
-        console.error("Error object:", error);
+        console.error(`[${correlationId}] === ERROR PROCESSING QUEUE ===`);
+        console.error(`[${correlationId}] Error message:`, errorMessage);
+        console.error(`[${correlationId}] Error stack:`, errorStack);
+        console.error(`[${correlationId}] Error object:`, error);
+
+        // Log error to audit trail if supabase client available
+        if (supabaseClient) {
+            try {
+                await logAuditEvent(supabaseClient, {
+                    correlationId,
+                    stage: "function_error",
+                    timestamp: new Date().toISOString(),
+                    error: errorMessage,
+                    data: {
+                        errorStack,
+                        totalExecutionTimeMs: totalExecutionTime,
+                    },
+                    executionTimeMs: totalExecutionTime,
+                });
+            } catch (logError) {
+                console.error(
+                    `[${correlationId}] Failed to log error audit event:`,
+                    logError,
+                );
+            }
+        }
 
         return new Response(
             JSON.stringify({
                 error: errorMessage,
                 stack: errorStack,
+                correlationId,
                 timestamp: new Date().toISOString(),
+                executionTimeMs: totalExecutionTime,
             }),
             {
                 headers: { ...corsHeaders, "Content-Type": "application/json" },

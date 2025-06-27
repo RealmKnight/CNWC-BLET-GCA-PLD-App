@@ -13,27 +13,58 @@ import Animated, { FadeIn, FadeOut, Layout } from "react-native-reanimated";
 
 const AnimatedThemedView = Animated.createAnimatedComponent(ThemedView);
 
-interface EmailTrackingRecord {
-  id: number;
-  request_id: string;
+// Enhanced interface to include both email_tracking and email_attempt_log data
+interface EmailRecord {
+  id: string; // Combine with source identifier
+  source: "email_tracking" | "email_attempt_log";
+  request_id: string | null;
   email_type: "request" | "cancellation" | "notification";
-  recipient: string;
-  subject: string;
-  message_id: string | null;
-  status: "queued" | "sent" | "delivered" | "opened" | "clicked" | "failed" | "bounced" | "complained" | "unsubscribed";
-  error_message: string | null;
-  retry_count: number;
-  next_retry_at: string | null;
-  fallback_notification_sent: boolean;
-  last_updated_at: string;
+
+  // From email_tracking
+  recipient?: string;
+  subject?: string;
+  message_id?: string | null;
+  tracking_status?:
+    | "queued"
+    | "sent"
+    | "delivered"
+    | "opened"
+    | "clicked"
+    | "failed"
+    | "bounced"
+    | "complained"
+    | "unsubscribed";
+  retry_count?: number;
+  next_retry_at?: string | null;
+  fallback_notification_sent?: boolean;
+
+  // From email_attempt_log
+  attempt_status?:
+    | "initiated"
+    | "function_invoked"
+    | "function_failed"
+    | "email_queued"
+    | "email_sent"
+    | "email_failed"
+    | "email_delivered";
+  function_name?: string;
+  app_component?: string;
+  attempt_data?: any;
+  response_data?: any;
+  email_tracking_id?: number;
+
+  // Common fields
+  error_message?: string | null;
   created_at: string;
+  last_updated_at?: string;
+
   // Request details for display
   request?: {
     id: string;
     request_date: string;
     leave_type: "PLD" | "SDV";
     status: string;
-    pin_number: number | null; // Pin number from request table
+    pin_number: number | null;
     member?: {
       first_name: string | null;
       last_name: string | null;
@@ -55,19 +86,21 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
   const { divisions, fetchDivisions } = useDivisionManagementStore();
 
   // State
-  const [emailRecords, setEmailRecords] = useState<EmailTrackingRecord[]>([]);
+  const [emailRecords, setEmailRecords] = useState<EmailRecord[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedStatus, setSelectedStatus] = useState<string>("all");
   const [selectedEmailType, setSelectedEmailType] = useState<string>("all");
+  const [selectedSource, setSelectedSource] = useState<string>("all");
 
   // Get division info for context (but don't use for filtering)
   const currentDivision = divisions.find((div) => div.name === division);
 
-  // Filter options
+  // Enhanced filter options to include attempt statuses
   const statusOptions = [
     { value: "all", label: "All Status" },
+    // Email tracking statuses
     { value: "queued", label: "Queued" },
     { value: "sent", label: "Sent" },
     { value: "delivered", label: "Delivered" },
@@ -75,6 +108,11 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
     { value: "clicked", label: "Clicked" },
     { value: "failed", label: "Failed" },
     { value: "bounced", label: "Bounced" },
+    // Email attempt statuses
+    { value: "initiated", label: "Initiated" },
+    { value: "function_invoked", label: "Function Called" },
+    { value: "function_failed", label: "Function Failed" },
+    { value: "email_failed", label: "Email Failed" },
   ];
 
   const emailTypeOptions = [
@@ -84,6 +122,12 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
     { value: "notification", label: "Notification" },
   ];
 
+  const sourceOptions = [
+    { value: "all", label: "All Sources" },
+    { value: "email_tracking", label: "Delivered Emails" },
+    { value: "email_attempt_log", label: "Attempts & Failures" },
+  ];
+
   // Load divisions if not already loaded
   useEffect(() => {
     if (divisions.length === 0) {
@@ -91,13 +135,14 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
     }
   }, [divisions.length, fetchDivisions]);
 
-  // Fetch email tracking records
+  // Enhanced fetch function to get both email_tracking and email_attempt_log data
   const fetchEmailRecords = async () => {
     setIsLoading(true);
     setError(null);
 
     try {
-      let query = supabase
+      // Fetch from email_tracking table
+      let trackingQuery = supabase
         .from("email_tracking")
         .select(
           `
@@ -118,55 +163,116 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
         `
         )
         .order("created_at", { ascending: false })
-        .limit(500);
+        .limit(300);
+
+      // Fetch from email_attempt_log table
+      let attemptQuery = supabase
+        .from("email_attempt_log")
+        .select(
+          `
+          *,
+          request:pld_sdv_requests (
+            id,
+            request_date,
+            leave_type,
+            status,
+            pin_number,
+            member:members (
+              first_name,
+              last_name,
+              pin_number,
+              division_id
+            )
+          )
+        `
+        )
+        .order("attempted_at", { ascending: false })
+        .limit(300);
 
       // Filter by specific request if provided
       if (requestId) {
-        query = query.eq("request_id", requestId);
+        trackingQuery = trackingQuery.eq("request_id", requestId);
+        attemptQuery = attemptQuery.eq("request_id", requestId);
       }
 
-      const { data, error: fetchError } = await query;
+      const [trackingResult, attemptResult] = await Promise.all([trackingQuery, attemptQuery]);
 
-      if (fetchError) throw fetchError;
+      if (trackingResult.error) throw trackingResult.error;
+      if (attemptResult.error) throw attemptResult.error;
 
-      let filteredData = data as EmailTrackingRecord[];
+      // Transform and combine both datasets
+      const trackingRecords: EmailRecord[] = (trackingResult.data || []).map((record: any) => ({
+        id: `tracking_${record.id}`,
+        source: "email_tracking" as const,
+        request_id: record.request_id,
+        email_type: record.email_type,
+        recipient: record.recipient,
+        subject: record.subject,
+        message_id: record.message_id,
+        tracking_status: record.status,
+        error_message: record.error_message,
+        retry_count: record.retry_count,
+        next_retry_at: record.next_retry_at,
+        fallback_notification_sent: record.fallback_notification_sent,
+        created_at: record.created_at,
+        last_updated_at: record.last_updated_at,
+        request: record.request,
+      }));
+
+      const attemptRecords: EmailRecord[] = (attemptResult.data || []).map((record: any) => ({
+        id: `attempt_${record.id}`,
+        source: "email_attempt_log" as const,
+        request_id: record.request_id,
+        email_type: record.email_type,
+        attempt_status: record.attempt_status,
+        function_name: record.function_name,
+        app_component: record.app_component,
+        attempt_data: record.attempt_data,
+        response_data: record.response_data,
+        error_message: record.error_message,
+        email_tracking_id: record.email_tracking_id,
+        created_at: record.attempted_at, // Use attempted_at for created_at
+        last_updated_at: record.completed_at || record.attempted_at, // Use completed_at for last_updated_at
+        request: record.request,
+      }));
+
+      // Combine and sort by creation date
+      let allRecords = [...trackingRecords, ...attemptRecords];
+      allRecords.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
       // Filter by division if division context is provided and no specific request
       if (division && !requestId) {
-        // Find the current division (recalculate in case divisions weren't loaded yet)
         const divisionInfo = divisions.find((div) => div.name === division);
 
         if (divisionInfo) {
-          filteredData = filteredData.filter((record) => {
-            // Include emails where the request is associated with a member from this division
+          allRecords = allRecords.filter((record) => {
+            // Include records where the request is associated with a member from this division
             if (record.request?.member?.division_id === divisionInfo.id) {
               return true;
             }
 
             // Include system-wide notifications ONLY if they're related to this division's requests
-            // (like errors for requests from members in this division)
             if (record.email_type === "notification" && record.recipient === "system") {
-              // Only include if the underlying request is from a member in this division
               if (record.request?.member?.division_id === divisionInfo.id) {
                 return true;
               }
-              // Skip system notifications for other divisions
               return false;
             }
 
-            // Include emails sent to division-specific addresses
-            // Check if the recipient matches any division email patterns
-            const divisionEmailPatterns = [
-              division.toLowerCase(),
-              `div${divisionInfo.id}`,
-              `division${divisionInfo.id}`,
-            ];
+            // Include emails sent to division-specific addresses (only for tracking records)
+            if (record.source === "email_tracking" && record.recipient) {
+              const divisionEmailPatterns = [
+                division.toLowerCase(),
+                `div${divisionInfo.id}`,
+                `division${divisionInfo.id}`,
+              ];
 
-            const recipientLower = record.recipient.toLowerCase();
-            const includesDivisionPattern = divisionEmailPatterns.some((pattern) => recipientLower.includes(pattern));
+              const recipientLower = record.recipient.toLowerCase();
+              const includesDivisionPattern = divisionEmailPatterns.some((pattern) => recipientLower.includes(pattern));
 
-            if (includesDivisionPattern) {
-              return true;
+              if (includesDivisionPattern) {
+                return true;
+              }
             }
 
             return false;
@@ -174,7 +280,7 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
         }
       }
 
-      setEmailRecords(filteredData);
+      setEmailRecords(allRecords);
     } catch (err) {
       console.error("Error fetching email records:", err);
       setError(err instanceof Error ? err.message : "Failed to fetch email records");
@@ -183,8 +289,8 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
     }
   };
 
-  // Resend email
-  const handleResendEmail = async (record: EmailTrackingRecord) => {
+  // Enhanced resend email function
+  const handleResendEmail = async (record: EmailRecord) => {
     if (!record.request_id) return;
 
     try {
@@ -199,7 +305,6 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
           functionName = "send-cancellation-email";
           break;
         case "notification":
-          // Notification emails are triggered by status changes, not directly resendable
           Toast.show({
             type: "info",
             text1: "Cannot Resend",
@@ -249,29 +354,37 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
     }
   };
 
-  // Filter records based on search and filters
+  // Enhanced filter function
   const filteredRecords = emailRecords.filter((record) => {
     // Search filter
     if (searchQuery) {
       const searchLower = searchQuery.toLowerCase();
       const matchesSearch =
-        record.recipient.toLowerCase().includes(searchLower) ||
-        record.subject.toLowerCase().includes(searchLower) ||
+        (record.recipient || "").toLowerCase().includes(searchLower) ||
+        (record.subject || "").toLowerCase().includes(searchLower) ||
         (record.request?.member?.first_name || "").toLowerCase().includes(searchLower) ||
         (record.request?.member?.last_name || "").toLowerCase().includes(searchLower) ||
+        (record.app_component || "").toLowerCase().includes(searchLower) ||
+        (record.function_name || "").toLowerCase().includes(searchLower) ||
         record.request?.member?.pin_number?.toString().includes(searchQuery) ||
         record.request?.pin_number?.toString().includes(searchQuery);
 
       if (!matchesSearch) return false;
     }
 
-    // Status filter
-    if (selectedStatus !== "all" && record.status !== selectedStatus) {
-      return false;
+    // Status filter - check both tracking and attempt statuses
+    if (selectedStatus !== "all") {
+      const matchesStatus = record.tracking_status === selectedStatus || record.attempt_status === selectedStatus;
+      if (!matchesStatus) return false;
     }
 
     // Email type filter
     if (selectedEmailType !== "all" && record.email_type !== selectedEmailType) {
+      return false;
+    }
+
+    // Source filter
+    if (selectedSource !== "all" && record.source !== selectedSource) {
       return false;
     }
 
@@ -283,46 +396,92 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
     fetchEmailRecords();
   }, [requestId, division, divisions.length]);
 
-  // Get status color
-  const getStatusColor = (status: string): string => {
+  // Enhanced status color function
+  const getStatusColor = (record: EmailRecord): string => {
+    const status = record.tracking_status || record.attempt_status;
+
     switch (status) {
       case "delivered":
       case "opened":
       case "clicked":
+      case "email_sent":
+      case "email_delivered":
         return Colors.light.success || "#10b981";
       case "sent":
+      case "function_invoked":
+      case "email_queued":
         return Colors.light.tint;
       case "queued":
+      case "initiated":
         return Colors.light.warning || "#f59e0b";
       case "failed":
       case "bounced":
       case "complained":
+      case "function_failed":
+      case "email_failed":
         return Colors.light.error;
       default:
         return Colors[colorScheme].text;
     }
   };
 
-  // Get status icon
-  const getStatusIcon = (status: string): keyof typeof Ionicons.glyphMap => {
+  // Enhanced status icon function
+  const getStatusIcon = (record: EmailRecord): keyof typeof Ionicons.glyphMap => {
+    const status = record.tracking_status || record.attempt_status;
+
     switch (status) {
       case "delivered":
+      case "email_delivered":
         return "checkmark-circle";
       case "opened":
         return "mail-open";
       case "clicked":
         return "link";
       case "sent":
+      case "email_sent":
         return "paper-plane";
       case "queued":
+      case "email_queued":
         return "time";
       case "failed":
       case "bounced":
+      case "function_failed":
+      case "email_failed":
         return "warning";
       case "complained":
         return "ban";
+      case "initiated":
+        return "play";
+      case "function_invoked":
+        return "code";
       default:
         return "mail";
+    }
+  };
+
+  // Helper function to get display status
+  const getDisplayStatus = (record: EmailRecord): string => {
+    if (record.source === "email_tracking") {
+      return record.tracking_status?.toUpperCase() || "UNKNOWN";
+    } else {
+      switch (record.attempt_status) {
+        case "initiated":
+          return "INITIATED";
+        case "function_invoked":
+          return "FUNCTION CALLED";
+        case "function_failed":
+          return "FUNCTION FAILED";
+        case "email_queued":
+          return "EMAIL QUEUED";
+        case "email_sent":
+          return "EMAIL SENT";
+        case "email_failed":
+          return "EMAIL FAILED";
+        case "email_delivered":
+          return "EMAIL DELIVERED";
+        default:
+          return (record.attempt_status || "unknown").toUpperCase();
+      }
     }
   };
 
@@ -330,14 +489,14 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
     return (
       <ThemedView style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={Colors[colorScheme].tint} />
-        <ThemedText style={styles.loadingText}>Loading email history...</ThemedText>
+        <ThemedText style={styles.loadingText}>Loading comprehensive email history...</ThemedText>
       </ThemedView>
     );
   }
 
   return (
     <ThemedView style={styles.container}>
-      {/* Information Section */}
+      {/* Enhanced Information Section */}
       {division && currentDivision && (
         <View
           style={[
@@ -348,20 +507,21 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
           <View style={styles.infoHeader}>
             <Ionicons name="information-circle" size={20} color={Colors[colorScheme].tint} />
             <ThemedText style={[styles.infoTitle, { color: Colors[colorScheme].tint }]}>
-              {division} Division Email History
+              {division} Division - Complete Email History
             </ThemedText>
           </View>
           <ThemedText style={styles.infoText}>
-            Showing email notifications for {division} division members and division-specific communications only.
-            {"\n"}Notifications are only sent to members who have:
-            {"\n"}• Registered in the app with their PIN number
-            {"\n"}• Set up their notification preferences
-            {"\n\n"}Members who haven't registered yet will not receive email notifications to prevent spam.
+            Showing ALL email activity for {division} division including:
+            {"\n"}• ✅ Successfully delivered emails (green status)
+            {"\n"}• ⚠️ Failed attempts and errors (red status)
+            {"\n"}• 🔄 Retry attempts and function calls (blue/yellow status)
+            {"\n"}• 📧 Email notifications for registered members only
+            {"\n\n"}This comprehensive view helps diagnose email delivery issues and track all communication attempts.
           </ThemedText>
         </View>
       )}
 
-      {/* Search and Filters */}
+      {/* Enhanced Search and Filters */}
       <View style={styles.filtersContainer}>
         <TextInput
           style={[
@@ -372,13 +532,47 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
               backgroundColor: Colors[colorScheme].background,
             },
           ]}
-          placeholder="Search by recipient, subject, or member..."
+          placeholder="Search by recipient, subject, member, or component..."
           placeholderTextColor={Colors[colorScheme].text + "60"}
           value={searchQuery}
           onChangeText={setSearchQuery}
         />
 
         <View style={styles.filtersRow}>
+          {/* Source Filter */}
+          <View style={styles.filterGroup}>
+            <ThemedText style={styles.filterLabel}>Source:</ThemedText>
+            <View style={styles.filterChipContainer}>
+              {sourceOptions.map((option) => (
+                <TouchableOpacityComponent
+                  key={option.value}
+                  style={[
+                    styles.filterChip,
+                    {
+                      backgroundColor:
+                        selectedSource === option.value ? Colors[colorScheme].tint : Colors[colorScheme].border,
+                    },
+                  ]}
+                  onPress={() => setSelectedSource(option.value)}
+                >
+                  <ThemedText
+                    style={[
+                      styles.filterChipText,
+                      {
+                        color:
+                          selectedSource === option.value
+                            ? Colors[colorScheme].background
+                            : Colors[colorScheme].textDim,
+                      },
+                    ]}
+                  >
+                    {option.label}
+                  </ThemedText>
+                </TouchableOpacityComponent>
+              ))}
+            </View>
+          </View>
+
           {/* Status Filter */}
           <View style={styles.filterGroup}>
             <ThemedText style={styles.filterLabel}>Status:</ThemedText>
@@ -449,12 +643,26 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
         </View>
       </View>
 
-      {/* Results Summary */}
+      {/* Enhanced Results Summary */}
       <View style={styles.summaryContainer}>
         <ThemedText style={styles.summaryText}>
-          Showing {filteredRecords.length} of {emailRecords.length} email records
+          Showing {filteredRecords.length} of {emailRecords.length} records
           {division && currentDivision && ` for ${division} division`}
         </ThemedText>
+        <View style={styles.legendContainer}>
+          <View style={styles.legendItem}>
+            <View style={[styles.legendDot, { backgroundColor: Colors.light.success }]} />
+            <ThemedText style={styles.legendText}>Success</ThemedText>
+          </View>
+          <View style={styles.legendItem}>
+            <View style={[styles.legendDot, { backgroundColor: Colors.light.error }]} />
+            <ThemedText style={styles.legendText}>Failed</ThemedText>
+          </View>
+          <View style={styles.legendItem}>
+            <View style={[styles.legendDot, { backgroundColor: Colors.light.warning }]} />
+            <ThemedText style={styles.legendText}>Pending</ThemedText>
+          </View>
+        </View>
       </View>
 
       {/* Error State */}
@@ -467,7 +675,7 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
         </ThemedView>
       )}
 
-      {/* Email Records List */}
+      {/* Enhanced Email Records List */}
       <View style={styles.listContainer}>
         {filteredRecords.length === 0 ? (
           <ThemedView style={styles.emptyContainer}>
@@ -479,9 +687,9 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
             </ThemedText>
             {division && currentDivision && emailRecords.length === 0 && (
               <ThemedText style={styles.emptySubtext}>
-                Email records will appear here when email notifications are sent for members in the {division} division.
-                {"\n\n"}Note: Notifications are only sent to members who have registered in the app and set up their
-                notification preferences.
+                Email records will appear here when email attempts are made for members in the {division} division.
+                {"\n\n"}This includes both successful deliveries and failed attempts, providing complete visibility into
+                email system activity.
               </ThemedText>
             )}
           </ThemedView>
@@ -490,25 +698,38 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
             {filteredRecords.map((record) => (
               <AnimatedThemedView
                 key={record.id}
-                style={[styles.recordCard, { borderColor: Colors[colorScheme].border }]}
+                style={[
+                  styles.recordCard,
+                  {
+                    borderColor: Colors[colorScheme].border,
+                    borderLeftWidth: 4,
+                    borderLeftColor: getStatusColor(record),
+                  },
+                ]}
                 entering={FadeIn}
                 exiting={FadeOut}
                 layout={Layout.springify()}
               >
-                {/* Header Row */}
+                {/* Enhanced Header Row */}
                 <View style={styles.recordHeader}>
                   <View style={styles.recordInfo}>
                     <View style={styles.statusContainer}>
-                      <Ionicons name={getStatusIcon(record.status)} size={16} color={getStatusColor(record.status)} />
-                      <ThemedText style={[styles.statusText, { color: getStatusColor(record.status) }]}>
-                        {record.status.toUpperCase()}
+                      <Ionicons name={getStatusIcon(record)} size={16} color={getStatusColor(record)} />
+                      <ThemedText style={[styles.statusText, { color: getStatusColor(record) }]}>
+                        {getDisplayStatus(record)}
                       </ThemedText>
                     </View>
                     <ThemedText style={styles.emailTypeText}>{record.email_type.toUpperCase()}</ThemedText>
+                    <ThemedText style={styles.sourceText}>
+                      {record.source === "email_tracking" ? "📧 DELIVERED" : "🔍 ATTEMPT"}
+                    </ThemedText>
                   </View>
 
-                  {/* Resend Button */}
-                  {(record.status === "failed" || record.status === "bounced") && (
+                  {/* Enhanced Resend Button */}
+                  {(record.tracking_status === "failed" ||
+                    record.tracking_status === "bounced" ||
+                    record.attempt_status === "function_failed" ||
+                    record.attempt_status === "email_failed") && (
                     <TouchableOpacityComponent
                       style={[styles.resendButton, { borderColor: Colors[colorScheme].tint }]}
                       onPress={() => handleResendEmail(record)}
@@ -537,36 +758,80 @@ export function EmailHistory({ division, requestId }: EmailHistoryProps) {
                   </View>
                 )}
 
-                {/* Email Details */}
+                {/* Enhanced Email Details */}
                 <View style={styles.emailDetails}>
+                  {record.source === "email_tracking" ? (
+                    <>
+                      <ThemedText style={styles.detailText}>
+                        <ThemedText style={styles.detailLabel}>To:</ThemedText> {record.recipient}
+                      </ThemedText>
+                      <ThemedText style={styles.detailText}>
+                        <ThemedText style={styles.detailLabel}>Subject:</ThemedText> {record.subject}
+                      </ThemedText>
+                      {record.message_id && (
+                        <ThemedText style={styles.detailText}>
+                          <ThemedText style={styles.detailLabel}>Message ID:</ThemedText> {record.message_id}
+                        </ThemedText>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <ThemedText style={styles.detailText}>
+                        <ThemedText style={styles.detailLabel}>Function:</ThemedText> {record.function_name || "N/A"}
+                      </ThemedText>
+                      <ThemedText style={styles.detailText}>
+                        <ThemedText style={styles.detailLabel}>Component:</ThemedText> {record.app_component || "N/A"}
+                      </ThemedText>
+                      {record.email_tracking_id && (
+                        <ThemedText style={styles.detailText}>
+                          <ThemedText style={styles.detailLabel}>Linked Email ID:</ThemedText>{" "}
+                          {record.email_tracking_id}
+                        </ThemedText>
+                      )}
+                    </>
+                  )}
+
                   <ThemedText style={styles.detailText}>
-                    <ThemedText style={styles.detailLabel}>To:</ThemedText> {record.recipient}
-                  </ThemedText>
-                  <ThemedText style={styles.detailText}>
-                    <ThemedText style={styles.detailLabel}>Subject:</ThemedText> {record.subject}
-                  </ThemedText>
-                  <ThemedText style={styles.detailText}>
-                    <ThemedText style={styles.detailLabel}>Sent:</ThemedText>{" "}
+                    <ThemedText style={styles.detailLabel}>Created:</ThemedText>{" "}
                     {new Date(record.created_at).toLocaleString()}
                   </ThemedText>
-                  {record.last_updated_at !== record.created_at && (
+                  {record.last_updated_at && record.last_updated_at !== record.created_at && (
                     <ThemedText style={styles.detailText}>
-                      <ThemedText style={styles.detailLabel}>Last Updated:</ThemedText>{" "}
+                      <ThemedText style={styles.detailLabel}>Updated:</ThemedText>{" "}
                       {new Date(record.last_updated_at).toLocaleString()}
                     </ThemedText>
                   )}
                 </View>
 
-                {/* Additional Info */}
+                {/* Enhanced Additional Info */}
                 <View style={styles.additionalInfo}>
-                  {record.retry_count > 0 && (
+                  {record.retry_count && record.retry_count > 0 && (
                     <ThemedText style={styles.retryText}>Retries: {record.retry_count}</ThemedText>
                   )}
                   {record.fallback_notification_sent && (
                     <ThemedText style={styles.fallbackText}>Fallback notification sent</ThemedText>
                   )}
                   {record.error_message && (
-                    <ThemedText style={styles.errorText}>Error: {record.error_message}</ThemedText>
+                    <View style={styles.errorSection}>
+                      <ThemedText style={styles.errorLabel}>Error:</ThemedText>
+                      <ThemedText style={styles.errorText}>{record.error_message}</ThemedText>
+                    </View>
+                  )}
+                  {record.attempt_data && (
+                    <TouchableOpacityComponent
+                      style={styles.debugButton}
+                      onPress={() => {
+                        Toast.show({
+                          type: "info",
+                          text1: "Debug Data",
+                          text2: JSON.stringify(record.attempt_data, null, 2),
+                          position: "bottom",
+                        });
+                      }}
+                    >
+                      <Ionicons name="bug" size={12} color={Colors[colorScheme].textDim} />
+                      <ThemedText style={styles.debugText}>Debug Info</ThemedText>
+                    </TouchableOpacityComponent>
                   )}
                 </View>
               </AnimatedThemedView>
@@ -797,5 +1062,52 @@ const styles = StyleSheet.create({
   infoText: {
     fontSize: 14,
     opacity: 0.7,
+  },
+  legendContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 16,
+  },
+  legendItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  legendDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+  },
+  legendText: {
+    fontSize: 12,
+    fontWeight: "500",
+  },
+  errorSection: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  errorLabel: {
+    fontWeight: "500",
+  },
+  debugButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderRadius: 6,
+  },
+  debugText: {
+    fontSize: 12,
+    fontWeight: "500",
+  },
+  sourceText: {
+    fontSize: 12,
+    fontWeight: "500",
+    opacity: 0.7,
+    fontStyle: "italic",
   },
 });

@@ -11,6 +11,7 @@ import { useUserStore } from "@/store/userStore";
 import { useAuth } from "@/hooks/useAuth";
 import Toast from "react-native-toast-message";
 import Animated, { FadeIn, FadeOut, Layout } from "react-native-reanimated";
+import { checkEmailHealth, EmailHealthStatus } from "@/utils/emailHealthCheck";
 
 const AnimatedThemedView = Animated.createAnimatedComponent(ThemedView);
 
@@ -50,6 +51,28 @@ export function EmailNotificationAlerts({
   const [showAll, setShowAll] = useState(false);
   const [isAcknowledging, setIsAcknowledging] = useState(false);
   const [showOnlyUnacknowledged, setShowOnlyUnacknowledged] = useState(initialShowOnlyUnacknowledged);
+
+  // Email Health State
+  const [emailHealth, setEmailHealth] = useState<EmailHealthStatus | null>(null);
+  const [isLoadingHealth, setIsLoadingHealth] = useState(false);
+  const [showHealthDetails, setShowHealthDetails] = useState(false);
+
+  // Fetch email health status
+  const fetchEmailHealth = async () => {
+    setIsLoadingHealth(true);
+    try {
+      const healthStatus = await checkEmailHealth(24); // Check last 24 hours
+      setEmailHealth(healthStatus);
+
+      if (healthStatus && !healthStatus.healthy) {
+        console.warn("[EmailNotificationAlerts] Email system health check indicates issues:", healthStatus.issues);
+      }
+    } catch (error) {
+      console.error("[EmailNotificationAlerts] Error fetching email health:", error);
+    } finally {
+      setIsLoadingHealth(false);
+    }
+  };
 
   // Fetch email-related alerts
   const fetchEmailAlerts = async () => {
@@ -461,6 +484,7 @@ export function EmailNotificationAlerts({
   // Load data on mount
   useEffect(() => {
     fetchEmailAlerts();
+    fetchEmailHealth();
 
     // Clean up old alerts on mount (only for company admins to avoid multiple cleanup calls)
     if (!divisionFilter) {
@@ -519,6 +543,35 @@ export function EmailNotificationAlerts({
               <ThemedText style={styles.badgeText}>{alerts.length}</ThemedText>
             </View>
           )}
+          {/* Email Health Status Indicator */}
+          {emailHealth && (
+            <TouchableOpacityComponent
+              style={[
+                styles.healthIndicator,
+                {
+                  backgroundColor: emailHealth.healthy ? Colors.light.success + "20" : Colors.light.error + "20",
+                  borderColor: emailHealth.healthy ? Colors.light.success : Colors.light.error,
+                },
+              ]}
+              onPress={() => setShowHealthDetails(!showHealthDetails)}
+            >
+              <Ionicons
+                name={emailHealth.healthy ? "checkmark-circle" : "warning"}
+                size={16}
+                color={emailHealth.healthy ? Colors.light.success : Colors.light.error}
+              />
+              <ThemedText
+                style={[
+                  styles.healthText,
+                  {
+                    color: emailHealth.healthy ? Colors.light.success : Colors.light.error,
+                  },
+                ]}
+              >
+                {emailHealth.healthy ? "Healthy" : "Issues"}
+              </ThemedText>
+            </TouchableOpacityComponent>
+          )}
         </View>
         <View style={styles.headerRight}>
           {/* Toggle for showing all vs unacknowledged */}
@@ -549,11 +602,90 @@ export function EmailNotificationAlerts({
               </ThemedText>
             </TouchableOpacityComponent>
           )}
-          <TouchableOpacityComponent style={styles.refreshButton} onPress={fetchEmailAlerts}>
+          <TouchableOpacityComponent
+            style={styles.refreshButton}
+            onPress={() => {
+              fetchEmailAlerts();
+              fetchEmailHealth();
+            }}
+          >
             <Ionicons name="refresh" size={20} color={Colors[colorScheme].tint} />
           </TouchableOpacityComponent>
         </View>
       </View>
+
+      {/* Email Health Details (expanded) */}
+      {showHealthDetails && emailHealth && (
+        <AnimatedThemedView style={styles.healthDetailsContainer} entering={FadeIn} exiting={FadeOut}>
+          <View style={styles.healthHeader}>
+            <Ionicons name="pulse" size={20} color={Colors[colorScheme].tint} />
+            <ThemedText style={styles.healthDetailsTitle}>Email System Health (24h)</ThemedText>
+          </View>
+
+          <View style={styles.healthStatsRow}>
+            <View style={styles.healthStat}>
+              <ThemedText style={styles.healthStatLabel}>Success Rate</ThemedText>
+              <ThemedText
+                style={[
+                  styles.healthStatValue,
+                  {
+                    color: emailHealth.successRatePercent >= 85 ? Colors.light.success : Colors.light.error,
+                  },
+                ]}
+              >
+                {emailHealth.successRatePercent.toFixed(1)}%
+              </ThemedText>
+            </View>
+
+            <View style={styles.healthStat}>
+              <ThemedText style={styles.healthStatLabel}>Total Attempts</ThemedText>
+              <ThemedText style={styles.healthStatValue}>{emailHealth.totalAttempts}</ThemedText>
+            </View>
+
+            <View style={styles.healthStat}>
+              <ThemedText style={styles.healthStatLabel}>Failures</ThemedText>
+              <ThemedText
+                style={[
+                  styles.healthStatValue,
+                  {
+                    color: emailHealth.recentFailures > 0 ? Colors.light.error : Colors[colorScheme].text,
+                  },
+                ]}
+              >
+                {emailHealth.recentFailures}
+              </ThemedText>
+            </View>
+          </View>
+
+          {emailHealth.averageResponseTime > 0 && (
+            <View style={styles.healthResponseTime}>
+              <ThemedText style={styles.healthStatLabel}>Avg Response Time</ThemedText>
+              <ThemedText style={styles.healthStatValue}>
+                {(emailHealth.averageResponseTime / 1000).toFixed(1)}s
+              </ThemedText>
+            </View>
+          )}
+
+          {emailHealth.issues.length > 0 && (
+            <View style={styles.healthIssues}>
+              <ThemedText style={styles.healthIssuesTitle}>Issues Detected:</ThemedText>
+              {emailHealth.issues.map((issue, index) => (
+                <View key={index} style={styles.healthIssueItem}>
+                  <Ionicons name="alert-circle" size={14} color={Colors.light.error} />
+                  <ThemedText style={styles.healthIssueText}>{issue}</ThemedText>
+                </View>
+              ))}
+            </View>
+          )}
+
+          <View style={styles.healthFooter}>
+            <ThemedText style={styles.healthLastCheck}>
+              Last checked: {emailHealth.checkedAt.toLocaleTimeString()}
+            </ThemedText>
+            {isLoadingHealth && <ActivityIndicator size="small" color={Colors[colorScheme].tint} />}
+          </View>
+        </AnimatedThemedView>
+      )}
 
       {/* Error State */}
       {error && (
@@ -702,6 +834,92 @@ const styles = StyleSheet.create({
     color: "white",
     fontSize: 12,
     fontWeight: "600",
+  },
+  healthIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderRadius: 12,
+  },
+  healthText: {
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  healthDetailsContainer: {
+    marginTop: 12,
+    marginBottom: 16,
+    padding: 16,
+    backgroundColor: Colors.light.background,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    borderRadius: 8,
+  },
+  healthHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 16,
+  },
+  healthDetailsTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  healthStatsRow: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    marginBottom: 16,
+  },
+  healthStat: {
+    alignItems: "center",
+  },
+  healthStatLabel: {
+    fontSize: 12,
+    opacity: 0.7,
+    marginBottom: 4,
+  },
+  healthStatValue: {
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  healthResponseTime: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  healthIssues: {
+    marginBottom: 16,
+  },
+  healthIssuesTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: Colors.light.error,
+    marginBottom: 8,
+  },
+  healthIssueItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 4,
+  },
+  healthIssueText: {
+    fontSize: 13,
+    color: Colors.light.error,
+  },
+  healthFooter: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    borderTopWidth: 1,
+    borderTopColor: Colors.light.border,
+    paddingTop: 12,
+  },
+  healthLastCheck: {
+    fontSize: 12,
+    opacity: 0.6,
   },
   headerRight: {
     flexDirection: "row",
