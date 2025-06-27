@@ -55,3 +55,13 @@ supabase/functions/send-email/*
 *.tsbuildinfo
 
 app-example
+
+# Database backups and related files
+*.backup
+*.sql
+*.db
+*.sqlite
+*.sqlite3
+backup_recovery.backup/
+**/backup_recovery.backup/
+**/*.backup
