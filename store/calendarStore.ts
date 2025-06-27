@@ -753,6 +753,31 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
     console.log("[CalendarStore] Cancelling request", requestId);
     const state = get();
     try {
+      // *** NEW: Fetch request status before cancellation to determine if we should send company email ***
+      const { data: requestData, error: fetchError } = await supabase
+        .schema("public")
+        .from("pld_sdv_requests")
+        .select("status, leave_type, request_date")
+        .eq("id", requestId)
+        .eq("member_id", member.id)
+        .single();
+
+      if (fetchError) {
+        console.error(
+          `[CalendarStore] Error fetching request status before cancellation:`,
+          fetchError,
+        );
+        // Continue with cancellation anyway, but don't send email
+      }
+
+      const originalStatus = requestData?.status;
+      const shouldSendCompanyEmail = originalStatus &&
+        originalStatus !== "waitlisted";
+
+      console.log(
+        `[CalendarStore] Request status before cancellation: ${originalStatus}, will send company email: ${shouldSendCompanyEmail}`,
+      );
+
       // Optimistically update the UI by updating the status
       const newRequests = { ...state.requests };
       if (newRequests[requestDate]) {
@@ -772,11 +797,11 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
 
       if (error) throw error;
 
-      // If cancellation was successful, send email notification
-      if (data === true) {
+      // *** UPDATED: Only send email notification if request was NOT waitlisted ***
+      if (data === true && shouldSendCompanyEmail) {
         try {
           console.log(
-            "[CalendarStore] Sending cancellation email notification...",
+            "[CalendarStore] Sending cancellation email notification to company...",
           );
           const { error: emailError } = await supabase.functions.invoke(
             "send-cancellation-email",
@@ -805,6 +830,10 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
           );
           // Continue - cancellation was successful even if email failed
         }
+      } else if (data === true) {
+        console.log(
+          `[CalendarStore] Skipping company email for waitlisted request (original status: ${originalStatus})`,
+        );
       }
 
       // If immediate cancellation (data is true), update the UI again

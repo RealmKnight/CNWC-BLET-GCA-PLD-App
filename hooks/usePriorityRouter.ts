@@ -5,6 +5,7 @@ import { useAnnouncementStore } from "@/store/announcementStore";
 import { useNotificationStore } from "@/store/notificationStore";
 import { useBadgeStore } from "@/store/badgeStore";
 import { useUserStore } from "@/store/userStore";
+import { useEffectiveRoles } from "@/hooks/useEffectiveRoles";
 import { AppState } from "react-native";
 
 interface PriorityItem {
@@ -26,6 +27,7 @@ export function usePriorityRouter() {
     const pathname = usePathname();
     const { member } = useAuth();
     const division = useUserStore((state) => state.division);
+    const effectiveRoles = useEffectiveRoles() ?? [];
     const [isCheckingPriority, setIsCheckingPriority] = useState(false);
     const [priorityItems, setPriorityItems] = useState<PriorityItem[]>([]);
     const [currentlyHandlingItem, setCurrentlyHandlingItem] = useState<
@@ -174,6 +176,31 @@ export function usePriorityRouter() {
 
                     // Only include if unread OR unacknowledged
                     if (isUnread || isUnacknowledged) {
+                        // For division announcements, only treat as priority if it's for the user's PERSONAL division
+                        const isDivisionAnnouncement =
+                            announcement.target_type === "division";
+
+                        if (isDivisionAnnouncement) {
+                            // Check if this announcement is for the user's personal division
+                            // We need to compare against the actual division ID, not the division name
+                            let isForPersonalDivision = false;
+
+                            if (member?.division_id) {
+                                // Check if any of the announcement's target division IDs match the user's personal division
+                                isForPersonalDivision =
+                                    announcement.target_division_ids?.includes(
+                                        member.division_id,
+                                    ) || false;
+                            }
+
+                            if (!isForPersonalDivision) {
+                                console.log(
+                                    `[PriorityRouter] Skipping division announcement ${announcement.id} (${announcement.title}) - not for user's personal division (user division_id: ${member?.division_id}, announcement target_division_ids: ${announcement.target_division_ids})`,
+                                );
+                                return; // Skip this announcement
+                            }
+                        }
+
                         const route = announcement.target_type === "GCA"
                             ? `/(gca)/announcements`
                             : `/(division)/${division}/announcements`;
@@ -232,6 +259,8 @@ export function usePriorityRouter() {
         announcements,
         division,
         isProcessingPriority,
+        effectiveRoles,
+        pathname,
         // REMOVED priorityItems from dependencies to break circular dependency
     ]);
 
@@ -333,8 +362,10 @@ export function usePriorityRouter() {
             (!item.isRead || !item.isAcknowledged)
         );
 
-        // Don't block if user is already on a priority route or on tabs index
-        const isOnValidRoute = isOnPriorityRoute() || pathname === "/(tabs)";
+        // Don't block if user is already on a priority route, tabs index, or admin routes
+        const isOnValidRoute = isOnPriorityRoute() ||
+            pathname === "/(tabs)" ||
+            pathname.startsWith("/(admin)");
 
         return (hasCriticalItems || hasHighPriorityItems) && !isOnValidRoute;
     }, [priorityItems, isOnPriorityRoute, pathname]);
@@ -496,6 +527,31 @@ export function usePriorityRouter() {
                                     .acknowledged_by?.includes(userIdentifier);
 
                                 if (isUnread || isUnacknowledged) {
+                                    // For division announcements, only treat as priority if it's for the user's PERSONAL division
+                                    const isDivisionAnnouncement =
+                                        announcement.target_type === "division";
+
+                                    if (isDivisionAnnouncement) {
+                                        // Check if this announcement is for the user's personal division
+                                        let isForPersonalDivision = false;
+
+                                        if (member?.division_id) {
+                                            // Check if any of the announcement's target division IDs match the user's personal division
+                                            isForPersonalDivision =
+                                                announcement.target_division_ids
+                                                    ?.includes(
+                                                        member.division_id,
+                                                    ) || false;
+                                        }
+
+                                        if (!isForPersonalDivision) {
+                                            console.log(
+                                                `[PriorityRouter] Deferred check: Skipping division announcement ${announcement.id} (${announcement.title}) - not for user's personal division (user division_id: ${member?.division_id}, announcement target_division_ids: ${announcement.target_division_ids})`,
+                                            );
+                                            return; // Skip this announcement
+                                        }
+                                    }
+
                                     const route =
                                         announcement.target_type === "GCA"
                                             ? `/(gca)/announcements`

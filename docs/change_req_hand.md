@@ -950,3 +950,45 @@ COMPANY_PAYMENT_EMAIL=us_cmc_payroll@cn.ca
 **Dependencies:** Completion of Priority 3 Mailgun conversions ✅ **SATISFIED**
 
 ---
+
+## Updated Cancellation Email Logic (2024)
+
+### **Issue:**
+
+Previously, all request cancellations triggered company emails regardless of the request status, including waitlisted requests that the company doesn't need to know about.
+
+### **Solution:**
+
+Updated both `timeStore.ts` and `calendarStore.ts` cancellation functions to conditionally send company emails based on request status:
+
+#### **Email Sending Logic:**
+
+- **✅ SEND Email When:** Request status is `pending`, `approved`, or `cancellation_pending`
+- **❌ DO NOT Send Email When:** Request status is `waitlisted`
+
+#### **Implementation Details:**
+
+1. **Fetch request status** before calling `cancel_leave_request` database function
+2. **Determine email necessity** using `shouldSendCompanyEmail = originalStatus && originalStatus !== "waitlisted"`
+3. **Proceed with cancellation** regardless of email sending decision
+4. **Send company email** only if `shouldSendCompanyEmail` is true
+5. **Log decisions** for debugging and audit purposes
+
+#### **Benefits:**
+
+- **Reduces email noise** to company administrators
+- **Maintains proper notifications** for requests that require company action
+- **Preserves all existing functionality** for non-waitlisted requests
+- **Improves user experience** by eliminating unnecessary company communications
+
+#### **Files Modified:**
+
+- `store/timeStore.ts` - `cancelRequest` function
+- `store/calendarStore.ts` - `cancelRequest` function
+
+#### **Testing Considerations:**
+
+- Verify waitlisted request cancellations do NOT send emails
+- Verify pending/approved request cancellations DO send emails
+- Ensure cancellation still works if email sending fails
+- Confirm proper logging for both scenarios

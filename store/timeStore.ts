@@ -1024,6 +1024,31 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
         set({ isSubmittingAction: true, error: null });
 
         try {
+            // *** NEW: Fetch request status before cancellation to determine if we should send company email ***
+            const { data: requestData, error: fetchError } = await supabase
+                .schema("public")
+                .from("pld_sdv_requests")
+                .select("status, leave_type, request_date")
+                .eq("id", requestId)
+                .eq("member_id", memberId)
+                .single();
+
+            if (fetchError) {
+                console.error(
+                    `[TimeStore] Error fetching request status before cancellation:`,
+                    fetchError,
+                );
+                // Continue with cancellation anyway, but don't send email
+            }
+
+            const originalStatus = requestData?.status;
+            const shouldSendCompanyEmail = originalStatus &&
+                originalStatus !== "waitlisted";
+
+            console.log(
+                `[TimeStore] Request status before cancellation: ${originalStatus}, will send company email: ${shouldSendCompanyEmail}`,
+            );
+
             // Call the verified database function with schema name
             const { data, error } = await supabase.schema("public").rpc(
                 "cancel_leave_request",
@@ -1041,38 +1066,44 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
                     `[TimeStore] Cancellation successful/initiated for request ${requestId}`,
                 );
 
-                // Send email notification for the cancellation
-                try {
-                    console.log(
-                        "[TimeStore] Sending cancellation email notification...",
-                    );
-                    const { error: emailError } = await supabase.functions
-                        .invoke(
-                            "send-cancellation-email",
-                            {
-                                body: {
-                                    requestId: requestId,
-                                },
-                            },
+                // *** UPDATED: Only send email notification if request was NOT waitlisted ***
+                if (shouldSendCompanyEmail) {
+                    try {
+                        console.log(
+                            "[TimeStore] Sending cancellation email notification to company...",
                         );
+                        const { error: emailError } = await supabase.functions
+                            .invoke(
+                                "send-cancellation-email",
+                                {
+                                    body: {
+                                        requestId: requestId,
+                                    },
+                                },
+                            );
 
-                    if (emailError) {
+                        if (emailError) {
+                            console.error(
+                                "[TimeStore] Cancellation email notification failed:",
+                                emailError,
+                            );
+                            // Don't fail the cancellation if email fails - the cancellation was successful
+                        } else {
+                            console.log(
+                                "[TimeStore] Cancellation email notification sent successfully",
+                            );
+                        }
+                    } catch (emailError) {
                         console.error(
-                            "[TimeStore] Cancellation email notification failed:",
+                            "[TimeStore] Error sending cancellation email notification:",
                             emailError,
                         );
-                        // Don't fail the cancellation if email fails - the cancellation was successful
-                    } else {
-                        console.log(
-                            "[TimeStore] Cancellation email notification sent successfully",
-                        );
+                        // Continue - cancellation was successful even if email failed
                     }
-                } catch (emailError) {
-                    console.error(
-                        "[TimeStore] Error sending cancellation email notification:",
-                        emailError,
+                } else {
+                    console.log(
+                        `[TimeStore] Skipping company email for waitlisted request (original status: ${originalStatus})`,
                     );
-                    // Continue - cancellation was successful even if email failed
                 }
 
                 set({ isSubmittingAction: false });
