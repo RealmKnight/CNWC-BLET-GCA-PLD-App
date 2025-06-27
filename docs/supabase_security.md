@@ -1,16 +1,27 @@
-| name                         | title                        | level | facing   | categories   | description                                                   | detail                                                                           | remediation                                                                                        | metadata                                                                     | cache_key                                                                                          |
-| ---------------------------- | ---------------------------- | ----- | -------- | ------------ | ------------------------------------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| function_search_path_mutable | Function Search Path Mutable | WARN  | EXTERNAL | ["SECURITY"] | Detects functions where the search_path parameter is not set. | Function \`public.handle_status_change\` has a role mutable search_path          | <https://supabase.com/docs/guides/database/database-linter?lint=0011_function_search_path_mutable> | {"name":"handle_status_change","type":"function","schema":"public"}          | function_search_path_mutable_public_handle_status_change_b000d1ffa6941138ef78c073c0a56ff5          |
-| function_search_path_mutable | Function Search Path Mutable | WARN  | EXTERNAL | ["SECURITY"] | Detects functions where the search_path parameter is not set. | Function \`public.transfer_member\` has a role mutable search_path               | <https://supabase.com/docs/guides/database/database-linter?lint=0011_function_search_path_mutable> | {"name":"transfer_member","type":"function","schema":"public"}               | function_search_path_mutable_public_transfer_member_8b41c69298c095bc045b0e065b2aadd6               |
-| function_search_path_mutable | Function Search Path Mutable | WARN  | EXTERNAL | ["SECURITY"] | Detects functions where the search_path parameter is not set. | Function \`public.notify_on_meeting_change\` has a role mutable search_path      | <https://supabase.com/docs/guides/database/database-linter?lint=0011_function_search_path_mutable> | {"name":"notify_on_meeting_change","type":"function","schema":"public"}      | function_search_path_mutable_public_notify_on_meeting_change_43444107d9a0a2b8550d8b5c2179b97f      |
-| function_search_path_mutable | Function Search Path Mutable | WARN  | EXTERNAL | ["SECURITY"] | Detects functions where the search_path parameter is not set. | Function \`public.is_member_registered\` has a role mutable search_path          | <https://supabase.com/docs/guides/database/database-linter?lint=0011_function_search_path_mutable> | {"name":"is_member_registered","type":"function","schema":"public"}          | function_search_path_mutable_public_is_member_registered_9720eb984679dc94d0df377220ca102a          |
-| function_search_path_mutable | Function Search Path Mutable | WARN  | EXTERNAL | ["SECURITY"] | Detects functions where the search_path parameter is not set. | Function \`public.get_request_with_member_email\` has a role mutable search_path | <https://supabase.com/docs/guides/database/database-linter?lint=0011_function_search_path_mutable> | {"name":"get_request_with_member_email","type":"function","schema":"public"} | function_search_path_mutable_public_get_request_with_member_email_bdde375447e189a9564124b1afb72101 |
+| name                         | title                        | level | facing   | categories   | description                                                   | detail                                                                                       | remediation                                                                                        | metadata                                                                                 | cache_key                                                                                                      |
+| ---------------------------- | ---------------------------- | ----- | -------- | ------------ | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| function_search_path_mutable | Function Search Path Mutable | WARN  | EXTERNAL | ["SECURITY"] | Detects functions where the search_path parameter is not set. | Function \`public.test_waitlist_promotion_email\` has a role mutable search_path             | <https://supabase.com/docs/guides/database/database-linter?lint=0011_function_search_path_mutable> | {"name":"test_waitlist_promotion_email","type":"function","schema":"public"}             | function_search_path_mutable_public_test_waitlist_promotion_email_f7179fd26d8cc63890ebffe0b7c7fe60             |
+| function_search_path_mutable | Function Search Path Mutable | WARN  | EXTERNAL | ["SECURITY"] | Detects functions where the search_path parameter is not set. | Function \`public.test_waitlist_promotion_logic\` has a role mutable search_path             | <https://supabase.com/docs/guides/database/database-linter?lint=0011_function_search_path_mutable> | {"name":"test_waitlist_promotion_logic","type":"function","schema":"public"}             | function_search_path_mutable_public_test_waitlist_promotion_logic_79dce8154c1ae59fd0284ba8db607028             |
+| function_search_path_mutable | Function Search Path Mutable | WARN  | EXTERNAL | ["SECURITY"] | Detects functions where the search_path parameter is not set. | Function \`public.get_waitlist_email_implementation_summary\` has a role mutable search_path | <https://supabase.com/docs/guides/database/database-linter?lint=0011_function_search_path_mutable> | {"name":"get_waitlist_email_implementation_summary","type":"function","schema":"public"} | function_search_path_mutable_public_get_waitlist_email_implementation_summary_9c25beaf17861269d1594b761dacb9f2 |
+| function_search_path_mutable | Function Search Path Mutable | WARN  | EXTERNAL | ["SECURITY"] | Detects functions where the search_path parameter is not set. | Function \`public.log_email_attempt\` has a role mutable search_path                         | <https://supabase.com/docs/guides/database/database-linter?lint=0011_function_search_path_mutable> | {"name":"log_email_attempt","type":"function","schema":"public"}                         | function_search_path_mutable_public_log_email_attempt_b2f97c92601610d8957cda8e31aad3be                         |
+| function_search_path_mutable | Function Search Path Mutable | WARN  | EXTERNAL | ["SECURITY"] | Detects functions where the search_path parameter is not set. | Function \`public.update_email_attempt\` has a role mutable search_path                      | <https://supabase.com/docs/guides/database/database-linter?lint=0011_function_search_path_mutable> | {"name":"update_email_attempt","type":"function","schema":"public"}                      | function_search_path_mutable_public_update_email_attempt_8848b451291f3922b0d3e01318d1898e                      |
+| function_search_path_mutable | Function Search Path Mutable | WARN  | EXTERNAL | ["SECURITY"] | Detects functions where the search_path parameter is not set. | Function \`public.get_email_attempt_stats\` has a role mutable search_path                   | <https://supabase.com/docs/guides/database/database-linter?lint=0011_function_search_path_mutable> | {"name":"get_email_attempt_stats","type":"function","schema":"public"}                   | function_search_path_mutable_public_get_email_attempt_stats_4d85af222826fc11a2befe0378dac485                   |
+| function_search_path_mutable | Function Search Path Mutable | WARN  | EXTERNAL | ["SECURITY"] | Detects functions where the search_path parameter is not set. | Function \`public.run_email_health_check\` has a role mutable search_path                    | <https://supabase.com/docs/guides/database/database-linter?lint=0011_function_search_path_mutable> | {"name":"run_email_health_check","type":"function","schema":"public"}                    | function_search_path_mutable_public_run_email_health_check_bc475f3fcb05391ce8a8b6c3962f3fcc                    |
+| function_search_path_mutable | Function Search Path Mutable | WARN  | EXTERNAL | ["SECURITY"] | Detects functions where the search_path parameter is not set. | Function \`public.check_email_health\` has a role mutable search_path                        | <https://supabase.com/docs/guides/database/database-linter?lint=0011_function_search_path_mutable> | {"name":"check_email_health","type":"function","schema":"public"}                        | function_search_path_mutable_public_check_email_health_2b0ce3994df6cb131cb3a742e2ccea75                        |
+| function_search_path_mutable | Function Search Path Mutable | WARN  | EXTERNAL | ["SECURITY"] | Detects functions where the search_path parameter is not set. | Function \`public.get_email_health_trends\` has a role mutable search_path                   | <https://supabase.com/docs/guides/database/database-linter?lint=0011_function_search_path_mutable> | {"name":"get_email_health_trends","type":"function","schema":"public"}                   | function_search_path_mutable_public_get_email_health_trends_72e2551f9d36101d1edb357045cf7d90                   |
+| function_search_path_mutable | Function Search Path Mutable | WARN  | EXTERNAL | ["SECURITY"] | Detects functions where the search_path parameter is not set. | Function \`public.generate_email_reconciliation_report\` has a role mutable search_path      | <https://supabase.com/docs/guides/database/database-linter?lint=0011_function_search_path_mutable> | {"name":"generate_email_reconciliation_report","type":"function","schema":"public"}      | function_search_path_mutable_public_generate_email_reconciliation_report_8ac4f1c3e4b7c412ff921d1603884a66      |
+| function_search_path_mutable | Function Search Path Mutable | WARN  | EXTERNAL | ["SECURITY"] | Detects functions where the search_path parameter is not set. | Function \`public.get_reconciliation_details\` has a role mutable search_path                | <https://supabase.com/docs/guides/database/database-linter?lint=0011_function_search_path_mutable> | {"name":"get_reconciliation_details","type":"function","schema":"public"}                | function_search_path_mutable_public_get_reconciliation_details_5112827d76571c75bd46aabc8daae34d                |
+| function_search_path_mutable | Function Search Path Mutable | WARN  | EXTERNAL | ["SECURITY"] | Detects functions where the search_path parameter is not set. | Function \`public.move_to_dead_letter_queue\` has a role mutable search_path                 | <https://supabase.com/docs/guides/database/database-linter?lint=0011_function_search_path_mutable> | {"name":"move_to_dead_letter_queue","type":"function","schema":"public"}                 | function_search_path_mutable_public_move_to_dead_letter_queue_8ff91381cd77699faddddf61d5df7701                 |
+| function_search_path_mutable | Function Search Path Mutable | WARN  | EXTERNAL | ["SECURITY"] | Detects functions where the search_path parameter is not set. | Function \`public.resolve_dlq_item\` has a role mutable search_path                          | <https://supabase.com/docs/guides/database/database-linter?lint=0011_function_search_path_mutable> | {"name":"resolve_dlq_item","type":"function","schema":"public"}                          | function_search_path_mutable_public_resolve_dlq_item_210dd4f758f325a59ea705effb27ba9c                          |
+| function_search_path_mutable | Function Search Path Mutable | WARN  | EXTERNAL | ["SECURITY"] | Detects functions where the search_path parameter is not set. | Function \`public.validate_six_month_date_limits\` has a role mutable search_path            | <https://supabase.com/docs/guides/database/database-linter?lint=0011_function_search_path_mutable> | {"name":"validate_six_month_date_limits","type":"function","schema":"public"}            | function_search_path_mutable_public_validate_six_month_date_limits_52dfeefa15046ac82bcaee83d2eb85a8            |
+| function_search_path_mutable | Function Search Path Mutable | WARN  | EXTERNAL | ["SECURITY"] | Detects functions where the search_path parameter is not set. | Function \`public.furlough_member\` has a role mutable search_path                           | <https://supabase.com/docs/guides/database/database-linter?lint=0011_function_search_path_mutable> | {"name":"furlough_member","type":"function","schema":"public"}                           | function_search_path_mutable_public_furlough_member_6491e0525aa7c05eda56f838c2892c8a                           |
+| function_search_path_mutable | Function Search Path Mutable | WARN  | EXTERNAL | ["SECURITY"] | Detects functions where the search_path parameter is not set. | Function \`public.restore_member\` has a role mutable search_path                            | <https://supabase.com/docs/guides/database/database-linter?lint=0011_function_search_path_mutable> | {"name":"restore_member","type":"function","schema":"public"}                            | function_search_path_mutable_public_restore_member_f11c7bc0a87ecd8f3bff28920d526931                            |
 
 ## Security Fix Progress Summary
 
 | Issue Type                   | Total Count | Fixed | Remaining | Progress |
 | ---------------------------- | ----------- | ----- | --------- | -------- |
-| Function Search Path Mutable | 5           | 5     | 0         | 100%     |
+| Function Search Path Mutable | 16          | 16    | 0         | 100%     |
 
 ## Important Note on Function Fixes
 
@@ -154,6 +165,22 @@ For all future function fixes, make sure to:
 | cancel_pending_request                           | Fixed  | 2025-08-03 | Added SET search_path = '' and fully qualified table references                   |
 | is_document_in_user_division                     | Fixed  | 2025-08-03 | Added SET search_path = '' and fully qualified table references                   |
 | get_user_contact_info                            | Fixed  | 2025-08-04 | Added SET search_path = '' and ensured auth schema references                     |
+| get_waitlist_email_implementation_summary        | Fixed  | 2025-01-08 | Added SET search_path = 'public'                                                  |
+| log_email_attempt                                | Fixed  | 2025-01-08 | Added SET search_path = 'public'                                                  |
+| update_email_attempt                             | Fixed  | 2025-01-08 | Added SET search_path = 'public'                                                  |
+| get_email_attempt_stats                          | Fixed  | 2025-01-08 | Added SET search_path = 'public'                                                  |
+| run_email_health_check                           | Fixed  | 2025-01-08 | Added SET search_path = 'public'                                                  |
+| check_email_health                               | Fixed  | 2025-01-08 | Added SET search_path = 'public'                                                  |
+| get_email_health_trends                          | Fixed  | 2025-01-08 | Added SET search_path = 'public'                                                  |
+| generate_email_reconciliation_report             | Fixed  | 2025-01-08 | Added SET search_path = 'public'                                                  |
+| get_reconciliation_details                       | Fixed  | 2025-01-08 | Added SET search_path = 'public'                                                  |
+| move_to_dead_letter_queue                        | Fixed  | 2025-01-08 | Added SET search_path = 'public'                                                  |
+| resolve_dlq_item                                 | Fixed  | 2025-01-08 | Added SET search_path = 'public'                                                  |
+| validate_six_month_date_limits                   | Fixed  | 2025-01-08 | Added SET search_path = 'public', 'pg_catalog'                                    |
+| furlough_member                                  | Fixed  | 2025-01-08 | Added SET search_path = 'public', 'pg_catalog'                                    |
+| restore_member                                   | Fixed  | 2025-01-08 | Added SET search_path = 'public', 'pg_catalog'                                    |
+| test_waitlist_promotion_email                    | Fixed  | 2025-01-08 | Added SET search_path = 'public', 'vault', 'pg_catalog', 'information_schema'     |
+| test_waitlist_promotion_logic                    | Fixed  | 2025-01-08 | Added SET search_path = 'public', 'pg_catalog'                                    |
 | get_user_details                                 | Fixed  | 2025-08-04 | Added SET search_path = '' and fully qualified table references                   |
 | notify_on_admin_review_change                    | Fixed  | 2025-08-04 | Added SET search_path = '' and fully qualified table references                   |
 | notify_on_meeting_change                         | Fixed  | 2025-08-04 | Added SET search_path = '' and fully qualified table references                   |
@@ -168,9 +195,46 @@ For all future function fixes, make sure to:
 | is_member_registered                             | Fixed  | 2025-01-08 | Added SET search_path = '' (auth.users already properly qualified)                |
 | get_request_with_member_email                    | Fixed  | 2025-01-08 | Added SET search_path = '' and fully qualified table references                   |
 
+## Final 16 Functions - Targeted Search Path Approach
+
+For the final 16 functions identified in the security report, we used a targeted approach based on schema requirements rather than the blanket empty search path + full qualification method:
+
+### Categorization by Schema Requirements
+
+1. **Basic Email Functions** (`SET search_path = 'public'`):
+
+   - Functions only accessing email tracking tables in public schema
+   - Examples: `log_email_attempt`, `update_email_attempt`, `get_email_attempt_stats`
+
+2. **Date/Time Functions** (`SET search_path = 'public', 'pg_catalog'`):
+
+   - Functions using PostgreSQL built-ins like DATE_TRUNC, NOW(), INTERVAL
+   - Examples: `validate_six_month_date_limits`, `furlough_member`, `restore_member`
+
+3. **System Testing Functions** (`SET search_path = 'public', 'vault', 'pg_catalog', 'information_schema'`):
+   - Functions accessing system catalogs and vault for validation/testing
+   - Examples: `test_waitlist_promotion_email`
+
+This approach maintains the security fix (immutable search path) while preserving functionality and readability without requiring extensive code changes.
+
 ## Guidance for New Function Creation
 
-For any new functions created in the future, remember to include the search_path setting and use fully qualified table names:
+For any new functions created in the future, choose the appropriate search path based on schema requirements:
+
+### Option 1: Minimal Access (Recommended)
+
+```sql
+CREATE OR REPLACE FUNCTION public.new_function_name(parameters)
+RETURNS return_type
+LANGUAGE sql|plpgsql
+SET search_path = 'public'
+AS $$
+  -- Access only public schema tables
+  SELECT * FROM users;
+$$;
+```
+
+### Option 2: Maximum Security (When needed)
 
 ```sql
 CREATE OR REPLACE FUNCTION public.new_function_name(parameters)
@@ -183,4 +247,17 @@ AS $$
 $$;
 ```
 
-This two-step process (setting search_path AND using fully qualified references) is essential for maintaining security while ensuring functionality.
+### Option 3: Multi-Schema Access (When required)
+
+```sql
+CREATE OR REPLACE FUNCTION public.new_function_name(parameters)
+RETURNS return_type
+LANGUAGE sql|plpgsql
+SET search_path = 'public', 'auth', 'pg_catalog'
+AS $$
+  -- Access specific required schemas
+  SELECT * FROM users u JOIN auth.users au ON u.id = au.id;
+$$;
+```
+
+The key principle is to include only the schemas your function actually needs, ensuring both security and functionality.
