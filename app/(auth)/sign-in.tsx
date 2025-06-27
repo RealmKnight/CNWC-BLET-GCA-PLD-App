@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { StyleSheet, TextInput, TouchableOpacity, Image, KeyboardAvoidingView, Platform } from "react-native";
 import { Link, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -35,6 +35,20 @@ export default function SignInScreen() {
 
   // Enable web-specific input enhancements for iOS PWA
   useWebInputEnhancements();
+
+  // Debug effect to track error state changes
+  useEffect(() => {
+    if (error) {
+      console.log("[SignIn] Error state set:", error);
+    } else {
+      console.log("[SignIn] Error state cleared");
+    }
+  }, [error]);
+
+  // Debug effect to track auth status changes that might affect error display
+  useEffect(() => {
+    console.log("[SignIn] Auth status changed:", { isCaptchaEnabled, isLoading, error: !!error });
+  }, [isCaptchaEnabled, isLoading, error]);
 
   const validateEmail = (email: string): string | null => {
     if (!email.trim()) {
@@ -114,6 +128,10 @@ export default function SignInScreen() {
     if (emailError) {
       setEmailError(null);
     }
+    // Clear general error when user starts typing
+    if (error) {
+      setError(null);
+    }
   };
 
   const handleCaptchaVerify = (token: string) => {
@@ -135,27 +153,32 @@ export default function SignInScreen() {
   };
 
   const handleSignIn = async () => {
-    try {
-      setError(null);
-      setCaptchaError(null);
-      setIsLoading(true);
+    console.log("[SignIn] handleSignIn called - email:", email, "hasPassword:", !!password);
+    // Clear previous errors at the start of new attempt
+    setError(null);
+    setCaptchaError(null);
+    setIsLoading(true);
 
+    try {
       // Validate email before attempting sign in
       const emailValidationError = validateEmail(email);
       if (emailValidationError) {
         setEmailError(emailValidationError);
+        setIsLoading(false);
         return;
       }
 
       // Validate password is not empty
       if (!password.trim()) {
         setError("Password is required");
+        setIsLoading(false);
         return;
       }
 
       // Validate CAPTCHA token only if CAPTCHA is enabled
       if (isCaptchaEnabled && !captchaToken) {
         setCaptchaError("Please complete the security verification");
+        setIsLoading(false);
         return;
       }
 
@@ -177,7 +200,9 @@ export default function SignInScreen() {
       setLoginAttempts((prev) => prev + 1);
 
       // Use enhanced error messaging
-      setError(getErrorMessage(error));
+      const errorMessage = getErrorMessage(error);
+      console.log("[SignIn] Setting error message:", errorMessage);
+      setError(errorMessage);
 
       // Reset CAPTCHA on error to allow retry
       if (isCaptchaEnabled) {
@@ -225,7 +250,13 @@ export default function SignInScreen() {
             placeholder="Password"
             placeholderTextColor={Colors.dark.secondary}
             value={password}
-            onChangeText={setPassword}
+            onChangeText={(value) => {
+              setPassword(value);
+              // Clear general error when user starts typing
+              if (error) {
+                setError(null);
+              }
+            }}
             secureTextEntry={!showPassword}
             editable={!isLoading}
           />

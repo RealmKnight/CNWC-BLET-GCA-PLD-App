@@ -699,7 +699,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   // --- Authentication Functions ---
   const signIn = async (email: string, password: string, captchaToken?: string) => {
-    setAuthStatus("loading"); // Show loading during sign-in attempt
+    // Don't change auth status to loading - let the sign-in component handle loading state
+    // Only change auth status if sign-in is successful (handled by onAuthStateChange)
     try {
       const signInOptions: any = {
         email,
@@ -714,9 +715,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
       const { error } = await supabase.auth.signInWithPassword(signInOptions);
       if (error) throw error;
       // onAuthStateChange will handle the session update and trigger updateAuthState
+      // No need to set authStatus here - successful auth will be handled by the auth state change listener
     } catch (error: any) {
       console.error("[Auth] Sign in error:", error);
-      setAuthStatus("signedOut"); // Revert status on error
+      // Don't change authStatus on error - stay in current state to preserve UI
       throw error; // Re-throw for UI handling
     }
   };
