@@ -218,11 +218,10 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
                     event: "*",
                     schema: "public",
                     table: "pld_sdv_requests",
-                    // filter: `member_id=eq.${memberId}`, // <-- Temporarily commented out
                 },
                 (payload: RealtimePostgresChangesPayload<DbPldSdvRequests>) => {
                     console.log(
-                        "[TimeStore] >>> pld_sdv_requests REALTIME (NO FILTER) CALLBACK FIRED <<< Payload:",
+                        "🔥 [TimeStore] pld_sdv_requests realtime callback fired:",
                         payload,
                     );
 
@@ -231,9 +230,9 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
 
                     if (payload.eventType === "UPDATE") {
                         console.log(
-                            `[TimeStore DIAGNOSTIC] EventType is UPDATE. Store memberId: ${get().memberId}, Payload member_id: ${newRecord?.member_id}`,
+                            `[TimeStore] UPDATE event - Store memberId: ${get().memberId}, Payload member_id: ${newRecord?.member_id}`,
                         );
-                        // Unconditionally call handleRealtimeUpdate for UPDATE to see if it then works or logs [TimeStore RT]
+                        // Call handleRealtimeUpdate for UPDATE events
                         get().handleRealtimeUpdate(payload, "pld_sdv_requests");
                     } else if (payload.eventType === "INSERT") {
                         if (
@@ -245,7 +244,7 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
                             );
                         } else {
                             console.log(
-                                `[TimeStore] pld_sdv_requests (NO FILTER) INSERT for different/no member_id (${newRecord?.member_id}), ignoring.`,
+                                `[TimeStore] pld_sdv_requests INSERT for different member_id (${newRecord?.member_id}), ignoring.`,
                             );
                         }
                     } else if (payload.eventType === "DELETE") {
@@ -258,12 +257,14 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
                             );
                         } else {
                             console.log(
-                                `[TimeStore] pld_sdv_requests (NO FILTER) DELETE for different/no member_id (${oldRecord?.member_id}), ignoring.`,
+                                `[TimeStore] pld_sdv_requests DELETE for different member_id (${oldRecord?.member_id}), ignoring.`,
                             );
                         }
                     } else {
                         console.log(
-                            "[TimeStore] pld_sdv_requests (NO FILTER) other event type ('${payload.eventType}'), passing to handler:",
+                            `[TimeStore] pld_sdv_requests other event type (${
+                                (payload as any).eventType
+                            }), passing to handler:`,
                             payload,
                         );
                         get().handleRealtimeUpdate(payload, "pld_sdv_requests");

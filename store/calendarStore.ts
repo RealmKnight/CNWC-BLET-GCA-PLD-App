@@ -1154,15 +1154,24 @@ export async function setupCalendarSubscriptions() {
         event: "*",
         schema: "public",
         table: "pld_sdv_allotments",
-        filter: `calendar_id=eq.${calendarId}`,
       },
       async (payload: RealtimePostgresChangesPayload<any>) => {
         console.log(
-          "[CalendarStore Realtime] PLD/SDV allotment change:",
+          "🔥 [CalendarStore Realtime] PLD/SDV allotment change received:",
           payload,
         );
 
         try {
+          // Client-side filtering: only process changes for our calendar
+          const recordCalendarId = (payload.new as any)?.calendar_id ||
+            (payload.old as any)?.calendar_id;
+          if (recordCalendarId !== calendarId) {
+            console.log(
+              `[CalendarStore] Ignoring allotment update for different calendar: ${recordCalendarId} (expected: ${calendarId})`,
+            );
+            return;
+          }
+
           // Get the current state
           const state = useCalendarStore.getState();
           const newAllotments = { ...state.allotments };
@@ -1224,12 +1233,24 @@ export async function setupCalendarSubscriptions() {
         event: "*",
         schema: "public",
         table: "pld_sdv_requests",
-        filter: `calendar_id=eq.${calendarId}`,
       },
       async (payload: RealtimePostgresChangesPayload<any>) => {
-        console.log("[CalendarStore Realtime] Request change:", payload);
+        console.log(
+          "🔥 [CalendarStore Realtime] Request change received:",
+          payload,
+        );
 
         try {
+          // Client-side filtering: only process changes for our calendar
+          const recordCalendarId = (payload.new as any)?.calendar_id ||
+            (payload.old as any)?.calendar_id;
+          if (recordCalendarId !== calendarId) {
+            console.log(
+              `[CalendarStore] Ignoring request update for different calendar: ${recordCalendarId} (expected: ${calendarId})`,
+            );
+            return;
+          }
+
           // Get the current state and refresh the requests for the affected date
           const state = useCalendarStore.getState();
           const member = useUserStore.getState().member;
@@ -1238,9 +1259,9 @@ export async function setupCalendarSubscriptions() {
           if (
             payload.eventType === "INSERT" || payload.eventType === "UPDATE"
           ) {
-            date = payload.new.request_date;
+            date = (payload.new as any).request_date;
           } else {
-            date = payload.old.request_date;
+            date = (payload.old as any).request_date;
           }
 
           if (member?.calendar_id) {
@@ -1251,12 +1272,7 @@ export async function setupCalendarSubscriptions() {
             );
           }
 
-          // !!! DIAGNOSTIC HACK !!!
-          console.log(
-            "[CalendarStore Realtime] Attempting to trigger TimeStore refresh for PLD/SDV change.",
-          );
-
-          // Replace direct timeStore call with event emission
+          // Emit event for TimeStore refresh
           storeEventManager.emitEvent(
             StoreEventType.CALENDAR_REQUESTS_UPDATED,
             {
@@ -1279,7 +1295,6 @@ export async function setupCalendarSubscriptions() {
           console.log(
             "[CalendarStore Realtime] Emitted CALENDAR_REQUESTS_UPDATED event for TimeStore",
           );
-          // !!! END DIAGNOSTIC HACK !!!
         } catch (error) {
           console.error(
             "[CalendarStore Realtime] Error handling request change:",
@@ -1315,26 +1330,35 @@ export async function setupCalendarSubscriptions() {
         event: "*",
         schema: "public",
         table: "six_month_requests",
-        filter: `member_id=eq.${memberId}`,
       },
       async (payload: RealtimePostgresChangesPayload<any>) => {
         console.log(
-          "[CalendarStore Realtime] Six-month request change detected:",
+          "🔥 [CalendarStore Realtime] Six-month request change received:",
           {
             eventType: payload.eventType,
             table: payload.table,
             schema: payload.schema,
             memberId: memberId,
             requestDate: payload.eventType === "INSERT"
-              ? payload.new.request_date
-              : payload.old?.request_date,
+              ? (payload.new as any).request_date
+              : (payload.old as any)?.request_date,
             requestId: payload.eventType === "INSERT"
-              ? payload.new.id
-              : payload.old?.id,
+              ? (payload.new as any).id
+              : (payload.old as any)?.id,
           },
         );
 
         try {
+          // Client-side filtering: only process changes for our member
+          const recordMemberId = (payload.new as any)?.member_id ||
+            (payload.old as any)?.member_id;
+          if (recordMemberId !== memberId) {
+            console.log(
+              `[CalendarStore] Ignoring six-month request update for different member: ${recordMemberId} (expected: ${memberId})`,
+            );
+            return;
+          }
+
           // Get the current state and update sixMonthRequestDays
           const state = useCalendarStore.getState();
 
@@ -1343,11 +1367,11 @@ export async function setupCalendarSubscriptions() {
             // Add the date to sixMonthRequestDays
             const updatedDays = {
               ...state.sixMonthRequestDays,
-              [payload.new.request_date]: true,
+              [(payload.new as any).request_date]: true,
             };
             console.log(
               "[CalendarStore Realtime] Adding six-month request date to state:",
-              payload.new.request_date,
+              (payload.new as any).request_date,
               "Updated days:",
               Object.keys(updatedDays),
             );
@@ -1358,18 +1382,18 @@ export async function setupCalendarSubscriptions() {
 
             console.log(
               "[CalendarStore Realtime] DELETE event received for six-month request. Request date:",
-              payload.old.request_date,
+              (payload.old as any).request_date,
               "RequestId:",
-              payload.old.id,
+              (payload.old as any).id,
               "Current sixMonthRequestDays:",
               Object.keys(newSixMonthRequestDays),
             );
 
-            if (payload.old && payload.old.request_date) {
-              delete newSixMonthRequestDays[payload.old.request_date];
+            if (payload.old && (payload.old as any).request_date) {
+              delete newSixMonthRequestDays[(payload.old as any).request_date];
               console.log(
                 "[CalendarStore Realtime] Removing six-month request date from state:",
-                payload.old.request_date,
+                (payload.old as any).request_date,
                 "Updated days:",
                 Object.keys(newSixMonthRequestDays),
               );
@@ -1377,19 +1401,18 @@ export async function setupCalendarSubscriptions() {
               // Force a state update with the new object
               state.setSixMonthRequestDays({ ...newSixMonthRequestDays });
 
-              // Force a refresh of the timeStore data as well
+              // Emit event for TimeStore refresh
               try {
                 console.log(
                   "[CalendarStore Realtime] Triggering timeStore refresh after six-month cancellation",
                 );
 
-                // Replace direct timeStore call with event emission
                 storeEventManager.emitEvent(
                   StoreEventType.SIX_MONTH_REQUESTS_UPDATED,
                   {
                     source: "calendarStore",
                     payload: {
-                      requestDate: payload.old.request_date,
+                      requestDate: (payload.old as any).request_date,
                       memberId: memberId,
                       updateType: "realtime_update",
                       shouldRefreshTimeStore: true,
@@ -1419,15 +1442,18 @@ export async function setupCalendarSubscriptions() {
           } else if (payload.eventType === "UPDATE") {
             console.log(
               "[CalendarStore Realtime] Detected UPDATE for six-month request:",
-              payload.old.request_date,
+              (payload.old as any).request_date,
               "->",
-              payload.new.request_date,
+              (payload.new as any).request_date,
             );
             // Handle updates if needed
-            if (payload.old.request_date !== payload.new.request_date) {
+            if (
+              (payload.old as any).request_date !==
+                (payload.new as any).request_date
+            ) {
               const updatedDays = { ...state.sixMonthRequestDays };
-              delete updatedDays[payload.old.request_date];
-              updatedDays[payload.new.request_date] = true;
+              delete updatedDays[(payload.old as any).request_date];
+              updatedDays[(payload.new as any).request_date] = true;
               state.setSixMonthRequestDays(updatedDays);
             }
           }
@@ -1478,6 +1504,13 @@ export async function setupCalendarSubscriptions() {
     ));
 
   console.log("[CalendarStore] All subscriptions setup complete");
+
+  // TEMPORARY: Debug websocket connection status
+  console.log("🔍 [CalendarStore] Realtime connection state:", {
+    url: supabase.realtime.endpointURL,
+    channels: supabase.realtime.channels.length,
+    isConnected: supabase.realtime.isConnected(),
+  });
 
   // Return a cleanup function directly
   return () => {
