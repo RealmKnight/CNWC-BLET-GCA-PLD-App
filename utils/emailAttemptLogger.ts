@@ -189,12 +189,11 @@ export async function invokeWithAttemptLogging(
             };
         }
 
-        // Log successful function call - the function itself should update to email_queued/sent/failed
-        if (attemptId) {
-            await updateEmailAttempt(attemptId, "function_invoked", {
-                responseData: data,
-            });
-        }
+        // Log successful function call - the edge function handles its own status updates
+        // We don't update the status here to avoid overwriting the edge function's status updates
+        console.log(
+            `[EmailAttemptLogger] ${functionName} completed - edge function handles status update`,
+        );
 
         return {
             success: true,
@@ -339,12 +338,11 @@ export async function invokeWithRetryAndTimeout(
                 continue;
             }
 
-            // Success! Log the successful function call
-            if (attemptId) {
-                await updateEmailAttempt(attemptId, "function_invoked", {
-                    responseData: { ...data, retryCount, finalAttempt: true },
-                });
-            }
+            // Success! Edge function handles its own status updates (email_sent/email_failed)
+            // We don't update the status here to avoid overwriting the edge function's status
+            console.log(
+                `[EmailAttemptLogger] ${functionName} completed - edge function will handle status update`,
+            );
 
             console.log(
                 `[EmailAttemptLogger] ${functionName} succeeded after ${
