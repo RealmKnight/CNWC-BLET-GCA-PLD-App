@@ -2,7 +2,7 @@
   "expo": {
     "name": "pld-app-cnwc-gca-blet",
     "slug": "pld-app-cnwc-gca-blet",
-    "version": "1.0.0",
+    "version": "1.0.53",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "pldapp",

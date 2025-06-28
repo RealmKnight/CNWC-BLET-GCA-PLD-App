@@ -85,12 +85,12 @@ export function AdminMessageModal({ visible, onClose, pinNumber, userEmail }: Ad
 
     setIsLoading(true);
     try {
-      // Get all admin users for the selected division
+      // Get all division admin users for the selected division from members table
       const { data: adminData, error: adminError } = await supabase
-        .from("user_roles")
-        .select("members!inner(pin_number)")
+        .from("members")
+        .select("pin_number, divisions!inner(name)")
         .eq("role", "division_admin")
-        .eq("members.division", selectedDivision);
+        .eq("divisions.name", selectedDivision);
 
       if (adminError) throw adminError;
 
@@ -101,11 +101,8 @@ export function AdminMessageModal({ visible, onClose, pinNumber, userEmail }: Ad
       // Extract pin numbers
       const adminPinNumbers: number[] = [];
       for (const admin of adminData) {
-        // Access nested data safely
-        // @ts-ignore - Type is complex and not needed to be defined here
-        const adminPin = admin.members?.pin_number;
-        if (adminPin) {
-          adminPinNumbers.push(parseInt(adminPin));
+        if (admin.pin_number) {
+          adminPinNumbers.push(parseInt(admin.pin_number.toString()));
         }
       }
 
