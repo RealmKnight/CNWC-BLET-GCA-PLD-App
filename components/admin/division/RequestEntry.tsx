@@ -26,7 +26,22 @@ export function RequestEntry({ selectedDivision, selectedCalendarId: propSelecte
   const colorScheme = (useColorScheme() ?? "light") as keyof typeof Colors;
 
   // State from stores
-  const { membersByCalendar, isLoadingMembersByCalendar, fetchMembersByCalendarId } = useAdminMemberManagementStore();
+  const {
+    membersByCalendar,
+    isLoadingMembersByCalendar,
+    fetchMembersByCalendarId,
+    // Transfer-related store state
+    memberApprovedWeeks,
+    availableTransferWeeks,
+    isLoadingApprovedWeeks,
+    isLoadingAvailableWeeks,
+    transferError,
+    // Transfer-related store methods
+    fetchMemberApprovedWeeks,
+    fetchAvailableTransferWeeks,
+    transferVacationWeek,
+    clearTransferData,
+  } = useAdminMemberManagementStore();
   const { calendars, vacationAllotmentWeeks, isLoadingVacationAllotmentWeeks, fetchVacationAllotmentWeeks } =
     useAdminCalendarManagementStore();
   const { member: adminUser } = useUserStore();
@@ -44,6 +59,13 @@ export function RequestEntry({ selectedDivision, selectedCalendarId: propSelecte
   const [submissionState, setSubmissionState] = useState<SubmissionState>("idle");
   const [formError, setFormError] = useState<string | null>(null);
   const [isLoadingCalendars, setIsLoadingCalendars] = useState<boolean>(false);
+
+  // NEW: Transfer-related state variables
+  const [transferSelectedMemberPin, setTransferSelectedMemberPin] = useState<string | null>(null);
+  const [transferCurrentWeek, setTransferCurrentWeek] = useState<string | null>(null);
+  const [transferNewWeek, setTransferNewWeek] = useState<string | null>(null);
+  const [transferSubmissionState, setTransferSubmissionState] = useState<SubmissionState>("idle");
+  const [localTransferError, setLocalTransferError] = useState<string | null>(null);
 
   // Effect to sync prop calendar with local state when prop changes
   useEffect(() => {
@@ -69,6 +91,38 @@ export function RequestEntry({ selectedDivision, selectedCalendarId: propSelecte
       console.log("[RequestEntry] No calendar selected, clearing form.");
     }
   }, [localSelectedCalendarId, selectedYear, fetchMembersByCalendarId, fetchVacationAllotmentWeeks]);
+
+  // NEW: Effect for loading approved weeks when transfer member is selected
+  useEffect(() => {
+    if (transferSelectedMemberPin && localSelectedCalendarId && selectedYear) {
+      const pinNumber = parseInt(transferSelectedMemberPin, 10);
+      if (!isNaN(pinNumber)) {
+        console.log(`[RequestEntry] Fetching approved weeks for member ${pinNumber}`);
+        fetchMemberApprovedWeeks(localSelectedCalendarId, pinNumber, selectedYear);
+      }
+    }
+    // Reset current week when member changes
+    setTransferCurrentWeek(null);
+    setTransferNewWeek(null);
+  }, [transferSelectedMemberPin, localSelectedCalendarId, selectedYear, fetchMemberApprovedWeeks]);
+
+  // NEW: Effect for loading available weeks when current week is selected
+  useEffect(() => {
+    if (transferCurrentWeek && localSelectedCalendarId && selectedYear) {
+      console.log(`[RequestEntry] Fetching available weeks excluding ${transferCurrentWeek}`);
+      fetchAvailableTransferWeeks(localSelectedCalendarId, selectedYear, transferCurrentWeek);
+    }
+    // Reset new week when current week changes
+    setTransferNewWeek(null);
+  }, [transferCurrentWeek, localSelectedCalendarId, selectedYear, fetchAvailableTransferWeeks]);
+
+  // NEW: Cleanup effect for transfer data
+  useEffect(() => {
+    return () => {
+      // Clear transfer data when component unmounts
+      clearTransferData();
+    };
+  }, [clearTransferData]);
 
   const handleCalendarChange = (calendarId: string | null) => {
     setLocalSelectedCalendarId(calendarId);
@@ -173,6 +227,100 @@ export function RequestEntry({ selectedDivision, selectedCalendarId: propSelecte
     }
   };
 
+  // NEW: Transfer handler function
+  const handleTransferSubmit = async () => {
+    setTransferSubmissionState("submitting");
+    setLocalTransferError(null);
+
+    // Form validation
+    if (
+      !transferSelectedMemberPin ||
+      !transferCurrentWeek ||
+      !transferNewWeek ||
+      !localSelectedCalendarId ||
+      !adminUser?.id
+    ) {
+      const message = "All fields are required for vacation week transfer.";
+      setLocalTransferError(message);
+      setTransferSubmissionState("error");
+      console.error("[RequestEntry] Transfer validation failed:", {
+        transferSelectedMemberPin,
+        transferCurrentWeek,
+        transferNewWeek,
+        localSelectedCalendarId,
+        adminUserId: adminUser?.id,
+      });
+      return;
+    }
+
+    // Prevent transfer to same week
+    if (transferCurrentWeek === transferNewWeek) {
+      const message = "Cannot transfer to the same week. Please select a different week.";
+      setLocalTransferError(message);
+      setTransferSubmissionState("error");
+      return;
+    }
+
+    try {
+      console.log("[RequestEntry] Submitting vacation week transfer:", {
+        transferSelectedMemberPin,
+        transferCurrentWeek,
+        transferNewWeek,
+        localSelectedCalendarId,
+        adminUserId: adminUser.id,
+      });
+
+      const success = await transferVacationWeek({
+        pin_number: parseInt(transferSelectedMemberPin, 10),
+        old_start_date: transferCurrentWeek,
+        new_start_date: transferNewWeek,
+        calendar_id: localSelectedCalendarId,
+        admin_user_id: adminUser.id,
+        reason: `Admin transfer - moved from ${transferCurrentWeek} to ${transferNewWeek}`,
+      });
+
+      if (success) {
+        setTransferSubmissionState("success");
+        Toast.show({
+          type: "success",
+          text1: "Transfer Successful",
+          text2: `Vacation week transferred from ${transferCurrentWeek} to ${transferNewWeek}`,
+        });
+
+        // Reset transfer form
+        setTransferSelectedMemberPin(null);
+        setTransferCurrentWeek(null);
+        setTransferNewWeek(null);
+
+        // Refresh vacation allotment weeks to show updated data
+        if (localSelectedCalendarId) {
+          fetchVacationAllotmentWeeks(localSelectedCalendarId, selectedYear);
+        }
+
+        setTimeout(() => setTransferSubmissionState("idle"), 3000);
+      } else {
+        setTransferSubmissionState("error");
+        const errorMessage = transferError || "Transfer failed. Please try again.";
+        setLocalTransferError(errorMessage);
+        Toast.show({
+          type: "error",
+          text1: "Transfer Failed",
+          text2: errorMessage,
+        });
+      }
+    } catch (error) {
+      console.error("[RequestEntry] handleTransferSubmit error:", error);
+      const message = error instanceof Error ? error.message : "An unexpected error occurred during transfer.";
+      setLocalTransferError(message);
+      setTransferSubmissionState("error");
+      Toast.show({
+        type: "error",
+        text1: "Transfer Failed",
+        text2: message,
+      });
+    }
+  };
+
   // Loading state check
   const isLoading = isLoadingMembersByCalendar || isLoadingVacationAllotmentWeeks || isLoadingCalendars;
 
@@ -181,6 +329,17 @@ export function RequestEntry({ selectedDivision, selectedCalendarId: propSelecte
   const currentWeeks = localSelectedCalendarId
     ? vacationAllotmentWeeks[localSelectedCalendarId]?.[selectedYear] || []
     : [];
+
+  // NEW: Get transfer-related data from store cache
+  const transferMemberApprovedWeeks =
+    transferSelectedMemberPin && localSelectedCalendarId && selectedYear
+      ? memberApprovedWeeks[`${localSelectedCalendarId}-${transferSelectedMemberPin}-${selectedYear}`] || []
+      : [];
+
+  const transferAvailableWeeks =
+    localSelectedCalendarId && selectedYear
+      ? availableTransferWeeks[`${localSelectedCalendarId}-${selectedYear}`] || []
+      : [];
 
   // Define styles inside the component to access colorScheme
   const pickerBaseStyle: ViewStyle & TextStyle = {
@@ -270,6 +429,33 @@ export function RequestEntry({ selectedDivision, selectedCalendarId: propSelecte
     },
     yearPickerContainer: {
       flex: 1,
+    },
+    // NEW: Transfer section styles
+    sectionDivider: {
+      marginVertical: 32,
+      alignItems: "center",
+    },
+    dividerLine: {
+      height: 1,
+      backgroundColor: Colors[colorScheme].border,
+      width: "100%",
+      marginBottom: 8,
+    },
+    sectionTitle: {
+      fontSize: 18,
+      fontWeight: "600",
+      textAlign: "center",
+      marginBottom: 16,
+    },
+    transferButton: {
+      marginTop: 20,
+      backgroundColor: Colors[colorScheme].success,
+    },
+    transferButtonText: {
+      color: Colors[colorScheme].background,
+    },
+    loadingIndicator: {
+      marginVertical: 10,
     },
   });
 
@@ -464,6 +650,179 @@ export function RequestEntry({ selectedDivision, selectedCalendarId: propSelecte
         </>
       ) : (
         <ThemedText style={styles.placeholderText}>Please select a calendar to continue.</ThemedText>
+      )}
+
+      {/* NEW: Vacation Week Transfer Section */}
+      {localSelectedCalendarId && (
+        <>
+          {/* Section Divider */}
+          <View style={styles.sectionDivider}>
+            <View style={styles.dividerLine} />
+            <ThemedText style={styles.sectionTitle}>Transfer Approved Vacation Week</ThemedText>
+          </View>
+
+          {/* Transfer Member Selector */}
+          <View style={styles.inputGroup}>
+            <ThemedText style={styles.label}>Select Member to Transfer:</ThemedText>
+            <View style={styles.yearPickerContainer}>
+              {Platform.OS === "web" ? (
+                <select
+                  value={transferSelectedMemberPin ?? ""}
+                  onChange={(e) => setTransferSelectedMemberPin(e.target.value || null)}
+                  style={{ ...pickerBaseStyle, ...webPickerSpecificStyle } as React.CSSProperties}
+                  disabled={currentMembers.length === 0 || transferSubmissionState === "submitting"}
+                >
+                  <option value="">Select Member...</option>
+                  {currentMembers.map((member) => (
+                    <option key={member.pin_number} value={String(member.pin_number)}>
+                      {`${member.last_name}, ${member.first_name} (${member.pin_number})`}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <Picker
+                  selectedValue={transferSelectedMemberPin}
+                  onValueChange={(itemValue) => setTransferSelectedMemberPin(itemValue)}
+                  enabled={currentMembers.length > 0 && transferSubmissionState !== "submitting"}
+                  style={styles.nativePicker}
+                  dropdownIconColor={Colors[colorScheme].text}
+                >
+                  <Picker.Item label="Select Member..." value={null} />
+                  {currentMembers.map((member) => (
+                    <Picker.Item
+                      key={member.pin_number}
+                      label={`${member.last_name}, ${member.first_name} (${member.pin_number})`}
+                      value={String(member.pin_number)}
+                    />
+                  ))}
+                </Picker>
+              )}
+            </View>
+          </View>
+
+          {/* Show loading indicator for approved weeks */}
+          {isLoadingApprovedWeeks && transferSelectedMemberPin && (
+            <ActivityIndicator size="small" color={Colors[colorScheme].tint} style={styles.loadingIndicator} />
+          )}
+
+          {/* Current Approved Week Selector */}
+          {transferSelectedMemberPin && !isLoadingApprovedWeeks && (
+            <View style={styles.inputGroup}>
+              <ThemedText style={styles.label}>Current Approved Week:</ThemedText>
+              <View style={styles.yearPickerContainer}>
+                {Platform.OS === "web" ? (
+                  <select
+                    value={transferCurrentWeek ?? ""}
+                    onChange={(e) => setTransferCurrentWeek(e.target.value || null)}
+                    style={{ ...pickerBaseStyle, ...webPickerSpecificStyle } as React.CSSProperties}
+                    disabled={transferMemberApprovedWeeks.length === 0 || transferSubmissionState === "submitting"}
+                  >
+                    <option value="">Select Current Week...</option>
+                    {transferMemberApprovedWeeks.map((week) => (
+                      <option key={week.id} value={week.start_date}>
+                        {`Week of ${week.start_date}`}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <Picker
+                    selectedValue={transferCurrentWeek}
+                    onValueChange={(itemValue) => setTransferCurrentWeek(itemValue)}
+                    enabled={transferMemberApprovedWeeks.length > 0 && transferSubmissionState !== "submitting"}
+                    style={styles.nativePicker}
+                    dropdownIconColor={Colors[colorScheme].text}
+                  >
+                    <Picker.Item label="Select Current Week..." value={null} />
+                    {transferMemberApprovedWeeks.map((week) => (
+                      <Picker.Item key={week.id} label={`Week of ${week.start_date}`} value={week.start_date} />
+                    ))}
+                  </Picker>
+                )}
+              </View>
+              {transferMemberApprovedWeeks.length === 0 && (
+                <ThemedText style={styles.errorText}>
+                  No approved vacation weeks found for this member in {selectedYear}.
+                </ThemedText>
+              )}
+            </View>
+          )}
+
+          {/* Show loading indicator for available weeks */}
+          {isLoadingAvailableWeeks && transferCurrentWeek && (
+            <ActivityIndicator size="small" color={Colors[colorScheme].tint} style={styles.loadingIndicator} />
+          )}
+
+          {/* New Available Week Selector */}
+          {transferCurrentWeek && !isLoadingAvailableWeeks && (
+            <View style={styles.inputGroup}>
+              <ThemedText style={styles.label}>Transfer to Available Week:</ThemedText>
+              <View style={styles.yearPickerContainer}>
+                {Platform.OS === "web" ? (
+                  <select
+                    value={transferNewWeek ?? ""}
+                    onChange={(e) => setTransferNewWeek(e.target.value || null)}
+                    style={{ ...pickerBaseStyle, ...webPickerSpecificStyle } as React.CSSProperties}
+                    disabled={transferAvailableWeeks.length === 0 || transferSubmissionState === "submitting"}
+                  >
+                    <option value="">Select New Week...</option>
+                    {transferAvailableWeeks.map((week) => (
+                      <option key={week.week_start_date} value={week.week_start_date}>
+                        {`Week of ${week.week_start_date} (${week.available_slots} slots available)`}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <Picker
+                    selectedValue={transferNewWeek}
+                    onValueChange={(itemValue) => setTransferNewWeek(itemValue)}
+                    enabled={transferAvailableWeeks.length > 0 && transferSubmissionState !== "submitting"}
+                    style={styles.nativePicker}
+                    dropdownIconColor={Colors[colorScheme].text}
+                  >
+                    <Picker.Item label="Select New Week..." value={null} />
+                    {transferAvailableWeeks.map((week) => (
+                      <Picker.Item
+                        key={week.week_start_date}
+                        label={`Week of ${week.week_start_date} (${week.available_slots} slots available)`}
+                        value={week.week_start_date}
+                      />
+                    ))}
+                  </Picker>
+                )}
+              </View>
+              {transferAvailableWeeks.length === 0 && (
+                <ThemedText style={styles.errorText}>
+                  No available weeks with capacity found for transfer in {selectedYear}.
+                </ThemedText>
+              )}
+            </View>
+          )}
+
+          {/* Transfer Submit Button */}
+          {transferSelectedMemberPin && transferCurrentWeek && transferNewWeek && (
+            <Button
+              onPress={handleTransferSubmit}
+              disabled={
+                !transferSelectedMemberPin ||
+                !transferCurrentWeek ||
+                !transferNewWeek ||
+                transferSubmissionState === "submitting" ||
+                isLoadingApprovedWeeks ||
+                isLoadingAvailableWeeks
+              }
+              style={styles.transferButton}
+            >
+              <ThemedText style={styles.transferButtonText}>
+                {transferSubmissionState === "submitting" ? "Transferring..." : "Transfer Vacation Week"}
+              </ThemedText>
+            </Button>
+          )}
+
+          {/* Transfer Error Messages */}
+          {(localTransferError || transferError) && transferSubmissionState === "error" && (
+            <ThemedText style={styles.errorText}>{localTransferError || transferError}</ThemedText>
+          )}
+        </>
       )}
     </ThemedView>
   );

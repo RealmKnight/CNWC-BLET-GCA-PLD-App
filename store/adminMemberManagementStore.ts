@@ -15,6 +15,32 @@ interface MemberSummary {
     calendar_id: string | null;
 }
 
+// Vacation week transfer interfaces
+export interface ApprovedVacationWeek {
+    id: string;
+    start_date: string;
+    end_date: string;
+    requested_at: string | null;
+    actioned_at: string | null;
+}
+
+export interface AvailableTransferWeek {
+    week_start_date: string;
+    max_allotment: number;
+    current_requests: number;
+    available_slots: number;
+    vac_year: number;
+}
+
+export interface TransferVacationParams {
+    pin_number: number;
+    old_start_date: string;
+    new_start_date: string;
+    calendar_id: string;
+    admin_user_id: string;
+    reason?: string;
+}
+
 // Define the data-only Member type
 export interface MemberData {
     pin_number: string | number;
@@ -104,6 +130,13 @@ interface AdminMemberManagementState {
     isLoadingMembersByCalendar: boolean;
     memberListUIState: MemberListUIState;
 
+    // Vacation week transfer state
+    memberApprovedWeeks: Record<string, ApprovedVacationWeek[]>;
+    availableTransferWeeks: Record<string, AvailableTransferWeek[]>;
+    isLoadingApprovedWeeks: boolean;
+    isLoadingAvailableWeeks: boolean;
+    transferError: string | null;
+
     prepareDivisionSwitch: (
         currentDivision: string,
         newDivision: string,
@@ -115,6 +148,20 @@ interface AdminMemberManagementState {
     fetchMembersByCalendarId: (calendarId: string) => Promise<void>;
     updateMemberListUIState: (newState: Partial<MemberListUIState>) => void;
     fetchAllMembers: () => Promise<void>; // New method for Union Admin
+
+    // Vacation week transfer methods
+    fetchMemberApprovedWeeks: (
+        calendarId: string,
+        pinNumber: number,
+        year: number,
+    ) => Promise<void>;
+    fetchAvailableTransferWeeks: (
+        calendarId: string,
+        year: number,
+        excludeDate?: string,
+    ) => Promise<void>;
+    transferVacationWeek: (params: TransferVacationParams) => Promise<boolean>;
+    clearTransferData: () => void;
 }
 
 export const useAdminMemberManagementStore = create<AdminMemberManagementState>(
@@ -139,6 +186,13 @@ export const useAdminMemberManagementStore = create<AdminMemberManagementState>(
             scrollPosition: 0,
             lastEditedMemberPin: null,
         },
+
+        // Vacation week transfer state
+        memberApprovedWeeks: {},
+        availableTransferWeeks: {},
+        isLoadingApprovedWeeks: false,
+        isLoadingAvailableWeeks: false,
+        transferError: null,
 
         updateMemberListUIState: (newState) => {
             set((state) => ({
@@ -464,6 +518,258 @@ export const useAdminMemberManagementStore = create<AdminMemberManagementState>(
             } finally {
                 set({ isLoading: false });
             }
+        },
+
+        // Vacation week transfer methods
+        fetchMemberApprovedWeeks: async (
+            calendarId: string,
+            pinNumber: number,
+            year: number,
+        ) => {
+            if (!calendarId || !pinNumber || !year) {
+                console.warn(
+                    "[AdminMemberStore] fetchMemberApprovedWeeks: Missing required parameters",
+                );
+                return;
+            }
+
+            const cacheKey = `${calendarId}-${pinNumber}-${year}`;
+
+            set((state) => ({
+                isLoadingApprovedWeeks: true,
+                transferError: null,
+            }));
+
+            try {
+                console.log(
+                    "[AdminMemberStore] Fetching member approved weeks:",
+                    {
+                        calendarId,
+                        pinNumber,
+                        year,
+                    },
+                );
+
+                const { data, error } = await supabase.rpc(
+                    "get_member_approved_weeks",
+                    {
+                        p_pin_number: pinNumber,
+                        p_calendar_id: calendarId,
+                        p_year: year,
+                    },
+                );
+
+                if (error) throw error;
+
+                const approvedWeeks: ApprovedVacationWeek[] = (data || []).map((
+                    row: any,
+                ) => ({
+                    id: row.id,
+                    start_date: row.start_date,
+                    end_date: row.end_date,
+                    requested_at: row.requested_at,
+                    actioned_at: row.actioned_at,
+                }));
+
+                console.log("[AdminMemberStore] Fetched approved weeks:", {
+                    count: approvedWeeks.length,
+                    cacheKey,
+                });
+
+                set((state) => ({
+                    memberApprovedWeeks: {
+                        ...state.memberApprovedWeeks,
+                        [cacheKey]: approvedWeeks,
+                    },
+                    isLoadingApprovedWeeks: false,
+                }));
+            } catch (error) {
+                console.error(
+                    "[AdminMemberStore] Error fetching member approved weeks:",
+                    error,
+                );
+                set({
+                    transferError: error instanceof Error
+                        ? error.message
+                        : "Failed to fetch approved weeks",
+                    isLoadingApprovedWeeks: false,
+                });
+            }
+        },
+        fetchAvailableTransferWeeks: async (
+            calendarId: string,
+            year: number,
+            excludeDate?: string,
+        ) => {
+            if (!calendarId || !year) {
+                console.warn(
+                    "[AdminMemberStore] fetchAvailableTransferWeeks: Missing required parameters",
+                );
+                return;
+            }
+
+            const cacheKey = `${calendarId}-${year}`;
+
+            set((state) => ({
+                isLoadingAvailableWeeks: true,
+                transferError: null,
+            }));
+
+            try {
+                console.log(
+                    "[AdminMemberStore] Fetching available transfer weeks:",
+                    {
+                        calendarId,
+                        year,
+                        excludeDate,
+                    },
+                );
+
+                const { data, error } = await supabase.rpc(
+                    "get_available_weeks_for_transfer",
+                    {
+                        p_calendar_id: calendarId,
+                        p_year: year,
+                        p_exclude_start_date: excludeDate || null,
+                    },
+                );
+
+                if (error) throw error;
+
+                const availableWeeks: AvailableTransferWeek[] = (data || [])
+                    .map((row: any) => ({
+                        week_start_date: row.week_start_date,
+                        max_allotment: row.max_allotment,
+                        current_requests: row.current_requests,
+                        available_slots: row.available_slots,
+                        vac_year: row.vac_year,
+                    }));
+
+                console.log("[AdminMemberStore] Fetched available weeks:", {
+                    count: availableWeeks.length,
+                    cacheKey,
+                });
+
+                set((state) => ({
+                    availableTransferWeeks: {
+                        ...state.availableTransferWeeks,
+                        [cacheKey]: availableWeeks,
+                    },
+                    isLoadingAvailableWeeks: false,
+                }));
+            } catch (error) {
+                console.error(
+                    "[AdminMemberStore] Error fetching available transfer weeks:",
+                    error,
+                );
+                set({
+                    transferError: error instanceof Error
+                        ? error.message
+                        : "Failed to fetch available weeks",
+                    isLoadingAvailableWeeks: false,
+                });
+            }
+        },
+        transferVacationWeek: async (params: TransferVacationParams) => {
+            if (
+                !params.pin_number || !params.old_start_date ||
+                !params.new_start_date ||
+                !params.calendar_id || !params.admin_user_id
+            ) {
+                console.warn(
+                    "[AdminMemberStore] transferVacationWeek: Missing required parameters",
+                );
+                set({
+                    transferError: "Missing required parameters for transfer",
+                });
+                return false;
+            }
+
+            set({ transferError: null });
+
+            try {
+                console.log(
+                    "[AdminMemberStore] Transferring vacation week:",
+                    params,
+                );
+
+                const { data, error } = await supabase.rpc(
+                    "transfer_vacation_week",
+                    {
+                        p_pin_number: params.pin_number,
+                        p_old_start_date: params.old_start_date,
+                        p_new_start_date: params.new_start_date,
+                        p_calendar_id: params.calendar_id,
+                        p_admin_user_id: params.admin_user_id,
+                        p_reason: params.reason || "Admin transfer",
+                    },
+                );
+
+                if (error) throw error;
+
+                // Parse the JSON response from the RPC function
+                const result = data;
+
+                if (!result.success) {
+                    console.error(
+                        "[AdminMemberStore] Transfer failed:",
+                        result.error,
+                    );
+                    set({ transferError: result.error });
+                    return false;
+                }
+
+                console.log("[AdminMemberStore] Transfer successful:", result);
+
+                // Refresh the data after successful transfer
+                const state = get();
+
+                // Refresh member approved weeks if we have them cached
+                const approvedWeeksKey =
+                    `${params.calendar_id}-${params.pin_number}-${
+                        new Date().getFullYear()
+                    }`;
+                if (state.memberApprovedWeeks[approvedWeeksKey]) {
+                    await state.fetchMemberApprovedWeeks(
+                        params.calendar_id,
+                        params.pin_number,
+                        new Date().getFullYear(),
+                    );
+                }
+
+                // Refresh available weeks if we have them cached
+                const availableWeeksKey = `${params.calendar_id}-${
+                    new Date().getFullYear()
+                }`;
+                if (state.availableTransferWeeks[availableWeeksKey]) {
+                    await state.fetchAvailableTransferWeeks(
+                        params.calendar_id,
+                        new Date().getFullYear(),
+                    );
+                }
+
+                return true;
+            } catch (error) {
+                console.error(
+                    "[AdminMemberStore] Error transferring vacation week:",
+                    error,
+                );
+                const errorMessage = error instanceof Error
+                    ? error.message
+                    : "Failed to transfer vacation week";
+                set({ transferError: errorMessage });
+                return false;
+            }
+        },
+        clearTransferData: () => {
+            console.log("[AdminMemberStore] Clearing transfer data");
+            set({
+                memberApprovedWeeks: {},
+                availableTransferWeeks: {},
+                isLoadingApprovedWeeks: false,
+                isLoadingAvailableWeeks: false,
+                transferError: null,
+            });
         },
     }),
 );

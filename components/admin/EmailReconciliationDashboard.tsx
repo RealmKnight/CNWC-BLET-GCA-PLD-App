@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { View, StyleSheet, RefreshControl, Alert, Platform } from "react-native";
+import { View, StyleSheet, RefreshControl, Platform } from "react-native";
 import { ThemedView } from "../ThemedView";
 import { ThemedText } from "../ThemedText";
 import { ThemedScrollView } from "../ThemedScrollView";
@@ -32,6 +32,7 @@ interface EmailIssue {
   pin_number: string;
   division_name: string;
   issue_type: string;
+  email_type?: string; // Add email_type field for stuck emails
   time_since_action?: string;
   time_since_failure?: string;
   time_since_creation?: string;
@@ -160,47 +161,46 @@ export function EmailReconciliationDashboard() {
   };
 
   const retryFailedEmail = async (requestId: string, emailType: string) => {
-    Alert.alert("Retry Email", `Retry sending ${emailType} email for request ${requestId}?`, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Retry",
-        onPress: async () => {
-          try {
-            const functionName = emailType.includes("cancellation") ? "send-cancellation-email" : "send-request-email";
+    try {
+      // Show confirmation toast instead of Alert (which doesn't work on web)
+      Toast.show({
+        type: "info",
+        text1: "Retrying Email",
+        text2: `Attempting to resend ${emailType} email...`,
+      });
 
-            const { error } = await supabase.functions.invoke(functionName, {
-              body: { requestId },
-            });
+      const functionName = emailType.includes("cancellation") ? "send-cancellation-email" : "send-request-email";
 
-            if (error) {
-              console.error("Error retrying email:", error);
-              Toast.show({
-                type: "error",
-                text1: "Retry Failed",
-                text2: "Unable to retry email sending",
-              });
-              return;
-            }
+      const { error } = await supabase.functions.invoke(functionName, {
+        body: { requestId },
+      });
 
-            Toast.show({
-              type: "success",
-              text1: "Email Retry Initiated",
-              text2: "Email sending has been retried",
-            });
+      if (error) {
+        console.error("Error retrying email:", error);
+        Toast.show({
+          type: "error",
+          text1: "Retry Failed",
+          text2: "Unable to retry email sending",
+        });
+        return;
+      }
 
-            // Refresh data
-            await fetchReconciliationData();
-          } catch (error) {
-            console.error("Error in retryFailedEmail:", error);
-            Toast.show({
-              type: "error",
-              text1: "Retry Failed",
-              text2: "Network error occurred",
-            });
-          }
-        },
-      },
-    ]);
+      Toast.show({
+        type: "success",
+        text1: "Email Retry Initiated",
+        text2: "Email sending has been retried successfully",
+      });
+
+      // Refresh data
+      await fetchReconciliationData();
+    } catch (error) {
+      console.error("Error in retryFailedEmail:", error);
+      Toast.show({
+        type: "error",
+        text1: "Retry Failed",
+        text2: "Network error occurred",
+      });
+    }
   };
 
   useEffect(() => {
@@ -251,7 +251,7 @@ export function EmailReconciliationDashboard() {
         </ThemedText>
       </View>
       <ThemedText style={styles.issueDetails}>
-        {issue.leave_type} on {new Date(issue.request_date).toLocaleDateString()}
+        {issue.leave_type} on {new Date(issue.request_date + "T12:00:00").toLocaleDateString()}
       </ThemedText>
       <ThemedText style={styles.issueDivision}>Division: {issue.division_name}</ThemedText>
       {issue.error_message && <ThemedText style={styles.errorMessage}>{issue.error_message}</ThemedText>}
@@ -261,7 +261,7 @@ export function EmailReconciliationDashboard() {
       <View style={styles.issueActions}>
         <ThemedTouchableOpacity
           style={[styles.actionButton, { backgroundColor: primaryColor }]}
-          onPress={() => retryFailedEmail(issue.id, issue.issue_type)}
+          onPress={() => retryFailedEmail(issue.id, issue.email_type || "request")}
         >
           <ThemedText style={styles.actionButtonText}>Retry Email</ThemedText>
         </ThemedTouchableOpacity>
