@@ -222,8 +222,12 @@ async function sendStatusChangeEmails(
   );
 
   // Configure email content based on status
-  let userSubject: string, userHtml: string, userText: string;
-  let adminSubject: string, adminHtml: string, adminText: string;
+  let userSubject: string = "";
+  let userHtml: string = "";
+  let userText: string = "";
+  let adminSubject: string = "";
+  let adminHtml: string = "";
+  let adminText: string = "";
 
   const baseUserStyle = `
     body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
@@ -422,6 +426,87 @@ async function sendStatusChangeEmails(
       adminText =
         `A time off request for ${memberName} on ${formattedDate} (${leaveType}) has been CANCELLED.\n\nRequest ID: ${request.id}`;
       break;
+
+    case "pending": {
+      // Handle waitlist→pending transitions by sending company notification email
+      console.log(`Processing pending status change for request ${request.id}`);
+
+      const companyEmail = "sroc_cmc_vacationdesk@cn.ca";
+      const companySubject =
+        `${leaveType} Request - ${memberName} [Request ID: ${request.id}]`;
+      const companyHtml = `
+        <!DOCTYPE html>
+        <html>
+        <head><style>${baseAdminStyle}</style></head>
+        <body>
+          <div class="header"><h1>WC GCA BLET PLD Request</h1></div>
+          <div class="content">
+            <h2>Time Off Request for Review</h2>
+            <p>A time off request requires company review and approval.</p>
+            <div class="details">
+              <p><strong>Employee:</strong> ${memberName}</p>
+              <p><strong>Date:</strong> ${formattedDate}</p>
+              <p><strong>Type:</strong> ${leaveType}</p>
+              <p><strong>Request ID:</strong> ${request.id}</p>
+              <p><strong>Status:</strong> Pending Company Review</p>
+            </div>
+            <p>Please review and process this request through your standard procedures.</p>
+          </div>
+          <div class="footer">
+            <p>WC GCA BLET PLD Application</p>
+          </div>
+        </body>
+        </html>`;
+
+      const companyText =
+        `Time off request for company review:\n\nEmployee: ${memberName}\nDate: ${formattedDate}\nType: ${leaveType}\nRequest ID: ${request.id}\nStatus: Pending Company Review\n\nPlease review and process this request through your standard procedures.`;
+
+      try {
+        console.log(
+          `Sending company notification email to: ${companyEmail} for request ${request.id}`,
+        );
+
+        const companyResult = await sendEmailViaDirect(
+          mailgunSendingKey,
+          mailgunDomain,
+          {
+            from: "WC GCA BLET PLD App <requests@pldapp.bletcnwcgca.org>",
+            to: companyEmail,
+            subject: companySubject,
+            html: companyHtml,
+            text: companyText,
+          },
+        );
+
+        // Record tracking for company email
+        await supabase
+          .from("email_tracking")
+          .insert({
+            request_id: request.id,
+            email_type: "request",
+            recipient: companyEmail,
+            subject: companySubject,
+            message_id: companyResult.id,
+            status: "sent",
+            retry_count: 0,
+            created_at: new Date().toISOString(),
+            last_updated_at: new Date().toISOString(),
+          });
+
+        console.log(
+          `Company notification email sent successfully for request ${request.id}`,
+        );
+        return; // Exit early for pending status - don't send member notifications
+      } catch (companyEmailError) {
+        console.error(
+          `Error sending company notification email for request ${request.id}:`,
+          companyEmailError,
+        );
+        // For pending status, we only send company emails, not member notifications
+        // Return here even if company email fails to avoid sending member emails
+        return;
+      }
+    }
 
     default:
       // Don't send emails for other status changes
