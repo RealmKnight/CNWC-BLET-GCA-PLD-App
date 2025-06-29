@@ -148,13 +148,24 @@ function SMSStatusIndicator() {
       </ThemedView>
 
       {!phoneVerified && (
-        <TouchableOpacity
-          style={[styles.verifyButton, { backgroundColor: Colors[theme].tint }]}
-          onPress={() => router.push(`/(profile)/${session?.user?.id}`)}
-        >
-          <Ionicons name="shield-checkmark" size={16} color={Colors.dark.buttonText} />
-          <ThemedText style={styles.verifyButtonText}>Verify Phone Number</ThemedText>
-        </TouchableOpacity>
+        <ThemedView style={styles.phoneVerificationInfo}>
+          <ThemedView style={styles.infoRow}>
+            <Ionicons name="information-circle" size={16} color={Colors[theme].warning} />
+            <ThemedText style={styles.infoText}>
+              To receive SMS notifications, go to your profile and select "Text Message" as your contact preference.
+              Phone verification will begin automatically.
+            </ThemedText>
+          </ThemedView>
+          <TouchableOpacity
+            style={styles.profileLinkButton}
+            onPress={() => router.push(`/(profile)/${session?.user?.id}`)}
+          >
+            <Ionicons name="person" size={16} color={Colors[theme].tint} />
+            <ThemedText style={[styles.profileLinkText, { color: Colors[theme].tint }]}>
+              Go to Profile Settings
+            </ThemedText>
+          </TouchableOpacity>
+        </ThemedView>
       )}
 
       <ThemedText style={styles.smsInfoText}>
@@ -1108,5 +1119,26 @@ const styles = StyleSheet.create({
     opacity: 0.7,
     fontStyle: "italic",
     marginTop: 8,
+  },
+  phoneVerificationInfo: {
+    backgroundColor: "rgba(255, 149, 0, 0.1)",
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 8,
+    gap: 8,
+  },
+  profileLinkButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 10,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: Colors.dark.tint,
+    backgroundColor: "transparent",
+  },
+  profileLinkText: {
+    fontWeight: "500",
+    marginLeft: 6,
   },
 });
