@@ -383,6 +383,11 @@ export function RequestEntry({ selectedDivision, selectedCalendarId: propSelecte
       flex: 1,
       padding: 16,
     },
+    title2: {
+      marginBottom: 20,
+      textAlign: "center",
+      color: Colors[colorScheme].warning,
+    },
     title: {
       marginBottom: 20,
       textAlign: "center",
@@ -473,8 +478,8 @@ export function RequestEntry({ selectedDivision, selectedCalendarId: propSelecte
 
   return (
     <ThemedView style={styles.container}>
-      <ThemedText type="subtitle" style={styles.title}>
-        Enter Vacation Request
+      <ThemedText type="subtitle" style={styles.title2}>
+        Select Calendar First
       </ThemedText>
 
       {/* Calendar Selector */}
@@ -511,6 +516,13 @@ export function RequestEntry({ selectedDivision, selectedCalendarId: propSelecte
           )}
         </View>
       </View>
+      <View style={styles.sectionDivider}>
+        <View style={styles.dividerLine} />
+      </View>
+
+      <ThemedText type="subtitle" style={styles.title}>
+        Enter Vacation Request
+      </ThemedText>
 
       {/* Only show remaining form if a calendar is selected */}
       {localSelectedCalendarId ? (
