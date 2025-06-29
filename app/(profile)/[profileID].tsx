@@ -667,15 +667,6 @@ export default function ProfileScreen() {
   // Permissions: can edit basic info only if it's their own profile
   const canEditProfileDetails = isOwnProfile;
 
-  // --- Query Parameter Effect ---
-  useEffect(() => {
-    const params = useLocalSearchParams();
-    if (params.verify === "phone" && isOwnProfile) {
-      // Automatically trigger phone verification flow
-      setIsSMSOptInVisible(true);
-    }
-  }, [isOwnProfile]);
-
   // --- Data Fetching Effect ---
   useEffect(() => {
     const fetchProfileData = async () => {
@@ -808,6 +799,18 @@ export default function ProfileScreen() {
 
     fetchProfileData();
   }, [profileID, session?.user?.id]); // Re-fetch if profileID changes or session potentially changes
+
+  // --- Query Parameter Effect (after profile is loaded) ---
+  useEffect(() => {
+    // Only run this effect if we have a profile and it's the user's own profile
+    if (profile && isOwnProfile && !isLoading) {
+      const params = useLocalSearchParams();
+      if (params.verify === "phone") {
+        // Automatically trigger phone verification flow
+        setIsSMSOptInVisible(true);
+      }
+    }
+  }, [profile, isOwnProfile, isLoading]); // Run when profile loads and we know if it's own profile
 
   // --- Helper Functions ---
 
