@@ -13,6 +13,18 @@ import TurnstileCaptcha, { TurnstileCaptchaRef } from "@/components/ui/Turnstile
 // Email validation regex
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Helper function to detect iOS Safari
+const isIOSSafari = () => {
+  if (Platform.OS !== "web") return false;
+  if (typeof window === "undefined") return false;
+
+  const userAgent = window.navigator.userAgent;
+  const isIOS = /iPad|iPhone|iPod/.test(userAgent);
+  const isSafari = /Safari/.test(userAgent) && !/Chrome|CriOS|FxiOS/.test(userAgent);
+
+  return isIOS && isSafari;
+};
+
 // TODO: Add admin controls to enable/disable CAPTCHA protection
 // Future enhancement: Allow application_admin to enable/disable CAPTCHA protection
 // on the sign-in page based on security needs and attack patterns.
@@ -29,12 +41,27 @@ export default function SignInScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [emailError, setEmailError] = useState<string | null>(null);
   const [loginAttempts, setLoginAttempts] = useState(0);
+  const [showIOSHelp, setShowIOSHelp] = useState(false);
   const { signIn, isCaptchaEnabled } = useAuth();
   const captchaRef = useRef<TurnstileCaptchaRef>(null);
   const router = useRouter();
 
+  // Detect if user is on iOS Safari
+  const isiOSSafari = isIOSSafari();
+
   // Enable web-specific input enhancements for iOS PWA
   useWebInputEnhancements();
+
+  // Show iOS help automatically after multiple failures
+  useEffect(() => {
+    if (isiOSSafari && loginAttempts >= 2 && error && !showIOSHelp) {
+      const timer = setTimeout(() => {
+        setShowIOSHelp(true);
+      }, 3000); // Show help after 3 seconds of persistent errors
+
+      return () => clearTimeout(timer);
+    }
+  }, [isiOSSafari, loginAttempts, error, showIOSHelp]);
 
   // Debug effect to track error state changes
   useEffect(() => {
@@ -110,6 +137,9 @@ export default function SignInScreen() {
 
     // Handle network/server errors
     if (errorMessage.includes("network") || errorMessage.includes("fetch")) {
+      if (isiOSSafari) {
+        return "Connection error. Please check your internet connection and ensure JavaScript and cookies are enabled in Safari.";
+      }
       return "Connection error. Please check your internet connection and try again.";
     }
 
@@ -277,6 +307,23 @@ export default function SignInScreen() {
           theme="auto"
         />
 
+        {/* iOS Safari Help Section */}
+        {isiOSSafari && showIOSHelp && (
+          <ThemedView style={styles.iosHelpContainer}>
+            <ThemedView style={styles.iosHelpHeader}>
+              <Ionicons name="phone-portrait-outline" size={16} color={Colors.dark.icon} />
+              <ThemedText style={styles.iosHelpTitle}>iOS Safari Tips</ThemedText>
+            </ThemedView>
+            <ThemedText style={styles.iosHelpText}>
+              • Ensure JavaScript and cookies are enabled{"\n"}• Try refreshing the page if sign-in doesn't work{"\n"}•
+              Check your internet connection
+            </ThemedText>
+            <TouchableOpacity style={styles.iosHelpDismiss} onPress={() => setShowIOSHelp(false)}>
+              <ThemedText style={styles.iosHelpDismissText}>Got it</ThemedText>
+            </TouchableOpacity>
+          </ThemedView>
+        )}
+
         {/* Display CAPTCHA error */}
         {captchaError && (
           <ThemedView style={styles.errorContainer}>
@@ -313,6 +360,12 @@ export default function SignInScreen() {
                   }}
                 >
                   <ThemedText style={styles.helpfulActionText}>Create a new account →</ThemedText>
+                </TouchableOpacity>
+              )}
+              {/* Show iOS-specific help link */}
+              {isiOSSafari && !showIOSHelp && error.includes("Connection error") && (
+                <TouchableOpacity style={styles.helpfulAction} onPress={() => setShowIOSHelp(true)}>
+                  <ThemedText style={styles.helpfulActionText}>Safari troubleshooting tips →</ThemedText>
                 </TouchableOpacity>
               )}
             </ThemedView>
@@ -486,5 +539,34 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
     textAlign: "center",
+  },
+  iosHelpContainer: {
+    padding: 15,
+    backgroundColor: Colors.dark.card,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    marginBottom: 20,
+  },
+  iosHelpHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  iosHelpTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    marginLeft: 10,
+  },
+  iosHelpText: {
+    fontSize: 14,
+    opacity: 0.8,
+  },
+  iosHelpDismiss: {
+    marginTop: 10,
+    alignItems: "center",
+  },
+  iosHelpDismissText: {
+    color: Colors.dark.icon,
   },
 });
