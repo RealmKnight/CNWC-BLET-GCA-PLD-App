@@ -590,7 +590,6 @@ function PhoneUpdateModal({
 export default function ProfileScreen() {
   const params = useLocalSearchParams();
   const profileID = params.profileID as string | undefined;
-  const shouldTriggerVerification = params.verify === "phone";
   const { user, session, member: loggedInMember } = useAuth();
   const theme = (useColorScheme() ?? "light") as ColorScheme;
   const router = useRouter();
@@ -788,14 +787,6 @@ export default function ProfileScreen() {
           }
         } else {
           setZoneName(null);
-        }
-
-        // Check for phone verification parameter after successful profile load
-        if (shouldTriggerVerification && session?.user?.id === memberData.id) {
-          // Small delay to ensure state is settled, then trigger phone verification
-          setTimeout(() => {
-            setIsSMSOptInVisible(true);
-          }, 100);
         }
       } catch (err: any) {
         console.error("Error fetching profile data:", err);

@@ -150,7 +150,7 @@ function SMSStatusIndicator() {
       {!phoneVerified && (
         <TouchableOpacity
           style={[styles.verifyButton, { backgroundColor: Colors[theme].tint }]}
-          onPress={() => router.push(`/(profile)/${session?.user?.id}?verify=phone`)}
+          onPress={() => router.push(`/(profile)/${session?.user?.id}`)}
         >
           <Ionicons name="shield-checkmark" size={16} color={Colors.dark.buttonText} />
           <ThemedText style={styles.verifyButtonText}>Verify Phone Number</ThemedText>
@@ -332,7 +332,7 @@ export default function NotificationSettingsScreen() {
           props: {
             onAction: (action: string) => {
               if (action === "confirm") {
-                router.push(`/(profile)/${session.user.id}?verify=phone`);
+                router.push(`/(profile)/${session?.user?.id}`);
               }
               Toast.hide();
             },
@@ -684,7 +684,7 @@ export default function NotificationSettingsScreen() {
             To change how you receive notifications, please visit your profile settings.
           </ThemedText>
 
-          <TouchableOpacity style={styles.linkButton} onPress={() => router.push("/(profile)/[profileID]")}>
+          <TouchableOpacity style={styles.linkButton} onPress={() => router.push(`/(profile)/${session?.user?.id}`)}>
             <ThemedText style={styles.linkText}>Go to Profile Settings</ThemedText>
           </TouchableOpacity>
         </ThemedView>
