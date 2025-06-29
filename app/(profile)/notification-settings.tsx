@@ -150,7 +150,7 @@ function SMSStatusIndicator() {
       {!phoneVerified && (
         <TouchableOpacity
           style={[styles.verifyButton, { backgroundColor: Colors[theme].tint }]}
-          onPress={() => router.push("/(profile)/phone-verification")}
+          onPress={() => router.push(`/(profile)/${session?.user?.id}?verify=phone`)}
         >
           <Ionicons name="shield-checkmark" size={16} color={Colors.dark.buttonText} />
           <ThemedText style={styles.verifyButtonText}>Verify Phone Number</ThemedText>
@@ -332,7 +332,7 @@ export default function NotificationSettingsScreen() {
           props: {
             onAction: (action: string) => {
               if (action === "confirm") {
-                router.push("/(profile)/phone-verification");
+                router.push(`/(profile)/${session.user.id}?verify=phone`);
               }
               Toast.hide();
             },
