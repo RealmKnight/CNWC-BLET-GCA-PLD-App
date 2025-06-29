@@ -590,6 +590,7 @@ function PhoneUpdateModal({
 export default function ProfileScreen() {
   const params = useLocalSearchParams();
   const profileID = params.profileID as string | undefined;
+  const shouldTriggerVerification = params.verify === "phone";
   const { user, session, member: loggedInMember } = useAuth();
   const theme = (useColorScheme() ?? "light") as ColorScheme;
   const router = useRouter();
@@ -788,6 +789,14 @@ export default function ProfileScreen() {
         } else {
           setZoneName(null);
         }
+
+        // Check for phone verification parameter after successful profile load
+        if (shouldTriggerVerification && session?.user?.id === memberData.id) {
+          // Small delay to ensure state is settled, then trigger phone verification
+          setTimeout(() => {
+            setIsSMSOptInVisible(true);
+          }, 100);
+        }
       } catch (err: any) {
         console.error("Error fetching profile data:", err);
         setError(err.message || "An error occurred while loading the profile.");
@@ -799,18 +808,6 @@ export default function ProfileScreen() {
 
     fetchProfileData();
   }, [profileID, session?.user?.id]); // Re-fetch if profileID changes or session potentially changes
-
-  // --- Query Parameter Effect (after profile is loaded) ---
-  useEffect(() => {
-    // Only run this effect if we have a profile and it's the user's own profile
-    if (profile && isOwnProfile && !isLoading) {
-      const params = useLocalSearchParams();
-      if (params.verify === "phone") {
-        // Automatically trigger phone verification flow
-        setIsSMSOptInVisible(true);
-      }
-    }
-  }, [profile, isOwnProfile, isLoading]); // Run when profile loads and we know if it's own profile
 
   // --- Helper Functions ---
 
