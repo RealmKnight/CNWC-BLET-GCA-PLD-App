@@ -2597,12 +2597,40 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       alignItems: "center",
     },
     modalContent: {
-      width: Platform.OS === "web" ? "75%" : "90%",
+      ...(Platform.OS === "android"
+        ? {
+            width: Dimensions.get("window").width * 0.9,
+            height: Dimensions.get("window").height * 0.85,
+            maxHeight: Dimensions.get("window").height * 0.85,
+          }
+        : Platform.OS === "web"
+        ? {
+            width: "75%",
+            maxHeight: "90%",
+          }
+        : {
+            width: "90%",
+            maxHeight: "90%",
+          }),
       maxWidth: 500,
-      maxHeight: "90%",
       borderRadius: 8,
       padding: 16,
       backgroundColor: Colors.dark.card,
+      ...Platform.select({
+        android: {
+          elevation: 24,
+          shadowColor: "transparent", // Remove shadow on Android, use elevation instead
+        },
+        ios: {
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.25,
+          shadowRadius: 3.84,
+        },
+        web: {
+          boxShadow: "0px 2px 10px rgba(0, 0, 0, 0.25)",
+        },
+      }),
     },
     modalHeader: {
       flexDirection: "row",
