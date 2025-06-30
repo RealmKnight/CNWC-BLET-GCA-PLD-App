@@ -2174,14 +2174,6 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
                 </ThemedText>
               )}
 
-              {/* Missing Email Alerts */}
-              {renderMissingEmailAlerts()}
-
-              {/* Email History Section */}
-              {renderEmailHistory()}
-
-              {error && <ThemedText style={styles.error}>{error}</ThemedText>}
-
               <View style={styles.modalActions}>
                 <Button onPress={handleCloseEditModal} variant="secondary" style={styles.modalButton}>
                   Cancel
@@ -2200,6 +2192,14 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
                   {isUpdating ? "Updating..." : "Update Request"}
                 </Button>
               </View>
+
+              {/* Missing Email Alerts */}
+              {renderMissingEmailAlerts()}
+
+              {/* Email History Section */}
+              {renderEmailHistory()}
+
+              {error && <ThemedText style={styles.error}>{error}</ThemedText>}
             </ScrollView>
           </ThemedView>
         </View>
