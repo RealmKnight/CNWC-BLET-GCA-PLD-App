@@ -165,6 +165,21 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
   const [selectedStatus, setSelectedStatus] = useState<string>("");
   const [selectedLeaveType, setSelectedLeaveType] = useState<"PLD" | "SDV">("PLD");
 
+  // Add state for email history
+  const [emailHistory, setEmailHistory] = useState<any[]>([]);
+  const [isLoadingEmailHistory, setIsLoadingEmailHistory] = useState(false);
+  const [showEmailHistory, setShowEmailHistory] = useState(false);
+
+  // Add state for missing email detection
+  const [missingEmails, setMissingEmails] = useState<
+    {
+      type: "request" | "cancellation" | "payment_request";
+      priority: "critical" | "high" | "medium";
+      message: string;
+    }[]
+  >([]);
+  const [isSendingEmail, setIsSendingEmail] = useState(false);
+
   // Add state for request ID lookup
   const [lookupRequestId, setLookupRequestId] = useState("");
   const [lookupResult, setLookupResult] = useState<any | null>(null);
@@ -856,19 +871,288 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     fetchMemberAvailableDays,
   ]);
 
-  // Function to open the edit modal
-  const handleEditRequest = useCallback((request: PldSdvRequest) => {
-    setEditingRequest(request);
-    setSelectedStatus(request.status);
-    setSelectedLeaveType(request.leave_type as "PLD" | "SDV");
-    setShowEditModal(true);
+  // Function to analyze missing emails for a request
+  const analyzeMissingEmails = useCallback((request: PldSdvRequest, emailHistoryData: any[]) => {
+    console.log("Running analyzeMissingEmails for request:", request.id, "Status:", request.status);
+    console.log("Email history data:", emailHistoryData);
+
+    const missing: {
+      type: "request" | "cancellation" | "payment_request";
+      priority: "critical" | "high" | "medium";
+      message: string;
+    }[] = [];
+
+    // Check for missing cancellation email
+    if (request.status === "cancellation_pending") {
+      console.log("Checking for cancellation email...");
+      const hasCancellationEmail = emailHistoryData.some(
+        (email) => email.type === "outgoing" && email.email_type === "cancellation"
+      );
+      console.log("Has cancellation email:", hasCancellationEmail);
+      if (!hasCancellationEmail) {
+        missing.push({
+          type: "cancellation",
+          priority: "critical",
+          message: "Cancellation email never sent - Company unaware of cancellation request",
+        });
+        console.log("Added missing cancellation email alert");
+      }
+    }
+
+    // Check for missing request email
+    if (request.status === "pending") {
+      console.log("Checking for request email...");
+      const hasRequestEmail = emailHistoryData.some(
+        (email) => email.type === "outgoing" && email.email_type === "request"
+      );
+      console.log("Has request email:", hasRequestEmail);
+      if (!hasRequestEmail) {
+        missing.push({
+          type: "request",
+          priority: "high",
+          message: "Initial request email never sent - Company unaware of request",
+        });
+        console.log("Added missing request email alert");
+      }
+    }
+
+    // Check for missing payment request email (future only - skip legacy)
+    if (request.status === "approved" && request.paid_in_lieu) {
+      console.log("Checking for payment request email...");
+      // Only check for requests created after a certain date to skip legacy entries
+      const requestDate = new Date(request.request_date);
+      const cutoffDate = new Date("2025-01-01"); // Adjust this date as needed
+
+      if (requestDate >= cutoffDate) {
+        const hasPaymentEmail = emailHistoryData.some(
+          (email) => email.type === "outgoing" && email.email_type === "payment_request"
+        );
+        console.log("Has payment email:", hasPaymentEmail);
+        if (!hasPaymentEmail) {
+          missing.push({
+            type: "payment_request",
+            priority: "medium",
+            message: "Payment request email not sent - Company needs payment notification",
+          });
+          console.log("Added missing payment email alert");
+        }
+      }
+    }
+
+    console.log("Setting missing emails:", missing);
+    setMissingEmails(missing);
   }, []);
+
+  // Function to fetch email history for a request
+  const fetchEmailHistory = useCallback(
+    async (requestId: string, requestForAnalysis?: PldSdvRequest) => {
+      try {
+        setIsLoadingEmailHistory(true);
+
+        // Fetch email tracking data (outgoing emails)
+        const { data: emailTrackingData, error: trackingError } = await supabase
+          .from("email_tracking")
+          .select(
+            `
+          id,
+          email_type,
+          recipient,
+          subject,
+          status,
+          error_message,
+          retry_count,
+          fallback_notification_sent,
+          created_at,
+          last_updated_at
+        `
+          )
+          .eq("request_id", requestId)
+          .order("created_at", { ascending: false });
+
+        // Fetch email responses data (incoming emails)
+        const { data: emailResponsesData, error: responsesError } = await supabase
+          .from("email_responses")
+          .select(
+            `
+          id,
+          sender_email,
+          subject,
+          content,
+          processed,
+          processed_at,
+          resulting_status,
+          denial_reason,
+          created_at
+        `
+          )
+          .eq("request_id", requestId)
+          .order("created_at", { ascending: false });
+
+        if (trackingError) {
+          console.error("Error fetching email tracking data:", trackingError);
+        }
+
+        if (responsesError) {
+          console.error("Error fetching email responses data:", responsesError);
+        }
+
+        // Combine and format the data
+        const combinedHistory: any[] = [];
+
+        // Add email tracking data (outgoing)
+        if (emailTrackingData) {
+          emailTrackingData.forEach((email) => {
+            combinedHistory.push({
+              ...email,
+              type: "outgoing",
+              timestamp: email.created_at,
+              display_title: `${email.email_type} Email`,
+              display_subtitle: `To: ${email.recipient}`,
+              display_status: email.status,
+              display_icon: "mail-outline",
+            });
+          });
+        }
+
+        // Add email responses data (incoming)
+        if (emailResponsesData) {
+          emailResponsesData.forEach((response) => {
+            combinedHistory.push({
+              ...response,
+              type: "incoming",
+              timestamp: response.created_at,
+              display_title: "Company Response",
+              display_subtitle: `From: ${response.sender_email}`,
+              display_status: response.processed ? "processed" : "pending",
+              display_icon: "mail-open-outline",
+            });
+          });
+        }
+
+        // Sort by timestamp (newest first)
+        combinedHistory.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+        setEmailHistory(combinedHistory);
+
+        // Analyze missing emails using the passed request or the current editing request
+        const requestToAnalyze = requestForAnalysis || editingRequest;
+        if (requestToAnalyze) {
+          console.log("Analyzing missing emails for request:", requestToAnalyze.id, requestToAnalyze.status);
+          analyzeMissingEmails(requestToAnalyze, combinedHistory);
+        }
+      } catch (error) {
+        console.error("Error fetching email history:", error);
+      } finally {
+        setIsLoadingEmailHistory(false);
+      }
+    },
+    [editingRequest, analyzeMissingEmails]
+  );
+
+  // Function to open the edit modal
+  const handleEditRequest = useCallback(
+    (request: PldSdvRequest) => {
+      setEditingRequest(request);
+      setSelectedStatus(request.status);
+      setSelectedLeaveType(request.leave_type as "PLD" | "SDV");
+      setShowEditModal(true);
+      setShowEmailHistory(false); // Reset email history visibility
+
+      // Fetch email history for this request and pass the request for analysis
+      fetchEmailHistory(request.id, request);
+    },
+    [fetchEmailHistory]
+  );
+
+  // Function to send missing emails
+  const handleSendMissingEmail = useCallback(
+    async (emailType: "request" | "cancellation" | "payment_request") => {
+      if (!editingRequest || !selectedMember) {
+        setError("Cannot send email: Missing request or member information");
+        return;
+      }
+
+      try {
+        setIsSendingEmail(true);
+        setError(null);
+
+        let edgeFunctionName = "";
+        let requestBody: any = {};
+
+        // Determine which edge function to call based on email type
+        switch (emailType) {
+          case "request":
+            edgeFunctionName = "send-request-email";
+            requestBody = {
+              requestId: editingRequest.id,
+            };
+            break;
+          case "cancellation":
+            edgeFunctionName = "send-cancellation-email";
+            requestBody = {
+              requestId: editingRequest.id,
+            };
+            break;
+          case "payment_request":
+            edgeFunctionName = "send-payment-request";
+            requestBody = {
+              requestId: editingRequest.id,
+            };
+            break;
+          default:
+            throw new Error(`Unknown email type: ${emailType}`);
+        }
+
+        console.log(`Sending ${emailType} email for request ${editingRequest.id}`);
+
+        // Call the appropriate edge function
+        const { data, error: functionError } = await supabase.functions.invoke(edgeFunctionName, {
+          body: requestBody,
+        });
+
+        if (functionError) {
+          throw new Error(`Failed to send ${emailType} email: ${functionError.message}`);
+        }
+
+        if (data?.error) {
+          throw new Error(`Edge function error: ${data.error}`);
+        }
+
+        // Show success message
+        Toast.show({
+          type: "success",
+          text1: "Email Sent Successfully",
+          text2: `${emailType.charAt(0).toUpperCase() + emailType.slice(1)} email sent to company`,
+        });
+
+        // Refresh email history to show the new email
+        await fetchEmailHistory(editingRequest.id, editingRequest);
+      } catch (err: any) {
+        console.error(`Error sending ${emailType} email:`, err);
+        setError(err.message || `Failed to send ${emailType} email`);
+
+        Toast.show({
+          type: "error",
+          text1: "Email Send Failed",
+          text2: err.message || `Failed to send ${emailType} email`,
+        });
+      } finally {
+        setIsSendingEmail(false);
+      }
+    },
+    [editingRequest, selectedMember, fetchEmailHistory]
+  );
 
   // Function to close the edit modal
   const handleCloseEditModal = useCallback(() => {
     setShowEditModal(false);
     setEditingRequest(null);
     setError(null);
+    setEmailHistory([]);
+    setShowEmailHistory(false);
+    setIsLoadingEmailHistory(false);
+    setMissingEmails([]);
+    setIsSendingEmail(false);
   }, []);
 
   // Function to lookup request by ID
@@ -1541,6 +1825,274 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     );
   };
 
+  // Function to get email status color
+  const getEmailStatusColor = (status: string, type: string): string => {
+    if (type === "outgoing") {
+      switch (status.toLowerCase()) {
+        case "sent":
+        case "delivered":
+          return Colors[colorScheme].success;
+        case "failed":
+        case "error":
+          return Colors[colorScheme].error;
+        case "queued":
+        case "pending":
+          return Colors[colorScheme].warning;
+        default:
+          return Colors[colorScheme].text;
+      }
+    } else {
+      // incoming
+      switch (status.toLowerCase()) {
+        case "processed":
+          return Colors[colorScheme].success;
+        case "pending":
+          return Colors[colorScheme].warning;
+        default:
+          return Colors[colorScheme].text;
+      }
+    }
+  };
+
+  // Function to get priority color and icon
+  const getPriorityStyle = (priority: "critical" | "high" | "medium") => {
+    switch (priority) {
+      case "critical":
+        return {
+          color: Colors[colorScheme].error,
+          backgroundColor: Colors[colorScheme].error + "20",
+          borderColor: Colors[colorScheme].error + "50",
+          icon: "alert-circle" as const,
+        };
+      case "high":
+        return {
+          color: Colors[colorScheme].warning,
+          backgroundColor: Colors[colorScheme].warning + "20",
+          borderColor: Colors[colorScheme].warning + "50",
+          icon: "warning" as const,
+        };
+      case "medium":
+        return {
+          color: Colors[colorScheme].tint,
+          backgroundColor: Colors[colorScheme].tint + "20",
+          borderColor: Colors[colorScheme].tint + "50",
+          icon: "information-circle" as const,
+        };
+    }
+  };
+
+  // Render missing email alerts
+  const renderMissingEmailAlerts = () => {
+    if (!editingRequest || missingEmails.length === 0) return null;
+
+    return (
+      <View style={styles.missingEmailAlertsContainer}>
+        <ThemedText style={styles.missingEmailAlertsTitle}>⚠️ Missing Company Communication</ThemedText>
+
+        {missingEmails.map((missingEmail, index) => {
+          const priorityStyle = getPriorityStyle(missingEmail.priority);
+
+          return (
+            <View
+              key={`${missingEmail.type}-${index}`}
+              style={[
+                styles.missingEmailAlert,
+                {
+                  backgroundColor: priorityStyle.backgroundColor,
+                  borderColor: priorityStyle.borderColor,
+                },
+              ]}
+            >
+              <View style={styles.missingEmailAlertContent}>
+                <Ionicons
+                  name={priorityStyle.icon}
+                  size={20}
+                  color={priorityStyle.color}
+                  style={styles.missingEmailAlertIcon}
+                />
+                <ThemedText style={[styles.missingEmailAlertText, { color: priorityStyle.color }]}>
+                  {missingEmail.message}
+                </ThemedText>
+              </View>
+
+              <ThemedTouchableOpacity
+                style={[
+                  styles.sendEmailButton,
+                  {
+                    backgroundColor: priorityStyle.color,
+                    opacity: isSendingEmail ? 0.6 : 1,
+                  },
+                ]}
+                onPress={() => handleSendMissingEmail(missingEmail.type)}
+                disabled={isSendingEmail}
+                activeOpacity={0.7}
+              >
+                {isSendingEmail ? (
+                  <ActivityIndicator size="small" color={Colors[colorScheme].buttonText} />
+                ) : (
+                  <>
+                    <Ionicons
+                      name="mail-outline"
+                      size={16}
+                      color={Colors[colorScheme].buttonText}
+                      style={styles.sendEmailButtonIcon}
+                    />
+                    <ThemedText style={styles.sendEmailButtonText}>
+                      Send{" "}
+                      {missingEmail.type === "payment_request"
+                        ? "Payment"
+                        : missingEmail.type === "cancellation"
+                        ? "Cancellation"
+                        : "Request"}{" "}
+                      Email
+                    </ThemedText>
+                  </>
+                )}
+              </ThemedTouchableOpacity>
+            </View>
+          );
+        })}
+      </View>
+    );
+  };
+
+  // Render email history section
+  const renderEmailHistory = () => {
+    if (!editingRequest) return null;
+
+    return (
+      <View style={styles.emailHistorySection}>
+        <ThemedTouchableOpacity
+          style={styles.emailHistoryHeader}
+          onPress={() => setShowEmailHistory(!showEmailHistory)}
+          activeOpacity={0.7}
+        >
+          <View style={styles.emailHistoryHeaderContent}>
+            <Ionicons name="mail" size={20} color={Colors[colorScheme].tint} style={styles.emailHistoryIcon} />
+            <ThemedText style={styles.emailHistoryTitle}>Email History ({emailHistory.length})</ThemedText>
+            {isLoadingEmailHistory && (
+              <ActivityIndicator size="small" color={Colors[colorScheme].tint} style={styles.emailHistoryLoader} />
+            )}
+          </View>
+          <Ionicons
+            name={showEmailHistory ? "chevron-up" : "chevron-down"}
+            size={20}
+            color={Colors[colorScheme].text}
+          />
+        </ThemedTouchableOpacity>
+
+        {showEmailHistory && (
+          <View style={styles.emailHistoryContent}>
+            {emailHistory.length > 0 ? (
+              <View style={styles.emailHistoryList}>
+                {emailHistory.map((email, index) => (
+                  <View key={`${email.type}-${email.id}`} style={styles.emailHistoryItem}>
+                    <View style={styles.emailHistoryItemHeader}>
+                      <View style={styles.emailHistoryItemLeft}>
+                        <Ionicons
+                          name={email.display_icon}
+                          size={18}
+                          color={email.type === "outgoing" ? Colors[colorScheme].tint : Colors[colorScheme].success}
+                          style={styles.emailHistoryItemIcon}
+                        />
+                        <View style={styles.emailHistoryItemInfo}>
+                          <ThemedText style={styles.emailHistoryItemTitle}>{email.display_title}</ThemedText>
+                          <ThemedText style={styles.emailHistoryItemSubtitle}>{email.display_subtitle}</ThemedText>
+                        </View>
+                      </View>
+                      <View style={styles.emailHistoryItemRight}>
+                        <View
+                          style={[
+                            styles.emailStatusBadge,
+                            { backgroundColor: getEmailStatusColor(email.display_status, email.type) + "20" },
+                          ]}
+                        >
+                          <ThemedText
+                            style={[
+                              styles.emailStatusText,
+                              { color: getEmailStatusColor(email.display_status, email.type) },
+                            ]}
+                          >
+                            {email.display_status}
+                          </ThemedText>
+                        </View>
+                        <ThemedText style={styles.emailHistoryItemTime}>
+                          {format(parseISO(email.timestamp), "MMM dd, HH:mm")}
+                        </ThemedText>
+                      </View>
+                    </View>
+
+                    {/* Additional details for outgoing emails */}
+                    {email.type === "outgoing" && (
+                      <View style={styles.emailHistoryItemDetails}>
+                        <ThemedText style={styles.emailHistoryItemDetailText}>Subject: {email.subject}</ThemedText>
+                        {email.error_message && (
+                          <ThemedText style={[styles.emailHistoryItemDetailText, { color: Colors[colorScheme].error }]}>
+                            Error: {email.error_message}
+                          </ThemedText>
+                        )}
+                        {email.retry_count > 0 && (
+                          <ThemedText style={styles.emailHistoryItemDetailText}>
+                            Retries: {email.retry_count}
+                          </ThemedText>
+                        )}
+                        {email.fallback_notification_sent && (
+                          <ThemedText
+                            style={[styles.emailHistoryItemDetailText, { color: Colors[colorScheme].warning }]}
+                          >
+                            ⚠️ Fallback notification sent
+                          </ThemedText>
+                        )}
+                      </View>
+                    )}
+
+                    {/* Additional details for incoming emails */}
+                    {email.type === "incoming" && (
+                      <View style={styles.emailHistoryItemDetails}>
+                        <ThemedText style={styles.emailHistoryItemDetailText}>Subject: {email.subject}</ThemedText>
+                        {email.resulting_status && (
+                          <ThemedText style={styles.emailHistoryItemDetailText}>
+                            Resulting Status: {email.resulting_status}
+                          </ThemedText>
+                        )}
+                        {email.denial_reason && (
+                          <ThemedText style={[styles.emailHistoryItemDetailText, { color: Colors[colorScheme].error }]}>
+                            Denial Reason: {email.denial_reason}
+                          </ThemedText>
+                        )}
+                        {email.processed_at && (
+                          <ThemedText style={styles.emailHistoryItemDetailText}>
+                            Processed: {format(parseISO(email.processed_at), "MMM dd, HH:mm")}
+                          </ThemedText>
+                        )}
+                        {email.content && email.content.length > 0 && (
+                          <View style={styles.emailContentPreview}>
+                            <ThemedText style={styles.emailContentLabel}>Content Preview:</ThemedText>
+                            <ThemedText style={styles.emailContentText} numberOfLines={3}>
+                              {email.content.substring(0, 200)}
+                              {email.content.length > 200 ? "..." : ""}
+                            </ThemedText>
+                          </View>
+                        )}
+                      </View>
+                    )}
+
+                    {/* Separator line between emails (except last one) */}
+                    {index < emailHistory.length - 1 && <View style={styles.emailHistoryItemSeparator} />}
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <ThemedText style={styles.noEmailHistoryText}>
+                {isLoadingEmailHistory ? "Loading email history..." : "No email history found for this request."}
+              </ThemedText>
+            )}
+          </View>
+        )}
+      </View>
+    );
+  };
+
   // Render edit confirmation modal
   const renderEditModal = () => {
     if (!editingRequest) return null;
@@ -1558,7 +2110,7 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
               </ThemedTouchableOpacity>
             </View>
 
-            <View style={styles.modalBody}>
+            <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={true}>
               <ThemedText style={styles.modalWarning}>**Edit with caution**</ThemedText>
               <ThemedText style={styles.modalInfoText}>
                 Member: {selectedMember?.first_name} {selectedMember?.last_name}
@@ -1622,6 +2174,12 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
                 </ThemedText>
               )}
 
+              {/* Missing Email Alerts */}
+              {renderMissingEmailAlerts()}
+
+              {/* Email History Section */}
+              {renderEmailHistory()}
+
               {error && <ThemedText style={styles.error}>{error}</ThemedText>}
 
               <View style={styles.modalActions}>
@@ -1642,7 +2200,7 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
                   {isUpdating ? "Updating..." : "Update Request"}
                 </Button>
               </View>
-            </View>
+            </ScrollView>
           </ThemedView>
         </View>
       </Modal>
@@ -2041,6 +2599,7 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     modalContent: {
       width: Platform.OS === "web" ? "75%" : "90%",
       maxWidth: 500,
+      maxHeight: "90%",
       borderRadius: 8,
       padding: 16,
       backgroundColor: Colors.dark.card,
@@ -2065,6 +2624,7 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     },
     modalBody: {
       padding: 8,
+      flex: 1,
     },
     modalWarning: {
       fontSize: 16,
@@ -2503,6 +3063,180 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     },
     clearLookupButton: {
       alignSelf: "flex-start",
+    },
+    // Email History Styles
+    emailHistorySection: {
+      marginTop: 16,
+      borderWidth: 1,
+      borderColor: Colors.dark.border,
+      borderRadius: 8,
+      backgroundColor: Colors.dark.card,
+    },
+    emailHistoryHeader: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      padding: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: Colors.dark.border + "30",
+    },
+    emailHistoryHeaderContent: {
+      flexDirection: "row",
+      alignItems: "center",
+      flex: 1,
+    },
+    emailHistoryIcon: {
+      marginRight: 8,
+    },
+    emailHistoryTitle: {
+      fontSize: 16,
+      fontWeight: "600",
+      flex: 1,
+    },
+    emailHistoryLoader: {
+      marginLeft: 8,
+    },
+    emailHistoryContent: {
+      padding: 12,
+    },
+    emailHistoryList: {
+      maxHeight: 300,
+      backgroundColor: Colors.dark.card,
+    },
+    emailHistoryItem: {
+      paddingVertical: 8,
+    },
+    emailHistoryItemHeader: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "flex-start",
+      marginBottom: 8,
+    },
+    emailHistoryItemLeft: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      flex: 1,
+    },
+    emailHistoryItemIcon: {
+      marginRight: 8,
+      marginTop: 2,
+    },
+    emailHistoryItemInfo: {
+      flex: 1,
+    },
+    emailHistoryItemTitle: {
+      fontSize: 14,
+      fontWeight: "600",
+      marginBottom: 2,
+    },
+    emailHistoryItemSubtitle: {
+      fontSize: 12,
+      color: Colors.dark.secondary,
+    },
+    emailHistoryItemRight: {
+      alignItems: "flex-end",
+      marginLeft: 12,
+    },
+    emailStatusBadge: {
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+      borderRadius: 12,
+      marginBottom: 4,
+    },
+    emailStatusText: {
+      fontSize: 11,
+      fontWeight: "600",
+      textTransform: "uppercase",
+    },
+    emailHistoryItemTime: {
+      fontSize: 11,
+      color: Colors.dark.secondary,
+    },
+    emailHistoryItemDetails: {
+      marginLeft: 26,
+      paddingTop: 4,
+    },
+    emailHistoryItemDetailText: {
+      fontSize: 12,
+      color: Colors.dark.text,
+      marginBottom: 2,
+    },
+    emailContentPreview: {
+      marginTop: 8,
+      padding: 8,
+      backgroundColor: Colors.dark.border + "20",
+      borderRadius: 4,
+    },
+    emailContentLabel: {
+      fontSize: 11,
+      fontWeight: "600",
+      marginBottom: 4,
+      color: Colors.dark.secondary,
+    },
+    emailContentText: {
+      fontSize: 11,
+      lineHeight: 16,
+      color: Colors.dark.text,
+    },
+    emailHistoryItemSeparator: {
+      height: 1,
+      backgroundColor: Colors.dark.border + "30",
+      marginVertical: 8,
+      marginLeft: 26,
+    },
+    noEmailHistoryText: {
+      textAlign: "center",
+      fontStyle: "italic",
+      color: Colors.dark.secondary,
+      paddingVertical: 20,
+    },
+    // Missing Email Alert Styles
+    missingEmailAlertsContainer: {
+      marginVertical: 16,
+    },
+    missingEmailAlertsTitle: {
+      fontSize: 16,
+      fontWeight: "600",
+      marginBottom: 12,
+      color: Colors.dark.warning,
+    },
+    missingEmailAlert: {
+      borderWidth: 1,
+      borderRadius: 8,
+      padding: 12,
+      marginBottom: 12,
+    },
+    missingEmailAlertContent: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      marginBottom: 12,
+    },
+    missingEmailAlertIcon: {
+      marginRight: 8,
+      marginTop: 2,
+    },
+    missingEmailAlertText: {
+      flex: 1,
+      fontSize: 14,
+      lineHeight: 20,
+      fontWeight: "500",
+    },
+    sendEmailButton: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: 12,
+      borderRadius: 6,
+      alignSelf: "flex-start",
+      minWidth: 180,
+    },
+    sendEmailButtonIcon: {
+      marginRight: 6,
+    },
+    sendEmailButtonText: {
+      fontSize: 14,
+      fontWeight: "600",
+      color: Colors.dark.buttonText,
     },
   });
 

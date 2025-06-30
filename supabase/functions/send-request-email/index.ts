@@ -118,37 +118,114 @@ serve(async (req) => {
       }
     }
 
-    // Get request details from Supabase first - UPDATED: Include paid_in_lieu and calendar_id fields
+    // Get request details from Supabase first - UPDATED: Include pin_number for non-signed-up members
+    auditStage = "request_lookup";
     const { data: requestData, error: requestError } = await supabaseAdmin
       .from("pld_sdv_requests")
       .select(
-        "id, request_date, leave_type, member_id, paid_in_lieu, calendar_id",
+        "id, request_date, leave_type, member_id, pin_number, paid_in_lieu, calendar_id",
       )
       .eq("id", requestId)
       .single();
 
     if (requestError) {
+      logAuditEvent(
+        "request_lookup_failed",
+        { requestId },
+        new Error(requestError.message),
+      );
       throw new Error(`Failed to get request details: ${requestError.message}`);
     }
 
-    if (!requestData.member_id) {
-      throw new Error("Member ID not found for this request");
-    }
+    logAuditEvent("request_lookup_success", {
+      requestId,
+      hasMemberId: !!requestData.member_id,
+      hasPinNumber: !!requestData.pin_number,
+      leaveType: requestData.leave_type,
+      paidInLieu: requestData.paid_in_lieu,
+    });
 
-    // Get member details separately
-    const { data: memberData, error: memberError } = await supabaseAdmin
-      .from("members")
-      .select("first_name, last_name, pin_number, division_id")
-      .eq("id", requestData.member_id)
-      .single();
+    // Get member details - handle both signed-up (has member_id) and non-signed-up (pin_number only) members
+    auditStage = "member_lookup";
+    let memberData = null;
+    let memberLookupMethod = "";
 
-    if (memberError) {
-      throw new Error(`Failed to get member details: ${memberError.message}`);
+    if (requestData.member_id) {
+      // Method 1: Member has signed up for the app - lookup by member_id
+      memberLookupMethod = "member_id";
+      logAuditEvent("member_lookup_attempt", {
+        method: "member_id",
+        memberId: requestData.member_id,
+      });
+
+      const { data: memberByIdData, error: memberByIdError } =
+        await supabaseAdmin
+          .from("members")
+          .select("first_name, last_name, pin_number, division_id")
+          .eq("id", requestData.member_id)
+          .single();
+
+      if (memberByIdError) {
+        logAuditEvent("member_lookup_by_id_failed", {
+          memberId: requestData.member_id,
+        }, new Error(memberByIdError.message));
+        throw new Error(
+          `Failed to get member details by ID: ${memberByIdError.message}`,
+        );
+      }
+
+      memberData = memberByIdData;
+    } else if (requestData.pin_number) {
+      // Method 2: Member hasn't signed up yet - lookup by pin_number
+      memberLookupMethod = "pin_number";
+      logAuditEvent("member_lookup_attempt", {
+        method: "pin_number",
+        pinNumber: requestData.pin_number,
+      });
+
+      const { data: memberByPinData, error: memberByPinError } =
+        await supabaseAdmin
+          .from("members")
+          .select("first_name, last_name, pin_number, division_id")
+          .eq("pin_number", requestData.pin_number)
+          .single();
+
+      if (memberByPinError) {
+        logAuditEvent("member_lookup_by_pin_failed", {
+          pinNumber: requestData.pin_number,
+        }, new Error(memberByPinError.message));
+        throw new Error(
+          `Failed to get member details by PIN: ${memberByPinError.message}`,
+        );
+      }
+
+      memberData = memberByPinData;
+    } else {
+      // Neither member_id nor pin_number available
+      const error = new Error(
+        "Request has neither member_id nor pin_number - cannot identify member",
+      );
+      logAuditEvent("member_identification_failed", { requestId }, error);
+      throw error;
     }
 
     if (!memberData) {
-      throw new Error("Member information not found for this request");
+      const error = new Error(
+        `Member information not found using ${memberLookupMethod}`,
+      );
+      logAuditEvent(
+        "member_data_not_found",
+        { method: memberLookupMethod },
+        error,
+      );
+      throw error;
     }
+
+    logAuditEvent("member_lookup_success", {
+      method: memberLookupMethod,
+      memberName: `${memberData.first_name} ${memberData.last_name}`,
+      pinNumber: memberData.pin_number,
+    });
 
     // Get calendar details if calendar_id exists
     let calendarData = null;
