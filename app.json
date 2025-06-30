@@ -2,7 +2,7 @@
   "expo": {
     "name": "pld-app-cnwc-gca-blet",
     "slug": "pld-app-cnwc-gca-blet",
-    "version": "1.0.60",
+    "version": "1.0.61",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "pldapp",
@@ -22,7 +22,7 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#000000"
       },
-      "runtimeVersion": "1.0.60"
+      "runtimeVersion": "1.0.61"
     },
     "web": {
       "bundler": "metro",
