@@ -3100,7 +3100,6 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       padding: 12,
     },
     emailHistoryList: {
-      maxHeight: 300,
       backgroundColor: Colors.dark.card,
     },
     emailHistoryItem: {
