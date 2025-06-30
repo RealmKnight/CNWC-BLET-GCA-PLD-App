@@ -515,7 +515,7 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
         const isPld = req.leave_type === "PLD";
         const isSdv = req.leave_type === "SDV";
 
-        if (req.status === "approved") {
+        if (req.status === "approved" || req.status === "transferred") {
           if (req.paid_in_lieu) {
             if (isPld) paidInLieuPld++;
             if (isSdv) paidInLieuSdv++;
