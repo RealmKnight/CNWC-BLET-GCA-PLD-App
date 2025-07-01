@@ -207,9 +207,9 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
     let dateObj: Date;
     try {
       dateObj = parseISO(date);
-      // Ensure the date is valid and within the current year
-      if (isNaN(dateObj.getTime()) || dateObj.getFullYear() !== currentYear) {
-        // console.log("[CalendarStore] Date not selectable - invalid or outside current year:", date);
+      // Ensure the date is valid
+      if (isNaN(dateObj.getTime())) {
+        // console.log("[CalendarStore] Date not selectable - invalid date:", date);
         return false;
       }
     } catch (e) {
@@ -238,7 +238,18 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       return false;
     }
 
-    // If the date is within the current year and up to 6 months out (or a six-month date),
+    // Enhanced year validation: Allow current year and next year if within six-month window
+    const dateYear = dateObj.getFullYear();
+    const sixMonthYear = sixMonthsFromNow.getFullYear();
+    const isValidYear = dateYear === currentYear ||
+      (dateYear === currentYear + 1 && dateYear <= sixMonthYear);
+
+    if (!isValidYear) {
+      // console.log("[CalendarStore] Date not selectable - outside valid year range:", date);
+      return false;
+    }
+
+    // If the date is within valid year range and up to 6 months out (or a six-month date),
     // it is selectable for viewing or requesting.
     return true;
   },
