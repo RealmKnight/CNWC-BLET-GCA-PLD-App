@@ -25,6 +25,10 @@ import {
     invokeWithRetryAndTimeout,
     logStructuredError,
 } from "@/utils/emailAttemptLogger";
+import {
+    calculateTimeStatsForYear,
+    getYearBoundaries,
+} from "../utils/yearAwareTimeCalculations";
 // Import specific table types
 type DbMembers = Database["public"]["Tables"]["members"]["Row"];
 type DbPldSdvRequests = Database["public"]["Tables"]["pld_sdv_requests"]["Row"];
@@ -46,6 +50,17 @@ export interface TimeStats {
     approved: { pld: number; sdv: number };
     paidInLieu: { pld: number; sdv: number };
     // syncStatus: SyncStatus; // Add later if needed based on complexity
+}
+
+// Year-aware extension for time stats with year context
+export interface YearAwareTimeStats extends TimeStats {
+    year: number;
+    lastUpdated: Date;
+}
+
+// Cache structure for multi-year stats
+export interface TimeStatsCache {
+    [year: number]: YearAwareTimeStats;
 }
 
 export interface VacationStats {
@@ -90,7 +105,8 @@ export interface UserVacationRequest {
 
 interface TimeState {
     memberId: string | null;
-    timeStats: TimeStats | null;
+    timeStats: TimeStats | null; // Current year stats for backward compatibility
+    timeStatsCache: TimeStatsCache; // Multi-year cache for year-aware requests
     vacationStats: VacationStats | null;
     timeOffRequests: TimeOffRequest[];
     vacationRequests: UserVacationRequest[];
@@ -109,6 +125,12 @@ interface TimeActions {
     initialize: (memberId: string) => Promise<void>;
     cleanup: () => void;
     fetchTimeStats: (memberId: string) => Promise<TimeStats | null>;
+    fetchTimeStatsForYear: (
+        memberId: string,
+        year: number,
+    ) => Promise<TimeStats | null>;
+    getTimeStatsForYear: (year: number) => YearAwareTimeStats | null;
+    invalidateYearCache: (year?: number) => void;
     fetchVacationStats: (memberId: string) => Promise<VacationStats | null>;
     fetchTimeOffRequests: (memberId: string) => Promise<TimeOffRequest[]>;
     fetchVacationRequests: (memberId: string) => Promise<UserVacationRequest[]>;
@@ -148,6 +170,7 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
     // --- State ---
     memberId: null,
     timeStats: null,
+    timeStatsCache: {},
     vacationStats: null,
     timeOffRequests: [],
     vacationRequests: [],
@@ -439,6 +462,7 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
         set({
             memberId: null,
             timeStats: null,
+            timeStatsCache: {},
             vacationStats: null,
             timeOffRequests: [],
             vacationRequests: [],
@@ -636,6 +660,239 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
                     : "Failed to fetch time stats",
             });
             return null;
+        }
+    },
+
+    fetchTimeStatsForYear: async (memberId, year) => {
+        console.log(
+            `[TimeStore] Fetching time stats for member: ${memberId} and year: ${year}`,
+        );
+
+        // Check cache first
+        const cachedStats = get().getTimeStatsForYear(year);
+        if (cachedStats) {
+            const cacheAge = Date.now() - cachedStats.lastUpdated.getTime();
+            const CACHE_MAX_AGE = 5 * 60 * 1000; // 5 minutes
+            if (cacheAge < CACHE_MAX_AGE) {
+                console.log(`[TimeStore] Using cached stats for year ${year}`);
+                return cachedStats;
+            }
+        }
+
+        try {
+            const { start: yearStart, end: yearEnd } = getYearBoundaries(year);
+
+            // --- Step 1: Fetch Member Data ---
+            const { data: memberData, error: memberError } = await supabase
+                .from("members")
+                .select(`
+                    id, 
+                    company_hire_date, 
+                    max_plds, 
+                    sdv_entitlement, 
+                    sdv_election,
+                    pld_rolled_over
+                `)
+                .eq("id", memberId)
+                .single();
+
+            if (memberError) {
+                throw new Error(
+                    `Error fetching member data: ${memberError.message}`,
+                );
+            }
+            if (!memberData) throw new Error("Member not found.");
+
+            // --- Step 2: Use year-aware database functions to get totals ---
+            const [totalPldsResult, totalSdvsResult] = await Promise.all([
+                supabase.rpc("get_member_total_pld_allocation_for_year", {
+                    p_member_id: memberId,
+                    p_year: year,
+                }),
+                supabase.rpc("get_member_sdv_allocation_for_year", {
+                    p_member_id: memberId,
+                    p_year: year,
+                }),
+            ]);
+
+            if (totalPldsResult.error) {
+                throw new Error(
+                    `Error fetching total PLDs: ${totalPldsResult.error.message}`,
+                );
+            }
+            if (totalSdvsResult.error) {
+                throw new Error(
+                    `Error fetching total SDVs: ${totalSdvsResult.error.message}`,
+                );
+            }
+
+            const totalPlds = safeParseInt(totalPldsResult.data, 0);
+            const totalSdvs = safeParseInt(totalSdvsResult.data, 0);
+            const rolledOverPlds = year === new Date().getFullYear()
+                ? safeParseInt(memberData.pld_rolled_over, 0)
+                : 0; // Conservative approach: no rollover for future years
+
+            // --- Step 3: Fetch Year-Specific Requests ---
+            const [regularRequestsResult, sixMonthRequestsResult] =
+                await Promise.all([
+                    supabase
+                        .from("pld_sdv_requests")
+                        .select(
+                            "id, leave_type, status, paid_in_lieu, is_rollover_pld",
+                        )
+                        .eq("member_id", memberId)
+                        .gte("request_date", yearStart)
+                        .lte("request_date", yearEnd),
+                    supabase
+                        .from("six_month_requests")
+                        .select("id, leave_type, processed")
+                        .eq("member_id", memberId)
+                        .gte("request_date", yearStart)
+                        .lte("request_date", yearEnd),
+                ]);
+
+            if (regularRequestsResult.error) {
+                throw new Error(
+                    `Error fetching regular requests: ${regularRequestsResult.error.message}`,
+                );
+            }
+            if (sixMonthRequestsResult.error) {
+                throw new Error(
+                    `Error fetching six-month requests: ${sixMonthRequestsResult.error.message}`,
+                );
+            }
+
+            const regularRequests = regularRequestsResult.data || [];
+            const sixMonthRequests = sixMonthRequestsResult.data || [];
+
+            // --- Step 4: Calculate Request Counts ---
+            let usedRolloverPlds = 0;
+            let requested = { pld: 0, sdv: 0 };
+            let waitlisted = { pld: 0, sdv: 0 };
+            let approved = { pld: 0, sdv: 0 };
+            let paidInLieu = { pld: 0, sdv: 0 };
+
+            regularRequests.forEach((req) => {
+                const type = req.leave_type === "PLD"
+                    ? "pld"
+                    : req.leave_type === "SDV"
+                    ? "sdv"
+                    : null;
+                if (!type) return;
+
+                if (req.paid_in_lieu === true) {
+                    if (req.status === "approved" || req.status === "pending") {
+                        paidInLieu[type]++;
+                    }
+                } else {
+                    switch (req.status) {
+                        case "pending":
+                        case "cancellation_pending":
+                            requested[type]++;
+                            break;
+                        case "waitlisted":
+                            waitlisted[type]++;
+                            break;
+                        case "approved":
+                        case "transferred":
+                            approved[type]++;
+                            if (type === "pld" && req.is_rollover_pld) {
+                                usedRolloverPlds++;
+                            }
+                            break;
+                    }
+                }
+            });
+
+            sixMonthRequests.forEach((req) => {
+                const type = req.leave_type === "PLD"
+                    ? "pld"
+                    : req.leave_type === "SDV"
+                    ? "sdv"
+                    : null;
+                if (!type) return;
+                if (!req.processed) {
+                    requested[type]++;
+                }
+            });
+
+            // --- Step 5: Calculate Final Stats ---
+            const unusedPlds = Math.max(0, rolledOverPlds - usedRolloverPlds);
+            const availablePlds = Math.max(
+                0,
+                totalPlds -
+                    (approved.pld + requested.pld + waitlisted.pld +
+                        paidInLieu.pld),
+            );
+            const availableSdvs = Math.max(
+                0,
+                totalSdvs -
+                    (approved.sdv + requested.sdv + waitlisted.sdv +
+                        paidInLieu.sdv),
+            );
+
+            const yearStats: YearAwareTimeStats = {
+                total: { pld: totalPlds, sdv: totalSdvs },
+                rolledOver: { pld: rolledOverPlds, unusedPlds },
+                available: { pld: availablePlds, sdv: availableSdvs },
+                requested,
+                waitlisted,
+                approved,
+                paidInLieu,
+                year,
+                lastUpdated: new Date(),
+            };
+
+            // Cache the results
+            const currentCache = get().timeStatsCache;
+            set({
+                timeStatsCache: {
+                    ...currentCache,
+                    [year]: yearStats,
+                },
+            });
+
+            // If this is the current year, also update the main timeStats for backward compatibility
+            if (year === new Date().getFullYear()) {
+                const { year: _, lastUpdated: __, ...currentYearStats } =
+                    yearStats;
+                set({ timeStats: currentYearStats });
+            }
+
+            console.log(
+                `[TimeStore] Calculated year-aware stats for ${year}:`,
+                yearStats,
+            );
+            return yearStats;
+        } catch (error) {
+            console.error(
+                "[TimeStore] Error fetching time stats for year:",
+                error,
+            );
+            set({
+                error: error instanceof Error
+                    ? error.message
+                    : "Failed to fetch time stats for year",
+            });
+            return null;
+        }
+    },
+
+    getTimeStatsForYear: (year) => {
+        const timeStatsCache = get().timeStatsCache;
+        return timeStatsCache[year] || null;
+    },
+
+    invalidateYearCache: (year) => {
+        const currentCache = get().timeStatsCache;
+        if (year === undefined) {
+            // Clear entire cache
+            set({ timeStatsCache: {} });
+        } else {
+            // Remove specific year
+            const newCache = { ...currentCache };
+            delete newCache[year];
+            set({ timeStatsCache: newCache });
         }
     },
 
@@ -1072,6 +1329,16 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
                     `[TimeStore] Cancellation successful/initiated for request ${requestId}`,
                 );
 
+                // Invalidate year cache for the request year if we have the request data
+                if (requestData?.request_date) {
+                    const requestYear = new Date(requestData.request_date)
+                        .getFullYear();
+                    get().invalidateYearCache(requestYear);
+                    console.log(
+                        `[TimeStore] Invalidated cache for year ${requestYear} after cancellation`,
+                    );
+                }
+
                 // *** UPDATED: Only send email notification if request was NOT waitlisted ***
                 if (shouldSendCompanyEmail) {
                     console.log(
@@ -1193,6 +1460,17 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
             if (error) throw error;
 
             console.log("[TimeStore] Six-month request deletion result:", data);
+
+            // Invalidate year cache for the request year if we have the request data
+            if (requestData?.request_date) {
+                const requestYear = new Date(requestData.request_date)
+                    .getFullYear();
+                get().invalidateYearCache(requestYear);
+                console.log(
+                    `[TimeStore] Invalidated cache for year ${requestYear} after six-month cancellation`,
+                );
+            }
+
             set({ isSubmittingAction: false });
             console.log("[TimeStore] Cancel six-month request successful");
 
@@ -1313,6 +1591,13 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
 
             console.log("[TimeStore] Request submitted successfully:", data);
 
+            // Invalidate year cache for the request year
+            const requestYear = new Date(date).getFullYear();
+            get().invalidateYearCache(requestYear);
+            console.log(
+                `[TimeStore] Invalidated cache for year ${requestYear} after request submission`,
+            );
+
             // Send email notification for the new request
             console.log(
                 "[TimeStore] Sending request email notification...",
@@ -1400,6 +1685,14 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
                 "[TimeStore] Six-month request submitted successfully:",
                 data,
             );
+
+            // Invalidate year cache for the request year
+            const requestYear = new Date(date).getFullYear();
+            get().invalidateYearCache(requestYear);
+            console.log(
+                `[TimeStore] Invalidated cache for year ${requestYear} after six-month request submission`,
+            );
+
             set({ isSubmittingAction: false });
             // Refresh data after submission
             await get().refreshAll(memberId);

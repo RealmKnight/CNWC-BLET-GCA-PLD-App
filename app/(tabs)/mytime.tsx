@@ -31,6 +31,7 @@ import { PaidInLieuModal } from "@/components/modals/PaidInLieuModal";
 import { Select } from "@/components/ui/Select";
 import { supabase } from "@/utils/supabase";
 import { Picker } from "@react-native-picker/picker";
+import { useTimeStore } from "@/store/timeStore";
 
 interface LeaveRowProps {
   label: string;
@@ -452,6 +453,18 @@ export default function MyTimeScreen() {
   const insets = useSafeAreaInsets();
   const { member } = useAuth();
 
+  // PHASE 4.2: Year-aware MyTime Screen implementation
+  const currentDisplayYear = new Date().getFullYear();
+  const [selectedYear, setSelectedYear] = useState(currentDisplayYear);
+
+  // Get TimeStore methods for year-aware data
+  const { fetchTimeStatsForYear, getTimeStatsForYear } = useTimeStore();
+
+  // State for year-specific data
+  const [yearSpecificStats, setYearSpecificStats] = useState<any>(null);
+  const [isLoadingYearStats, setIsLoadingYearStats] = useState(false);
+  const [yearSpecificError, setYearSpecificError] = useState<string | null>(null);
+
   // Get data from the simplified useMyTime hook (which gets it from useTimeStore)
   const {
     timeStats,
@@ -500,15 +513,81 @@ export default function MyTimeScreen() {
     setDateRange({ minDate, maxDate });
   }, []);
 
+  // PHASE 4.2: Effect to fetch year-specific stats when selected year changes
+  useEffect(() => {
+    // If current year is selected, use the data from useMyTime hook
+    if (selectedYear === currentDisplayYear) {
+      setYearSpecificStats(null); // Clear year-specific stats to use current data
+      setYearSpecificError(null);
+      return;
+    }
+
+    // For non-current years, fetch year-specific data
+    const fetchYearSpecificData = async () => {
+      if (!member?.id) {
+        setYearSpecificError("Member information not available");
+        return;
+      }
+
+      setIsLoadingYearStats(true);
+      setYearSpecificError(null);
+
+      try {
+        // Check cache first
+        const cachedStats = getTimeStatsForYear(selectedYear);
+        if (cachedStats) {
+          console.log(`[MyTimeScreen] Using cached stats for year ${selectedYear}:`, cachedStats);
+          setYearSpecificStats(cachedStats);
+        } else {
+          // Fetch year-specific stats
+          console.log(`[MyTimeScreen] Fetching year-specific stats for ${selectedYear}`);
+          const yearStats = await fetchTimeStatsForYear(member.id, selectedYear);
+          if (yearStats) {
+            setYearSpecificStats(yearStats);
+            console.log(`[MyTimeScreen] Fetched year ${selectedYear} stats:`, yearStats);
+          } else {
+            setYearSpecificError(`Unable to load data for year ${selectedYear}`);
+          }
+        }
+      } catch (error) {
+        console.error(`[MyTimeScreen] Error fetching year ${selectedYear} stats:`, error);
+        setYearSpecificError(
+          `Error loading data for year ${selectedYear}: ${error instanceof Error ? error.message : "Unknown error"}`
+        );
+      } finally {
+        setIsLoadingYearStats(false);
+      }
+    };
+
+    fetchYearSpecificData();
+  }, [selectedYear, currentDisplayYear, member?.id, fetchTimeStatsForYear, getTimeStatsForYear]);
+
   const cardWidth = useMemo(() => {
     return Math.min(width - 32, 480);
   }, [width]);
 
-  // Memoize the filtered and sorted requests - logic remains the same
+  // PHASE 4.2: Year-aware request filtering and sorting
   const { pendingAndApproved, waitlisted, sortedVacationRequests } = useMemo(() => {
     const safeTimeOffRequests = Array.isArray(timeOffRequests) ? timeOffRequests : [];
+
+    // Filter requests by selected year
+    const yearFilteredRequests = safeTimeOffRequests.filter((request) => {
+      if (!request.request_date) return false;
+      try {
+        const requestYear = new Date(request.request_date).getFullYear();
+        return requestYear === selectedYear;
+      } catch (error) {
+        console.error(`[MyTimeScreen] Error parsing request date: ${request.request_date}`, error);
+        return false;
+      }
+    });
+
+    console.log(
+      `[MyTimeScreen] Filtering requests for year ${selectedYear}: ${yearFilteredRequests.length}/${safeTimeOffRequests.length} requests`
+    );
+
     const pendingAndApproved = sortRequestsByDate(
-      safeTimeOffRequests.filter(
+      yearFilteredRequests.filter(
         (request) =>
           request.status === "pending" || request.status === "approved" || request.status === "cancellation_pending"
       )
@@ -516,7 +595,7 @@ export default function MyTimeScreen() {
     pendingAndApproved.future.sort((a, b) => safeCompareDate(a.request_date, b.request_date));
     pendingAndApproved.past.sort((a, b) => safeCompareDate(b.request_date, a.request_date, true));
 
-    const waitlisted = sortRequestsByDate(safeTimeOffRequests.filter((request) => request.status === "waitlisted"));
+    const waitlisted = sortRequestsByDate(yearFilteredRequests.filter((request) => request.status === "waitlisted"));
     waitlisted.future.sort((a, b) => safeCompareDate(a.request_date, b.request_date));
     waitlisted.past.sort((a, b) => safeCompareDate(b.request_date, a.request_date, true));
 
@@ -526,7 +605,7 @@ export default function MyTimeScreen() {
     sortedVacationRequests.past.sort((a, b) => safeCompareDate(b.start_date, a.start_date, true));
 
     return { pendingAndApproved, waitlisted, sortedVacationRequests };
-  }, [timeOffRequests, vacationRequests]);
+  }, [timeOffRequests, vacationRequests, selectedYear]);
 
   // Handle paid in lieu modal - logic remains the same
   const handlePaidInLieuPress = () => {
@@ -742,47 +821,112 @@ export default function MyTimeScreen() {
     }
   };
 
-  // Display loading indicator - uses isLoading from hook
-  if (isLoading && !timeStats) {
-    // Show initial loading only if stats are null
-    // console.log("[MyTimeScreen] Rendering loading state");
+  // PHASE 4.2: Year Selector Component
+  const renderYearSelector = () => {
+    const availableYears = [currentDisplayYear, currentDisplayYear + 1];
+
+    return (
+      <ThemedView style={styles.yearSelectorContainer}>
+        <ThemedText style={styles.yearSelectorLabel}>Viewing Year:</ThemedText>
+        <ThemedView style={styles.yearPickerContainer}>
+          <Picker
+            selectedValue={selectedYear}
+            onValueChange={(value) => setSelectedYear(Number(value))}
+            style={styles.yearPicker}
+            dropdownIconColor={Colors[colorScheme ?? "light"].text}
+          >
+            {availableYears.map((year) => (
+              <Picker.Item
+                key={year}
+                label={year === currentDisplayYear ? `${year} (Current)` : `${year}`}
+                value={year}
+              />
+            ))}
+          </Picker>
+        </ThemedView>
+      </ThemedView>
+    );
+  };
+
+  // PHASE 4.2: Updated loading state - consider both general loading and year-specific loading
+  if ((isLoading && !timeStats) || (selectedYear !== currentDisplayYear && isLoadingYearStats && !yearSpecificStats)) {
     return (
       <ThemedView style={[styles.loadingContainer, { paddingTop: insets.top }]}>
         <ActivityIndicator size="large" color={Colors[colorScheme ?? "light"].primary} />
-        <ThemedText style={styles.loadingText}>Loading your time off data...</ThemedText>
+        <ThemedText style={styles.loadingText}>
+          {selectedYear !== currentDisplayYear
+            ? `Loading ${selectedYear} time off data...`
+            : "Loading your time off data..."}
+        </ThemedText>
       </ThemedView>
     );
   }
 
-  // Display error state - uses error from hook
-  if (error) {
-    // console.log("[MyTimeScreen] Rendering error state:", error);
+  // PHASE 4.2: Updated error state - handle both general error and year-specific error
+  const displayError = selectedYear === currentDisplayYear ? error : yearSpecificError;
+  if (displayError) {
     return (
       <ThemedView style={[styles.errorContainer, { paddingTop: insets.top }]}>
         <Feather name="alert-circle" size={48} color={Colors[colorScheme ?? "light"].error} />
-        <ThemedText style={styles.errorTitle}>Error Loading Data</ThemedText>
-        <ThemedText style={styles.errorDescription}>{error}</ThemedText>
-        <ThemedTouchableOpacity style={styles.retryButton} onPress={() => refreshData("")}>
+        <ThemedText style={styles.errorTitle}>
+          {selectedYear !== currentDisplayYear ? `Error Loading ${selectedYear} Data` : "Error Loading Data"}
+        </ThemedText>
+        <ThemedText style={styles.errorDescription}>{displayError}</ThemedText>
+        <ThemedTouchableOpacity
+          style={styles.retryButton}
+          onPress={() => {
+            if (selectedYear === currentDisplayYear) {
+              refreshData("");
+            } else {
+              // Retry year-specific data by re-triggering the effect
+              setYearSpecificError(null);
+              setYearSpecificStats(null);
+            }
+          }}
+        >
           <ThemedText style={styles.retryButtonText}>Retry</ThemedText>
         </ThemedTouchableOpacity>
       </ThemedView>
     );
   }
 
-  // Create a safe stats object that won't crash if timeStats is incomplete or null
+  // PHASE 4.2: Determine which stats to display based on selected year
+  const displayStats = useMemo(() => {
+    // For current year, use timeStats from useMyTime hook
+    if (selectedYear === currentDisplayYear) {
+      return timeStats
+        ? {
+            total: { pld: timeStats.total?.pld ?? 0, sdv: timeStats.total?.sdv ?? 0 },
+            rolledOver: { pld: timeStats.rolledOver?.pld ?? 0, unusedPlds: timeStats.rolledOver?.unusedPlds ?? 0 },
+            available: { pld: timeStats.available?.pld ?? 0, sdv: timeStats.available?.sdv ?? 0 },
+            requested: { pld: timeStats.requested?.pld ?? 0, sdv: timeStats.requested?.sdv ?? 0 },
+            waitlisted: { pld: timeStats.waitlisted?.pld ?? 0, sdv: timeStats.waitlisted?.sdv ?? 0 },
+            approved: { pld: timeStats.approved?.pld ?? 0, sdv: timeStats.approved?.sdv ?? 0 },
+            paidInLieu: { pld: timeStats.paidInLieu?.pld ?? 0, sdv: timeStats.paidInLieu?.sdv ?? 0 },
+          }
+        : null;
+    }
+
+    // For other years, use yearSpecificStats
+    return yearSpecificStats
+      ? {
+          total: { pld: yearSpecificStats.total?.pld ?? 0, sdv: yearSpecificStats.total?.sdv ?? 0 },
+          rolledOver: {
+            pld: yearSpecificStats.rolledOver?.pld ?? 0,
+            unusedPlds: yearSpecificStats.rolledOver?.unusedPlds ?? 0,
+          },
+          available: { pld: yearSpecificStats.available?.pld ?? 0, sdv: yearSpecificStats.available?.sdv ?? 0 },
+          requested: { pld: yearSpecificStats.requested?.pld ?? 0, sdv: yearSpecificStats.requested?.sdv ?? 0 },
+          waitlisted: { pld: yearSpecificStats.waitlisted?.pld ?? 0, sdv: yearSpecificStats.waitlisted?.sdv ?? 0 },
+          approved: { pld: yearSpecificStats.approved?.pld ?? 0, sdv: yearSpecificStats.approved?.sdv ?? 0 },
+          paidInLieu: { pld: yearSpecificStats.paidInLieu?.pld ?? 0, sdv: yearSpecificStats.paidInLieu?.sdv ?? 0 },
+        }
+      : null;
+  }, [selectedYear, currentDisplayYear, timeStats, yearSpecificStats]);
+
+  // Create a safe stats object that won't crash if displayStats is incomplete or null
   // Ensure all nested properties are accessed safely with default values.
-  const safeStats = timeStats
-    ? {
-        total: { pld: timeStats.total?.pld ?? 0, sdv: timeStats.total?.sdv ?? 0 },
-        rolledOver: { pld: timeStats.rolledOver?.pld ?? 0, unusedPlds: timeStats.rolledOver?.unusedPlds ?? 0 },
-        available: { pld: timeStats.available?.pld ?? 0, sdv: timeStats.available?.sdv ?? 0 },
-        requested: { pld: timeStats.requested?.pld ?? 0, sdv: timeStats.requested?.sdv ?? 0 },
-        waitlisted: { pld: timeStats.waitlisted?.pld ?? 0, sdv: timeStats.waitlisted?.sdv ?? 0 },
-        approved: { pld: timeStats.approved?.pld ?? 0, sdv: timeStats.approved?.sdv ?? 0 },
-        paidInLieu: { pld: timeStats.paidInLieu?.pld ?? 0, sdv: timeStats.paidInLieu?.sdv ?? 0 },
-        // syncStatus: timeStats.syncStatus, // Removed syncStatus
-      }
-    : null;
+  const safeStats = displayStats;
 
   // Replace the renderSplitWeeksSection function to include a message when outside election period
   const renderSplitWeeksSection = () => {
@@ -861,12 +1005,16 @@ export default function MyTimeScreen() {
         contentContainerStyle={styles.contentContainer}
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
       >
-        {/* Add sync status indicator - Consider using isSubmittingAction or isRefreshing ? */}
-        {/* {isRefreshing && ( ... sync indicator ... )} */}
-        {/* {error && ( ... error indicator ... )} */}
+        {/* Year-specific loading indicator */}
+        {selectedYear !== currentDisplayYear && isLoadingYearStats && (
+          <ThemedView style={styles.loadingContainer}>
+            <ActivityIndicator size="small" color={Colors[colorScheme ?? "light"].primary} />
+            <ThemedText style={styles.loadingText}>Loading {selectedYear} data...</ThemedText>
+          </ThemedView>
+        )}
 
-        {/* Rollover Warning Banner */}
-        {safeStats && safeStats.rolledOver.unusedPlds > 0 && (
+        {/* Rollover Warning Banner - only show for current year */}
+        {selectedYear === currentDisplayYear && safeStats && safeStats.rolledOver.unusedPlds > 0 && (
           <RolloverWarningBanner unusedPlds={safeStats.rolledOver.unusedPlds} />
         )}
 
@@ -874,8 +1022,14 @@ export default function MyTimeScreen() {
         {safeStats ? (
           <ThemedView style={[styles.card, { width: cardWidth }]}>
             <ThemedView style={styles.sectionHeader}>
-              <ThemedText style={styles.sectionTitle}>Single Day Allocations</ThemedText>
+              <ThemedText style={styles.sectionTitle}>
+                {selectedYear !== currentDisplayYear
+                  ? `${selectedYear} Single Day Allocations`
+                  : "Single Day Allocations"}
+              </ThemedText>
             </ThemedView>
+            {/* PHASE 4.2: Year Selector - moved to Single Day Allocations section */}
+            {renderYearSelector()}
             <ThemedView style={styles.tableHeader}>
               <ThemedText style={styles.headerLabel}></ThemedText>
               <ThemedText style={styles.headerValue}>PLD</ThemedText>
@@ -905,7 +1059,11 @@ export default function MyTimeScreen() {
 
         {/* Time Off Requests (Pending/Approved) */}
         <ThemedView style={styles.sectionHeader}>
-          <ThemedText style={styles.sectionTitle}>Pending/Approved Requests</ThemedText>
+          <ThemedText style={styles.sectionTitle}>
+            {selectedYear !== currentDisplayYear
+              ? `${selectedYear} Pending/Approved Requests`
+              : "Pending/Approved Requests"}
+          </ThemedText>
         </ThemedView>
         <ThemedView style={[styles.card, { width: cardWidth, marginTop: 24 }]}>
           {pendingAndApproved.future.length > 0 && (
@@ -939,7 +1097,9 @@ export default function MyTimeScreen() {
         {(waitlisted.future.length > 0 || waitlisted.past.length > 0) && (
           <ThemedView style={[styles.card, { width: cardWidth, marginTop: 24 }]}>
             <ThemedView style={styles.sectionHeader}>
-              <ThemedText style={styles.sectionTitle}>Waitlisted Requests</ThemedText>
+              <ThemedText style={styles.sectionTitle}>
+                {selectedYear !== currentDisplayYear ? `${selectedYear} Waitlisted Requests` : "Waitlisted Requests"}
+              </ThemedText>
             </ThemedView>
             {/* Future Waitlisted - Render only if future exists */}
             {waitlisted.future.length > 0 && (
@@ -1534,5 +1694,48 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "bold",
     marginBottom: 8,
+  },
+  // PHASE 4.2: Year selector styles
+  yearSelectorContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: Colors.dark.card,
+    borderRadius: 8,
+    marginBottom: 2,
+    width: "100%",
+    maxWidth: 600,
+  },
+  yearSelectorLabel: {
+    fontSize: 16,
+    fontWeight: "600",
+    marginRight: 12,
+  },
+  yearPickerContainer: {
+    flex: 1,
+    backgroundColor: Colors.dark.background,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    overflow: "hidden",
+  },
+  yearPicker: {
+    backgroundColor: Colors.dark.background,
+    color: Colors.dark.text,
+    height: 40,
+    borderColor: Colors.dark.border,
+    ...Platform.select({
+      ios: {
+        height: 40,
+      },
+      android: {
+        height: 50,
+      },
+      web: {
+        height: 40,
+        cursor: "pointer",
+      },
+    }),
   },
 });

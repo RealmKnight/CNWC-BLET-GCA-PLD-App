@@ -124,6 +124,95 @@ function RequestDialog({
   const updateDailyAllotment = useAdminCalendarManagementStore((state) => state.updateDailyAllotment);
   const updateWeeklyAllotment = useAdminCalendarManagementStore((state) => state.updateWeeklyAllotment);
 
+  // PHASE 4.1: Year-Aware RequestDialog Enhancements
+  const { fetchTimeStatsForYear, getTimeStatsForYear } = useTimeStore();
+
+  // Year detection logic
+  const selectedYear = useMemo(() => {
+    if (!selectedDate || selectedDate === null) return new Date().getFullYear();
+    try {
+      const dateStr = selectedDate as string; // Type assertion after null check
+      return parseISO(dateStr).getFullYear();
+    } catch {
+      return new Date().getFullYear();
+    }
+  }, [selectedDate]);
+
+  const currentYear = new Date().getFullYear();
+  const isNextYearRequest = selectedYear > currentYear;
+
+  // Year-specific available days state
+  const [yearAwareAvailablePld, setYearAwareAvailablePld] = useState(availablePld);
+  const [yearAwareAvailableSdv, setYearAwareAvailableSdv] = useState(availableSdv);
+  const [isLoadingYearStats, setIsLoadingYearStats] = useState(false);
+
+  // Fetch year-specific stats when needed
+  useEffect(() => {
+    if (!isVisible || !member?.id || !isNextYearRequest) {
+      // For current year, use props
+      setYearAwareAvailablePld(availablePld);
+      setYearAwareAvailableSdv(availableSdv);
+      return;
+    }
+
+    const fetchYearStats = async () => {
+      setIsLoadingYearStats(true);
+      try {
+        // Check cache first
+        const cachedStats = getTimeStatsForYear(selectedYear);
+        if (cachedStats) {
+          console.log(`[RequestDialog] Using cached stats for year ${selectedYear}:`, cachedStats);
+          setYearAwareAvailablePld(cachedStats.available.pld);
+          setYearAwareAvailableSdv(cachedStats.available.sdv);
+        } else {
+          // Fetch year-specific stats - ensure member.id is not null
+          if (!member.id) {
+            console.error(`[RequestDialog] Cannot fetch year stats: member.id is null`);
+            setYearAwareAvailablePld(availablePld);
+            setYearAwareAvailableSdv(availableSdv);
+            return;
+          }
+
+          console.log(`[RequestDialog] Fetching year-specific stats for ${selectedYear}`);
+          const yearStats = await fetchTimeStatsForYear(member.id, selectedYear);
+          if (yearStats) {
+            setYearAwareAvailablePld(yearStats.available.pld);
+            setYearAwareAvailableSdv(yearStats.available.sdv);
+            console.log(`[RequestDialog] Fetched year ${selectedYear} stats:`, {
+              availablePld: yearStats.available.pld,
+              availableSdv: yearStats.available.sdv,
+            });
+          }
+        }
+      } catch (error) {
+        console.error(`[RequestDialog] Error fetching year ${selectedYear} stats:`, error);
+        // Fallback to props
+        setYearAwareAvailablePld(availablePld);
+        setYearAwareAvailableSdv(availableSdv);
+      } finally {
+        setIsLoadingYearStats(false);
+      }
+    };
+
+    fetchYearStats();
+  }, [
+    isVisible,
+    member?.id,
+    isNextYearRequest,
+    selectedYear,
+    availablePld,
+    availableSdv,
+    fetchTimeStatsForYear,
+    getTimeStatsForYear,
+  ]);
+
+  // Year label for display (only show year for next year requests)
+  const yearLabel = isNextYearRequest ? ` ${selectedYear}` : "";
+
+  // Use year-aware values for logic
+  const displayAvailablePld = yearAwareAvailablePld;
+  const displayAvailableSdv = yearAwareAvailableSdv;
+
   // Removed isSubmitting state
   const [hasSixMonthRequest, setHasSixMonthRequest] = useState(false);
   // --- REINTRODUCE local state for six-month count ---
@@ -773,19 +862,20 @@ function RequestDialog({
       isSubmittingAction["submitRequest"] ||
       isSubmittingAction["submitSixMonthRequest"];
 
-    // Disable when user has a PIL request
-    let isDisabled = availablePld <= 0 || isLoading || isExistingRequestPaidInLieu;
+    // PHASE 4.1: Use year-aware available days for button logic
+    let isDisabled = displayAvailablePld <= 0 || isLoading || isExistingRequestPaidInLieu || isLoadingYearStats;
     if (isSixMonthRequest) isDisabled = isDisabled || hasSixMonthRequest;
 
     return { onPress: () => handleSubmit("PLD"), disabled: isDisabled, loadingState: isLoading };
   }, [
-    availablePld,
+    displayAvailablePld,
     isSubmittingAction,
     handleSubmit,
     hasSixMonthRequest,
     isSixMonthRequest,
     selectedDate,
     isExistingRequestPaidInLieu,
+    isLoadingYearStats,
   ]);
 
   // Modified sdvButtonProps to also be disabled when user has a PIL request
@@ -796,19 +886,20 @@ function RequestDialog({
       isSubmittingAction["submitRequest"] ||
       isSubmittingAction["submitSixMonthRequest"];
 
-    // Disable when user has a PIL request
-    let isDisabled = availableSdv <= 0 || isLoading || isExistingRequestPaidInLieu;
+    // PHASE 4.1: Use year-aware available days for button logic
+    let isDisabled = displayAvailableSdv <= 0 || isLoading || isExistingRequestPaidInLieu || isLoadingYearStats;
     if (isSixMonthRequest) isDisabled = isDisabled || hasSixMonthRequest;
 
     return { onPress: () => handleSubmit("SDV"), disabled: isDisabled, loadingState: isLoading };
   }, [
-    availableSdv,
+    displayAvailableSdv,
     isSubmittingAction,
     handleSubmit,
     hasSixMonthRequest,
     isSixMonthRequest,
     selectedDate,
     isExistingRequestPaidInLieu,
+    isLoadingYearStats,
   ]);
 
   // canCancelRequest memo remains the same
@@ -925,10 +1016,27 @@ function RequestDialog({
 
           {!isPastView && !isExistingRequestPaidInLieu && !hasExistingRequest && !hasSixMonthRequest && (
             <>
-              {/* Uses props availablePld/availableSdv */}
+              {/* PHASE 4.1: Year-aware available days display */}
               <View style={dialogStyles.remainingDaysContainer}>
-                <ThemedText style={dialogStyles.remainingDaysText}>Available PLD Days: {availablePld}</ThemedText>
-                <ThemedText style={dialogStyles.remainingDaysText}>Available SDV Days: {availableSdv}</ThemedText>
+                {isLoadingYearStats ? (
+                  <View
+                    style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", paddingVertical: 8 }}
+                  >
+                    <ActivityIndicator size="small" color={Colors[theme].tint} />
+                    <ThemedText style={[dialogStyles.remainingDaysText, { marginLeft: 8 }]}>
+                      Loading {yearLabel} stats...
+                    </ThemedText>
+                  </View>
+                ) : (
+                  <>
+                    <ThemedText style={dialogStyles.remainingDaysText}>
+                      Available{yearLabel} PLD Days: {displayAvailablePld}
+                    </ThemedText>
+                    <ThemedText style={dialogStyles.remainingDaysText}>
+                      Available{yearLabel} SDV Days: {displayAvailableSdv}
+                    </ThemedText>
+                  </>
+                )}
               </View>
             </>
           )}
@@ -938,7 +1046,7 @@ function RequestDialog({
             !hasExistingRequest &&
             !isSixMonthRequest &&
             !isExistingRequestPaidInLieu && // Explicitly check PIL status
-            (availablePld > 0 || availableSdv > 0) &&
+            (displayAvailablePld > 0 || displayAvailableSdv > 0) &&
             (() => {
               // Check if selected date is within 15 days of today
               try {
@@ -1067,7 +1175,7 @@ function RequestDialog({
                         )}
                       </TouchableOpacity>
                     ) : // Request Six Month Buttons (PLD/SDV - Uses submitButtonProps, sdvButtonProps)
-                    availablePld <= 0 && availableSdv > 0 ? (
+                    displayAvailablePld <= 0 && displayAvailableSdv > 0 ? (
                       <TouchableOpacity
                         style={[
                           dialogStyles.modalButton,
@@ -1085,7 +1193,7 @@ function RequestDialog({
                           <ThemedText style={dialogStyles.modalButtonText}>Request SDV (Six Month)</ThemedText>
                         )}
                       </TouchableOpacity>
-                    ) : availableSdv <= 0 && availablePld > 0 ? (
+                    ) : displayAvailableSdv <= 0 && displayAvailablePld > 0 ? (
                       <TouchableOpacity
                         style={[
                           dialogStyles.modalButton,
@@ -1172,15 +1280,15 @@ function RequestDialog({
                   ) : !isExistingRequestPaidInLieu ? (
                     // Request Regular Buttons (PLD/SDV - Uses submitButtonProps, sdvButtonProps, displayAllotment)
                     // Only show buttons if member has available days for at least one type
-                    availablePld > 0 || availableSdv > 0 ? (
+                    displayAvailablePld > 0 || displayAvailableSdv > 0 ? (
                       <>
-                        {availablePld <= 0 && availableSdv > 0 ? (
+                        {displayAvailablePld <= 0 && displayAvailableSdv > 0 ? (
                           <TouchableOpacity
                             style={[
                               dialogStyles.modalButton,
                               dialogStyles.submitButton,
                               { flex: 2 },
-                              approvedPendingRequests.length >= displayAllotment.max && availableSdv > 0
+                              approvedPendingRequests.length >= displayAllotment.max && displayAvailableSdv > 0
                                 ? dialogStyles.waitlistButton
                                 : null,
                               sdvButtonProps.disabled && dialogStyles.disabledButton,
@@ -1199,13 +1307,13 @@ function RequestDialog({
                               </ThemedText>
                             )}
                           </TouchableOpacity>
-                        ) : availableSdv <= 0 && availablePld > 0 ? (
+                        ) : displayAvailableSdv <= 0 && displayAvailablePld > 0 ? (
                           <TouchableOpacity
                             style={[
                               dialogStyles.modalButton,
                               dialogStyles.submitButton,
                               { flex: 2 },
-                              approvedPendingRequests.length >= displayAllotment.max && availablePld > 0
+                              approvedPendingRequests.length >= displayAllotment.max && displayAvailablePld > 0
                                 ? dialogStyles.waitlistButton
                                 : null,
                               submitButtonProps.disabled && dialogStyles.disabledButton,
@@ -1230,7 +1338,7 @@ function RequestDialog({
                               style={[
                                 dialogStyles.modalButton,
                                 dialogStyles.submitButton,
-                                approvedPendingRequests.length >= displayAllotment.max && availablePld > 0
+                                approvedPendingRequests.length >= displayAllotment.max && displayAvailablePld > 0
                                   ? dialogStyles.waitlistButton
                                   : null,
                                 submitButtonProps.disabled && dialogStyles.disabledButton,
@@ -1253,7 +1361,7 @@ function RequestDialog({
                               style={[
                                 dialogStyles.modalButton,
                                 dialogStyles.submitButton,
-                                approvedPendingRequests.length >= displayAllotment.max && availableSdv > 0
+                                approvedPendingRequests.length >= displayAllotment.max && displayAvailableSdv > 0
                                   ? dialogStyles.waitlistButton
                                   : null,
                                 sdvButtonProps.disabled && dialogStyles.disabledButton,
