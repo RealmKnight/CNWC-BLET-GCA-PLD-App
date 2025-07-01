@@ -179,6 +179,8 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     }[]
   >([]);
   const [isSendingEmail, setIsSendingEmail] = useState(false);
+  const [isSendingReminder, setIsSendingReminder] = useState(false);
+  const [isSendingCancellationReminder, setIsSendingCancellationReminder] = useState(false);
 
   // Add state for request ID lookup
   const [lookupRequestId, setLookupRequestId] = useState("");
@@ -1143,6 +1145,83 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     [editingRequest, selectedMember, fetchEmailHistory]
   );
 
+  // Function to send a reminder email (standard request template)
+  const handleSendReminderEmail = useCallback(async () => {
+    if (!editingRequest) {
+      setError("Cannot send reminder: No request in context");
+      return;
+    }
+
+    try {
+      setIsSendingReminder(true);
+      setError(null);
+
+      const { data, error: functionError } = await supabase.functions.invoke("send-request-email", {
+        body: { requestId: editingRequest.id },
+      });
+
+      if (functionError) throw new Error(functionError.message);
+      if (data?.error) throw new Error(data.error);
+
+      Toast.show({
+        type: "success",
+        text1: "Reminder Email Sent",
+        text2: "Company has been reminded of this request",
+      });
+
+      // Refresh email history to include the newly sent email
+      await fetchEmailHistory(editingRequest.id, editingRequest);
+    } catch (err: any) {
+      console.error("Error sending reminder email:", err);
+      setError(err.message || "Failed to send reminder email");
+      Toast.show({
+        type: "error",
+        text1: "Reminder Failed",
+        text2: err.message || "Could not send reminder email",
+      });
+    } finally {
+      setIsSendingReminder(false);
+    }
+  }, [editingRequest, fetchEmailHistory]);
+
+  // Function to send a cancellation reminder email
+  const handleSendCancellationReminderEmail = useCallback(async () => {
+    if (!editingRequest) {
+      setError("Cannot send reminder: No request in context");
+      return;
+    }
+
+    try {
+      setIsSendingCancellationReminder(true);
+      setError(null);
+
+      const { data, error: functionError } = await supabase.functions.invoke("send-cancellation-email", {
+        body: { requestId: editingRequest.id },
+      });
+
+      if (functionError) throw new Error(functionError.message);
+      if (data?.error) throw new Error(data.error);
+
+      Toast.show({
+        type: "success",
+        text1: "Cancellation Email Sent",
+        text2: "Company has been reminded of the cancellation request",
+      });
+
+      await fetchEmailHistory(editingRequest.id, editingRequest);
+    } catch (err: any) {
+      console.error("Error sending cancellation reminder:", err);
+      setError(err.message || "Failed to send cancellation reminder");
+      Toast.show({
+        type: "error",
+        text1: "Reminder Failed",
+        text2: err.message || "Could not send cancellation reminder",
+      });
+    } finally {
+      setIsSendingCancellationReminder(false);
+    }
+  }, [editingRequest, fetchEmailHistory]);
+
   // Function to close the edit modal
   const handleCloseEditModal = useCallback(() => {
     setShowEditModal(false);
@@ -1984,104 +2063,131 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
         {showEmailHistory && (
           <View style={styles.emailHistoryContent}>
             {emailHistory.length > 0 ? (
-              <View style={styles.emailHistoryList}>
-                {emailHistory.map((email, index) => (
-                  <View key={`${email.type}-${email.id}`} style={styles.emailHistoryItem}>
-                    <View style={styles.emailHistoryItemHeader}>
-                      <View style={styles.emailHistoryItemLeft}>
-                        <Ionicons
-                          name={email.display_icon}
-                          size={18}
-                          color={email.type === "outgoing" ? Colors[colorScheme].tint : Colors[colorScheme].success}
-                          style={styles.emailHistoryItemIcon}
-                        />
-                        <View style={styles.emailHistoryItemInfo}>
-                          <ThemedText style={styles.emailHistoryItemTitle}>{email.display_title}</ThemedText>
-                          <ThemedText style={styles.emailHistoryItemSubtitle}>{email.display_subtitle}</ThemedText>
+              <>
+                <View style={styles.emailHistoryList}>
+                  {emailHistory.map((email, index) => (
+                    <View key={`${email.type}-${email.id}`} style={styles.emailHistoryItem}>
+                      <View style={styles.emailHistoryItemHeader}>
+                        <View style={styles.emailHistoryItemLeft}>
+                          <Ionicons
+                            name={email.display_icon}
+                            size={18}
+                            color={email.type === "outgoing" ? Colors[colorScheme].tint : Colors[colorScheme].success}
+                            style={styles.emailHistoryItemIcon}
+                          />
+                          <View style={styles.emailHistoryItemInfo}>
+                            <ThemedText style={styles.emailHistoryItemTitle}>{email.display_title}</ThemedText>
+                            <ThemedText style={styles.emailHistoryItemSubtitle}>{email.display_subtitle}</ThemedText>
+                          </View>
                         </View>
-                      </View>
-                      <View style={styles.emailHistoryItemRight}>
-                        <View
-                          style={[
-                            styles.emailStatusBadge,
-                            { backgroundColor: getEmailStatusColor(email.display_status, email.type) + "20" },
-                          ]}
-                        >
-                          <ThemedText
+                        <View style={styles.emailHistoryItemRight}>
+                          <View
                             style={[
-                              styles.emailStatusText,
-                              { color: getEmailStatusColor(email.display_status, email.type) },
+                              styles.emailStatusBadge,
+                              { backgroundColor: getEmailStatusColor(email.display_status, email.type) + "20" },
                             ]}
                           >
-                            {email.display_status}
-                          </ThemedText>
-                        </View>
-                        <ThemedText style={styles.emailHistoryItemTime}>
-                          {format(parseISO(email.timestamp), "MMM dd, HH:mm")}
-                        </ThemedText>
-                      </View>
-                    </View>
-
-                    {/* Additional details for outgoing emails */}
-                    {email.type === "outgoing" && (
-                      <View style={styles.emailHistoryItemDetails}>
-                        <ThemedText style={styles.emailHistoryItemDetailText}>Subject: {email.subject}</ThemedText>
-                        {email.error_message && (
-                          <ThemedText style={[styles.emailHistoryItemDetailText, { color: Colors[colorScheme].error }]}>
-                            Error: {email.error_message}
-                          </ThemedText>
-                        )}
-                        {email.retry_count > 0 && (
-                          <ThemedText style={styles.emailHistoryItemDetailText}>
-                            Retries: {email.retry_count}
-                          </ThemedText>
-                        )}
-                        {email.fallback_notification_sent && (
-                          <ThemedText
-                            style={[styles.emailHistoryItemDetailText, { color: Colors[colorScheme].warning }]}
-                          >
-                            ⚠️ Fallback notification sent
-                          </ThemedText>
-                        )}
-                      </View>
-                    )}
-
-                    {/* Additional details for incoming emails */}
-                    {email.type === "incoming" && (
-                      <View style={styles.emailHistoryItemDetails}>
-                        <ThemedText style={styles.emailHistoryItemDetailText}>Subject: {email.subject}</ThemedText>
-                        {email.resulting_status && (
-                          <ThemedText style={styles.emailHistoryItemDetailText}>
-                            Resulting Status: {email.resulting_status}
-                          </ThemedText>
-                        )}
-                        {email.denial_reason && (
-                          <ThemedText style={[styles.emailHistoryItemDetailText, { color: Colors[colorScheme].error }]}>
-                            Denial Reason: {email.denial_reason}
-                          </ThemedText>
-                        )}
-                        {email.processed_at && (
-                          <ThemedText style={styles.emailHistoryItemDetailText}>
-                            Processed: {format(parseISO(email.processed_at), "MMM dd, HH:mm")}
-                          </ThemedText>
-                        )}
-                        {email.content && email.content.length > 0 && (
-                          <View style={styles.emailContentPreview}>
-                            <ThemedText style={styles.emailContentLabel}>Content Preview:</ThemedText>
-                            <ThemedText style={styles.emailContentText} numberOfLines={3}>
-                              {email.content.substring(0, 200)}
-                              {email.content.length > 200 ? "..." : ""}
+                            <ThemedText
+                              style={[
+                                styles.emailStatusText,
+                                { color: getEmailStatusColor(email.display_status, email.type) },
+                              ]}
+                            >
+                              {email.display_status}
                             </ThemedText>
                           </View>
-                        )}
+                          <ThemedText style={styles.emailHistoryItemTime}>
+                            {format(parseISO(email.timestamp), "MMM dd, HH:mm")}
+                          </ThemedText>
+                        </View>
                       </View>
-                    )}
 
-                    {/* Separator line between emails (except last one) */}
-                    {index < emailHistory.length - 1 && <View style={styles.emailHistoryItemSeparator} />}
-                  </View>
-                ))}
-              </View>
+                      {/* Additional details for outgoing emails */}
+                      {email.type === "outgoing" && (
+                        <View style={styles.emailHistoryItemDetails}>
+                          <ThemedText style={styles.emailHistoryItemDetailText}>Subject: {email.subject}</ThemedText>
+                          {email.error_message && (
+                            <ThemedText
+                              style={[styles.emailHistoryItemDetailText, { color: Colors[colorScheme].error }]}
+                            >
+                              Error: {email.error_message}
+                            </ThemedText>
+                          )}
+                          {email.retry_count > 0 && (
+                            <ThemedText style={styles.emailHistoryItemDetailText}>
+                              Retries: {email.retry_count}
+                            </ThemedText>
+                          )}
+                          {email.fallback_notification_sent && (
+                            <ThemedText
+                              style={[styles.emailHistoryItemDetailText, { color: Colors[colorScheme].warning }]}
+                            >
+                              ⚠️ Fallback notification sent
+                            </ThemedText>
+                          )}
+                        </View>
+                      )}
+
+                      {/* Additional details for incoming emails */}
+                      {email.type === "incoming" && (
+                        <View style={styles.emailHistoryItemDetails}>
+                          <ThemedText style={styles.emailHistoryItemDetailText}>Subject: {email.subject}</ThemedText>
+                          {email.resulting_status && (
+                            <ThemedText style={styles.emailHistoryItemDetailText}>
+                              Resulting Status: {email.resulting_status}
+                            </ThemedText>
+                          )}
+                          {email.denial_reason && (
+                            <ThemedText
+                              style={[styles.emailHistoryItemDetailText, { color: Colors[colorScheme].error }]}
+                            >
+                              Denial Reason: {email.denial_reason}
+                            </ThemedText>
+                          )}
+                          {email.processed_at && (
+                            <ThemedText style={styles.emailHistoryItemDetailText}>
+                              Processed: {format(parseISO(email.processed_at), "MMM dd, HH:mm")}
+                            </ThemedText>
+                          )}
+                          {email.content && email.content.length > 0 && (
+                            <View style={styles.emailContentPreview}>
+                              <ThemedText style={styles.emailContentLabel}>Content Preview:</ThemedText>
+                              <ThemedText style={styles.emailContentText} numberOfLines={3}>
+                                {email.content.substring(0, 200)}
+                                {email.content.length > 200 ? "..." : ""}
+                              </ThemedText>
+                            </View>
+                          )}
+                        </View>
+                      )}
+
+                      {/* Separator line between emails (except last one) */}
+                      {index < emailHistory.length - 1 && <View style={styles.emailHistoryItemSeparator} />}
+                    </View>
+                  ))}
+                </View>
+
+                {/* Reminder Email Button */}
+                <Button
+                  onPress={handleSendReminderEmail}
+                  variant="secondary"
+                  disabled={isSendingReminder}
+                  style={styles.reminderEmailButton}
+                >
+                  {isSendingReminder ? "Sending..." : "Send Reminder Email"}
+                </Button>
+
+                {editingRequest.status === "cancellation_pending" && (
+                  <Button
+                    onPress={handleSendCancellationReminderEmail}
+                    variant="secondary"
+                    disabled={isSendingCancellationReminder}
+                    style={styles.reminderEmailButton}
+                  >
+                    {isSendingCancellationReminder ? "Sending..." : "Send Cancellation Reminder"}
+                  </Button>
+                )}
+              </>
             ) : (
               <ThemedText style={styles.noEmailHistoryText}>
                 {isLoadingEmailHistory ? "Loading email history..." : "No email history found for this request."}
@@ -3264,6 +3370,10 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       fontSize: 14,
       fontWeight: "600",
       color: Colors.dark.buttonText,
+    },
+    reminderEmailButton: {
+      marginTop: 12,
+      alignSelf: "flex-start",
     },
   });
 

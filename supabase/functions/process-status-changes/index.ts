@@ -428,82 +428,156 @@ async function sendStatusChangeEmails(
       break;
 
     case "pending": {
-      // Handle waitlist→pending transitions by sending company notification email
+      // Handle waitlist→pending transitions by sending the standard request email
       console.log(`Processing pending status change for request ${request.id}`);
 
-      const companyEmail = "sroc_cmc_vacationdesk@cn.ca";
-      const companySubject =
-        `${leaveType} Request - ${memberName} [Request ID: ${request.id}]`;
-      const companyHtml = `
+      try {
+        // 🔄 NEW: delegate email generation to the dedicated edge function
+        await supabase.functions.invoke("send-request-email", {
+          body: {
+            requestId: request.id,
+          },
+        });
+
+        console.log(
+          `send-request-email invoked successfully for request ${request.id}`,
+        );
+
+        // Exit early – send-request-email handles company notifications only.
+        return; // ⬅️ ensure no duplicate member/admin emails for pending status
+      } catch (invokeError) {
+        console.error(
+          `send-request-email invocation failed for request ${request.id}. Falling back to in-place email logic.`,
+          invokeError,
+        );
+
+        // 🌐 FALLBACK: legacy direct email to company (previous implementation)
+        const companyEmail = "sroc_cmc_vacationdesk@cn.ca";
+        const companySubject =
+          `${leaveType} Request - ${memberName} [Request ID: ${request.id}]`;
+
+        // NEW TEMPLATE ALIGNMENT – replicate send-request-email (regular request)
+        const companyHtml = `
         <!DOCTYPE html>
         <html>
-        <head><style>${baseAdminStyle}</style></head>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>${companySubject}</title>
+          <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background-color: #2c5aa0; color: white; padding: 20px; text-align: center; margin-bottom: 20px; }
+            .content { padding: 20px; border: 1px solid #ddd; }
+            .details { background-color: #f9f9f9; padding: 15px; margin: 15px 0; border-left: 4px solid #2c5aa0; }
+            .instructions { background-color: #fff3cd; padding: 15px; margin: 15px 0; border: 1px solid #ffeaa7; }
+            .footer { text-align: center; margin-top: 20px; font-size: 0.9em; color: #666; }
+          </style>
+        </head>
         <body>
-          <div class="header"><h1>WC GCA BLET PLD Request</h1></div>
-          <div class="content">
-            <h2>Time Off Request for Review</h2>
-            <p>A time off request requires company review and approval.</p>
-            <div class="details">
-              <p><strong>Employee:</strong> ${memberName}</p>
-              <p><strong>Date:</strong> ${formattedDate}</p>
-              <p><strong>Type:</strong> ${leaveType}</p>
-              <p><strong>Request ID:</strong> ${request.id}</p>
-              <p><strong>Status:</strong> Pending Company Review</p>
-            </div>
-            <p>Please review and process this request through your standard procedures.</p>
+          <div class="header">
+            <h1>WC GCA BLET PLD Request</h1>
           </div>
+
+          <div class="content">
+            <h2>New ${leaveType} Request</h2>
+
+            <div class="details">
+              <p><strong>Employee Name:</strong> ${memberName}</p>
+              <p><strong>Date Requested:</strong> ${formattedDate}</p>
+              <p><strong>Leave Type:</strong> ${leaveType}</p>
+              <p><strong>Request ID:</strong> ${request.id}</p>
+            </div>
+
+            <div class="instructions">
+              <h3>Response Instructions</h3>
+              <p>To process this request, please reply to this email with one of the following:</p>
+              <ul>
+                <li><strong>To APPROVE:</strong> Reply with "approved" or "done"</li>
+                <li><strong>To DENY:</strong> Reply with "denied - [reason]"</li>
+              </ul>
+              <p><strong>Common denial reasons:</strong></p>
+              <ul>
+                <li>"denied - out of ${leaveType} days"</li>
+                <li>"denied - allotment is full"</li>
+                <li>"denied - other - [specific reason]"</li>
+              </ul>
+            </div>
+          </div>
+
           <div class="footer">
-            <p>WC GCA BLET PLD Application</p>
+            <p>This is an automated message from the WC GCA BLET PLD Application.</p>
+            <p>Request ID: ${request.id}</p>
           </div>
         </body>
         </html>`;
 
-      const companyText =
-        `Time off request for company review:\n\nEmployee: ${memberName}\nDate: ${formattedDate}\nType: ${leaveType}\nRequest ID: ${request.id}\nStatus: Pending Company Review\n\nPlease review and process this request through your standard procedures.`;
+        const companyText = `
+WC GCA BLET PLD Request
 
-      try {
-        console.log(
-          `Sending company notification email to: ${companyEmail} for request ${request.id}`,
-        );
+Employee Name: ${memberName}
+Date Requested: ${formattedDate}
+Leave Type: ${leaveType}
+Request ID: ${request.id}
 
-        const companyResult = await sendEmailViaDirect(
-          mailgunSendingKey,
-          mailgunDomain,
-          {
-            from: "WC GCA BLET PLD App <requests@pldapp.bletcnwcgca.org>",
-            to: companyEmail,
-            subject: companySubject,
-            html: companyHtml,
-            text: companyText,
-          },
-        );
+RESPONSE INSTRUCTIONS:
+To process this request, please reply to this email with one of the following:
+- To APPROVE: Reply with "approved" or "done"
+- To DENY: Reply with "denied - [reason]"
 
-        // Record tracking for company email
-        await supabase
-          .from("email_tracking")
-          .insert({
-            request_id: request.id,
-            email_type: "request",
-            recipient: companyEmail,
-            subject: companySubject,
-            message_id: companyResult.id,
-            status: "sent",
-            retry_count: 0,
-            created_at: new Date().toISOString(),
-            last_updated_at: new Date().toISOString(),
-          });
+Common denial reasons:
+- "denied - out of ${leaveType} days"
+- "denied - allotment is full"
+- "denied - other - [specific reason]"
 
-        console.log(
-          `Company notification email sent successfully for request ${request.id}`,
-        );
-        return; // Exit early for pending status - don't send member notifications
-      } catch (companyEmailError) {
-        console.error(
-          `Error sending company notification email for request ${request.id}:`,
-          companyEmailError,
-        );
-        // For pending status, we only send company emails, not member notifications
-        // Return here even if company email fails to avoid sending member emails
+This is an automated message from the WC GCA BLET PLD Application.
+Request ID: ${request.id}
+        `;
+
+        // END TEMPLATE ALIGNMENT
+
+        try {
+          console.log(
+            `Fallback: sending company notification email to: ${companyEmail} for request ${request.id}`,
+          );
+
+          const companyResult = await sendEmailViaDirect(
+            mailgunSendingKey,
+            mailgunDomain,
+            {
+              from: "WC GCA BLET PLD App <requests@pldapp.bletcnwcgca.org>",
+              to: companyEmail,
+              subject: companySubject,
+              html: companyHtml,
+              text: companyText,
+            },
+          );
+
+          // Record tracking for company email
+          await supabase
+            .from("email_tracking")
+            .insert({
+              request_id: request.id,
+              email_type: "request",
+              recipient: companyEmail,
+              subject: companySubject,
+              message_id: companyResult.id,
+              status: "sent",
+              retry_count: 0,
+              created_at: new Date().toISOString(),
+              last_updated_at: new Date().toISOString(),
+            });
+
+          console.log(
+            `Company notification email sent successfully for request ${request.id}`,
+          );
+        } catch (companyEmailError) {
+          console.error(
+            `Error sending fallback company email for request ${request.id}:`,
+            companyEmailError,
+          );
+        }
+
+        // After fallback attempt (successful or not) return to avoid member/admin emails.
         return;
       }
     }
