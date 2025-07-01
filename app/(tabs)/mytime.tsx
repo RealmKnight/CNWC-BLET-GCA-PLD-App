@@ -515,51 +515,68 @@ export default function MyTimeScreen() {
 
   // PHASE 4.2: Effect to fetch year-specific stats when selected year changes
   useEffect(() => {
+    let isMounted = true;
+
     // If current year is selected, use the data from useMyTime hook
     if (selectedYear === currentDisplayYear) {
-      setYearSpecificStats(null); // Clear year-specific stats to use current data
-      setYearSpecificError(null);
+      if (isMounted) {
+        setYearSpecificStats(null); // Clear year-specific stats to use current data
+        setYearSpecificError(null);
+      }
       return;
     }
 
     // For non-current years, fetch year-specific data
     const fetchYearSpecificData = async () => {
       if (!member?.id) {
-        setYearSpecificError("Member information not available");
+        if (isMounted) {
+          setYearSpecificError("Member information not available");
+        }
         return;
       }
 
-      setIsLoadingYearStats(true);
-      setYearSpecificError(null);
+      if (isMounted) {
+        setIsLoadingYearStats(true);
+        setYearSpecificError(null);
+      }
 
       try {
         // Check cache first
         const cachedStats = getTimeStatsForYear(selectedYear);
-        if (cachedStats) {
+        if (cachedStats && isMounted) {
           console.log(`[MyTimeScreen] Using cached stats for year ${selectedYear}:`, cachedStats);
           setYearSpecificStats(cachedStats);
-        } else {
+        } else if (isMounted) {
           // Fetch year-specific stats
           console.log(`[MyTimeScreen] Fetching year-specific stats for ${selectedYear}`);
           const yearStats = await fetchTimeStatsForYear(member.id, selectedYear);
-          if (yearStats) {
+          if (yearStats && isMounted) {
             setYearSpecificStats(yearStats);
             console.log(`[MyTimeScreen] Fetched year ${selectedYear} stats:`, yearStats);
-          } else {
+          } else if (isMounted) {
             setYearSpecificError(`Unable to load data for year ${selectedYear}`);
           }
         }
       } catch (error) {
         console.error(`[MyTimeScreen] Error fetching year ${selectedYear} stats:`, error);
-        setYearSpecificError(
-          `Error loading data for year ${selectedYear}: ${error instanceof Error ? error.message : "Unknown error"}`
-        );
+        if (isMounted) {
+          setYearSpecificError(
+            `Error loading data for year ${selectedYear}: ${error instanceof Error ? error.message : "Unknown error"}`
+          );
+        }
       } finally {
-        setIsLoadingYearStats(false);
+        if (isMounted) {
+          setIsLoadingYearStats(false);
+        }
       }
     };
 
     fetchYearSpecificData();
+
+    // Cleanup function
+    return () => {
+      isMounted = false;
+    };
   }, [selectedYear, currentDisplayYear, member?.id, fetchTimeStatsForYear, getTimeStatsForYear]);
 
   const cardWidth = useMemo(() => {
@@ -606,6 +623,119 @@ export default function MyTimeScreen() {
 
     return { pendingAndApproved, waitlisted, sortedVacationRequests };
   }, [timeOffRequests, vacationRequests, selectedYear]);
+
+  // PHASE 4.2: Determine which stats to display based on selected year - MOVED BEFORE EARLY RETURNS
+  const displayStats = useMemo(() => {
+    const sourceStats = selectedYear === currentDisplayYear ? timeStats : yearSpecificStats;
+
+    if (!sourceStats) {
+      return null;
+    }
+
+    try {
+      return {
+        total: {
+          pld: sourceStats.total?.pld ?? 0,
+          sdv: sourceStats.total?.sdv ?? 0,
+        },
+        rolledOver: {
+          pld: sourceStats.rolledOver?.pld ?? 0,
+          unusedPlds: sourceStats.rolledOver?.unusedPlds ?? 0,
+        },
+        available: {
+          pld: sourceStats.available?.pld ?? 0,
+          sdv: sourceStats.available?.sdv ?? 0,
+        },
+        requested: {
+          pld: sourceStats.requested?.pld ?? 0,
+          sdv: sourceStats.requested?.sdv ?? 0,
+        },
+        waitlisted: {
+          pld: sourceStats.waitlisted?.pld ?? 0,
+          sdv: sourceStats.waitlisted?.sdv ?? 0,
+        },
+        approved: {
+          pld: sourceStats.approved?.pld ?? 0,
+          sdv: sourceStats.approved?.sdv ?? 0,
+        },
+        paidInLieu: {
+          pld: sourceStats.paidInLieu?.pld ?? 0,
+          sdv: sourceStats.paidInLieu?.sdv ?? 0,
+        },
+      };
+    } catch (error) {
+      console.error("[MyTimeScreen] Error creating displayStats:", error);
+      return null;
+    }
+  }, [selectedYear, currentDisplayYear, timeStats, yearSpecificStats]);
+
+  // Create a safe stats object with guaranteed default values - MOVED BEFORE EARLY RETURNS
+  const safeStats = useMemo(() => {
+    if (!displayStats) {
+      return {
+        total: { pld: 0, sdv: 0 },
+        rolledOver: { pld: 0, unusedPlds: 0 },
+        available: { pld: 0, sdv: 0 },
+        requested: { pld: 0, sdv: 0 },
+        waitlisted: { pld: 0, sdv: 0 },
+        approved: { pld: 0, sdv: 0 },
+        paidInLieu: { pld: 0, sdv: 0 },
+      };
+    }
+    return displayStats;
+  }, [displayStats]);
+
+  // Added for SDV election - MOVED BEFORE EARLY RETURNS
+  const [isSavingSplitWeeks, setIsSavingSplitWeeks] = useState(false);
+  const [nextYearSplitWeeks, setNextYearSplitWeeks] = useState<number>(0);
+  const now = new Date();
+  const currentYear = now.getFullYear();
+
+  // Only show section from Jan 1 to June 30 - MOVED BEFORE EARLY RETURNS
+  const isElectionPeriod = useMemo(() => {
+    const startDate = new Date(currentYear, 0, 1); // Jan 1
+    const endDate = new Date(currentYear, 5, 30); // June 30
+    return now >= startDate && now <= endDate;
+  }, [currentYear]);
+
+  // Fetch next_vacation_split when component loads - MOVED BEFORE EARLY RETURNS
+  useEffect(() => {
+    const fetchNextVacationSplit = async () => {
+      if (!member) return;
+
+      try {
+        const { data, error } = await supabase
+          .from("members")
+          .select("next_vacation_split")
+          .eq("id", member.id)
+          .single();
+
+        if (error) throw error;
+
+        if (data) {
+          setNextYearSplitWeeks(data.next_vacation_split ?? 0);
+        }
+      } catch (error) {
+        console.error("[MyTimeScreen] Error fetching next_vacation_split:", error);
+      }
+    };
+
+    fetchNextVacationSplit();
+  }, [member]);
+
+  // PHASE 4.2: Updated loading state - MOVED BEFORE EARLY RETURNS
+  const isInitialLoading = useMemo(() => {
+    if (selectedYear === currentDisplayYear) {
+      return isLoading && !timeStats;
+    } else {
+      return isLoadingYearStats && !yearSpecificStats;
+    }
+  }, [selectedYear, currentDisplayYear, isLoading, timeStats, isLoadingYearStats, yearSpecificStats]);
+
+  // PHASE 4.2: Updated error state - MOVED BEFORE EARLY RETURNS
+  const displayError = useMemo(() => {
+    return selectedYear === currentDisplayYear ? error : yearSpecificError;
+  }, [selectedYear, currentDisplayYear, error, yearSpecificError]);
 
   // Handle paid in lieu modal - logic remains the same
   const handlePaidInLieuPress = () => {
@@ -734,44 +864,6 @@ export default function MyTimeScreen() {
     refreshData(member?.id || "");
   };
 
-  // Added for SDV election
-  const [isSavingSplitWeeks, setIsSavingSplitWeeks] = useState(false);
-  const [nextYearSplitWeeks, setNextYearSplitWeeks] = useState<number>(0);
-  const now = new Date();
-  const currentYear = now.getFullYear();
-
-  // Only show section from Jan 1 to June 30
-  const isElectionPeriod = useMemo(() => {
-    const startDate = new Date(currentYear, 0, 1); // Jan 1
-    const endDate = new Date(currentYear, 5, 30); // June 30
-    return now >= startDate && now <= endDate;
-  }, [currentYear]);
-
-  // Fetch next_vacation_split when component loads
-  useEffect(() => {
-    const fetchNextVacationSplit = async () => {
-      if (!member) return;
-
-      try {
-        const { data, error } = await supabase
-          .from("members")
-          .select("next_vacation_split")
-          .eq("id", member.id)
-          .single();
-
-        if (error) throw error;
-
-        if (data) {
-          setNextYearSplitWeeks(data.next_vacation_split ?? 0);
-        }
-      } catch (error) {
-        console.error("[MyTimeScreen] Error fetching next_vacation_split:", error);
-      }
-    };
-
-    fetchNextVacationSplit();
-  }, [member]);
-
   // Update next_vacation_split and sdv_election in database
   const handleSplitWeeksChange = async (value: string | number | null) => {
     if (!member) return;
@@ -823,33 +915,46 @@ export default function MyTimeScreen() {
 
   // PHASE 4.2: Year Selector Component
   const renderYearSelector = () => {
-    const availableYears = [currentDisplayYear, currentDisplayYear + 1];
+    try {
+      const availableYears = [currentDisplayYear, currentDisplayYear + 1];
 
-    return (
-      <ThemedView style={styles.yearSelectorContainer}>
-        <ThemedText style={styles.yearSelectorLabel}>Viewing Year:</ThemedText>
-        <ThemedView style={styles.yearPickerContainer}>
-          <Picker
-            selectedValue={selectedYear}
-            onValueChange={(value) => setSelectedYear(Number(value))}
-            style={styles.yearPicker}
-            dropdownIconColor={Colors[colorScheme ?? "light"].text}
-          >
-            {availableYears.map((year) => (
-              <Picker.Item
-                key={year}
-                label={year === currentDisplayYear ? `${year} (Current)` : `${year}`}
-                value={year}
-              />
-            ))}
-          </Picker>
+      return (
+        <ThemedView style={styles.yearSelectorContainer}>
+          <ThemedText style={styles.yearSelectorLabel}>Viewing Year:</ThemedText>
+          <ThemedView style={styles.yearPickerContainer}>
+            <Picker
+              selectedValue={selectedYear}
+              onValueChange={(value) => {
+                const newYear = Number(value);
+                if (newYear && !isNaN(newYear)) {
+                  setSelectedYear(newYear);
+                }
+              }}
+              style={styles.yearPicker}
+              dropdownIconColor={Colors[colorScheme ?? "light"].text}
+            >
+              {availableYears.map((year) => (
+                <Picker.Item
+                  key={year}
+                  label={year === currentDisplayYear ? `${year} (Current)` : `${year}`}
+                  value={year}
+                />
+              ))}
+            </Picker>
+          </ThemedView>
         </ThemedView>
-      </ThemedView>
-    );
+      );
+    } catch (error) {
+      console.error("[MyTimeScreen] Error rendering year selector:", error);
+      return (
+        <ThemedView style={styles.yearSelectorContainer}>
+          <ThemedText style={styles.yearSelectorLabel}>Viewing Year: {selectedYear}</ThemedText>
+        </ThemedView>
+      );
+    }
   };
 
-  // PHASE 4.2: Updated loading state - consider both general loading and year-specific loading
-  if ((isLoading && !timeStats) || (selectedYear !== currentDisplayYear && isLoadingYearStats && !yearSpecificStats)) {
+  if (isInitialLoading) {
     return (
       <ThemedView style={[styles.loadingContainer, { paddingTop: insets.top }]}>
         <ActivityIndicator size="large" color={Colors[colorScheme ?? "light"].primary} />
@@ -862,8 +967,6 @@ export default function MyTimeScreen() {
     );
   }
 
-  // PHASE 4.2: Updated error state - handle both general error and year-specific error
-  const displayError = selectedYear === currentDisplayYear ? error : yearSpecificError;
   if (displayError) {
     return (
       <ThemedView style={[styles.errorContainer, { paddingTop: insets.top }]}>
@@ -889,44 +992,6 @@ export default function MyTimeScreen() {
       </ThemedView>
     );
   }
-
-  // PHASE 4.2: Determine which stats to display based on selected year
-  const displayStats = useMemo(() => {
-    // For current year, use timeStats from useMyTime hook
-    if (selectedYear === currentDisplayYear) {
-      return timeStats
-        ? {
-            total: { pld: timeStats.total?.pld ?? 0, sdv: timeStats.total?.sdv ?? 0 },
-            rolledOver: { pld: timeStats.rolledOver?.pld ?? 0, unusedPlds: timeStats.rolledOver?.unusedPlds ?? 0 },
-            available: { pld: timeStats.available?.pld ?? 0, sdv: timeStats.available?.sdv ?? 0 },
-            requested: { pld: timeStats.requested?.pld ?? 0, sdv: timeStats.requested?.sdv ?? 0 },
-            waitlisted: { pld: timeStats.waitlisted?.pld ?? 0, sdv: timeStats.waitlisted?.sdv ?? 0 },
-            approved: { pld: timeStats.approved?.pld ?? 0, sdv: timeStats.approved?.sdv ?? 0 },
-            paidInLieu: { pld: timeStats.paidInLieu?.pld ?? 0, sdv: timeStats.paidInLieu?.sdv ?? 0 },
-          }
-        : null;
-    }
-
-    // For other years, use yearSpecificStats
-    return yearSpecificStats
-      ? {
-          total: { pld: yearSpecificStats.total?.pld ?? 0, sdv: yearSpecificStats.total?.sdv ?? 0 },
-          rolledOver: {
-            pld: yearSpecificStats.rolledOver?.pld ?? 0,
-            unusedPlds: yearSpecificStats.rolledOver?.unusedPlds ?? 0,
-          },
-          available: { pld: yearSpecificStats.available?.pld ?? 0, sdv: yearSpecificStats.available?.sdv ?? 0 },
-          requested: { pld: yearSpecificStats.requested?.pld ?? 0, sdv: yearSpecificStats.requested?.sdv ?? 0 },
-          waitlisted: { pld: yearSpecificStats.waitlisted?.pld ?? 0, sdv: yearSpecificStats.waitlisted?.sdv ?? 0 },
-          approved: { pld: yearSpecificStats.approved?.pld ?? 0, sdv: yearSpecificStats.approved?.sdv ?? 0 },
-          paidInLieu: { pld: yearSpecificStats.paidInLieu?.pld ?? 0, sdv: yearSpecificStats.paidInLieu?.sdv ?? 0 },
-        }
-      : null;
-  }, [selectedYear, currentDisplayYear, timeStats, yearSpecificStats]);
-
-  // Create a safe stats object that won't crash if displayStats is incomplete or null
-  // Ensure all nested properties are accessed safely with default values.
-  const safeStats = displayStats;
 
   // Replace the renderSplitWeeksSection function to include a message when outside election period
   const renderSplitWeeksSection = () => {
@@ -1019,43 +1084,56 @@ export default function MyTimeScreen() {
         )}
 
         {/* Single Day Allocations Card */}
-        {safeStats ? (
-          <ThemedView style={[styles.card, { width: cardWidth }]}>
-            <ThemedView style={styles.sectionHeader}>
-              <ThemedText style={styles.sectionTitle}>
-                {selectedYear !== currentDisplayYear
-                  ? `${selectedYear} Single Day Allocations`
-                  : "Single Day Allocations"}
-              </ThemedText>
-            </ThemedView>
-            {/* PHASE 4.2: Year Selector - moved to Single Day Allocations section */}
-            {renderYearSelector()}
-            <ThemedView style={styles.tableHeader}>
-              <ThemedText style={styles.headerLabel}></ThemedText>
-              <ThemedText style={styles.headerValue}>PLD</ThemedText>
-              <ThemedText style={styles.headerValue}>SDV</ThemedText>
-              <ThemedView style={styles.iconContainer} />
-            </ThemedView>
-            <LeaveRow label="Total" pldValue={safeStats.total.pld} sdvValue={safeStats.total.sdv} />
-            <LeaveRow label="Rolled Over" pldValue={safeStats.rolledOver.pld} />
-            <LeaveRow label="Available" pldValue={safeStats.available.pld} sdvValue={safeStats.available.sdv} />
-            <LeaveRow label="Requested" pldValue={safeStats.requested.pld} sdvValue={safeStats.requested.sdv} />
-            <LeaveRow label="Waitlisted" pldValue={safeStats.waitlisted.pld} sdvValue={safeStats.waitlisted.sdv} />
-            <LeaveRow label="Approved" pldValue={safeStats.approved.pld} sdvValue={safeStats.approved.sdv} />
-            <LeaveRow
-              label="Paid in Lieu"
-              pldValue={safeStats.paidInLieu.pld}
-              sdvValue={safeStats.paidInLieu.sdv}
-              showIcon={true}
-              onIconPress={handlePaidInLieuPress}
-            />
-          </ThemedView>
-        ) : (
-          <ThemedView style={[styles.card, { width: cardWidth, padding: 20, alignItems: "center" }]}>
-            <ActivityIndicator size="small" color={Colors[colorScheme ?? "light"].primary} />
-            <ThemedText style={{ marginTop: 12 }}>Loading time off data...</ThemedText>
-          </ThemedView>
-        )}
+        {(() => {
+          try {
+            return safeStats ? (
+              <ThemedView style={[styles.card, { width: cardWidth }]}>
+                <ThemedView style={styles.sectionHeader}>
+                  <ThemedText style={styles.sectionTitle}>
+                    {selectedYear !== currentDisplayYear
+                      ? `${selectedYear} Single Day Allocations`
+                      : "Single Day Allocations"}
+                  </ThemedText>
+                </ThemedView>
+                {/* PHASE 4.2: Year Selector - moved to Single Day Allocations section */}
+                {renderYearSelector()}
+                <ThemedView style={styles.tableHeader}>
+                  <ThemedText style={styles.headerLabel}></ThemedText>
+                  <ThemedText style={styles.headerValue}>PLD</ThemedText>
+                  <ThemedText style={styles.headerValue}>SDV</ThemedText>
+                  <ThemedView style={styles.iconContainer} />
+                </ThemedView>
+                <LeaveRow label="Total" pldValue={safeStats.total.pld} sdvValue={safeStats.total.sdv} />
+                <LeaveRow label="Rolled Over" pldValue={safeStats.rolledOver.pld} />
+                <LeaveRow label="Available" pldValue={safeStats.available.pld} sdvValue={safeStats.available.sdv} />
+                <LeaveRow label="Requested" pldValue={safeStats.requested.pld} sdvValue={safeStats.requested.sdv} />
+                <LeaveRow label="Waitlisted" pldValue={safeStats.waitlisted.pld} sdvValue={safeStats.waitlisted.sdv} />
+                <LeaveRow label="Approved" pldValue={safeStats.approved.pld} sdvValue={safeStats.approved.sdv} />
+                <LeaveRow
+                  label="Paid in Lieu"
+                  pldValue={safeStats.paidInLieu.pld}
+                  sdvValue={safeStats.paidInLieu.sdv}
+                  showIcon={true}
+                  onIconPress={handlePaidInLieuPress}
+                />
+              </ThemedView>
+            ) : (
+              <ThemedView style={[styles.card, { width: cardWidth, padding: 20, alignItems: "center" }]}>
+                <ActivityIndicator size="small" color={Colors[colorScheme ?? "light"].primary} />
+                <ThemedText style={{ marginTop: 12 }}>Loading time off data...</ThemedText>
+              </ThemedView>
+            );
+          } catch (error) {
+            console.error("[MyTimeScreen] Error rendering Single Day Allocations:", error);
+            return (
+              <ThemedView style={[styles.card, { width: cardWidth, padding: 20, alignItems: "center" }]}>
+                <ThemedText style={{ color: Colors[colorScheme ?? "light"].error }}>
+                  Error loading time off data. Please try refreshing.
+                </ThemedText>
+              </ThemedView>
+            );
+          }
+        })()}
 
         {/* Time Off Requests (Pending/Approved) */}
         <ThemedView style={styles.sectionHeader}>
