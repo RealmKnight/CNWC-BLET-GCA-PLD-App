@@ -728,9 +728,34 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       // Log admin user for debugging RLS issues
       console.log("Admin user submitting request:", adminUser?.id);
 
+      // --------------------------------------------------------------------
+      // Some member summaries (for users that have never logged-in) come back
+      // with an empty string for `id`.  Passing "" to the DB trigger causes
+      // the "Member not found: <NULL>" error.  Resolve a real member_id, or
+      // omit the field so the insert relies solely on pin_number.
+      // --------------------------------------------------------------------
+      let resolvedMemberId: string | null =
+        selectedMember.id && selectedMember.id.trim() !== "" ? selectedMember.id : null;
+
+      if (!resolvedMemberId) {
+        try {
+          const { data: memberRow, error: fetchErr } = await supabase
+            .from("members")
+            .select("id")
+            .eq("pin_number", selectedMember.pin_number)
+            .single();
+
+          if (!fetchErr && memberRow?.id) {
+            resolvedMemberId = memberRow.id;
+          }
+        } catch (resolveErr) {
+          console.warn("[ManualPldSdvRequestEntry] Unable to resolve member_id via pin_number", resolveErr);
+        }
+      }
+
       // Create request object for the database - NOTE: status will be overridden by DB trigger
       const requestData = {
-        member_id: selectedMember.id,
+        ...(resolvedMemberId ? { member_id: resolvedMemberId } : {}),
         pin_number: selectedMember.pin_number,
         calendar_id: memberCalendarId,
         request_date: requestDate,
