@@ -254,23 +254,23 @@ This document outlines the comprehensive plan to implement year-aware time-off c
 - [ ] Review six-month request logic for year transition scenarios
 - [ ] Ensure six-month requests in January use correct year's allocation
 - [ ] Update six-month validation to check appropriate year's available days
-- [ ] Test six-month requests requested in July for January dates
+- [x] Test six-month requests requested in July for January dates
 - [ ] Document any special handling needed for six-month cross-year scenarios
 
 ### 5.2 PLD Rollover Logic ✅ **CLARIFIED - CONSERVATIVE APPROACH ADOPTED**
 
-- [ ] **OFFICIAL DECISION**: Conservative approach - rollover PLDs NOT included in next year request calculations
-- [ ] **DEFINED**: PLD rollover occurs Dec 31 at 23:59, SDVs submitted for pay-in-lieu
-- [ ] **DEFINED**: Rolled-over PLDs must be used within first quarter of next year, otherwise paid out
-- [ ] **CORRECTED**: Rollover PLDs are ADDED to max PLDs for total available (e.g., 13 max + 4 rollover = 17 available)
-- [ ] **CORRECTED**: Rollover PLDs do NOT affect the max_plds field itself - they are over and above max PLDs
-- [ ] **CONSERVATIVE RULE**: Next year request availability shows ONLY next year's fresh allocation (max PLDs + SDV)
-- [ ] **RATIONALE**: Prevents over-booking scenarios where users schedule more than guaranteed allocation
-- [ ] **CLARIFICATION**: 4 rollover PLDs with 13 max = 17 total available, but requests show only 13 PLD days
-- [ ] Verify next year calculations start fresh (no rollover from future years)
-- [ ] Test rollover logic during year transitions
-- [ ] Document rollover interaction with year-aware calculations (separated from request availability)
-- [ ] Test edge case: member anniversary between July 1 and Dec 31 (affects pre-calculated next year data)
+- [x] **OFFICIAL DECISION**: Conservative approach - rollover PLDs NOT included in next year request calculations
+- [x] **DEFINED**: PLD rollover occurs Dec 31 at 23:59, SDVs submitted for pay-in-lieu
+- [x] **DEFINED**: Rolled-over PLDs must be used within first quarter of next year, otherwise paid out
+- [x] **CORRECTED**: Rollover PLDs are ADDED to max PLDs for total available (e.g., 13 max + 4 rollover = 17 available)
+- [x] **CORRECTED**: Rollover PLDs do NOT affect the max_plds field itself - they are over and above max PLDs
+- [x] **CONSERVATIVE RULE**: Next year request availability shows ONLY next year's fresh allocation (max PLDs + SDV)
+- [x] **RATIONALE**: Prevents over-booking scenarios where users schedule more than guaranteed allocation
+- [x] **CLARIFICATION**: 4 rollover PLDs with 13 max = 17 total available, but requests show only 13 PLD days
+- [x] Verify next year calculations start fresh (no rollover from future years)
+- [x] Test rollover logic during year transitions
+- [x] Document rollover interaction with year-aware calculations (separated from request availability)
+- [x] Test edge case: member anniversary between July 1 and Dec 31 (affects pre-calculated next year data)
 
 ### 5.3 Year Transition Edge Cases
 
