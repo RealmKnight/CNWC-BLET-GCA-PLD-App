@@ -375,6 +375,7 @@ interface DivisionMeetingState {
         id: string,
         pattern: Partial<DivisionMeeting>,
     ) => Promise<void>;
+    deleteMeetingPattern: (id: string) => Promise<void>;
     overrideMeetingOccurrence: (
         id: string,
         occurrenceDetails: Partial<MeetingOccurrence>,
@@ -1339,6 +1340,89 @@ export const useDivisionMeetingStore = create<DivisionMeetingState>((
             await get().fetchMeetingOccurrences(id);
         } catch (error) {
             console.error("Error updating meeting pattern:", error);
+            set({
+                error: error instanceof Error ? error.message : String(error),
+                isLoading: false,
+            });
+        }
+    },
+
+    deleteMeetingPattern: async (id: string) => {
+        set({ isLoading: true, error: null });
+        try {
+            console.log(`Deleting meeting pattern ${id}`);
+
+            // Validate division context before deleting
+            const { currentDivisionContext } = get();
+            if (currentDivisionContext) {
+                const isValidContext = await validateDivisionContext(
+                    id,
+                    currentDivisionContext,
+                );
+
+                if (!isValidContext) {
+                    throw new Error(
+                        `Cannot delete meeting pattern: pattern does not belong to division ${currentDivisionContext}`,
+                    );
+                }
+            }
+
+            // First delete related occurrences and minutes (best-effort)
+            const { error: occErr } = await supabase
+                .from("meeting_occurrences")
+                .delete()
+                .eq("meeting_pattern_id", id);
+
+            if (occErr) {
+                console.error("Error deleting related occurrences", occErr);
+            }
+
+            const { error: minErr } = await supabase
+                .from("meeting_minutes")
+                .delete()
+                .eq("meeting_id", id);
+
+            if (minErr) {
+                console.error("Error deleting related minutes", minErr);
+            }
+
+            // Now delete the pattern itself
+            const { error: patternErr } = await supabase
+                .from("division_meetings")
+                .delete()
+                .eq("id", id);
+
+            if (patternErr) throw patternErr;
+
+            // Update the local state
+            set((state) => {
+                const updatedMeetings: Record<string, DivisionMeeting[]> = {};
+                let divisionToUpdate: string | null = null;
+
+                for (
+                    const [division, meetings] of Object.entries(
+                        state.meetings,
+                    )
+                ) {
+                    const filtered = meetings.filter((m) => m.id !== id);
+                    updatedMeetings[division] = filtered;
+                    if (filtered.length !== meetings.length) {
+                        divisionToUpdate = division;
+                    }
+                }
+
+                return {
+                    meetings: updatedMeetings,
+                    // Reset selected pattern if it was deleted
+                    selectedMeetingPatternId:
+                        state.selectedMeetingPatternId === id
+                            ? null
+                            : state.selectedMeetingPatternId,
+                    isLoading: false,
+                };
+            });
+        } catch (error) {
+            console.error("Error deleting meeting pattern:", error);
             set({
                 error: error instanceof Error ? error.message : String(error),
                 isLoading: false,

@@ -15,7 +15,7 @@ import {
   triggerStageReAnalysis,
   executeQueuedDbChanges,
 } from "@/utils/importPreviewService";
-import { insertBatchPldSdvRequests } from "@/utils/databaseApiLayer";
+import { insertBatchPldSdvRequests, BatchImportResult } from "@/utils/databaseApiLayer";
 import { useUserStore } from "@/store/userStore";
 
 interface DuplicateAndFinalReviewProps {
@@ -35,6 +35,7 @@ export function DuplicateAndFinalReview({
   const { member: adminUser } = useUserStore();
   const [isImporting, setIsImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+  const [importFailures, setImportFailures] = useState<Array<{ index: number; error: string }>>([]);
 
   const { currentStage } = stagedPreview.progressState;
   const { duplicates, final_review } = stagedPreview.progressState.stageData;
@@ -211,7 +212,7 @@ export function DuplicateAndFinalReview({
       }
 
       // STEP 2: Execute new imports (if any)
-      let importResult = null;
+      let importResult: BatchImportResult | null = null;
       if (allItemsToImport.length > 0) {
         console.log(`[FinalReview] Importing ${allItemsToImport.length} new requests...`);
 
@@ -238,13 +239,23 @@ export function DuplicateAndFinalReview({
         // Execute the batch import
         importResult = await insertBatchPldSdvRequests(importPreviewItems, selectedIndices);
 
-        if (!importResult.success) {
+        if (!importResult.success && importResult.insertedCount === 0) {
+          // Whole batch failed
           setImportError(`Import failed: ${importResult.errorMessages.join(", ")}`);
           return;
         }
 
+        // Partial success – capture failures so we can show them to the admin
+        if (importResult.failedCount && importResult.failedCount > 0) {
+          setImportFailures(importResult.failedItems || []);
+        }
+
         totalProcessed += importResult.insertedCount;
-        console.log(`[FinalReview] Successfully imported ${importResult.insertedCount} new requests`);
+        console.log(
+          `[FinalReview] Successfully imported ${importResult.insertedCount} new requests; ${
+            importResult.failedCount || 0
+          } failed.`
+        );
       }
 
       // STEP 3: Report overall success
@@ -388,6 +399,27 @@ export function DuplicateAndFinalReview({
               <ThemedText style={styles.moreItems}>
                 ... and {db_reconciliation.queuedChanges.length - 5} more
               </ThemedText>
+            )}
+          </View>
+        )}
+
+        {/* Failed items display */}
+        {importFailures.length > 0 && (
+          <View style={styles.allotmentChangesSection}>
+            <ThemedText style={[styles.sectionTitle, styles.errorText]}>
+              Failed Requests ({importFailures.length})
+            </ThemedText>
+            {importFailures.slice(0, 5).map((fail, idx) => {
+              const failedItem = stagedPreview.originalItems[fail.index];
+              return (
+                <ThemedText key={idx} style={styles.dbChangeText}>
+                  • {failedItem.firstName} {failedItem.lastName} - {failedItem.leaveType} on{" "}
+                  {format(failedItem.requestDate, "MMM d")} (Reason: {fail.error})
+                </ThemedText>
+              );
+            })}
+            {importFailures.length > 5 && (
+              <ThemedText style={styles.moreItems}>... and {importFailures.length - 5} more</ThemedText>
             )}
           </View>
         )}

@@ -20,6 +20,7 @@ import {
 } from "@/store/divisionMeetingStore";
 import { timeZones } from "@/utils/timeZones";
 import { MeetingPatternChangePreview } from "@/components/admin/MeetingPatternChangePreview";
+import Toast from "react-native-toast-message";
 
 interface MeetingPatternEditorProps {
   divisionName: string;
@@ -292,6 +293,7 @@ export function MeetingPatternEditor({ divisionName, initialPattern, onSave, onC
 
   // Get store functions for validation
   const validatePatternUpdate = useDivisionMeetingStore((state) => state.validatePatternUpdate);
+  const deleteMeetingPattern = useDivisionMeetingStore((state) => state.deleteMeetingPattern);
 
   // Check for upcoming DST transitions (placeholder for actual implementation)
   useEffect(() => {
@@ -597,6 +599,34 @@ export function MeetingPatternEditor({ divisionName, initialPattern, onSave, onC
     setShowPreview(false);
     setPreviewData(null);
     setPendingPattern(null);
+  };
+
+  // Handle deleting an existing pattern
+  const handleDeletePattern = () => {
+    if (!initialPattern?.id) return;
+
+    Toast.show({
+      type: "info",
+      text1: "Delete Meeting Pattern",
+      text2: "Are you sure you want to permanently delete this meeting pattern?",
+      props: {
+        actionType: "delete",
+        onAction: async (action: string) => {
+          if (action === "delete") {
+            try {
+              await deleteMeetingPattern(initialPattern.id as string);
+              Toast.show({ type: "success", text1: "Pattern deleted" });
+              if (onCancel) {
+                onCancel();
+              }
+            } catch (error) {
+              console.error("Error deleting meeting pattern", error);
+              Toast.show({ type: "error", text1: "Failed to delete meeting pattern" });
+            }
+          }
+        },
+      },
+    });
   };
 
   // Render day of month form
@@ -1031,6 +1061,15 @@ export function MeetingPatternEditor({ divisionName, initialPattern, onSave, onC
         <Button variant="secondary" onPress={onCancel} style={{ flex: 1 }}>
           Cancel
         </Button>
+        {initialPattern?.id && (
+          <Button
+            variant="secondary"
+            onPress={handleDeletePattern}
+            style={{ minWidth: 120, backgroundColor: "#f44336" }}
+          >
+            Delete
+          </Button>
+        )}
         <Button onPress={handleSave} style={{ minWidth: 120 }} disabled={isValidating}>
           {isValidating ? "Validating..." : initialPattern?.id ? "Preview Changes" : "Save Pattern"}
         </Button>

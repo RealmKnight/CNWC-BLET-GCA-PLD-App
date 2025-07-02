@@ -11,6 +11,7 @@ export interface BatchImportResult {
     errorMessages: string[];
     insertedIds?: string[];
     waitlistPositionUpdates?: Array<{ id: string; position: number }>;
+    failedItems?: Array<{ index: number; error: string }>;
 }
 
 /**
@@ -51,36 +52,74 @@ export async function insertBatchPldSdvRequests(
             `Import status counts - Approved: ${statusCounts.approved}, Waitlisted: ${statusCounts.waitlisted}`,
         );
 
-        // Insert the data into the database
-        const { data, error } = await supabase
+        // ------------------------------
+        // PRIMARY ATTEMPT: single batch insert
+        // ------------------------------
+        const { data: batchData, error: batchError } = await supabase
             .from("pld_sdv_requests")
             .insert(importData)
-            .select("id"); // Return the IDs of inserted rows
+            .select("id");
 
-        if (error) {
-            console.error("Error inserting batch PLD/SDV requests:", error);
+        // If batch succeeded – great, return early
+        if (!batchError) {
+            const insertedIds = batchData?.map((row) =>
+                row.id
+            ) || [];
+            console.log(
+                `Successfully inserted ${insertedIds.length} PLD/SDV requests (batch)`,
+            );
             return {
-                success: false,
-                insertedCount: 0,
-                failedCount: importData.length,
-                errorMessages: [error.message],
+                success: true,
+                insertedCount: insertedIds.length,
+                failedCount: 0,
+                errorMessages: [],
+                insertedIds,
             };
         }
 
-        const insertedIds = data?.map((row) =>
-            row.id
-        ) || [];
-
-        console.log(
-            `Successfully inserted ${insertedIds.length} PLD/SDV requests`,
+        // ------------------------------
+        // FALLBACK PATH: batch failed – retry row-by-row so we can salvage valid rows
+        // ------------------------------
+        console.warn(
+            "Batch insert failed – switching to per-row insertion. Reason:",
+            batchError?.message,
         );
 
+        const insertedIds: string[] = [];
+        const failedItems: Array<{ index: number; error: string }> = [];
+
+        // Use for…of to await each insert sequentially to respect potential constraint locks
+        for (let localIdx = 0; localIdx < importData.length; localIdx++) {
+            const row = importData[localIdx];
+
+            /* eslint-disable no-await-in-loop */
+            const { data: singleData, error: singleError } = await supabase
+                .from("pld_sdv_requests")
+                .insert(row)
+                .select("id")
+                .single();
+
+            if (singleError) {
+                console.error(`Row ${localIdx} failed:`, singleError.message);
+                failedItems.push({
+                    index: selectedItems[localIdx],
+                    error: singleError.message,
+                });
+                continue;
+            }
+            if (singleData?.id) insertedIds.push(singleData.id);
+        }
+
+        const failedCount = failedItems.length;
+        const insertedCount = insertedIds.length;
+
         return {
-            success: true,
-            insertedCount: insertedIds.length,
-            failedCount: 0,
-            errorMessages: [],
+            success: insertedCount > 0,
+            insertedCount,
+            failedCount,
+            errorMessages: failedItems.map((f) => f.error),
             insertedIds,
+            failedItems,
         };
     } catch (error) {
         console.error(
