@@ -26,6 +26,7 @@ import {
   invokeWithRetryAndTimeout,
   logStructuredError,
 } from "@/utils/emailAttemptLogger";
+import { sendRequestEmailIfEligible } from "@/utils/emailHelpers";
 
 type Member = Database["public"]["Tables"]["members"]["Row"];
 type BaseRequest = Database["public"]["Tables"]["pld_sdv_requests"]["Row"];
@@ -905,38 +906,14 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
 
       if (error) throw error;
 
-      // Send email notification for the new request
-      console.log("[CalendarStore] Sending request email notification...");
-
-      const emailResult = await invokeWithRetryAndTimeout(
-        "send-request-email",
-        { requestId: data.id },
-        {
-          requestId: data.id,
-          emailType: "request",
-          appComponent: "CalendarStore.userSubmitRequest",
-          attemptData: {
-            leaveType: type,
-            requestDate: date,
-            memberId: member.id,
-            calendarId: member.calendar_id,
-          },
-        },
-      );
-
-      if (!emailResult.success) {
-        console.error(
-          "[CalendarStore] Email notification failed:",
-          emailResult.error,
-        );
-        // Don't fail the entire request submission if email fails
-        // The request is already in the database successfully
-      } else {
-        console.log(
-          "[CalendarStore] Email notification sent successfully",
-          `(Attempt ID: ${emailResult.attemptId})`,
-        );
-      }
+      // Only send the company email when the request is not wait-listed
+      await sendRequestEmailIfEligible(data.id, data.status as any, {
+        appComponent: "CalendarStore.userSubmitRequest",
+        leaveType: type,
+        requestDate: date,
+        memberId: member.id,
+        calendarId: member.calendar_id,
+      });
 
       // Update local state optimistically
       const newRequests = { ...state.requests };

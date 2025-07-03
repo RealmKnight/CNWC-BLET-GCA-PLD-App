@@ -25,6 +25,7 @@ import {
     invokeWithRetryAndTimeout,
     logStructuredError,
 } from "@/utils/emailAttemptLogger";
+import { sendRequestEmailIfEligible } from "@/utils/emailHelpers";
 import {
     calculateTimeStatsForYear,
     getYearBoundaries,
@@ -1598,41 +1599,15 @@ export const useTimeStore = create<TimeState & TimeActions>((set, get) => ({
                 `[TimeStore] Invalidated cache for year ${requestYear} after request submission`,
             );
 
-            // Send email notification for the new request
-            console.log(
-                "[TimeStore] Sending request email notification...",
-            );
-
-            const emailResult = await invokeWithRetryAndTimeout(
-                "send-request-email",
-                { requestId: data.id },
-                {
-                    requestId: data.id,
-                    emailType: "request",
-                    appComponent: "TimeStore.submitRequest",
-                    attemptData: {
-                        leaveType,
-                        requestDate: date,
-                        isPaidInLieu,
-                        memberId,
-                        calendarId: member.calendar_id,
-                    },
-                },
-            );
-
-            if (!emailResult.success) {
-                console.error(
-                    "[TimeStore] Email notification failed:",
-                    emailResult.error,
-                );
-                // Don't fail the entire request submission if email fails
-                // The request is already in the database successfully
-            } else {
-                console.log(
-                    "[TimeStore] Email notification sent successfully",
-                    `(Attempt ID: ${emailResult.attemptId})`,
-                );
-            }
+            // Only send the company email when the request is not wait-listed
+            await sendRequestEmailIfEligible(data.id, data.status as any, {
+                appComponent: "TimeStore.submitRequest",
+                leaveType,
+                requestDate: date,
+                isPaidInLieu,
+                memberId,
+                calendarId: member.calendar_id,
+            });
 
             set({ isSubmittingAction: false });
             // Refresh data after submission
