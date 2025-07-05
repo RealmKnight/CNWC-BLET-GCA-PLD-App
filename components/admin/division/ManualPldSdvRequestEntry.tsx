@@ -47,6 +47,14 @@ interface PldSdvRequest {
   paid_in_lieu: boolean;
   calendar_id: string;
   calendar_name?: string;
+  pin_number?: string;
+  member?: {
+    pin_number: string;
+    first_name: string;
+    last_name: string;
+    calendar_id: string;
+    is_unregistered?: boolean;
+  };
 }
 
 // Add interface for available days
@@ -108,8 +116,15 @@ async function updateRequestStatus(
     const { error } = await supabase
       .from("pld_sdv_requests")
       .update({
-        status: newStatus,
-        leave_type: newLeaveType,
+        status: newStatus as
+          | "pending"
+          | "approved"
+          | "denied"
+          | "waitlisted"
+          | "cancellation_pending"
+          | "cancelled"
+          | "transferred",
+        leave_type: newLeaveType as "PLD" | "SDV",
         responded_at: new Date().toISOString(),
         responded_by: adminUserId,
       })
@@ -208,6 +223,169 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
     return currentMonth >= 6;
   });
 
+  // Add state for date-based entry
+  const [entryMode, setEntryMode] = useState<"member" | "date">("member");
+  const [selectedEntryDate, setSelectedEntryDate] = useState<Date>(new Date());
+  const [dateRequests, setDateRequests] = useState<any[]>([]);
+  const [dateCalendarData, setDateCalendarData] = useState<Record<string, any>>({});
+  const [isLoadingDateData, setIsLoadingDateData] = useState(false);
+  const [showRequestEntryModal, setShowRequestEntryModal] = useState(false);
+  const [selectedCalendarForEntry, setSelectedCalendarForEntry] = useState<string | null>(null);
+  const [selectedSlotType, setSelectedSlotType] = useState<"PLD" | "SDV">("PLD");
+  const [showConfirmationDialog, setShowConfirmationDialog] = useState(false);
+  const [pendingRequestData, setPendingRequestData] = useState<any | null>(null);
+
+  // Function to get calendar allocation for a specific date
+  const getCalendarAllocation = useCallback(async (calendarId: string, date: Date): Promise<number> => {
+    try {
+      const dateString = format(date, "yyyy-MM-dd");
+      const year = date.getFullYear();
+
+      // First try to get allocation for this specific date
+      const { data: specificAllocation, error: specificError } = await supabase
+        .from("pld_sdv_allotments")
+        .select("max_allotment")
+        .eq("calendar_id", calendarId)
+        .eq("date", dateString)
+        .limit(1);
+
+      if (!specificError && specificAllocation && specificAllocation.length > 0) {
+        return specificAllocation[0].max_allotment || 0;
+      }
+
+      // If no specific date found, try to get yearly default for this calendar
+      const { data: yearlyAllocation, error: yearlyError } = await supabase
+        .from("pld_sdv_allotments")
+        .select("max_allotment")
+        .eq("calendar_id", calendarId)
+        .eq("year", year)
+        .limit(1);
+
+      if (!yearlyError && yearlyAllocation && yearlyAllocation.length > 0) {
+        return yearlyAllocation[0].max_allotment || 0;
+      }
+
+      // If still no allocation found, try to get any default allocation for this calendar
+      const { data: anyAllocation, error: anyError } = await supabase
+        .from("pld_sdv_allotments")
+        .select("max_allotment")
+        .eq("calendar_id", calendarId)
+        .order("year", { ascending: false })
+        .limit(1);
+
+      if (!anyError && anyAllocation && anyAllocation.length > 0) {
+        console.log(`Using fallback allocation for calendar ${calendarId}: ${anyAllocation[0].max_allotment}`);
+        return anyAllocation[0].max_allotment || 0;
+      }
+
+      // If absolutely no allocation found, return default of 3 (common default)
+      console.warn(`No allocation found for calendar ${calendarId} on ${dateString}, using default of 3`);
+      return 3;
+    } catch (error) {
+      console.error("Error fetching calendar allocation:", error);
+      return 3; // Default fallback
+    }
+  }, []);
+
+  // Function to fetch requests for a specific date
+  const fetchRequestsForDate = useCallback(
+    async (date: Date) => {
+      setIsLoadingDateData(true);
+      try {
+        const dateString = format(date, "yyyy-MM-dd");
+        // Get all calendars for this division
+        const divisionCalendars = currentDivisionCalendars;
+        const calendarIds = divisionCalendars.map((cal) => cal.id);
+        if (calendarIds.length === 0) {
+          setDateRequests([]);
+          setDateCalendarData({});
+          return;
+        }
+        // Fetch requests for this date across all calendars in the division
+        // Use LEFT JOIN (no !inner) to include requests from unregistered members
+        const { data: requests, error: requestsError } = await supabase
+          .from("pld_sdv_requests")
+          .select(`*, member:members(pin_number, first_name, last_name, calendar_id)`)
+          .eq("request_date", dateString)
+          .in("calendar_id", calendarIds);
+        if (requestsError) {
+          console.error("Error fetching requests for date:", requestsError);
+          setError("Failed to fetch requests for selected date");
+          return;
+        }
+
+        // For requests where member info is missing, try to look up by pin_number
+        const requestsWithMemberInfo = await Promise.all(
+          (requests || []).map(async (request) => {
+            if (!request.member && request.pin_number) {
+              try {
+                const { data: memberData, error: memberError } = await supabase
+                  .from("members")
+                  .select("pin_number, first_name, last_name, calendar_id")
+                  .eq("pin_number", request.pin_number)
+                  .single();
+
+                if (!memberError && memberData) {
+                  // Add member data with a flag indicating it's from lookup
+                  return {
+                    ...request,
+                    member: { ...memberData, is_unregistered: true },
+                  };
+                }
+              } catch (lookupError) {
+                console.warn(`Failed to lookup member by pin ${request.pin_number}:`, lookupError);
+              }
+            }
+            return request;
+          })
+        );
+
+        // Sort requests by status (approved > pending > waitlisted > denied > cancelled)
+        const statusOrder = ["approved", "pending", "waitlisted", "denied", "cancelled"];
+        const sortedRequests = requestsWithMemberInfo.slice().sort((a, b) => {
+          const aIdx = statusOrder.indexOf(a.status);
+          const bIdx = statusOrder.indexOf(b.status);
+          return (aIdx === -1 ? 99 : aIdx) - (bIdx === -1 ? 99 : bIdx);
+        });
+        // Group requests by calendar
+        const requestsByCalendar: Record<string, any[]> = {};
+        calendarIds.forEach((calendarId) => {
+          requestsByCalendar[calendarId] = [];
+        });
+        sortedRequests.forEach((request) => {
+          if (request.calendar_id && requestsByCalendar[request.calendar_id]) {
+            requestsByCalendar[request.calendar_id].push(request);
+          }
+        });
+        // Fetch allotments for each calendar on this date
+        const calendarData: Record<string, any> = {};
+        for (const calendar of divisionCalendars) {
+          const totalAllocation = await getCalendarAllocation(calendar.id, date);
+          const existingRequests = requestsByCalendar[calendar.id] || [];
+          // Only count requests that are not cancelled/denied for available spots
+          const isActive = (r: any) => !["cancelled", "denied"].includes(r.status);
+          const activeRequestCount = existingRequests.filter((r) => isActive(r)).length;
+
+          calendarData[calendar.id] = {
+            calendar,
+            requests: existingRequests, // show all requests, sorted
+            totalAllocation: totalAllocation,
+            usedSpots: activeRequestCount,
+            availableSpots: Math.max(0, totalAllocation - activeRequestCount),
+          };
+        }
+        setDateRequests(sortedRequests);
+        setDateCalendarData(calendarData);
+      } catch (error) {
+        console.error("Error fetching date data:", error);
+        setError("Failed to fetch data for selected date");
+      } finally {
+        setIsLoadingDateData(false);
+      }
+    },
+    [currentDivisionCalendars, getCalendarAllocation]
+  );
+
   // Fetch calendar names when the component loads
   useEffect(() => {
     async function fetchCalendarNames() {
@@ -233,6 +411,13 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
 
     fetchCalendarNames();
   }, []);
+
+  // Fetch data when date changes in date entry mode
+  useEffect(() => {
+    if (entryMode === "date") {
+      fetchRequestsForDate(selectedEntryDate);
+    }
+  }, [entryMode, selectedEntryDate, fetchRequestsForDate]);
 
   // Fetch division members when the component loads
   useEffect(() => {
@@ -602,6 +787,33 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       // No need to set modal visibility here as it's already shown when input is focused
     },
     [membersByCalendar]
+  );
+
+  // Handle search query change for date-based entry modal
+  const handleSearchQueryChange = useCallback(
+    (query: string) => {
+      setSearchQuery(query);
+      if (query.length < 3) {
+        setSearchResults([]);
+        return;
+      }
+
+      // Filter members that belong to the selected calendar
+      const calendarMembers = selectedCalendarForEntry
+        ? membersByCalendar[selectedCalendarForEntry] || []
+        : Object.values(membersByCalendar).flat();
+
+      const lowerQuery = query.toLowerCase();
+      const results = calendarMembers.filter(
+        (member) =>
+          member.pin_number.toString().includes(lowerQuery) ||
+          member.first_name.toLowerCase().includes(lowerQuery) ||
+          member.last_name.toLowerCase().includes(lowerQuery)
+      );
+
+      setSearchResults(results.slice(0, 10)); // Limit to 10 results for performance
+    },
+    [membersByCalendar, selectedCalendarForEntry]
   );
 
   // Handle member selection
@@ -1350,7 +1562,9 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       // Combine request and member data
       const lookupData = {
         ...requestData,
-        calendar_name: calendarNames[requestData.calendar_id] || "Unknown Calendar",
+        calendar_name: requestData.calendar_id
+          ? calendarNames[requestData.calendar_id] || "Unknown Calendar"
+          : "Unknown Calendar",
         member_name: memberData
           ? `${memberData.last_name}, ${memberData.first_name}`
           : `Unknown Member (PIN: ${requestData.pin_number})`,
@@ -1404,6 +1618,233 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
   };
 
   // Render the member's existing requests
+  // Render function for entry mode toggle
+  const renderEntryModeToggle = () => (
+    <View style={styles.entryModeContainer}>
+      <ThemedText style={styles.sectionTitle}>Entry Mode</ThemedText>
+      <View style={styles.toggleContainer}>
+        <ThemedTouchableOpacity
+          style={[styles.toggleButton, entryMode === "member" && styles.toggleButtonActive]}
+          onPress={() => setEntryMode("member")}
+        >
+          <ThemedText style={[styles.toggleButtonText, entryMode === "member" && styles.toggleButtonTextActive]}>
+            By Member
+          </ThemedText>
+        </ThemedTouchableOpacity>
+        <ThemedTouchableOpacity
+          style={[styles.toggleButton, entryMode === "date" && styles.toggleButtonActive]}
+          onPress={() => setEntryMode("date")}
+        >
+          <ThemedText style={[styles.toggleButtonText, entryMode === "date" && styles.toggleButtonTextActive]}>
+            By Date
+          </ThemedText>
+        </ThemedTouchableOpacity>
+      </View>
+    </View>
+  );
+
+  // Render function for date selector
+  const renderDateSelector = () => (
+    <View style={styles.dateContainer}>
+      <ThemedText style={styles.sectionTitle}>Select Date</ThemedText>
+      <View style={styles.datePickerContainer}>
+        <ClientOnlyDatePicker
+          date={selectedEntryDate}
+          onDateChange={(date) => {
+            if (date) {
+              setSelectedEntryDate(date);
+            }
+          }}
+          style={styles.datePicker}
+        />
+      </View>
+    </View>
+  );
+
+  // Render function for calendar overview on selected date
+  const renderCalendarOverview = () => {
+    if (isLoadingDateData) {
+      return (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={Colors[colorScheme].primary} />
+          <ThemedText style={styles.loadingText}>Loading date data...</ThemedText>
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.calendarOverviewContainer}>
+        <ThemedText style={styles.sectionTitle}>
+          {format(selectedEntryDate, "MMMM d, yyyy")} - Calendar Overview
+        </ThemedText>
+        {Object.entries(dateCalendarData).map(([calendarId, data]) => {
+          // Split requests into active and inactive
+          const activeStatuses = ["approved", "pending", "waitlisted"];
+          const inactiveStatuses = ["denied", "cancelled"];
+          const activeRequests = data.requests.filter((r: any) => activeStatuses.includes(r.status));
+          const inactiveRequests = data.requests.filter((r: any) => inactiveStatuses.includes(r.status));
+          return (
+            <View key={calendarId} style={styles.calendarCard}>
+              <ThemedText style={styles.calendarName}>{data.calendar.name}</ThemedText>
+              {/* Existing Requests - Active */}
+              <View style={styles.requestsSection}>
+                <ThemedText style={styles.requestsTitle}>Active Requests</ThemedText>
+                {activeRequests.length === 0 ? (
+                  <ThemedText style={styles.noRequestsText}>No active requests for this date</ThemedText>
+                ) : (
+                  activeRequests.map((request: any) => (
+                    <ThemedTouchableOpacity
+                      key={request.id}
+                      style={[styles.requestItem, styles.clickableRequestRow]}
+                      onPress={() =>
+                        handleEditRequest({
+                          ...request,
+                          calendar_name: data.calendar.name,
+                        })
+                      }
+                      activeOpacity={0.7}
+                    >
+                      <ThemedText style={styles.requestMemberName}>
+                        {request.member
+                          ? `${request.member.first_name} ${request.member.last_name} (#${request.member.pin_number})${
+                              request.member.is_unregistered ? " *" : ""
+                            }`
+                          : `Unregistered Member (#${request.pin_number})`}
+                      </ThemedText>
+                      <View style={styles.requestDetails}>
+                        <ThemedText
+                          style={[
+                            styles.requestType,
+                            {
+                              color:
+                                request.leave_type === "PLD"
+                                  ? Colors[colorScheme].primary
+                                  : Colors[colorScheme].secondary,
+                            },
+                          ]}
+                        >
+                          {" "}
+                          {request.leave_type}{" "}
+                        </ThemedText>
+                        <ThemedText style={[styles.requestStatus, { color: getStatusColor(request.status) }]}>
+                          {" "}
+                          {request.status.toUpperCase()}{" "}
+                        </ThemedText>
+                      </View>
+                    </ThemedTouchableOpacity>
+                  ))
+                )}
+              </View>
+              {/* Available Spots */}
+              <View style={styles.availableSection}>
+                <ThemedText style={styles.availableTitle}>Available Spots</ThemedText>
+                <View style={styles.spotsContainer}>
+                  <View style={styles.spotsSummary}>
+                    <ThemedText style={styles.spotsTotalLabel}>Total Allocated:</ThemedText>
+                    <ThemedText style={styles.spotsTotalValue}>{data.totalAllocation}</ThemedText>
+                  </View>
+                  <View style={styles.spotsSummary}>
+                    <ThemedText style={styles.spotsUsedLabel}>Used:</ThemedText>
+                    <ThemedText style={styles.spotsUsedValue}>{data.usedSpots}</ThemedText>
+                  </View>
+                  <View style={styles.spotsSummary}>
+                    <ThemedText style={styles.spotsAvailableLabel}>Available:</ThemedText>
+                    <ThemedText
+                      style={[
+                        styles.spotsAvailableValue,
+                        {
+                          color: data.availableSpots > 0 ? Colors[colorScheme].success : Colors[colorScheme].error,
+                        },
+                      ]}
+                    >
+                      {data.availableSpots}
+                    </ThemedText>
+                  </View>
+                </View>
+                <View style={styles.addRequestButtons}>
+                  <ThemedTouchableOpacity
+                    style={styles.addSpotButton}
+                    onPress={() => handleOpenSpotClick(calendarId, "PLD")}
+                  >
+                    <Ionicons name="add" size={16} color={Colors[colorScheme].background} />
+                    <ThemedText style={styles.addSpotText}>Add Request</ThemedText>
+                  </ThemedTouchableOpacity>
+                </View>
+              </View>
+              {/* Existing Requests - Inactive */}
+              <View style={styles.requestsSection}>
+                <ThemedText style={styles.requestsTitle}>Cancelled/Denied Requests</ThemedText>
+                {inactiveRequests.length === 0 ? (
+                  <ThemedText style={styles.noRequestsText}>No cancelled/denied requests for this date</ThemedText>
+                ) : (
+                  inactiveRequests.map((request: any) => (
+                    <ThemedTouchableOpacity
+                      key={request.id}
+                      style={[styles.requestItem, styles.clickableRequestRow]}
+                      onPress={() =>
+                        handleEditRequest({
+                          ...request,
+                          calendar_name: data.calendar.name,
+                        })
+                      }
+                      activeOpacity={0.7}
+                    >
+                      <ThemedText style={styles.requestMemberName}>
+                        {request.member
+                          ? `${request.member.first_name} ${request.member.last_name} (#${request.member.pin_number})${
+                              request.member.is_unregistered ? " *" : ""
+                            }`
+                          : `Unregistered Member (#${request.pin_number})`}
+                      </ThemedText>
+                      <View style={styles.requestDetails}>
+                        <ThemedText
+                          style={[
+                            styles.requestType,
+                            {
+                              color:
+                                request.leave_type === "PLD"
+                                  ? Colors[colorScheme].primary
+                                  : Colors[colorScheme].secondary,
+                            },
+                          ]}
+                        >
+                          {" "}
+                          {request.leave_type}{" "}
+                        </ThemedText>
+                        <ThemedText style={[styles.requestStatus, { color: getStatusColor(request.status) }]}>
+                          {" "}
+                          {request.status.toUpperCase()}{" "}
+                        </ThemedText>
+                      </View>
+                    </ThemedTouchableOpacity>
+                  ))
+                )}
+              </View>
+            </View>
+          );
+        })}
+      </View>
+    );
+  };
+
+  // Handler for clicking on an open spot
+  const handleOpenSpotClick = (calendarId: string, leaveType: "PLD" | "SDV" = "PLD") => {
+    setSelectedCalendarForEntry(calendarId);
+    setSelectedSlotType(leaveType); // Default to PLD, will be determined by member's available days in modal
+
+    // Clear previous search state
+    setSearchQuery("");
+    setSearchResults([]);
+    setSelectedMember(null);
+
+    // Ensure members are loaded for this calendar
+    if (calendarId && (!membersByCalendar[calendarId] || membersByCalendar[calendarId].length === 0)) {
+      fetchMembersByCalendarId(calendarId);
+    }
+
+    setShowRequestEntryModal(true);
+  };
+
   const renderMemberRequests = () => {
     if (!selectedMember) return null;
 
@@ -1637,7 +2078,15 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
                     value={searchQuery}
                     onChangeText={handleSearch}
                     placeholder="Search by name or PIN number (min. 3 characters)"
-                    style={[styles.searchInput, { color: Colors[colorScheme].text }]}
+                    style={[
+                      styles.searchInput,
+                      {
+                        color: Colors[colorScheme].text,
+                        height: Platform.OS === "ios" ? 48 : Platform.OS === "android" ? 48 : 40,
+                        paddingHorizontal: 12,
+                        paddingRight: 40,
+                      },
+                    ]}
                     placeholderTextColor={Colors[colorScheme].secondary}
                     autoFocus={true}
                   />
@@ -2244,10 +2693,25 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
             <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={true}>
               <ThemedText style={styles.modalWarning}>**Edit with caution**</ThemedText>
               <ThemedText style={styles.modalInfoText}>
-                Member: {selectedMember?.first_name} {selectedMember?.last_name}
+                Member:{" "}
+                {editingRequest?.member
+                  ? `${editingRequest.member.first_name} ${editingRequest.member.last_name}${
+                      editingRequest.member.is_unregistered ? " *" : ""
+                    }`
+                  : selectedMember?.first_name
+                  ? `${selectedMember.first_name} ${selectedMember.last_name}`
+                  : `PIN #${editingRequest?.pin_number} (Unregistered)`}
               </ThemedText>
               <ThemedText style={styles.modalInfoText}>Date: {formattedDate}</ThemedText>
-              <ThemedText style={styles.modalInfoText}>Request ID: {editingRequest.id}</ThemedText>
+              <ThemedText style={styles.modalInfoText}>Request ID: {editingRequest?.id}</ThemedText>
+
+              {/* Show warning for unregistered members */}
+              {(editingRequest?.member?.is_unregistered || (!editingRequest?.member && !selectedMember)) && (
+                <ThemedText style={[styles.modalInfoText, { color: Colors[colorScheme].warning }]}>
+                  <Ionicons name="warning" size={14} color={Colors[colorScheme].warning} />* Member has not registered
+                  for the app
+                </ThemedText>
+              )}
 
               {/* Leave Type Selector */}
               <View style={styles.selectorContainer}>
@@ -2336,6 +2800,338 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
         </View>
       </Modal>
     );
+  };
+
+  // Render member search modal for date-based entry
+  const renderMemberSearchModal = () => {
+    const calendarData = selectedCalendarForEntry ? dateCalendarData[selectedCalendarForEntry] : null;
+
+    return (
+      <Modal
+        visible={showRequestEntryModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowRequestEntryModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <ThemedView style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <ThemedText style={styles.modalTitle}>Add Request</ThemedText>
+              <ThemedTouchableOpacity onPress={() => setShowRequestEntryModal(false)} style={styles.closeModalButton}>
+                <Ionicons name="close" size={24} color={Colors[colorScheme].text} />
+              </ThemedTouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={true}>
+              <ThemedText style={styles.modalWarning}>**Create new request**</ThemedText>
+
+              {/* Request Details Section */}
+              <ThemedText style={styles.modalInfoText}>Date: {format(selectedEntryDate, "MMMM dd, yyyy")}</ThemedText>
+              <ThemedText style={styles.modalInfoText}>Calendar: {calendarData?.calendar.name}</ThemedText>
+              <ThemedText style={styles.modalInfoText}>
+                Available Spots: {calendarData?.availableSpots || 0} / {calendarData?.totalAllocation || 0}
+              </ThemedText>
+
+              {/* Request Type Selector */}
+              <View style={styles.selectorContainer}>
+                <ThemedText style={styles.label}>Request Type:</ThemedText>
+                <View style={styles.pickerContainer}>
+                  <Picker
+                    selectedValue={selectedSlotType}
+                    onValueChange={(itemValue) => setSelectedSlotType(itemValue as "PLD" | "SDV")}
+                    style={styles.picker}
+                    dropdownIconColor={Colors[colorScheme].text}
+                  >
+                    <Picker.Item label="PLD" value="PLD" />
+                    <Picker.Item label="SDV" value="SDV" />
+                  </Picker>
+                </View>
+              </View>
+
+              {/* Member Selection Section */}
+              <View style={styles.statusSelector}>
+                <ThemedText style={styles.label}>Select Member:</ThemedText>
+
+                {selectedCalendarForEntry &&
+                (!membersByCalendar[selectedCalendarForEntry] ||
+                  membersByCalendar[selectedCalendarForEntry].length === 0) ? (
+                  <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="small" color={Colors[colorScheme].tint} />
+                    <ThemedText style={styles.loadingText}>Loading members...</ThemedText>
+                  </View>
+                ) : (
+                  <>
+                    {!selectedMember && (
+                      <View style={styles.searchInputWrapper}>
+                        <TextInput
+                          style={[styles.searchInput, { color: Colors[colorScheme].text }]}
+                          placeholder="Type member name or pin number (min 3 characters)..."
+                          placeholderTextColor={Colors[colorScheme].secondary}
+                          value={searchQuery}
+                          onChangeText={handleSearchQueryChange}
+                        />
+                      </View>
+                    )}
+
+                    {/* Member Search Results - Only show when no member is selected */}
+                    {!selectedMember && (
+                      <>
+                        {searchQuery.length >= 3 && searchResults.length === 0 && (
+                          <ThemedText style={styles.noResultsText}>
+                            No members found matching "{searchQuery}"
+                            {selectedCalendarForEntry && membersByCalendar[selectedCalendarForEntry] && (
+                              <ThemedText style={styles.memberCountText}>
+                                {"\n"}(Searching {membersByCalendar[selectedCalendarForEntry].length} members in this
+                                calendar)
+                              </ThemedText>
+                            )}
+                          </ThemedText>
+                        )}
+
+                        {searchResults.length > 0 && (
+                          <View style={styles.memberResultsContainer}>
+                            <ThemedText style={styles.searchResultsTitle}>Available Members:</ThemedText>
+                            <View style={styles.statusOptions}>
+                              {searchResults.map((member) => (
+                                <ThemedTouchableOpacity
+                                  key={member.pin_number}
+                                  style={styles.statusOption}
+                                  onPress={() => setSelectedMember(member)}
+                                >
+                                  <View
+                                    style={[styles.statusDot, { backgroundColor: Colors[colorScheme].text + "30" }]}
+                                  />
+                                  <View style={{ flex: 1 }}>
+                                    <ThemedText style={styles.statusText}>
+                                      {member.first_name} {member.last_name}
+                                    </ThemedText>
+                                    <ThemedText
+                                      style={[styles.memberPin, { fontSize: 12, color: Colors[colorScheme].secondary }]}
+                                    >
+                                      PIN: {member.pin_number}
+                                    </ThemedText>
+                                  </View>
+                                </ThemedTouchableOpacity>
+                              ))}
+                            </View>
+                          </View>
+                        )}
+                      </>
+                    )}
+
+                    {/* Selected Member Display */}
+                    {selectedMember && (
+                      <View style={styles.selectedMemberDisplay}>
+                        <View style={styles.selectedMemberHeader}>
+                          <ThemedText style={styles.selectedMemberTitle}>Selected Member:</ThemedText>
+                          <ThemedTouchableOpacity
+                            style={styles.clearSelectionButton}
+                            onPress={() => {
+                              setSelectedMember(null);
+                              setSearchQuery("");
+                              setSearchResults([]);
+                            }}
+                          >
+                            <Ionicons name="close-circle" size={20} color={Colors[colorScheme].error} />
+                            <ThemedText style={styles.clearSelectionText}>Change</ThemedText>
+                          </ThemedTouchableOpacity>
+                        </View>
+                        <View style={styles.selectedMemberCard}>
+                          <View style={[styles.statusDot, { backgroundColor: Colors[colorScheme].success }]} />
+                          <View style={{ flex: 1 }}>
+                            <ThemedText style={[styles.statusText, { fontWeight: "bold" }]}>
+                              {selectedMember.first_name} {selectedMember.last_name}
+                            </ThemedText>
+                            <ThemedText
+                              style={[styles.memberPin, { fontSize: 12, color: Colors[colorScheme].secondary }]}
+                            >
+                              PIN: {selectedMember.pin_number}
+                            </ThemedText>
+                          </View>
+                        </View>
+                      </View>
+                    )}
+                  </>
+                )}
+              </View>
+
+              {/* Options Section */}
+              {selectedMember && (
+                <>
+                  <View style={styles.selectorContainer}>
+                    <ThemedText style={styles.label}>Paid in Lieu:</ThemedText>
+                    <Switch
+                      value={isPaidInLieu}
+                      onValueChange={setIsPaidInLieu}
+                      trackColor={{ false: Colors[colorScheme].text + "30", true: Colors[colorScheme].tint }}
+                      thumbColor={isPaidInLieu ? Colors[colorScheme].background : Colors[colorScheme].text}
+                    />
+                  </View>
+
+                  <ThemedText style={styles.modalInfoText}>
+                    Status:{" "}
+                    {shouldAutoApprove(format(selectedEntryDate, "yyyy-MM-dd")) ? (
+                      <ThemedText style={{ color: Colors[colorScheme].success }}>Will be Auto-Approved</ThemedText>
+                    ) : (
+                      <ThemedText style={{ color: Colors[colorScheme].warning }}>Will be Pending</ThemedText>
+                    )}
+                  </ThemedText>
+
+                  {calendarData?.availableSpots === 0 && (
+                    <ThemedText style={styles.updateWarning}>
+                      <Ionicons name="warning-outline" size={16} color={Colors[colorScheme].warning} />
+                      Calendar is fully allocated. Request may be waitlisted.
+                    </ThemedText>
+                  )}
+                </>
+              )}
+
+              {/* Actions */}
+              <View style={styles.modalActions}>
+                <Button onPress={() => setShowRequestEntryModal(false)} variant="secondary" style={styles.modalButton}>
+                  Cancel
+                </Button>
+                <Button
+                  onPress={handleProceedToConfirmation}
+                  variant="primary"
+                  style={styles.modalButton}
+                  disabled={!selectedMember}
+                >
+                  {selectedMember ? "Proceed" : "Select Member First"}
+                </Button>
+              </View>
+            </ScrollView>
+          </ThemedView>
+        </View>
+      </Modal>
+    );
+  };
+
+  // Render confirmation dialog
+  const renderConfirmationDialog = () => {
+    return (
+      <Modal
+        visible={showConfirmationDialog}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowConfirmationDialog(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <ThemedView style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <ThemedText style={styles.modalTitle}>Confirm Request</ThemedText>
+              <ThemedTouchableOpacity onPress={() => setShowConfirmationDialog(false)} style={styles.closeModalButton}>
+                <Ionicons name="close" size={24} color={Colors[colorScheme].text} />
+              </ThemedTouchableOpacity>
+            </View>
+
+            <View style={styles.modalBody}>
+              <ThemedText style={styles.confirmationText}>Please confirm the details of this request:</ThemedText>
+
+              <View style={styles.confirmationDetails}>
+                <ThemedText style={styles.confirmationLabel}>Member:</ThemedText>
+                <ThemedText style={styles.confirmationValue}>
+                  {selectedMember?.first_name} {selectedMember?.last_name} (#{selectedMember?.pin_number})
+                </ThemedText>
+
+                <ThemedText style={styles.confirmationLabel}>Date:</ThemedText>
+                <ThemedText style={styles.confirmationValue}>{format(selectedEntryDate, "MMMM dd, yyyy")}</ThemedText>
+
+                <ThemedText style={styles.confirmationLabel}>Request Type:</ThemedText>
+                <ThemedText style={styles.confirmationValue}>{selectedSlotType}</ThemedText>
+
+                <ThemedText style={styles.confirmationLabel}>Calendar:</ThemedText>
+                <ThemedText style={styles.confirmationValue}>
+                  {selectedCalendarForEntry ? dateCalendarData[selectedCalendarForEntry]?.calendar.name : "Unknown"}
+                </ThemedText>
+
+                <ThemedText style={styles.confirmationLabel}>Paid in Lieu:</ThemedText>
+                <ThemedText style={styles.confirmationValue}>{isPaidInLieu ? "Yes" : "No"}</ThemedText>
+
+                <ThemedText style={styles.confirmationLabel}>Status:</ThemedText>
+                <ThemedText style={styles.confirmationValue}>
+                  {shouldAutoApprove(format(selectedEntryDate, "yyyy-MM-dd")) ? "Approved" : "Pending"}
+                </ThemedText>
+              </View>
+
+              <View style={styles.modalActions}>
+                <Button onPress={() => setShowConfirmationDialog(false)} variant="secondary" style={styles.modalButton}>
+                  Cancel
+                </Button>
+                <Button
+                  onPress={handleConfirmRequest}
+                  variant="primary"
+                  style={styles.modalButton}
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? "Submitting..." : "Confirm & Submit"}
+                </Button>
+              </View>
+            </View>
+          </ThemedView>
+        </View>
+      </Modal>
+    );
+  };
+
+  // Handler for proceeding to confirmation
+  const handleProceedToConfirmation = () => {
+    if (!selectedMember || !selectedCalendarForEntry) return;
+
+    setPendingRequestData({
+      member: selectedMember,
+      date: selectedEntryDate,
+      leaveType: selectedSlotType,
+      calendarId: selectedCalendarForEntry,
+      paidInLieu: isPaidInLieu,
+    });
+
+    setShowRequestEntryModal(false);
+    setShowConfirmationDialog(true);
+  };
+
+  // Handler for confirming and submitting the request
+  const handleConfirmRequest = async () => {
+    if (!pendingRequestData || !adminUser) return;
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      // Only allow 'approved' or 'waitlisted' for status
+      const status: "approved" | "waitlisted" = shouldAutoApprove(format(pendingRequestData.date, "yyyy-MM-dd"))
+        ? "approved"
+        : "waitlisted";
+      const requestData = {
+        ...(pendingRequestData.member.id ? { member_id: pendingRequestData.member.id } : {}),
+        pin_number: pendingRequestData.member.pin_number,
+        calendar_id: pendingRequestData.calendarId,
+        request_date: format(pendingRequestData.date, "yyyy-MM-dd"),
+        leave_type: pendingRequestData.leaveType as "PLD" | "SDV",
+        status,
+        paid_in_lieu: pendingRequestData.paidInLieu,
+        requested_at: new Date().toISOString(),
+      };
+      const result = (await insertSinglePldSdvRequest(requestData)) as { success: boolean; error?: string } | null;
+      if (result && result.success) {
+        setSuccessMessage(
+          `Request submitted successfully for ${pendingRequestData.member.first_name} ${pendingRequestData.member.last_name}`
+        );
+        setSelectedMember(null);
+        setSearchQuery("");
+        setSearchResults([]);
+        setIsPaidInLieu(false);
+        setPendingRequestData(null);
+        setShowConfirmationDialog(false);
+        await fetchRequestsForDate(selectedEntryDate);
+        setTimeout(() => setSuccessMessage(null), 5000);
+      } else {
+        setError(result?.error || "Failed to submit request");
+      }
+    } catch (error) {
+      console.error("Error submitting request:", error);
+      setError("An error occurred while submitting the request");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   // Render the member's available days
@@ -3400,6 +4196,307 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
       marginTop: 12,
       alignSelf: "flex-start",
     },
+    // New styles for date-based entry
+    entryModeContainer: {
+      marginBottom: 20,
+    },
+    toggleContainer: {
+      flexDirection: "row",
+      borderRadius: 8,
+      overflow: "hidden",
+      borderWidth: 1,
+      borderColor: Colors[colorScheme].text + "30",
+    },
+    toggleButton: {
+      flex: 1,
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      alignItems: "center",
+      backgroundColor: Colors[colorScheme].card,
+    },
+    toggleButtonActive: {
+      backgroundColor: Colors[colorScheme].tint,
+    },
+    toggleButtonText: {
+      fontSize: 14,
+      fontWeight: "500",
+      color: Colors[colorScheme].text,
+    },
+    toggleButtonTextActive: {
+      color: Colors[colorScheme].buttonText,
+      fontWeight: "600",
+    },
+    dateContainer: {
+      marginBottom: 20,
+    },
+    datePickerContainer: {
+      marginTop: 8,
+    },
+    calendarOverviewContainer: {
+      marginBottom: 20,
+    },
+    calendarCard: {
+      backgroundColor: Colors[colorScheme].card,
+      borderRadius: 12,
+      padding: 16,
+      marginBottom: 16,
+      borderWidth: 1,
+      borderColor: Colors[colorScheme].text + "10",
+    },
+    calendarName: {
+      fontSize: 18,
+      fontWeight: "600",
+      marginBottom: 16,
+      color: Colors[colorScheme].text,
+    },
+    requestsSection: {
+      marginBottom: 16,
+    },
+    requestsTitle: {
+      fontSize: 14,
+      fontWeight: "600",
+      marginBottom: 8,
+      color: Colors[colorScheme].text,
+    },
+    requestItem: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      paddingVertical: 8,
+      paddingHorizontal: 12,
+      backgroundColor: Colors[colorScheme].background,
+      borderRadius: 8,
+      marginBottom: 4,
+    },
+    requestMemberName: {
+      fontSize: 14,
+      fontWeight: "500",
+      color: Colors[colorScheme].text,
+      flex: 1,
+    },
+    requestDetails: {
+      flexDirection: "row",
+      gap: 8,
+    },
+    requestType: {
+      fontSize: 12,
+      fontWeight: "600",
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 4,
+      backgroundColor: Colors[colorScheme].card,
+    },
+    requestStatus: {
+      fontSize: 12,
+      fontWeight: "600",
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 4,
+      backgroundColor: Colors[colorScheme].card,
+    },
+    availableSection: {
+      borderTopWidth: 1,
+      borderTopColor: Colors[colorScheme].text + "20",
+      paddingTop: 16,
+    },
+    availableTitle: {
+      fontSize: 14,
+      fontWeight: "600",
+      marginBottom: 12,
+      color: Colors[colorScheme].text,
+    },
+    spotsContainer: {
+      flexDirection: "row",
+      gap: 16,
+    },
+    spotTypeContainer: {
+      flex: 1,
+      alignItems: "center",
+    },
+    spotTypeLabel: {
+      fontSize: 14,
+      fontWeight: "600",
+      marginBottom: 4,
+      color: Colors[colorScheme].text,
+    },
+    spotCount: {
+      fontSize: 16,
+      fontWeight: "700",
+      marginBottom: 8,
+      color: Colors[colorScheme].text,
+    },
+    addSpotButton: {
+      flexDirection: "row",
+      alignItems: "center",
+      backgroundColor: Colors[colorScheme].tint,
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 6,
+      gap: 4,
+    },
+    addSpotText: {
+      fontSize: 12,
+      fontWeight: "600",
+      color: Colors[colorScheme].buttonText,
+    },
+    loadingContainer: {
+      alignItems: "center",
+      paddingVertical: 40,
+    },
+    loadingText: {
+      marginTop: 8,
+      fontSize: 14,
+      color: Colors[colorScheme].text + "70",
+    },
+    searchResultsTitle: {
+      fontSize: 14,
+      fontWeight: "600",
+      marginBottom: 8,
+      color: Colors[colorScheme].text,
+    },
+    searchResultItem: {
+      padding: 12,
+      backgroundColor: Colors[colorScheme].background,
+      borderRadius: 8,
+      marginBottom: 4,
+      borderWidth: 1,
+      borderColor: Colors[colorScheme].text + "20",
+    },
+    selectedMemberItem: {
+      borderColor: Colors[colorScheme].tint,
+      backgroundColor: Colors[colorScheme].tint + "10",
+    },
+    memberInfo: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+    },
+    memberName: {
+      fontSize: 14,
+      fontWeight: "500",
+      color: Colors[colorScheme].text,
+    },
+    memberPin: {
+      fontSize: 12,
+      color: Colors[colorScheme].text + "70",
+    },
+    confirmationText: {
+      fontSize: 16,
+      fontWeight: "500",
+      marginBottom: 16,
+      color: Colors[colorScheme].text,
+    },
+    confirmationDetails: {
+      marginBottom: 24,
+    },
+    confirmationLabel: {
+      fontSize: 14,
+      fontWeight: "600",
+      marginTop: 8,
+      marginBottom: 2,
+      color: Colors[colorScheme].text,
+    },
+    confirmationValue: {
+      fontSize: 14,
+      color: Colors[colorScheme].text + "80",
+    },
+    switchContainer: {
+      flexDirection: "row",
+      alignItems: "center",
+      marginVertical: 12,
+    },
+    // New styles for the updated spots display
+    spotsSummary: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      paddingVertical: 4,
+    },
+    spotsTotalLabel: {
+      fontSize: 14,
+      fontWeight: "500",
+      color: Colors[colorScheme].text,
+    },
+    spotsTotalValue: {
+      fontSize: 16,
+      fontWeight: "600",
+      color: Colors[colorScheme].text,
+    },
+    spotsUsedLabel: {
+      fontSize: 14,
+      fontWeight: "500",
+      color: Colors[colorScheme].text,
+    },
+    spotsUsedValue: {
+      fontSize: 16,
+      fontWeight: "600",
+      color: Colors[colorScheme].warning,
+    },
+    spotsAvailableLabel: {
+      fontSize: 14,
+      fontWeight: "500",
+      color: Colors[colorScheme].text,
+    },
+    spotsAvailableValue: {
+      fontSize: 16,
+      fontWeight: "600",
+    },
+    addRequestButtons: {
+      flexDirection: "row",
+      marginTop: 12,
+      justifyContent: "center",
+    },
+    memberCountText: {
+      fontSize: 12,
+      color: Colors.dark.secondary,
+      fontStyle: "italic",
+    },
+    memberResultsContainer: {
+      marginTop: 8,
+    },
+    selectedMemberDisplay: {
+      marginTop: 12,
+      padding: 12,
+      backgroundColor: Colors.dark.card,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: Colors.dark.success + "30",
+    },
+    selectedMemberHeader: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 8,
+    },
+    clearSelectionButton: {
+      flexDirection: "row",
+      alignItems: "center",
+      padding: 4,
+      borderRadius: 4,
+    },
+    clearSelectionText: {
+      fontSize: 12,
+      color: Colors.dark.error,
+      marginLeft: 4,
+      fontWeight: "500",
+    },
+    selectedMemberCard: {
+      flexDirection: "row",
+      alignItems: "center",
+      padding: 8,
+      backgroundColor: Colors.dark.background,
+      borderRadius: 6,
+      borderWidth: 1,
+      borderColor: Colors.dark.success + "50",
+    },
+    clickableRequestRow: {
+      borderWidth: 1,
+      borderColor: Colors.dark.text + "30",
+      borderRadius: 6,
+      ...(Platform.OS === "web" && {
+        cursor: "pointer",
+      }),
+    },
   });
 
   // Fix the outer container and remove platform-specific conditions
@@ -3424,13 +4521,27 @@ export function ManualPldSdvRequestEntry({ selectedDivision }: ManualPldSdvReque
         (ie if you are entering already approved requests, etc).
       </ThemedText>
 
-      <ScrollView style={styles.content} key={`scroll-${selectedMember?.id || "none"}`}>
-        {renderRequestLookup()}
-        {renderMemberSearch()}
-        {selectedMember && renderMemberRequests()}
-        {selectedMember && renderAvailableDays()}
-        {renderRequestForm()}
+      <ScrollView style={styles.content} key={`scroll-${selectedMember?.id || "none"}-${entryMode}`}>
+        {renderEntryModeToggle()}
+
+        {entryMode === "member" ? (
+          <>
+            {renderRequestLookup()}
+            {renderMemberSearch()}
+            {selectedMember && renderMemberRequests()}
+            {selectedMember && renderAvailableDays()}
+            {renderRequestForm()}
+          </>
+        ) : (
+          <>
+            {renderDateSelector()}
+            {renderCalendarOverview()}
+          </>
+        )}
+
         {renderEditModal()}
+        {renderMemberSearchModal()}
+        {renderConfirmationDialog()}
       </ScrollView>
     </ThemedView>
   );

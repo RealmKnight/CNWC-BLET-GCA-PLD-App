@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(claude:*)"
+      "Bash(claude:*)",
+      "mcp__supabase__list_tables",
+      "Bash(rg:*)"
     ],
     "deny": []
   }
